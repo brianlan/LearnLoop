@@ -135,6 +135,21 @@ export const api = {
   },
 
   /**
+   * Generic PATCH request
+   */
+  async patch<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify(body),
+    });
+    return handleResponse<T>(response);
+  },
+
+  /**
    * Generic DELETE request
    */
   async delete<T>(path: string): Promise<T> {
