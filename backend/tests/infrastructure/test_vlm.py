@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import httpx
+import pytest
+
+from app.infrastructure.config.settings import Settings
+from app.infrastructure.vlm.client import (
+    FAILURE_CODE_INVALID_RESPONSE,
+    FAILURE_CODE_NETWORK,
+    FAILURE_CODE_PROVIDER,
+    FAILURE_CODE_PROVIDER_REJECTED,
+    FAILURE_CODE_STALE_PREVIEW,
+    FAILURE_CODE_TIMEOUT,
+    ExtractionResult,
+    GradingResult,
+    VLMClient,
+    VLMError,
+    recover_stale_preview,
+)
+from app.infrastructure.vlm.prompts import (
+    EXTRACTION_PROMPT_VERSION,
+    EXTRACTION_SCHEMA_VERSION,
+    GRADING_PROMPT_VERSION,
+    GRADING_SCHEMA_VERSION,
+)
+
+
+def _build_client(handler) -> VLMClient:
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        transport=transport,
+        base_url="https://vlm.example/api",
+        timeout=5,
+        headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
+    )
+    settings = Settings(vlm_endpoint="https://vlm.example/api", vlm_model="demo", vlm_api_key="demo")
+    return VLMClient(settings=settings, http_client=http_client)
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_happy_path() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = await request.aread()
+        assert b'"requestType":"ingestion"' in payload
+        return httpx.Response(
+            200,
+            json={
+                "text": "Solve x + 1 = 2",
+                "problemType": "short-answer",
+                "graphDsl": None,
+                "providerMetadata": {"provider": "demo"},
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert isinstance(result, ExtractionResult)
+    assert result.request_type == "ingestion"
+    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+    assert result.schema_version == EXTRACTION_SCHEMA_VERSION
+    assert result.text == "Solve x + 1 = 2"
+    assert result.problem_type == "short-answer"
+    assert result.raw_provider_response["providerMetadata"]["provider"] == "demo"
+
+
+@pytest.mark.asyncio
+async def test_vlm_grading_happy_path() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = await request.aread()
+        assert b'"requestType":"short-answer-grading"' in payload
+        return httpx.Response(
+            200,
+            json={
+                "isCorrect": True,
+                "feedback": "Correct.",
+                "providerMetadata": {"provider": "demo"},
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.grade_short_answer(
+        image_url="s3://bucket/key",
+        user_answer="1",
+        correct_answer="1",
+    )
+    await client.aclose()
+
+    assert isinstance(result, GradingResult)
+    assert result.request_type == "short-answer-grading"
+    assert result.prompt_version == GRADING_PROMPT_VERSION
+    assert result.schema_version == GRADING_SCHEMA_VERSION
+    assert result.is_correct is True
+    assert result.feedback == "Correct."
+
+
+@pytest.mark.asyncio
+async def test_vlm_retries_only_retryable_failures() -> None:
+    async def server_error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"detail": "overloaded"})
+
+    client = _build_client(server_error_handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_PROVIDER
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_vlm_non_retryable_client_failure() -> None:
+    async def client_error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "bad request"})
+
+    client = _build_client(client_error_handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_PROVIDER_REJECTED
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_invalid_response_shape_is_rejected() -> None:
+    async def invalid_shape_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"text": "missing required fields"})
+
+    client = _build_client(invalid_shape_handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_timeout_is_classified_explicitly() -> None:
+    async def timeout_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    client = _build_client(timeout_handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_TIMEOUT
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_vlm_network_error_is_retryable() -> None:
+    async def network_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom")
+
+    client = _build_client(network_handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_NETWORK
+    assert exc_info.value.retryable is True
+
+
+def test_recover_stale_preview_transitions_to_vlm_failed() -> None:
+    now = datetime.now(UTC)
+    preview = {
+        "status": "extracting",
+        "createdAt": now - timedelta(seconds=120),
+        "updatedAt": now - timedelta(seconds=120),
+        "extraction": {
+            "requestStartedAt": now - timedelta(seconds=120),
+            "requestFinishedAt": None,
+            "success": None,
+            "failureCode": None,
+            "failureMessage": None,
+        },
+    }
+
+    recovered = recover_stale_preview(preview, now=now, extracting_window_seconds=30)
+
+    assert recovered is not None
+    assert recovered["status"] == "vlm-failed"
+    assert recovered["extraction"]["failureCode"] == FAILURE_CODE_STALE_PREVIEW
+    assert recovered["extraction"]["success"] is False
+
+
+def test_recover_stale_preview_ignores_fresh_extractions() -> None:
+    now = datetime.now(UTC)
+    preview = {
+        "status": "extracting",
+        "createdAt": now - timedelta(seconds=10),
+        "updatedAt": now - timedelta(seconds=10),
+        "extraction": {"requestStartedAt": now - timedelta(seconds=10)},
+    }
+
+    assert recover_stale_preview(preview, now=now, extracting_window_seconds=30) is None
