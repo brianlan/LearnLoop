@@ -8,6 +8,9 @@ from app.infrastructure.config.settings import get_settings
 from app.observability import configure_logging
 from app.presentation.auth import router as auth_router
 from app.presentation.errors import ApiError, api_error_handler, validation_error_handler
+from app.presentation.ingestion import router as ingestion_router
+from app.presentation.media import router as media_router
+from app.presentation.problems import router as problems_router
 
 
 def create_app() -> FastAPI:
@@ -27,6 +30,9 @@ def create_app() -> FastAPI:
 
     api_v1_router = APIRouter(prefix="/api/v1")
     api_v1_router.include_router(auth_router)
+    api_v1_router.include_router(ingestion_router)
+    api_v1_router.include_router(problems_router)
+    api_v1_router.include_router(media_router)
     application.include_router(api_v1_router)
 
     return application
