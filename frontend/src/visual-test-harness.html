@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=400, height=400, initial-scale=1.0">
+  <title>JSXGraph Visual Test Harness</title>
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/jsxgraph@1.8.0/distrib/jsxgraph.css" />
+  <script src="https://cdn.jsdelivr.net/npm/jsxgraph@1.8.0/distrib/jsxgraphcore.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #ffffff;
+      overflow: hidden;
+    }
+    
+    #render-container {
+      width: 400px;
+      height: 400px;
+      position: absolute;
+      top: 0;
+      left: 0;
+      background-color: #ffffff;
+    }
+    
+    #jxgbox {
+      width: 100%;
+      height: 100%;
+    }
+    
+    #error-display {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 90%;
+      padding: 16px;
+      background-color: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 4px;
+      color: #dc2626;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      text-align: center;
+    }
+    
+    #error-display.visible {
+      display: block;
+    }
+    
+    #render-status {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="render-container">
+    <div id="jxgbox"></div>
+    <div id="error-display"></div>
+  </div>
+  <div id="render-status" data-status="initializing"></div>
+
+  <script>
+    (function() {
+      const RENDER_DELAY_MS = 500;
+      const DEFAULT_BOUNDBOX = [-5, 5, 5, -5];
+      
+      const container = document.getElementById('jxgbox');
+      const errorDisplay = document.getElementById('error-display');
+      const statusIndicator = document.getElementById('render-status');
+      
+      let board = null;
+      
+      function showError(message) {
+        errorDisplay.textContent = message;
+        errorDisplay.classList.add('visible');
+        container.style.display = 'none';
+        statusIndicator.dataset.status = 'error';
+        statusIndicator.dataset.error = message;
+      }
+      
+      function clearError() {
+        errorDisplay.textContent = '';
+        errorDisplay.classList.remove('visible');
+        container.style.display = 'block';
+        statusIndicator.dataset.error = '';
+      }
+      
+      function cleanupBoard() {
+        if (board) {
+          try {
+            JXG.JSXGraph.freeBoard(board);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          board = null;
+        }
+        container.innerHTML = '';
+      }
+      
+      function parseUrlHash() {
+        const hash = window.location.hash.slice(1);
+        if (!hash) {
+          return null;
+        }
+        
+        try {
+          const paddedHash = hash.padEnd(hash.length + (4 - (hash.length % 4)) % 4, '=');
+          const jsonStr = atob(paddedHash.replace(/-/g, '+').replace(/_/g, '/'));
+          return JSON.parse(jsonStr);
+        } catch (e) {
+          return null;
+        }
+      }
+      
+      function renderDSL(dsl) {
+        clearError();
+        cleanupBoard();
+        
+        if (!dsl || typeof dsl !== 'string' || dsl.trim() === '') {
+          showError('No DSL code provided');
+          return;
+        }
+        
+        try {
+          board = JXG.JSXGraph.initBoard('jxgbox', {
+            boundingbox: DEFAULT_BOUNDBOX,
+            axis: true,
+            grid: true,
+            showCopyright: false,
+            showNavigation: false
+          });
+          
+          const dslFunction = new Function('board', dsl);
+          dslFunction(board);
+          
+          statusIndicator.dataset.status = 'rendered';
+        } catch (error) {
+          cleanupBoard();
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          showError('Error: ' + errorMessage);
+        }
+      }
+      
+      function init() {
+        const params = parseUrlHash();
+        const dsl = params && params.dsl ? params.dsl : '';
+        
+        setTimeout(function() {
+          renderDSL(dsl);
+        }, RENDER_DELAY_MS);
+      }
+      
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    })();
+  </script>
+</body>
+</html>
