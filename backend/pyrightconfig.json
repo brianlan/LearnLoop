@@ -1,0 +1,16 @@
+{
+  "include": [
+    "app",
+    "tests"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    ".venv/lib/python3.11/site-packages"
+  ],
+  "exclude": [
+    ".venv"
+  ]
+}

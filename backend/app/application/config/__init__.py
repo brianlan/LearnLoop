@@ -1,0 +1,1 @@
+"""Config application namespace."""

@@ -1,0 +1,1 @@
+"""Config infrastructure namespace."""
