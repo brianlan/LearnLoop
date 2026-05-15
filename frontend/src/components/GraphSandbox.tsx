@@ -111,10 +111,11 @@ function generateIframeHtml(): string {
           // Create new board
           board = JXG.JSXGraph.initBoard('jxgbox', {
             boundingbox: [-5, 5, 5, -5],
-            axis: true,
-            grid: true,
+            axis: false,
+            grid: false,
             showCopyright: false,
-            showNavigation: true
+            showNavigation: true,
+            keepaspectratio: true
           });
 
           // Execute the DSL in a controlled way
