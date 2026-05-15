@@ -297,6 +297,16 @@ async def _wait_for_preview_result(
     return True
 
 
+def _is_same_instant(a: datetime | None, b: datetime | None, *, tolerance_seconds: float = 1.0) -> bool:
+    if a is None or b is None:
+        return a is b
+    if a.tzinfo is not None and b.tzinfo is None:
+        b = b.replace(tzinfo=a.tzinfo)
+    elif a.tzinfo is None and b.tzinfo is not None:
+        a = a.replace(tzinfo=b.tzinfo)
+    return abs((a - b).total_seconds()) < tolerance_seconds
+
+
 async def _load_active_extracting_preview(
     database: AsyncDatabase[Document],
     preview_id: ObjectId,
@@ -308,7 +318,7 @@ async def _load_active_extracting_preview(
     if str(preview.get("status")) != IngestionPreviewStatus.EXTRACTING.value:
         return None
     current_started_at = dict(preview.get("extraction", {})).get("requestStartedAt")
-    if current_started_at != started_at:
+    if not _is_same_instant(current_started_at, started_at):
         return None
     return preview
 
@@ -329,7 +339,8 @@ async def _run_extraction_task(
 
         source_image = dict(preview.get("sourceImage", {}))
         image_bytes = s3_storage.get_object(source_image["bucket"], source_image["objectKey"])
-        result = await vlm_client.extract(image_base64=base64.b64encode(image_bytes).decode("utf-8"))
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        result = await vlm_client.extract(image_base64=image_b64)
         preview = await _load_active_extracting_preview(database, preview_id, started_at)
         if preview is None:
             return
@@ -459,7 +470,10 @@ async def _recover_preview_if_stale(
     preview: Document,
     settings: Settings,
 ) -> Document:
-    recovered = recover_stale_preview(preview, extracting_window_seconds=settings.vlm_timeout_seconds)
+    recovered = recover_stale_preview(
+        preview,
+        extracting_window_seconds=settings.preview_extracting_window_seconds,
+    )
     if recovered is None:
         return preview
 
@@ -648,7 +662,13 @@ async def confirm_preview(
     user: CurrentUserDependency,
 ) -> ProblemResponse:
     preview = await _get_owned_preview(database, preview_id, user)
-    _ensure_status(preview, {IngestionPreviewStatus.READY.value})
+    _ensure_status(
+        preview,
+        {
+            IngestionPreviewStatus.READY.value,
+            IngestionPreviewStatus.VLM_FAILED.value,
+        },
+    )
 
     draft = dict(preview.get("editableDraft", {}))
     text = _clean_optional_text(draft.get("text"))
@@ -660,7 +680,10 @@ async def confirm_preview(
     problem_type = ProblemType(problem_type_value)
     normalized_answer = normalize_answer(correct_answer, problem_type)
     now = _utc_now()
-    transition_preview_state(IngestionPreviewStatus.READY, IngestionPreviewStatus.CONFIRMED)
+    transition_preview_state(
+        IngestionPreviewStatus(str(preview["status"])),
+        IngestionPreviewStatus.CONFIRMED,
+    )
     problem: Document = {
         "_id": ObjectId(),
         "userId": user["_id"],
