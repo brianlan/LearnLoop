@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { ExamHistoryResponse, ExamHistoryItem } from "@/types/exam";
+import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse } from "@/types/exam";
 
 function formatDate(dateString?: string) {
   if (!dateString) {
@@ -110,6 +110,11 @@ export function ExamsPage() {
     queryFn: () => api.get<ExamHistoryResponse>(`/exams?page=${page}&pageSize=${pageSize}`),
   });
 
+  const createExamMutation = useMutation({
+    mutationFn: (req: CreateExamRequest) => api.post<CreateExamResponse>("/exams", req),
+    onSuccess: () => navigate("/exams/active"),
+  });
+
   const exams = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -134,19 +139,25 @@ export function ExamsPage() {
         </div>
         <button
           type="button"
-          onClick={() => navigate("/exams/active")}
+          onClick={() => createExamMutation.mutate({ maxProblemCount: 10 })}
+          disabled={createExamMutation.isPending}
           style={{
             padding: "0.75rem 1rem",
-            backgroundColor: "#2563eb",
+            backgroundColor: createExamMutation.isPending ? "#93c5fd" : "#2563eb",
             color: "white",
             border: "none",
             borderRadius: "0.375rem",
-            cursor: "pointer",
+            cursor: createExamMutation.isPending ? "not-allowed" : "pointer",
             fontWeight: 600,
           }}
         >
-          Start New Exam
+          {createExamMutation.isPending ? "Creating..." : "Start New Exam"}
         </button>
+        {createExamMutation.error && (
+          <p style={{ color: "#dc2626", fontSize: "0.875rem", marginTop: "0.5rem" }}>
+            {(createExamMutation.error as Error).message}
+          </p>
+        )}
       </div>
 
       {isLoading ? (

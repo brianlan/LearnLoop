@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClipboardEvent } from "react";
+import type { ChangeEvent, ClipboardEvent } from "react";
 import { GraphSandbox } from "./GraphSandbox";
 import api from "@/api/client";
 
@@ -220,6 +220,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
   });
 
   const [graphError, setGraphError] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const savedDraft = localStorage.getItem("ingestion-draft");
@@ -293,28 +294,8 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     };
   }, []);
 
-  const handlePaste = useCallback(
-    async (event: ClipboardEvent) => {
-      event.preventDefault();
-
-      const items = event.clipboardData.items;
-      let imageFile: File | null = null;
-
-      for (const item of items) {
-        if (item.type.startsWith("image/")) {
-          const file = item.getAsFile();
-          if (file) {
-            imageFile = file;
-            break;
-          }
-        }
-      }
-
-      if (!imageFile) {
-        setError("No image found in clipboard. Please copy an image first.");
-        return;
-      }
-
+  const processImageFile = useCallback(
+    async (imageFile: File) => {
       setError("");
       setCurrentStep("uploading");
       setUploadProgress(0);
@@ -346,6 +327,46 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
       }
     },
     [startPolling]
+  );
+
+  const handlePaste = useCallback(
+    async (event: ClipboardEvent) => {
+      event.preventDefault();
+
+      const items = event.clipboardData.items;
+      let imageFile: File | null = null;
+
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            imageFile = file;
+            break;
+          }
+        }
+      }
+
+      if (!imageFile) {
+        setError("No image found in clipboard. Please copy an image first.");
+        return;
+      }
+
+      await processImageFile(imageFile);
+    },
+    [processImageFile]
+  );
+
+  const handleFileSelection = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const imageFile = event.target.files?.[0];
+      event.target.value = "";
+      if (!imageFile) {
+        return;
+      }
+
+      await processImageFile(imageFile);
+    },
+    [processImageFile]
   );
 
   const handleRetry = useCallback(async () => {
@@ -434,6 +455,29 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
             <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>
               Copy an image and paste it here (Ctrl+V or Cmd+V)
             </p>
+            <div style={{ marginTop: "16px" }}>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "white",
+                  color: "#374151",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                }}
+              >
+                Choose Image File
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => void handleFileSelection(e)}
+                style={{ display: "none" }}
+              />
+            </div>
             {error && (
               <div
                 style={{
@@ -523,21 +567,42 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                 <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
                   The AI was unable to extract problem data from the image.
                 </p>
-                <button
-                  onClick={handleRetry}
-                  disabled={isLoading}
-                  style={{
-                    padding: "8px 16px",
-                    backgroundColor: "#dc2626",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: isLoading ? "not-allowed" : "pointer",
-                    opacity: isLoading ? 0.7 : 1,
-                  }}
-                >
-                  {isLoading ? "Retrying..." : "Try Again"}
-                </button>
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <button
+                    onClick={handleRetry}
+                    disabled={isLoading}
+                    style={{
+                      padding: "8px 16px",
+                      backgroundColor: "#dc2626",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: isLoading ? "not-allowed" : "pointer",
+                      opacity: isLoading ? 0.7 : 1,
+                    }}
+                  >
+                    {isLoading ? "Retrying..." : "Try Again"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (preview) {
+                        setFormData(mapPreviewToFormData(preview));
+                        setCurrentStep("editing");
+                      }
+                    }}
+                    style={{
+                      padding: "8px 16px",
+                      backgroundColor: "white",
+                      color: "#7f1d1d",
+                      border: "1px solid #fca5a5",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edit Manually
+                  </button>
+                </div>
               </div>
             )}
             {preview?.status === "graph-error" && (
@@ -636,8 +701,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
               >
                 Problem Type
               </label>
-              <input
-                type="text"
+              <select
                 value={formData.problemType}
                 onChange={(e) => handleFieldChange("problemType", e.target.value)}
                 style={{
@@ -648,10 +712,16 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                   fontSize: "14px",
                   fontFamily: "inherit",
                   boxSizing: "border-box",
+                  backgroundColor: "white",
                 }}
-                placeholder="e.g., algebra, geometry, calculus..."
                 data-testid="problem-type-input"
-              />
+              >
+                <option value="">Select a problem type…</option>
+                <option value="single-choice">Single Choice</option>
+                <option value="multi-choice">Multi Choice</option>
+                <option value="fill-in-the-blank">Fill in the Blank</option>
+                <option value="short-answer">Short Answer</option>
+              </select>
             </div>
 
             <div style={{ marginBottom: "24px" }}>
