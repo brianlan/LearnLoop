@@ -54,7 +54,7 @@ function generateIframeHtml(): string {
   <title>JSXGraph Sandbox</title>
   <script src="https://cdn.jsdelivr.net/npm/jsxgraph/distrib/jsxgraphcore.js"></script>
   <style>
-    body {
+    html, body {
       margin: 0;
       padding: 0;
       width: 100%;
