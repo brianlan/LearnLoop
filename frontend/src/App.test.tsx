@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -21,9 +20,13 @@ function createQueryClient() {
   });
 }
 
+type AuthSessionResponse =
+  | { authenticated: false }
+  | { authenticated: true; user: { id: string; username: string } };
+
 function renderWithRouterAndAuth(
   initialEntries: string[] = ["/"],
-  authResponse = { authenticated: false },
+  authResponse: AuthSessionResponse = { authenticated: false },
 ) {
   mockFetch.mockResolvedValueOnce({
     ok: true,
@@ -32,13 +35,7 @@ function renderWithRouterAndAuth(
 
   return render(
     <QueryClientProvider client={createQueryClient()}>
-      <MemoryRouter
-        initialEntries={initialEntries}
-        future={{
-          v7_startTransition: true,
-          v7_relativeSplatPath: true,
-        }}
-      >
+      <MemoryRouter initialEntries={initialEntries}>
         <AuthProvider>
           <AppRoutes />
         </AuthProvider>
@@ -63,7 +60,7 @@ describe("App", () => {
   it("redirects from root to problems when authenticated", async () => {
     renderWithRouterAndAuth(["/"], {
       authenticated: true,
-      user: { id: 1, username: "test" },
+      user: { id: "abc123", username: "test" },
     });
 
     await waitFor(() => {
@@ -79,7 +76,7 @@ describe("Route guards", () => {
 
   function renderWithAuthRoute(
     initialEntries: string[] = ["/"],
-    authResponse = { authenticated: false },
+    authResponse: AuthSessionResponse = { authenticated: false },
   ) {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -88,13 +85,7 @@ describe("Route guards", () => {
 
     return render(
       <QueryClientProvider client={createQueryClient()}>
-        <MemoryRouter
-          initialEntries={initialEntries}
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
+        <MemoryRouter initialEntries={initialEntries}>
           <AuthProvider>
             <Routes>
               <Route path="/login" element={<div>Login Page</div>} />
@@ -124,7 +115,7 @@ describe("Route guards", () => {
   it("allows access to protected route when authenticated", async () => {
     renderWithAuthRoute(["/protected"], {
       authenticated: true,
-      user: { id: 1, username: "test" },
+      user: { id: "abc123", username: "test" },
     });
 
     await waitFor(() => {
@@ -141,7 +132,7 @@ describe("AuthContext", () => {
   it("loads user session on mount", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ authenticated: true, user: { id: 1, username: "testuser" } }),
+      json: async () => ({ authenticated: true, user: { id: "abc123", username: "testuser" } }),
     });
 
     function TestComponent() {
@@ -157,12 +148,7 @@ describe("AuthContext", () => {
 
     render(
       <QueryClientProvider client={createQueryClient()}>
-        <MemoryRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
+        <MemoryRouter>
           <AuthProvider>
             <TestComponent />
           </AuthProvider>
@@ -195,12 +181,7 @@ describe("AuthContext", () => {
 
     render(
       <QueryClientProvider client={createQueryClient()}>
-        <MemoryRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
+        <MemoryRouter>
           <AuthProvider>
             <TestComponent />
           </AuthProvider>
@@ -222,7 +203,7 @@ describe("AuthContext", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ user: { id: 1, username: "newuser" } }),
+        json: async () => ({ user: { id: "newuser-id", username: "newuser" } }),
       });
 
     function TestComponent() {
@@ -239,12 +220,7 @@ describe("AuthContext", () => {
 
     render(
       <QueryClientProvider client={createQueryClient()}>
-        <MemoryRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
+        <MemoryRouter>
           <AuthProvider>
             <TestComponent />
           </AuthProvider>
@@ -268,7 +244,7 @@ describe("AuthContext", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ authenticated: true, user: { id: 1, username: "testuser" } }),
+        json: async () => ({ authenticated: true, user: { id: "abc123", username: "testuser" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -289,12 +265,7 @@ describe("AuthContext", () => {
 
     render(
       <QueryClientProvider client={createQueryClient()}>
-        <MemoryRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
+        <MemoryRouter>
           <AuthProvider>
             <TestComponent />
           </AuthProvider>
@@ -322,7 +293,7 @@ describe("AuthContext", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ user: { id: 2, username: "registered" } }),
+        json: async () => ({ user: { id: "registered-id", username: "registered" } }),
       });
 
     function TestComponent() {
@@ -339,12 +310,7 @@ describe("AuthContext", () => {
 
     render(
       <QueryClientProvider client={createQueryClient()}>
-        <MemoryRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
+        <MemoryRouter>
           <AuthProvider>
             <TestComponent />
           </AuthProvider>
@@ -373,7 +339,7 @@ describe("API client", () => {
   it("makes requests with credentials: include", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ authenticated: true, user: { id: 1, username: "test" } }),
+      json: async () => ({ authenticated: true, user: { id: "abc123", username: "test" } }),
     });
 
     const { api } = await import("./api/client");
@@ -388,7 +354,7 @@ describe("API client", () => {
   it("login sends POST with credentials", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ user: { id: 1, username: "test" } }),
+      json: async () => ({ user: { id: "abc123", username: "test" } }),
     });
 
     const { api } = await import("./api/client");

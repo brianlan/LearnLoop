@@ -15,7 +15,7 @@ export interface ApiResponse<T> {
 }
 
 export interface User {
-  id: number;
+  id: string;
   username: string;
 }
 
