@@ -1,7 +1,8 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import type { Exam, ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
+import { GraphSandbox } from "@/components/GraphSandbox";
+import type { ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
 
 async function fetchExam(examId: string): Promise<ExamResponse> {
   return api.get<ExamResponse>(`/exams/${examId}`);
@@ -45,12 +46,11 @@ function GradingStatusBadge({ status }: { status: string }) {
 
 interface ExamItemReviewProps {
   item: ExamItem;
-  examId: string;
   onSelfReport: (itemId: string, isCorrect: boolean) => void;
   isSelfReporting: boolean;
 }
 
-function ExamItemReview({ item, examId, onSelfReport, isSelfReporting }: ExamItemReviewProps) {
+function ExamItemReview({ item, onSelfReport, isSelfReporting }: ExamItemReviewProps) {
   const isPendingReview = item.grading.status === "pending-review";
 
   return (
@@ -65,9 +65,9 @@ function ExamItemReview({ item, examId, onSelfReport, isSelfReporting }: ExamIte
       </div>
 
       {item.problem.graphDsl && (
-        <pre style={{ backgroundColor: "#1f2937", color: "#e5e7eb", padding: "1rem", borderRadius: "0.25rem", fontFamily: "monospace", fontSize: "0.875rem", overflow: "auto", marginBottom: "1rem" }}>
-          {item.problem.graphDsl}
-        </pre>
+        <div style={{ marginBottom: "1rem" }}>
+          <GraphSandbox dsl={item.problem.graphDsl} height={250} />
+        </div>
       )}
 
       {item.problem.imageUrl && (
@@ -268,7 +268,6 @@ export function ExamDetailPage() {
           <ExamItemReview
             key={item.itemId}
             item={item}
-            examId={exam.id}
             onSelfReport={handleSelfReport}
             isSelfReporting={selfReportMutation.isPending}
           />

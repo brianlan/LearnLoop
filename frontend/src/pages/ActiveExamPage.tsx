@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { GraphSandbox } from "@/components/GraphSandbox";
 import type {
-  Exam,
   ExamItem,
   CreateExamRequest,
   CreateExamResponse,
@@ -429,9 +429,9 @@ export function ActiveExamPage() {
         </div>
 
         {currentItem.problem.graphDsl && (
-          <pre style={{ backgroundColor: "#1f2937", color: "#e5e7eb", padding: "1rem", borderRadius: "0.25rem", fontFamily: "monospace", fontSize: "0.875rem", overflow: "auto", marginBottom: "1.5rem" }}>
-            {currentItem.problem.graphDsl}
-          </pre>
+          <div style={{ marginBottom: "1.5rem" }}>
+            <GraphSandbox dsl={currentItem.problem.graphDsl} height={250} />
+          </div>
         )}
 
         {currentItem.problem.imageUrl && (
