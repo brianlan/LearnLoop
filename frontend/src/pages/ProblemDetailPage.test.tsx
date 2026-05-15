@@ -26,7 +26,7 @@ function createQueryClient() {
   });
 }
 
-function renderProblemDetailPage(problemId = "1") {
+function renderProblemDetailPage(problemId = "abc123") {
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={[`/problems/${problemId}`]}>
@@ -38,6 +38,30 @@ function renderProblemDetailPage(problemId = "1") {
   );
 }
 
+const baseProblem = {
+  id: "abc123",
+  problemType: "single-choice",
+  text: "What is 2+2?",
+  tags: ["algebra", "basic"],
+  graphDsl: null,
+  correctAnswer: { display: "4", normalizedText: "4", normalizedSet: ["4"], format: "single" },
+  imageUrl: null,
+  isDeleted: false,
+  createdAt: "2024-01-01",
+  updatedAt: "2024-01-01",
+};
+
+const baseTracking = {
+  problemId: "abc123",
+  tracking: {
+    exposureCount: 5,
+    correctCount: 4,
+    failedCount: 1,
+    lastTestedAt: "2024-01-01T00:00:00Z",
+    lastAttemptCorrect: true,
+  },
+};
+
 describe("ProblemDetailPage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
@@ -48,35 +72,20 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "What is 2+2?",
-          tags: ["algebra", "basic"],
-          graphDsl: "graph { a -- b }",
-          correctAnswer: "42",
-          isDeleted: false,
-          createdAt: "2024-01-01",
-          updatedAt: "2024-01-01",
-        }),
+        json: async () => ({ problem: { ...baseProblem, graphDsl: "graph { a -- b }", correctAnswer: { display: "42", normalizedText: "42", normalizedSet: ["42"], format: "single" } } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 5,
-          correctCount: 4,
-          failedCount: 1,
-          lastTestedAt: "2024-01-01T00:00:00Z",
-        }),
+        json: async () => baseTracking,
       });
 
     renderProblemDetailPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Problem #1")).toBeInTheDocument();
+      expect(screen.getByText("Problem #abc123")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("math")).toBeInTheDocument();
+    expect(screen.getByText("single-choice")).toBeInTheDocument();
     expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
     expect(screen.getByText("algebra")).toBeInTheDocument();
     expect(screen.getByText("42")).toBeInTheDocument();
@@ -88,23 +97,11 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Original text",
-          tags: ["tag1"],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       });
 
     renderProblemDetailPage();
@@ -124,47 +121,23 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Original text",
-          tags: ["tag1"],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Edited text",
-          tags: ["tag1", "tag2"],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Edited text",
-          tags: ["tag1", "tag2"],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       });
 
     renderProblemDetailPage();
@@ -183,8 +156,8 @@ describe("ProblemDetailPage", () => {
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/problems/1"),
-        expect.objectContaining({ method: "PUT" }),
+        expect.stringContaining("/problems/abc123"),
+        expect.objectContaining({ method: "PATCH" }),
       );
     });
 
@@ -200,23 +173,11 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Test",
-          tags: [],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -242,23 +203,18 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Test",
-          tags: [],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          exposureCount: 10,
-          correctCount: 8,
-          failedCount: 2,
-          lastTestedAt: "2024-01-15T10:30:00Z",
+          problemId: "abc123",
+          tracking: {
+            exposureCount: 10,
+            correctCount: 8,
+            failedCount: 2,
+            lastTestedAt: "2024-01-15T10:30:00Z",
+          },
         }),
       });
 
@@ -273,28 +229,15 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByText("2")).toBeInTheDocument();
   });
 
-  it("displays image when imagePath exists", async () => {
+  it("displays image when imageUrl exists", async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Test",
-          tags: [],
-          imagePath: "/path/to/image.png",
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Test", imageUrl: "/api/v1/problems/abc123/image" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       });
 
     renderProblemDetailPage();
@@ -302,7 +245,7 @@ describe("ProblemDetailPage", () => {
     await waitFor(() => {
       const img = screen.getByAltText("Problem");
       expect(img).toBeInTheDocument();
-      expect(img).toHaveAttribute("src", "/api/v1/problems/1/image");
+      expect(img).toHaveAttribute("src", "/api/v1/problems/abc123/image");
     });
   });
 
@@ -310,23 +253,11 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Test",
-          tags: [],
-          isDeleted: true,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Test", isDeleted: true } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       });
 
     renderProblemDetailPage();
@@ -341,23 +272,11 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Test",
-          tags: [],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       });
 
     renderProblemDetailPage();
@@ -376,23 +295,11 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Original text",
-          tags: [],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Original text" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       })
       .mockResolvedValueOnce({
         ok: false,
@@ -426,23 +333,11 @@ describe("ProblemDetailPage", () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: 1,
-          type: "math",
-          text: "Test",
-          tags: [],
-          isDeleted: false,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          exposureCount: 0,
-          correctCount: 0,
-          failedCount: 0,
-        }),
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
       })
       .mockResolvedValueOnce({
         ok: false,

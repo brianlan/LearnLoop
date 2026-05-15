@@ -2,25 +2,41 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { GraphSandbox } from "@/components/GraphSandbox";
+
+interface CorrectAnswer {
+  display: string;
+  normalizedText: string;
+  normalizedSet: string[];
+  format: string;
+}
 
 interface Problem {
-  id: number;
-  type: string;
+  id: string;
+  problemType: string;
   text: string;
   tags: string[];
   graphDsl?: string;
-  imagePath?: string;
-  correctAnswer?: string;
+  imageUrl?: string;
+  correctAnswer?: CorrectAnswer;
   isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+interface ProblemResponse {
+  problem: Problem;
+}
+
 interface TrackingData {
+  problemId: string;
+  tracking: {
   exposureCount: number;
   correctCount: number;
   failedCount: number;
   lastTestedAt?: string;
+    lastAttemptCorrect?: boolean;
+  };
 }
 
 interface UpdateProblemInput {
@@ -34,7 +50,7 @@ export function ProblemDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const problemId = Number(id);
+  const problemId = id ?? "";
 
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
@@ -46,17 +62,25 @@ export function ProblemDetailPage() {
     error: problemError,
   } = useQuery({
     queryKey: ["problem", problemId],
-    queryFn: () => api.get<Problem>(`/problems/${problemId}`),
+    queryFn: async () => {
+      const data = await api.get<ProblemResponse>(`/problems/${problemId}`);
+      return data.problem;
+    },
+    enabled: !!problemId,
   });
 
   const { data: tracking, isLoading: isLoadingTracking } = useQuery({
     queryKey: ["tracking", problemId],
-    queryFn: () => api.get<TrackingData>(`/problems/${problemId}/tracking`),
+    queryFn: async () => {
+      const response = await api.get<TrackingData>(`/problems/${problemId}/tracking`);
+      return response.tracking;
+    },
+    enabled: !!problemId,
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: UpdateProblemInput) =>
-      api.put<Problem>(`/problems/${problemId}`, data),
+      api.patch<ProblemResponse>(`/problems/${problemId}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["problem", problemId] });
       setIsEditing(false);
@@ -68,7 +92,7 @@ export function ProblemDetailPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.delete<void>(`/problems/${problemId}`),
+    mutationFn: () => api.delete<{ ok: true }>(`/problems/${problemId}`),
     onSuccess: () => {
       navigate("/problems");
     },
@@ -79,13 +103,13 @@ export function ProblemDetailPage() {
 
   const handleEdit = () => {
     if (problem) {
-      setEditForm({
-        text: problem.text,
-        tags: [...problem.tags],
-        graphDsl: problem.graphDsl || "",
-        correctAnswer: problem.correctAnswer || "",
-      });
-      setIsEditing(true);
+        setEditForm({
+          text: problem.text,
+          tags: [...problem.tags],
+          graphDsl: problem.graphDsl || "",
+          correctAnswer: problem.correctAnswer?.display || "",
+        });
+        setIsEditing(true);
     }
   };
 
@@ -163,7 +187,7 @@ export function ProblemDetailPage() {
                 marginRight: "0.5rem",
               }}
             >
-              {problem.type}
+              {problem.problemType}
             </span>
             {problem.isDeleted && (
               <span
@@ -179,10 +203,10 @@ export function ProblemDetailPage() {
           </div>
         </div>
 
-        {problem.imagePath && (
+        {problem.imageUrl && (
           <div style={{ marginBottom: "1rem" }}>
             <img
-              src={`/api/v1/problems/${problemId}/image`}
+              src={problem.imageUrl}
               alt="Problem"
               style={{ maxWidth: "100%", maxHeight: "400px" }}
             />
@@ -255,16 +279,9 @@ export function ProblemDetailPage() {
                 style={{ width: "100%", minHeight: "80px", marginTop: "0.5rem" }}
               />
             ) : (
-              <pre
-                style={{
-                  background: "#f5f5f5",
-                  padding: "0.5rem",
-                  borderRadius: "4px",
-                  overflow: "auto",
-                }}
-              >
-                {problem.graphDsl}
-              </pre>
+              <div style={{ marginTop: "0.5rem" }}>
+                <GraphSandbox dsl={problem.graphDsl ?? ""} />
+              </div>
             )}
           </div>
         )}
@@ -285,7 +302,7 @@ export function ProblemDetailPage() {
                 style={{ width: "100%", marginTop: "0.5rem" }}
               />
             ) : (
-              <div>{problem.correctAnswer}</div>
+              <div>{problem.correctAnswer?.display}</div>
             )}
           </div>
         )}

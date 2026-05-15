@@ -4,53 +4,61 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 
 interface Problem {
-  id: number;
-  type: string;
+  id: string;
+  problemType: string;
   text: string;
   tags: string[];
+  imageUrl?: string;
+  tracking: {
+    exposureCount: number;
+    correctCount: number;
+    failedCount: number;
+    lastTestedAt?: string;
+    lastAttemptCorrect?: boolean;
+  };
   isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 interface ProblemsResponse {
-  problems: Problem[];
+  items: Problem[];
   total: number;
   page: number;
   pageSize: number;
+}
+
+interface TagsResponse {
+  items: string[];
 }
 
 export function ProblemsPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [selectedTag, setSelectedTag] = useState<string>("");
-  const [selectedType, setSelectedType] = useState<string>("");
   const pageSize = 20;
 
   const { data: problemsData, isLoading: isLoadingProblems } = useQuery({
-    queryKey: ["problems", page, selectedTag, selectedType],
+    queryKey: ["problems", page, selectedTag],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       });
       if (selectedTag) params.append("tag", selectedTag);
-      if (selectedType) params.append("type", selectedType);
       return api.get<ProblemsResponse>(`/problems?${params.toString()}`);
     },
   });
 
   const { data: tags = [] } = useQuery({
     queryKey: ["tags"],
-    queryFn: () => api.get<string[]>("/problems/tags"),
+    queryFn: async () => {
+      const response = await api.get<TagsResponse>("/problems/tags");
+      return response.items;
+    },
   });
 
-  const { data: types = [] } = useQuery({
-    queryKey: ["types"],
-    queryFn: () => api.get<string[]>("/problems/types"),
-  });
-
-  const problems = problemsData?.problems || [];
+  const problems = problemsData?.items || [];
   const total = problemsData?.total || 0;
   const totalPages = Math.ceil(total / pageSize);
 
@@ -73,25 +81,6 @@ export function ProblemsPage() {
             {tags.map((tag) => (
               <option key={tag} value={tag}>
                 {tag}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="type-filter">Filter by Type: </label>
-          <select
-            id="type-filter"
-            value={selectedType}
-            onChange={(e) => {
-              setSelectedType(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All Types</option>
-            {types.map((type) => (
-              <option key={type} value={type}>
-                {type}
               </option>
             ))}
           </select>
@@ -132,7 +121,7 @@ export function ProblemsPage() {
                       fontSize: "0.875rem",
                     }}
                   >
-                    {problem.type}
+                    {problem.problemType}
                   </span>
                   {problem.isDeleted && (
                     <span

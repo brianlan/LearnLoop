@@ -47,9 +47,9 @@ describe("ProblemsPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          problems: [
-            { id: 1, type: "math", text: "What is 2+2?", tags: ["algebra"], isDeleted: false, createdAt: "", updatedAt: "" },
-            { id: 2, type: "logic", text: "If A then B", tags: ["deduction"], isDeleted: false, createdAt: "", updatedAt: "" },
+          items: [
+            { id: "1", problemType: "single-choice", text: "What is 2+2?", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
+            { id: "2", problemType: "multi-choice", text: "If A then B", tags: ["deduction"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
           ],
           total: 2,
           page: 1,
@@ -58,11 +58,7 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ["algebra", "deduction", "geometry"],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ["math", "logic", "geometry"],
+        json: async () => ({ items: ["algebra", "deduction", "geometry"] }),
       });
 
     renderProblemsPage();
@@ -72,8 +68,8 @@ describe("ProblemsPage", () => {
     });
 
     expect(screen.getByText("If A then B")).toBeInTheDocument();
-    expect(screen.getAllByText("math").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("logic").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("single-choice").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("multi-choice").length).toBeGreaterThanOrEqual(1);
   });
 
   it("navigates to problem detail on click", async () => {
@@ -82,7 +78,7 @@ describe("ProblemsPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          problems: [{ id: 1, type: "math", text: "Test problem", tags: [], isDeleted: false, createdAt: "", updatedAt: "" }],
+          items: [{ id: "abc123", problemType: "single-choice", text: "Test problem", tags: [], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" }],
           total: 1,
           page: 1,
           pageSize: 20,
@@ -90,11 +86,7 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
+        json: async () => ({ items: [] }),
       });
 
     renderProblemsPage();
@@ -105,7 +97,7 @@ describe("ProblemsPage", () => {
 
     await user.click(screen.getByText("Test problem"));
 
-    expect(mockNavigate).toHaveBeenCalledWith("/problems/1");
+    expect(mockNavigate).toHaveBeenCalledWith("/problems/abc123");
   });
 
   it("filters by tag", async () => {
@@ -114,8 +106,8 @@ describe("ProblemsPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          problems: [
-            { id: 1, type: "math", text: "Test", tags: ["algebra"], isDeleted: false, createdAt: "", updatedAt: "" },
+          items: [
+            { id: "1", problemType: "single-choice", text: "Test", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
           ],
           total: 1,
           page: 1,
@@ -124,17 +116,13 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ["algebra", "geometry"],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ["math"],
+        json: async () => ({ items: ["algebra", "geometry"] }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          problems: [
-            { id: 1, type: "math", text: "Algebra problem", tags: ["algebra"], isDeleted: false, createdAt: "", updatedAt: "" },
+          items: [
+            { id: "1", problemType: "single-choice", text: "Algebra problem", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
           ],
           total: 1,
           page: 1,
@@ -168,7 +156,16 @@ describe("ProblemsPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          problems: Array(20).fill({ id: 1, type: "math", text: "Problem", tags: [], isDeleted: false, createdAt: "", updatedAt: "" }),
+          items: Array.from({ length: 20 }, (_, index) => ({
+            id: `problem-${index + 1}`,
+            problemType: "single-choice",
+            text: `Problem ${index + 1}`,
+            tags: [],
+            isDeleted: false,
+            tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 },
+            createdAt: "",
+            updatedAt: "",
+          })),
           total: 50,
           page: 1,
           pageSize: 20,
@@ -176,11 +173,7 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
+        json: async () => ({ items: [] }),
       });
 
     renderProblemsPage();
@@ -198,7 +191,7 @@ describe("ProblemsPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          problems: [],
+          items: [],
           total: 0,
           page: 1,
           pageSize: 20,
@@ -206,11 +199,7 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
+        json: async () => ({ items: [] }),
       });
 
     renderProblemsPage();
