@@ -1,16 +1,93 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ClipboardEvent } from "react";
 import { GraphSandbox } from "./GraphSandbox";
 import api from "@/api/client";
+
+interface PreviewSourceImage {
+  bucket: string;
+  objectKey: string;
+  contentType?: string;
+  sizeBytes?: number;
+  sha256?: string;
+  uploadedAt?: string;
+}
+
+interface PreviewDraft {
+  text: string | null;
+  problemType: string | null;
+  graphDsl: string | null;
+  correctAnswer: string | null;
+  tags: string[];
+}
+
+interface PreviewExtraction {
+  rawText?: string | null;
+  rawProblemType?: string | null;
+  rawGraphDsl?: string | null;
+  rawCorrectAnswer?: string | null;
+  rawTags?: string[];
+  [key: string]: unknown;
+}
 
 export interface IngestionPreview {
   id: string;
   status: "extracting" | "ready" | "vlm-failed" | "graph-error";
-  extractedText: string;
-  problemType: string;
-  graphDsl: string;
-  correctAnswer: string;
-  tags: string[];
+  sourceImage: PreviewSourceImage;
+  draft: PreviewDraft;
+  extraction: PreviewExtraction;
   createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+}
+
+interface PreviewResponse {
+  preview: IngestionPreview;
+}
+
+function normalizePreviewResponse(data: unknown): IngestionPreview {
+  const candidate = data as
+    | PreviewResponse
+    | (Partial<IngestionPreview> & {
+        extractedText?: string;
+        problemType?: string;
+        graphDsl?: string;
+        correctAnswer?: string;
+        tags?: string[];
+      });
+
+  if (candidate && typeof candidate === "object" && "preview" in candidate) {
+    return candidate.preview as IngestionPreview;
+  }
+
+  return {
+    id: candidate.id ?? "",
+    status: (candidate.status as IngestionPreview["status"]) ?? "extracting",
+    sourceImage: (candidate.sourceImage as PreviewSourceImage) ?? {
+      bucket: "",
+      objectKey: "",
+    },
+    draft: candidate.draft ?? {
+      text: candidate.extractedText ?? null,
+      problemType: candidate.problemType ?? null,
+      graphDsl: candidate.graphDsl ?? null,
+      correctAnswer: candidate.correctAnswer ?? null,
+      tags: candidate.tags ?? [],
+    },
+    extraction: candidate.extraction ?? {},
+    createdAt: candidate.createdAt ?? "",
+    updatedAt: candidate.updatedAt ?? "",
+    expiresAt: candidate.expiresAt ?? "",
+  };
+}
+
+function mapPreviewToFormData(preview: IngestionPreview) {
+  return {
+    text: preview.draft.text || "",
+    problemType: preview.draft.problemType || "",
+    graphDsl: preview.draft.graphDsl || "",
+    correctAnswer: preview.draft.correctAnswer || "",
+    tags: preview.draft.tags.join(", "),
+  };
 }
 
 export type WizardStep = "paste" | "uploading" | "preview" | "editing" | "confirming";
@@ -35,11 +112,13 @@ async function createPreview(file: File): Promise<IngestionPreview> {
     throw new Error(errorData.error?.message || `HTTP ${response.status}`);
   }
 
-  return response.json() as Promise<IngestionPreview>;
+  const data = await response.json();
+  return normalizePreviewResponse(data);
 }
 
 async function getPreview(id: string): Promise<IngestionPreview> {
-  return api.get<IngestionPreview>(`/ingestion-previews/${id}`);
+  const data = await api.get<PreviewResponse>(`/ingestion-previews/${id}`);
+  return normalizePreviewResponse(data);
 }
 
 interface PreviewUpdateData {
@@ -65,7 +144,8 @@ async function updatePreview(id: string, data: PreviewUpdateData): Promise<Inges
     throw new Error(errorData.error?.message || `HTTP ${response.status}`);
   }
 
-  return response.json() as Promise<IngestionPreview>;
+  const result = await response.json();
+  return normalizePreviewResponse(result);
 }
 
 async function retryPreview(id: string): Promise<IngestionPreview> {
@@ -79,7 +159,8 @@ async function retryPreview(id: string): Promise<IngestionPreview> {
     throw new Error(errorData.error?.message || `HTTP ${response.status}`);
   }
 
-  return response.json() as Promise<IngestionPreview>;
+  const data = await response.json();
+  return normalizePreviewResponse(data);
 }
 
 async function confirmPreview(id: string): Promise<{ problemId: string }> {
@@ -93,7 +174,8 @@ async function confirmPreview(id: string): Promise<{ problemId: string }> {
     throw new Error(errorData.error?.message || `HTTP ${response.status}`);
   }
 
-  return response.json() as Promise<{ problemId: string }>;
+  const data = (await response.json()) as { problem: { id: string } };
+  return { problemId: data.problem.id };
 }
 
 function useDebouncedCallback<T extends (...args: unknown[]) => unknown>(
@@ -143,7 +225,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     const savedDraft = localStorage.getItem("ingestion-draft");
     if (savedDraft) {
       try {
-        const draft = JSON.parse(savedDraft);
+        const draft = JSON.parse(savedDraft) as Partial<typeof formData>;
         setFormData({
           text: draft.text || "",
           problemType: draft.problemType || "",
@@ -181,13 +263,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
         setPreview(updated);
 
         if (updated.status === "ready") {
-          setFormData({
-            text: updated.extractedText || "",
-            problemType: updated.problemType || "",
-            graphDsl: updated.graphDsl || "",
-            correctAnswer: updated.correctAnswer || "",
-            tags: updated.tags?.join(", ") || "",
-          });
+          setFormData(mapPreviewToFormData(updated));
           setCurrentStep("editing");
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
@@ -218,7 +294,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
   }, []);
 
   const handlePaste = useCallback(
-    async (event: React.ClipboardEvent) => {
+    async (event: ClipboardEvent) => {
       event.preventDefault();
 
       const items = event.clipboardData.items;
@@ -258,13 +334,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
           setCurrentStep("preview");
           startPolling(result.id);
         } else if (result.status === "ready") {
-          setFormData({
-            text: result.extractedText || "",
-            problemType: result.problemType || "",
-            graphDsl: result.graphDsl || "",
-            correctAnswer: result.correctAnswer || "",
-            tags: result.tags?.join(", ") || "",
-          });
+          setFormData(mapPreviewToFormData(result));
           setCurrentStep("editing");
         } else {
           setCurrentStep("preview");
@@ -292,13 +362,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
         setCurrentStep("preview");
         startPolling(previewId);
       } else if (result.status === "ready") {
-        setFormData({
-          text: result.extractedText || "",
-          problemType: result.problemType || "",
-          graphDsl: result.graphDsl || "",
-          correctAnswer: result.correctAnswer || "",
-          tags: result.tags?.join(", ") || "",
-        });
+        setFormData(mapPreviewToFormData(result));
         setCurrentStep("editing");
       }
     } catch (err) {
@@ -638,6 +702,11 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                     onError={handleGraphError}
                     onRender={() => setGraphError("")}
                   />
+                  {graphError && (
+                    <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
+                      {graphError}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -886,6 +955,11 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                   height={300}
                   onError={handleGraphError}
                 />
+                {graphError && (
+                  <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
+                    {graphError}
+                  </div>
+                )}
               </div>
             )}
 
