@@ -1,12 +1,19 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent.parent
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=str(_BACKEND_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_env: str = Field(default="development")
     app_host: str = Field(default="0.0.0.0")
@@ -24,9 +31,6 @@ class Settings(BaseSettings):
     s3_bucket: str = Field(default="learnloop-media")
     s3_region: str = Field(default="us-east-1")
     s3_force_path_style: bool = Field(default=True)
-
-    rustfs_endpoint: str = Field(default="http://localhost:9000")
-    rustfs_console_endpoint: str = Field(default="http://localhost:9001")
 
     vlm_endpoint: str = Field(default="https://example-vlm-provider.invalid/api")
     vlm_model: str = Field(default="replace-me")

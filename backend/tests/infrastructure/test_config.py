@@ -14,8 +14,6 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("S3_BUCKET", "media")
     monkeypatch.setenv("S3_REGION", "eu-central-1")
     monkeypatch.setenv("S3_FORCE_PATH_STYLE", "false")
-    monkeypatch.setenv("RUSTFS_ENDPOINT", "http://rustfs")
-    monkeypatch.setenv("RUSTFS_CONSOLE_ENDPOINT", "http://rustfs-console")
     monkeypatch.setenv("VLM_ENDPOINT", "https://vlm.example/api")
     monkeypatch.setenv("VLM_MODEL", "demo-model")
     monkeypatch.setenv("VLM_API_KEY", "demo-key")
@@ -38,8 +36,6 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.s3_bucket == "media"
     assert settings.s3_region == "eu-central-1"
     assert settings.s3_force_path_style is False
-    assert settings.rustfs_endpoint == "http://rustfs"
-    assert settings.rustfs_console_endpoint == "http://rustfs-console"
     assert settings.vlm_endpoint == "https://vlm.example/api"
     assert settings.vlm_model == "demo-model"
     assert settings.vlm_api_key == "demo-key"
@@ -63,8 +59,6 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
         "S3_BUCKET",
         "S3_REGION",
         "S3_FORCE_PATH_STYLE",
-        "RUSTFS_ENDPOINT",
-        "RUSTFS_CONSOLE_ENDPOINT",
         "VLM_ENDPOINT",
         "VLM_MODEL",
         "VLM_API_KEY",
