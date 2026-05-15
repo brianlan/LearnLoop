@@ -6,6 +6,7 @@ import hashlib
 import mimetypes
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Annotated
 
@@ -266,7 +267,9 @@ def _merge_draft_with_extraction(
 async def _maybe_close_vlm_client(vlm_client: Any) -> None:
     aclose = getattr(vlm_client, "aclose", None)
     if callable(aclose):
-        await aclose()
+        maybe_awaitable = aclose()
+        if isawaitable(maybe_awaitable):
+            await maybe_awaitable
 
 
 def _forget_preview_task(preview_id: str, task: asyncio.Task[None]) -> None:

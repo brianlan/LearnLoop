@@ -1,7 +1,13 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import List
 import random
 from .models import Problem, SelectionPolicyConfig
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def select_problems(
@@ -24,7 +30,7 @@ def select_problems(
     for problem in eligible:
         recency_score = 1.0
         if problem.tracking.lastTestedAt:
-            days_since = (now - problem.tracking.lastTestedAt).days
+            days_since = (now - _ensure_utc(problem.tracking.lastTestedAt)).days
             recency_score = min(1.0 + days_since / 30.0, 3.0)
 
         failure_score = 1.0
@@ -42,9 +48,10 @@ def select_problems(
     weighted.sort(key=lambda x: x[1], reverse=True)
     top_candidates = [p for p, _ in weighted[:count * 2]]
 
+    sample_size = min(count, len(top_candidates))
     if rng is None:
-        rng = random
-
-    selected = rng.sample(top_candidates, min(count, len(top_candidates)))
+        selected = random.sample(top_candidates, sample_size)
+    else:
+        selected = rng.sample(top_candidates, sample_size)
 
     return selected
