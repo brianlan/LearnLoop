@@ -29,6 +29,7 @@ from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoun
 from app.infrastructure.vlm.client import VLMClient, VLMError
 from app.presentation.deps import get_current_user, get_database
 from app.presentation.errors import ApiError
+from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload
 
 router = APIRouter(prefix="/exams", tags=["exams"])
 
@@ -45,22 +46,6 @@ class SaveAnswerRequest(BaseModel):
 
 class SelfReportRequest(BaseModel):
     isCorrect: bool
-
-
-class CorrectAnswerPayload(BaseModel):
-    display: str
-    normalizedText: str
-    normalizedSet: list[str]
-    format: str
-
-
-class SourceImagePayload(BaseModel):
-    bucket: str
-    objectKey: str
-    contentType: str | None = None
-    sizeBytes: int | None = None
-    sha256: str | None = None
-    uploadedAt: datetime | None = None
 
 
 class ExamProblemPayload(BaseModel):
@@ -710,6 +695,20 @@ async def submit_exam(
             raise ApiError(404, "NOT_FOUND", "Exam not found")
         if current_exam.get("state") != ExamState.IN_PROGRESS.value:
             raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
+
+        original_items = exam.get("items", [])
+        current_items = current_exam.get("items", [])
+        for i, original_item in enumerate(original_items):
+            if i >= len(current_items):
+                break
+            original_answer = dict(original_item.get("answer", {})).get("raw")
+            current_answer = dict(current_items[i].get("answer", {})).get("raw")
+            if original_answer != current_answer:
+                raise ApiError(
+                    409,
+                    "ANSWERS_MODIFIED_DURING_GRADING",
+                    "Answers were modified while grading was in progress. Please retry submission.",
+                )
 
         submitted_at = datetime.now(UTC)
         next_state = transition_exam_state(ExamState(current_exam["state"]), ExamState.SUBMITTED)

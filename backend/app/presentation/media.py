@@ -33,7 +33,7 @@ async def stream_problem_image(
         database,
         problem_id,
         current_user["_id"],
-        allow_deleted=True,
+        allow_deleted=False,
     )
     source_image = dict(problem.get("sourceImage") or {})
     bucket = source_image.get("bucket")

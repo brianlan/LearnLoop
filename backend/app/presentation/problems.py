@@ -14,17 +14,9 @@ from app.domain.normalization import normalize_answer
 from app.infrastructure.storage.mongo import Document
 from app.presentation.deps import get_current_user, get_database
 from app.presentation.errors import ApiError
+from app.presentation.schemas import CorrectAnswerPayload
 
 router = APIRouter(prefix="/problems", tags=["problems"])
-
-
-class ConfirmPreviewRequest(BaseModel):
-    previewId: str = Field(min_length=1)
-    text: str = Field(min_length=1)
-    problemType: ProblemType
-    graphDsl: str | None = None
-    correctAnswer: str = Field(min_length=1)
-    tags: list[str] = Field(default_factory=list)
 
 
 class UpdateProblemRequest(BaseModel):
@@ -33,13 +25,6 @@ class UpdateProblemRequest(BaseModel):
     graphDsl: str | None = None
     correctAnswer: str | None = Field(default=None, min_length=1)
     tags: list[str] | None = None
-
-
-class CorrectAnswerPayload(BaseModel):
-    display: str
-    normalizedText: str
-    normalizedSet: list[str]
-    format: str
 
 
 class TrackingPayload(BaseModel):
@@ -244,61 +229,6 @@ async def list_problem_tags(
         {"userId": current_user["_id"], "isDeleted": False},
     )
     return ProblemTagsResponse(items=sorted(str(tag) for tag in tags if str(tag).strip()))
-
-
-@router.post("", response_model=ProblemResponse, status_code=201)
-async def confirm_preview_as_problem(
-    payload: ConfirmPreviewRequest,
-    database: DatabaseDependency,
-    current_user: CurrentUserDependency,
-) -> ProblemResponse:
-    preview = await _get_owned_preview(database, payload.previewId, current_user["_id"])
-    if preview.get("status") != "ready":
-        raise ApiError(422, "VALIDATION_ERROR", "Preview is not ready for confirmation")
-
-    normalized_tags = _normalize_tags(payload.tags)
-    normalized_answer = normalize_answer(payload.correctAnswer, payload.problemType)
-    extraction = dict(preview.get("extraction", {}))
-    raw_problem_type = extraction.get("rawProblemType")
-    now = datetime.now(UTC)
-    problem = {
-        "_id": ObjectId(),
-        "userId": current_user["_id"],
-        "text": payload.text,
-        "problemType": payload.problemType.value,
-        "graphDsl": payload.graphDsl,
-        "correctAnswer": normalized_answer.model_dump(),
-        "tags": normalized_tags,
-        "sourceImage": deepcopy(preview.get("sourceImage")),
-        "origin": {
-            "previewId": preview["_id"],
-            "vlmModel": extraction.get("requestModel"),
-            "rawExtractedText": extraction.get("rawText"),
-            "rawExtractedProblemType": (
-                raw_problem_type.value
-                if isinstance(raw_problem_type, ProblemType)
-                else raw_problem_type
-            ),
-            "rawExtractedGraphDsl": extraction.get("rawGraphDsl"),
-        },
-        "tracking": {
-            "exposureCount": 0,
-            "correctCount": 0,
-            "failedCount": 0,
-            "lastTestedAt": None,
-            "lastAttemptCorrect": None,
-        },
-        "isDeleted": False,
-        "deletedAt": None,
-        "createdAt": now,
-        "updatedAt": now,
-    }
-    await database["problems"].insert_one(problem)
-    await database["ingestion_previews"].update_one(
-        {"_id": preview["_id"]},
-        {"$set": {"status": "confirmed", "updatedAt": now}},
-    )
-    return ProblemResponse(problem=_serialize_problem_detail(problem))
 
 
 @router.get("", response_model=ProblemListResponse)

@@ -451,6 +451,64 @@ async def test_submit_exam_grades_items_updates_tracking_and_history(exams_app: 
 
 
 @pytest.mark.asyncio
+async def test_submit_exam_rejects_when_answers_modified_during_grading(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    vlm: FakeVLMClient = exams_app.state.fake_vlm
+    user_id = exams_app.state.primary_user["_id"]
+
+    problem = make_problem(
+        user_id,
+        text="Explain photosynthesis",
+        problem_type="short-answer",
+        correct_answer="Plants convert light into chemical energy",
+    )
+    database["problems"].seed(problem)
+    storage.seed(problem["sourceImage"]["bucket"], problem["sourceImage"]["objectKey"], b"image")
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+
+    save_response = await client.patch(
+        f"/api/v1/exams/{exam['id']}/items/{item_id}/answer",
+        json={"answer": "initial answer"},
+    )
+    assert save_response.status_code == 200
+
+    async def mutate_answer_during_grading(
+        *,
+        image_url: str | None = None,
+        image_base64: str | None = None,
+        user_answer: str,
+        correct_answer: str,
+    ) -> FakeGradingResult:
+        vlm.calls += 1
+        stored_exam = await database["exams"].find_one({"_id": ObjectId(exam["id"])})
+        assert stored_exam is not None
+        stored_exam["items"][0]["answer"] = {
+            "raw": "modified during grading",
+            "savedAt": datetime.now(UTC),
+        }
+        await database["exams"].update_one(
+            {"_id": stored_exam["_id"]},
+            {"$set": {"items": stored_exam["items"], "updatedAt": datetime.now(UTC)}},
+        )
+        return FakeGradingResult(is_correct=True, feedback="good")
+
+    vlm.grade_short_answer = mutate_answer_during_grading
+
+    submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+
+    assert submit_response.status_code == 409
+    body = submit_response.json()
+    assert body["error"]["code"] == "ANSWERS_MODIFIED_DURING_GRADING"
+
+
+@pytest.mark.asyncio
 async def test_submit_exam_marks_pending_review_after_vlm_retry_and_self_report_updates_tracking(
     exams_app: FastAPI,
     client: AsyncClient,

@@ -276,31 +276,28 @@ async def test_confirm_preview_creates_problem_and_canonicalizes_answer(
 ) -> None:
     database: FakeDatabase = problems_app.state.fake_database
     preview = make_preview(problems_app.state.primary_user["_id"])
+    preview["editableDraft"] = {
+        "text": "Choose all correct letters",
+        "problemType": "multi-choice",
+        "graphDsl": None,
+        "correctAnswer": " C, A ,C ",
+        "tags": ["geometry", " geometry ", "chapter-3"],
+    }
     database["ingestion_previews"].seed(preview)
 
-    response = await client.post(
-        "/api/v1/problems",
-        json={
-            "previewId": str(preview["_id"]),
-            "text": "Choose all correct letters",
-            "problemType": "multi-choice",
-            "graphDsl": None,
-            "correctAnswer": " C, A ,C ",
-            "tags": ["geometry", " geometry ", "chapter-3"],
-        },
-    )
+    response = await client.post(f"/api/v1/ingestion-previews/{preview['_id']}/confirm")
 
     assert response.status_code == 201
     body = response.json()["problem"]
     assert body["correctAnswer"] == {
-        "display": " C, A ,C ",
+        "display": "C, A ,C",
         "normalizedText": "a,c",
         "normalizedSet": ["a", "c"],
         "format": "set",
     }
     assert body["tags"] == ["geometry", "chapter-3"]
-    assert body["origin"]["previewId"] == str(preview["_id"])
     stored_problem = database["problems"]._documents[0]
+    assert stored_problem["origin"]["previewId"] == str(preview["_id"])
     assert stored_problem["correctAnswer"]["normalizedSet"] == ["a", "c"]
     assert database["ingestion_previews"]._documents[0]["status"] == "confirmed"
 
@@ -480,19 +477,11 @@ async def test_cross_user_access_is_denied_for_problem_and_media_routes(
     }
 
     confirm_response = await client.post(
-        "/api/v1/problems",
-        json={
-            "previewId": str(other_user_preview["_id"]),
-            "text": "Nope",
-            "problemType": "short-answer",
-            "graphDsl": None,
-            "correctAnswer": "42",
-            "tags": ["denied"],
-        },
+        f"/api/v1/ingestion-previews/{other_user_preview['_id']}/confirm"
     )
-    assert confirm_response.status_code == 403
+    assert confirm_response.status_code == 404
     assert confirm_response.json() == {
-        "error": {"code": "FORBIDDEN", "message": "Forbidden"}
+        "error": {"code": "NOT_FOUND", "message": "Preview not found"}
     }
 
 

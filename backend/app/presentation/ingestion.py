@@ -22,11 +22,16 @@ from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoun
 from app.infrastructure.vlm.client import VLMClient, VLMError, recover_stale_preview
 from app.presentation.deps import get_app_settings, get_current_user, get_database
 from app.presentation.errors import ApiError
+from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload
 
 router = APIRouter(prefix="/ingestion-previews", tags=["ingestion"])
 
 PREVIEW_TTL = timedelta(hours=24)
 DEFAULT_SYNC_WAIT_SECONDS = 25.0
+
+# TODO(production): _preview_tasks is process-local and will not survive restarts
+# or work across multiple workers. Replace with a durable job queue (e.g. Celery,
+# Dramatiq) or store extraction state in Mongo and poll from a background worker.
 _preview_tasks: dict[str, asyncio.Task[None]] = {}
 
 
@@ -46,15 +51,6 @@ class PreviewDraftPayload(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
-class PreviewSourceImagePayload(BaseModel):
-    bucket: str
-    objectKey: str
-    contentType: str | None = None
-    sizeBytes: int | None = None
-    sha256: str | None = None
-    uploadedAt: datetime | None = None
-
-
 class PreviewExtractionPayload(BaseModel):
     requestModel: str | None = None
     requestStartedAt: datetime | None = None
@@ -71,7 +67,7 @@ class PreviewExtractionPayload(BaseModel):
 class PreviewPayload(BaseModel):
     id: str
     status: str
-    sourceImage: PreviewSourceImagePayload
+    sourceImage: SourceImagePayload
     draft: PreviewDraftPayload
     extraction: PreviewExtractionPayload
     createdAt: datetime
@@ -83,21 +79,14 @@ class PreviewResponse(BaseModel):
     preview: PreviewPayload
 
 
-class ProblemCorrectAnswerPayload(BaseModel):
-    display: str
-    normalizedText: str
-    normalizedSet: list[str] = Field(default_factory=list)
-    format: str
-
-
 class ProblemPayload(BaseModel):
     id: str
     text: str
     problemType: str
     graphDsl: str | None = None
-    correctAnswer: ProblemCorrectAnswerPayload
+    correctAnswer: CorrectAnswerPayload
     tags: list[str] = Field(default_factory=list)
-    sourceImage: PreviewSourceImagePayload | None = None
+    sourceImage: SourceImagePayload | None = None
     createdAt: datetime
     updatedAt: datetime
 
