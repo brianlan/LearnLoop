@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
+import { CollapsibleImage } from "@/components/CollapsibleImage";
 
 interface CorrectAnswer {
   display: string;
@@ -44,6 +45,10 @@ interface UpdateProblemInput {
   tags?: string[];
   graphDsl?: string;
   correctAnswer?: string;
+}
+
+function formatProblemReference(problemId: string): string {
+  return problemId.length > 8 ? problemId.slice(0, 8) : problemId;
 }
 
 export function ProblemDetailPage() {
@@ -177,7 +182,14 @@ export function ProblemDetailPage() {
             marginBottom: "1rem",
           }}
         >
-          <h1 style={{ margin: 0 }}>Problem #{problem.id}</h1>
+          <div>
+            <h1 style={{ margin: 0 }} title={problem.id}>
+              Problem {formatProblemReference(problem.id)}
+            </h1>
+            <div style={{ color: "#6b7280", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+              Reference: {problem.id}
+            </div>
+          </div>
           <div>
             <span
               style={{
@@ -204,13 +216,11 @@ export function ProblemDetailPage() {
         </div>
 
         {problem.imageUrl && (
-          <div style={{ marginBottom: "1rem" }}>
-            <img
-              src={problem.imageUrl}
-              alt="Problem"
-              style={{ maxWidth: "100%", maxHeight: "400px" }}
-            />
-          </div>
+          <CollapsibleImage
+            src={problem.imageUrl}
+            alt="Problem"
+            style={{ maxWidth: "100%", maxHeight: "400px" }}
+          />
         )}
 
         <div style={{ marginBottom: "1rem" }}>
@@ -244,16 +254,16 @@ export function ProblemDetailPage() {
               style={{ width: "100%", marginTop: "0.5rem" }}
             />
           ) : problem.tags.length > 0 ? (
-            <div style={{ marginTop: "0.5rem" }}>
+            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.375rem" }}>
               {problem.tags.map((tag) => (
                 <span
                   key={tag}
                   style={{
-                    marginRight: "0.25rem",
                     padding: "0.125rem 0.375rem",
                     background: "#f0f0f0",
                     borderRadius: "4px",
                     fontSize: "0.75rem",
+                    display: "inline-flex",
                   }}
                 >
                   {tag}

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
+import { CollapsibleImage } from "@/components/CollapsibleImage";
 import type {
   ExamItem,
   CreateExamRequest,
@@ -11,6 +12,11 @@ import type {
   SaveAnswerRequest,
   SaveAnswerResponse,
 } from "@/types/exam";
+
+function extractOptionKey(option: string): string {
+  const match = option.trim().match(/^([A-Za-z]|\d+)\s*[.):\-]?(?:\s|$)/);
+  return (match?.[1] ?? option).trim();
+}
 
 async function fetchActiveExam(): Promise<ExamResponse> {
   return api.get<ExamResponse>("/exams/active");
@@ -48,16 +54,18 @@ interface SingleChoiceInputProps {
   value: string;
   onChange: (value: string) => void;
   options: string[];
+  onBlur?: () => void;
   disabled?: boolean;
 }
 
-function SingleChoiceInput({ value, onChange, options, disabled }: SingleChoiceInputProps) {
+function SingleChoiceInput({ value, onChange, options, onBlur, disabled }: SingleChoiceInputProps) {
   if (options.length === 0) {
     return (
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         disabled={disabled}
         style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
       />
@@ -66,29 +74,33 @@ function SingleChoiceInput({ value, onChange, options, disabled }: SingleChoiceI
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-      {options.map((option) => (
-        <label
-          key={option}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            padding: "0.5rem",
-            cursor: disabled ? "default" : "pointer",
-            borderRadius: "0.25rem",
-          }}
-        >
-          <input
-            type="radio"
-            name="single-choice"
-            value={option}
-            checked={value === option}
-            onChange={() => onChange(option)}
-            disabled={disabled}
-          />
-          <span>{option}</span>
-        </label>
-      ))}
+      {options.map((option) => {
+        const optionValue = extractOptionKey(option);
+        return (
+          <label
+            key={option}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.5rem",
+              cursor: disabled ? "default" : "pointer",
+              borderRadius: "0.25rem",
+            }}
+          >
+            <input
+              type="radio"
+              name="single-choice"
+              value={optionValue}
+              checked={value === optionValue || value === option}
+              onChange={() => onChange(optionValue)}
+              onBlur={onBlur}
+              disabled={disabled}
+            />
+            <span>{option}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -97,16 +109,17 @@ interface MultiChoiceInputProps {
   value: string;
   onChange: (value: string) => void;
   options: string[];
+  onBlur?: () => void;
   disabled?: boolean;
 }
 
-function MultiChoiceInput({ value, onChange, options, disabled }: MultiChoiceInputProps) {
+function MultiChoiceInput({ value, onChange, options, onBlur, disabled }: MultiChoiceInputProps) {
   const selectedValues = value ? value.split(",").map((v) => v.trim()).filter(Boolean) : [];
 
-  const handleToggle = (option: string) => {
-    const newValues = selectedValues.includes(option)
-      ? selectedValues.filter((v) => v !== option)
-      : [...selectedValues, option];
+  const handleToggle = (optionValue: string) => {
+    const newValues = selectedValues.includes(optionValue)
+      ? selectedValues.filter((v) => v !== optionValue)
+      : [...selectedValues, optionValue];
     onChange(newValues.join(", "));
   };
 
@@ -116,6 +129,7 @@ function MultiChoiceInput({ value, onChange, options, disabled }: MultiChoiceInp
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         disabled={disabled}
         placeholder="Enter options separated by commas"
         style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
@@ -125,27 +139,31 @@ function MultiChoiceInput({ value, onChange, options, disabled }: MultiChoiceInp
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-      {options.map((option) => (
-        <label
-          key={option}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            padding: "0.5rem",
-            cursor: disabled ? "default" : "pointer",
-            borderRadius: "0.25rem",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={selectedValues.includes(option)}
-            onChange={() => handleToggle(option)}
-            disabled={disabled}
-          />
-          <span>{option}</span>
-        </label>
-      ))}
+      {options.map((option) => {
+        const optionValue = extractOptionKey(option);
+        return (
+          <label
+            key={option}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.5rem",
+              cursor: disabled ? "default" : "pointer",
+              borderRadius: "0.25rem",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={selectedValues.includes(optionValue) || selectedValues.includes(option)}
+              onChange={() => handleToggle(optionValue)}
+              onBlur={onBlur}
+              disabled={disabled}
+            />
+            <span>{option}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -154,15 +172,17 @@ interface TextInputProps {
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
+  onBlur?: () => void;
   disabled?: boolean;
 }
 
-function TextInput({ value, onChange, multiline, disabled }: TextInputProps) {
+function TextInput({ value, onChange, multiline, onBlur, disabled }: TextInputProps) {
   if (multiline) {
     return (
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         disabled={disabled}
         style={{
           width: "100%",
@@ -181,6 +201,7 @@ function TextInput({ value, onChange, multiline, disabled }: TextInputProps) {
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
       disabled={disabled}
       style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
     />
@@ -191,25 +212,27 @@ function AnswerInput({
   problemType,
   value,
   onChange,
+  onBlur,
   options,
   disabled,
 }: {
   problemType: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   options: string[];
   disabled?: boolean;
 }) {
   switch (problemType) {
     case "single-choice":
-      return <SingleChoiceInput value={value} onChange={onChange} options={options} disabled={disabled} />;
+      return <SingleChoiceInput value={value} onChange={onChange} onBlur={onBlur} options={options} disabled={disabled} />;
     case "multi-choice":
-      return <MultiChoiceInput value={value} onChange={onChange} options={options} disabled={disabled} />;
+      return <MultiChoiceInput value={value} onChange={onChange} onBlur={onBlur} options={options} disabled={disabled} />;
     case "short-answer":
-      return <TextInput value={value} onChange={onChange} multiline disabled={disabled} />;
+      return <TextInput value={value} onChange={onChange} onBlur={onBlur} multiline disabled={disabled} />;
     case "fill-in-the-blank":
     default:
-      return <TextInput value={value} onChange={onChange} disabled={disabled} />;
+      return <TextInput value={value} onChange={onChange} onBlur={onBlur} disabled={disabled} />;
   }
 }
 
@@ -230,6 +253,7 @@ export function ActiveExamPage() {
     queryKey: ["active-exam"],
     queryFn: fetchActiveExam,
     retry: false,
+    refetchOnWindowFocus: false,
   });
 
   const exam = examData?.exam;
@@ -265,16 +289,16 @@ export function ActiveExamPage() {
       setLocalAnswer(currentItem.answer.raw || "");
       setSaveStatus("idle");
     }
-  }, [currentItem]);
+  }, [currentItem?.itemId]);
 
-  const handleSaveAnswer = useCallback(() => {
+  const handleSaveAnswer = useCallback(async () => {
     if (!exam || !currentItem) return;
     if (localAnswer === (currentItem.answer.raw || "")) {
       setSaveStatus("idle");
       return;
     }
     setSaveStatus("saving");
-    saveAnswerMutation.mutate({
+    await saveAnswerMutation.mutateAsync({
       examId: exam.id,
       itemId: currentItem.itemId,
       request: { answer: localAnswer || null },
@@ -282,16 +306,16 @@ export function ActiveExamPage() {
   }, [exam, currentItem, localAnswer, saveAnswerMutation]);
 
   const handleBlur = useCallback(() => {
-    handleSaveAnswer();
+    void handleSaveAnswer();
   }, [handleSaveAnswer]);
 
-  const handlePrevious = useCallback(() => {
-    handleSaveAnswer();
+  const handlePrevious = useCallback(async () => {
+    await handleSaveAnswer();
     setCurrentItemIndex((prev) => Math.max(0, prev - 1));
   }, [handleSaveAnswer]);
 
-  const handleNext = useCallback(() => {
-    handleSaveAnswer();
+  const handleNext = useCallback(async () => {
+    await handleSaveAnswer();
     setCurrentItemIndex((prev) => Math.min(items.length - 1, prev + 1));
   }, [handleSaveAnswer, items.length]);
 
@@ -300,9 +324,9 @@ export function ActiveExamPage() {
     setShowSubmitConfirm(true);
   }, [exam]);
 
-  const confirmSubmit = useCallback(() => {
+  const confirmSubmit = useCallback(async () => {
     if (!exam) return;
-    handleSaveAnswer();
+    await handleSaveAnswer();
     submitExamMutation.mutate(exam.id);
   }, [exam, handleSaveAnswer, submitExamMutation]);
 
@@ -435,10 +459,10 @@ export function ActiveExamPage() {
         )}
 
         {currentItem.problem.imageUrl && (
-          <img
+          <CollapsibleImage
             src={currentItem.problem.imageUrl}
             alt="Problem"
-            style={{ maxWidth: "100%", height: "auto", borderRadius: "0.25rem", marginBottom: "1rem" }}
+            style={{ maxWidth: "100%", height: "auto", borderRadius: "0.25rem" }}
           />
         )}
 
@@ -450,11 +474,11 @@ export function ActiveExamPage() {
             problemType={currentItem.problem.problemType}
             value={localAnswer}
             onChange={setLocalAnswer}
+            onBlur={handleBlur}
             options={options}
             disabled={submitExamMutation.isPending}
           />
           <div
-            onBlur={handleBlur}
             style={{ marginTop: "0.5rem", fontSize: "0.875rem", color:
               saveStatus === "saving" ? "#f59e0b" :
               saveStatus === "saved" ? "#10b981" :
@@ -483,7 +507,7 @@ export function ActiveExamPage() {
                 Cancel
               </button>
               <button
-                onClick={confirmSubmit}
+                onClick={() => void confirmSubmit()}
                 disabled={submitExamMutation.isPending}
                 style={{
                   padding: "0.5rem 1rem",

@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
+import { CollapsibleImage } from "@/components/CollapsibleImage";
 import type { ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
 
 async function fetchExam(examId: string): Promise<ExamResponse> {
@@ -71,10 +72,10 @@ function ExamItemReview({ item, onSelfReport, isSelfReporting }: ExamItemReviewP
       )}
 
       {item.problem.imageUrl && (
-        <img
+        <CollapsibleImage
           src={item.problem.imageUrl}
           alt="Problem"
-          style={{ maxWidth: "100%", height: "auto", borderRadius: "0.25rem", marginBottom: "1rem" }}
+          style={{ maxWidth: "100%", height: "auto", borderRadius: "0.25rem" }}
         />
       )}
 
