@@ -697,12 +697,21 @@ async def submit_exam(
             raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
 
         original_items = exam.get("items", [])
-        current_items = current_exam.get("items", [])
-        for i, original_item in enumerate(original_items):
-            if i >= len(current_items):
-                break
+        current_items_by_id = {
+            str(item.get("itemId")): item
+            for item in current_exam.get("items", [])
+        }
+        for original_item in original_items:
+            item_id = str(original_item.get("itemId"))
+            current_item = current_items_by_id.get(item_id)
+            if current_item is None:
+                raise ApiError(
+                    409,
+                    "ANSWERS_MODIFIED_DURING_GRADING",
+                    "Answers were modified while grading was in progress. Please retry submission.",
+                )
             original_answer = dict(original_item.get("answer", {})).get("raw")
-            current_answer = dict(current_items[i].get("answer", {})).get("raw")
+            current_answer = dict(current_item.get("answer", {})).get("raw")
             if original_answer != current_answer:
                 raise ApiError(
                     409,

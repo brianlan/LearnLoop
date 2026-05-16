@@ -40,6 +40,13 @@ class FakeDeleteResult:
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
         actual = document.get(key)
+        if isinstance(value, dict):
+            allowed_values = value.get("$in")
+            if allowed_values is not None:
+                if actual not in allowed_values:
+                    return False
+                continue
+            return False
         if isinstance(actual, list):
             if value not in actual:
                 return False
@@ -76,6 +83,19 @@ class FakeCollection:
                     document[key] = deepcopy(value)
                 return FakeUpdateResult(1)
         return FakeUpdateResult(0)
+
+    async def find_one_and_update(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        for document in self._documents:
+            if _matches(document, query):
+                original_document = deepcopy(document)
+                for key, value in update.get("$set", {}).items():
+                    document[key] = deepcopy(value)
+                return original_document
+        return None
 
     async def delete_one(self, query: dict[str, Any]) -> FakeDeleteResult:
         for index, document in enumerate(self._documents):
@@ -588,6 +608,31 @@ async def test_confirm_preview_allows_manual_confirmation_after_vlm_failure(
     updated_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
     assert updated_preview is not None
     assert updated_preview["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_rejects_double_confirmation(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    database["ingestion_previews"].seed(preview)
+
+    first_response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert first_response.status_code == 201
+
+    second_response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert second_response.status_code == 409
+    assert second_response.json()["error"]["code"] == "PREVIEW_ALREADY_CONFIRMED"
 
 
 @pytest.mark.asyncio

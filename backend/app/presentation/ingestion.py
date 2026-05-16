@@ -650,29 +650,57 @@ async def confirm_preview(
     database: DatabaseDependency,
     user: CurrentUserDependency,
 ) -> ProblemResponse:
-    preview = await _get_owned_preview(database, preview_id, user)
-    _ensure_status(
-        preview,
-        {
+    now = _utc_now()
+    preview_oid = _parse_object_id(preview_id, field_name="Preview")
+    previews = database["ingestion_previews"]
+    claimed_preview: Document | None
+    try:
+        claimed_preview = await previews.find_one_and_update(
+            {
+                "_id": preview_oid,
+                "userId": user["_id"],
+                "status": {
+                    "$in": [
+                        IngestionPreviewStatus.READY.value,
+                        IngestionPreviewStatus.VLM_FAILED.value,
+                    ]
+                },
+            },
+            {"$set": {"status": IngestionPreviewStatus.CONFIRMED.value, "updatedAt": now}},
+        )
+    except AttributeError:
+        claimed_preview = await previews.find_one({"_id": preview_oid, "userId": user["_id"]})
+        if claimed_preview is not None and str(claimed_preview.get("status")) in {
             IngestionPreviewStatus.READY.value,
             IngestionPreviewStatus.VLM_FAILED.value,
-        },
-    )
+        }:
+            await previews.update_one(
+                {"_id": preview_oid},
+                {"$set": {"status": IngestionPreviewStatus.CONFIRMED.value, "updatedAt": now}},
+            )
+    if claimed_preview is None:
+        preview_exists = await previews.find_one({"_id": preview_oid, "userId": user["_id"]})
+        if preview_exists is None:
+            raise ApiError(404, "NOT_FOUND", "Preview not found")
+        raise ApiError(
+            409,
+            "PREVIEW_ALREADY_CONFIRMED",
+            "Preview has already been confirmed or is no longer available",
+        )
 
-    draft = dict(preview.get("editableDraft", {}))
+    draft = dict(claimed_preview.get("editableDraft", {}))
     text = _clean_optional_text(draft.get("text"))
     problem_type_value = draft.get("problemType")
     correct_answer = _clean_optional_text(draft.get("correctAnswer"))
     if text is None or problem_type_value is None or correct_answer is None:
+        await previews.update_one(
+            {"_id": preview_oid},
+            {"$set": {"status": claimed_preview["status"], "updatedAt": now}},
+        )
         raise ApiError(400, "INVALID_PREVIEW", "Preview draft is missing required fields")
 
     problem_type = ProblemType(problem_type_value)
     normalized_answer = normalize_answer(correct_answer, problem_type)
-    now = _utc_now()
-    transition_preview_state(
-        IngestionPreviewStatus(str(preview["status"])),
-        IngestionPreviewStatus.CONFIRMED,
-    )
     problem: Document = {
         "_id": ObjectId(),
         "userId": user["_id"],
@@ -681,13 +709,15 @@ async def confirm_preview(
         "graphDsl": draft.get("graphDsl"),
         "correctAnswer": normalized_answer.model_dump(),
         "tags": _clean_tags(list(draft.get("tags", []))),
-        "sourceImage": dict(preview.get("sourceImage", {})),
+        "sourceImage": dict(claimed_preview.get("sourceImage", {})),
         "origin": {
-            "previewId": str(preview["_id"]),
-            "vlmModel": dict(preview.get("extraction", {})).get("requestModel"),
-            "rawExtractedText": dict(preview.get("extraction", {})).get("rawText"),
-            "rawExtractedProblemType": _enum_value(dict(preview.get("extraction", {})).get("rawProblemType")),
-            "rawExtractedGraphDsl": dict(preview.get("extraction", {})).get("rawGraphDsl"),
+            "previewId": str(claimed_preview["_id"]),
+            "vlmModel": dict(claimed_preview.get("extraction", {})).get("requestModel"),
+            "rawExtractedText": dict(claimed_preview.get("extraction", {})).get("rawText"),
+            "rawExtractedProblemType": _enum_value(
+                dict(claimed_preview.get("extraction", {})).get("rawProblemType")
+            ),
+            "rawExtractedGraphDsl": dict(claimed_preview.get("extraction", {})).get("rawGraphDsl"),
         },
         "tracking": {
             "exposureCount": 0,
@@ -702,8 +732,4 @@ async def confirm_preview(
         "updatedAt": now,
     }
     await database["problems"].insert_one(problem)
-    await database["ingestion_previews"].update_one(
-        {"_id": preview["_id"]},
-        {"$set": {"status": IngestionPreviewStatus.CONFIRMED.value, "updatedAt": now}},
-    )
     return ProblemResponse(problem=_serialize_problem(problem))
