@@ -10,7 +10,11 @@ PREVIEW_TRANSITIONS = {
     IngestionPreviewStatus.UPLOADED: [IngestionPreviewStatus.EXTRACTING, IngestionPreviewStatus.EXPIRED],
     IngestionPreviewStatus.EXTRACTING: [IngestionPreviewStatus.READY, IngestionPreviewStatus.VLM_FAILED, IngestionPreviewStatus.EXPIRED],
     IngestionPreviewStatus.READY: [IngestionPreviewStatus.CONFIRMED, IngestionPreviewStatus.EXPIRED],
-    IngestionPreviewStatus.VLM_FAILED: [IngestionPreviewStatus.EXTRACTING, IngestionPreviewStatus.EXPIRED],
+    IngestionPreviewStatus.VLM_FAILED: [
+        IngestionPreviewStatus.EXTRACTING,
+        IngestionPreviewStatus.CONFIRMED,
+        IngestionPreviewStatus.EXPIRED,
+    ],
     IngestionPreviewStatus.CONFIRMED: [],
     IngestionPreviewStatus.EXPIRED: [],
 }

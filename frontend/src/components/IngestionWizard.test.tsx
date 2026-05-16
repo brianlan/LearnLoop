@@ -39,6 +39,11 @@ describe("IngestionWizard", () => {
     expect(pasteArea).toHaveAttribute("tabindex", "0");
   });
 
+  it("renders a file upload fallback", () => {
+    render(<IngestionWizard />);
+    expect(screen.getByRole("button", { name: "Choose Image File" })).toBeInTheDocument();
+  });
+
   it("loads draft from localStorage on mount", () => {
     const draft = {
       text: "Saved problem text",

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
 export function LoginPage() {
@@ -9,6 +9,13 @@ export function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const registrationState = location.state as
+    | { registrationSuccess?: boolean; username?: string }
+    | null;
+  const registrationMessage = registrationState?.registrationSuccess
+    ? `Account created${registrationState.username ? ` for ${registrationState.username}` : ""}. Please log in.`
+    : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +36,21 @@ export function LoginPage() {
     <main style={{ maxWidth: "400px", margin: "2rem auto", padding: "1rem" }}>
       <h1>Login</h1>
       <form onSubmit={handleSubmit}>
+        {registrationMessage && (
+          <div
+            style={{
+              color: "#065f46",
+              backgroundColor: "#ecfdf5",
+              border: "1px solid #a7f3d0",
+              padding: "0.75rem",
+              borderRadius: "0.375rem",
+              marginBottom: "1rem",
+            }}
+            role="status"
+          >
+            {registrationMessage}
+          </div>
+        )}
         <div style={{ marginBottom: "1rem" }}>
           <label htmlFor="username">Username</label>
           <input

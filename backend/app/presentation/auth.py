@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
 from app.infrastructure.auth.password import hash_password, verify_password
-from app.infrastructure.auth.session import create_session
+from app.infrastructure.auth.session import create_session, delete_session
 from app.infrastructure.config.settings import Settings
 from app.observability import log_auth_event
 from app.presentation.deps import (
@@ -132,7 +132,7 @@ async def logout(
 ) -> LogoutResponse:
     token = request.cookies.get(settings.session_cookie_name)
     if token:
-        await database["sessions"].delete_one({"token": token})
+        await delete_session(database, token)
     clear_session_cookie(response, settings)
     log_auth_event("logout", had_session=token is not None)
     return LogoutResponse(ok=True)

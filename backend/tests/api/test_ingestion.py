@@ -269,7 +269,11 @@ async def ingestion_app() -> AsyncIterator[FastAPI]:
     database = FakeDatabase()
     storage = FakeStorage()
     vlm_client = FakeVLMClient()
-    settings = Settings(vlm_model="gpt-4.1-mini", vlm_timeout_seconds=1.0)
+    settings = Settings(
+        vlm_model="gpt-4.1-mini",
+        vlm_timeout_seconds=1.0,
+        preview_extracting_window_seconds=1.0,
+    )
 
     application.state.fake_database = database
     application.state.fake_storage = storage
@@ -548,6 +552,38 @@ async def test_confirm_preview_creates_problem_from_confirmed_draft(
         "rawExtractedProblemType": "multi-choice",
         "rawExtractedGraphDsl": "graph LR; A-->B",
     }
+
+    updated_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+    assert updated_preview is not None
+    assert updated_preview["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_allows_manual_confirmation_after_vlm_failure(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="vlm-failed")
+    preview["editableDraft"] = {
+        "text": "Solve for x",
+        "problemType": "fill-in-the-blank",
+        "graphDsl": None,
+        "correctAnswer": "12",
+        "tags": ["manual-fix"],
+    }
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 201
+    body = response.json()["problem"]
+    assert body["text"] == "Solve for x"
+    assert body["correctAnswer"]["display"] == "12"
 
     updated_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
     assert updated_preview is not None

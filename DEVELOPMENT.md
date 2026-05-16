@@ -157,7 +157,8 @@ The canonical template lives in `.env.example`.
 | `VLM_ENDPOINT` | External VLM API endpoint | example placeholder |
 | `VLM_MODEL` | External VLM model identifier | `replace-me` |
 | `VLM_API_KEY` | External VLM credential | `replace-me` |
-| `VLM_TIMEOUT_SECONDS` | VLM request timeout | `30` |
+| `VLM_TIMEOUT_SECONDS` | VLM request timeout | `120` |
+| `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
 | `SESSION_COOKIE_NAME` | Session cookie name | `ll_session` |
 | `SESSION_SECURE` | HTTPS-only session cookie toggle | `false` |
 | `SESSION_SAMESITE` | Session cookie same-site policy | `lax` |

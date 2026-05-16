@@ -18,6 +18,7 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("VLM_MODEL", "demo-model")
     monkeypatch.setenv("VLM_API_KEY", "demo-key")
     monkeypatch.setenv("VLM_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("PREVIEW_EXTRACTING_WINDOW_SECONDS", "18")
     monkeypatch.setenv("SESSION_COOKIE_NAME", "cookie")
     monkeypatch.setenv("SESSION_SECURE", "true")
     monkeypatch.setenv("SESSION_SAMESITE", "strict")
@@ -40,6 +41,7 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.vlm_model == "demo-model"
     assert settings.vlm_api_key == "demo-key"
     assert settings.vlm_timeout_seconds == 12
+    assert settings.preview_extracting_window_seconds == 18
     assert settings.session_cookie_name == "cookie"
     assert settings.session_secure is True
     assert settings.session_samesite == "strict"
@@ -63,6 +65,7 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
         "VLM_MODEL",
         "VLM_API_KEY",
         "VLM_TIMEOUT_SECONDS",
+        "PREVIEW_EXTRACTING_WINDOW_SECONDS",
         "SESSION_COOKIE_NAME",
         "SESSION_SECURE",
         "SESSION_SAMESITE",
@@ -73,4 +76,5 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
 
     assert settings.mongodb_uri == "mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true"
     assert settings.s3_force_path_style is True
+    assert settings.preview_extracting_window_seconds == 150
     assert settings.session_samesite == "lax"

@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     vlm_endpoint: str = Field(default="https://example-vlm-provider.invalid/api")
     vlm_model: str = Field(default="replace-me")
     vlm_api_key: str = Field(default="replace-me")
-    vlm_timeout_seconds: float = Field(default=30.0, gt=0)
+    vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+    preview_extracting_window_seconds: float = Field(default=150.0, gt=0)
 
     session_cookie_name: str = Field(default="ll_session")
     session_secure: bool = Field(default=False)

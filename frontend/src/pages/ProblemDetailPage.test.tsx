@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -82,13 +82,14 @@ describe("ProblemDetailPage", () => {
     renderProblemDetailPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Problem #abc123")).toBeInTheDocument();
+      expect(screen.getByText("Problem abc123")).toBeInTheDocument();
     });
 
     expect(screen.getByText("single-choice")).toBeInTheDocument();
     expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
     expect(screen.getByText("algebra")).toBeInTheDocument();
     expect(screen.getByText("42")).toBeInTheDocument();
+    expect(screen.getByText("Reference: abc123")).toBeInTheDocument();
     expect(screen.getAllByText("4").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -246,6 +247,27 @@ describe("ProblemDetailPage", () => {
       const img = screen.getByAltText("Problem");
       expect(img).toBeInTheDocument();
       expect(img).toHaveAttribute("src", "/api/v1/problems/abc123/image");
+    });
+  });
+
+  it("hides broken image after load error", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ problem: { ...baseProblem, text: "Test", imageUrl: "/api/v1/problems/abc123/image" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
+      });
+
+    renderProblemDetailPage();
+
+    const img = await screen.findByAltText("Problem");
+    fireEvent.error(img);
+
+    await waitFor(() => {
+      expect(screen.queryByAltText("Problem")).not.toBeInTheDocument();
     });
   });
 

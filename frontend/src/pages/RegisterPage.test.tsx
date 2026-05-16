@@ -72,7 +72,7 @@ describe("RegisterPage", () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ user: { id: 1, username: "newuser" } }),
+      json: async () => ({ user: { id: "new-user", username: "newuser" } }),
     });
 
     await user.type(screen.getByLabelText("Username"), "newuser");
@@ -80,7 +80,10 @@ describe("RegisterPage", () => {
     await user.click(screen.getByRole("button", { name: "Register" }));
 
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith("/login");
+      expect(mockNavigate).toHaveBeenCalledWith("/login", {
+        replace: true,
+        state: { registrationSuccess: true, username: "newuser" },
+      });
     });
   });
 

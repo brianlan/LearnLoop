@@ -110,7 +110,8 @@ async def test_wf_auth_3_logout_clears_cookie_and_me_becomes_unauthenticated(
     assert logout_response.status_code == 200
     assert logout_response.json() == {"ok": True}
     assert 'll_session=""' in logout_response.headers["set-cookie"]
-    assert database["sessions"]._documents == []
+    assert len(database["sessions"]._documents) == 1
+    assert database["sessions"]._documents[0]["invalidatedAt"] is not None
 
     me_response = await client.get("/api/v1/auth/me")
     assert me_response.status_code == 200

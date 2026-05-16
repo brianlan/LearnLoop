@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 
 import httpx
 import pytest
@@ -42,15 +43,29 @@ def _build_client(handler) -> VLMClient:
 @pytest.mark.asyncio
 async def test_vlm_extraction_happy_path() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat/completions"
         payload = await request.aread()
-        assert b'"requestType":"ingestion"' in payload
+        assert b'"messages"' in payload
+        assert b'"image_url"' in payload
         return httpx.Response(
             200,
             json={
-                "text": "Solve x + 1 = 2",
-                "problemType": "short-answer",
-                "graphDsl": None,
-                "providerMetadata": {"provider": "demo"},
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Solve x + 1 = 2",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                    "providerMetadata": {"provider": "demo"},
+                                }
+                            ),
+                        },
+                    }
+                ],
             },
         )
 
@@ -71,14 +86,28 @@ async def test_vlm_extraction_happy_path() -> None:
 @pytest.mark.asyncio
 async def test_vlm_grading_happy_path() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat/completions"
         payload = await request.aread()
-        assert b'"requestType":"short-answer-grading"' in payload
+        assert b'"messages"' in payload
+        assert b'"image_url"' in payload
         return httpx.Response(
             200,
             json={
-                "isCorrect": True,
-                "feedback": "Correct.",
-                "providerMetadata": {"provider": "demo"},
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "isCorrect": True,
+                                    "feedback": "Correct.",
+                                    "providerMetadata": {"provider": "demo"},
+                                }
+                            ),
+                        },
+                    }
+                ],
             },
         )
 
@@ -97,6 +126,34 @@ async def test_vlm_grading_happy_path() -> None:
     assert result.schema_version == GRADING_SCHEMA_VERSION
     assert result.is_correct is True
     assert result.feedback == "Correct."
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_accepts_fenced_json_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat/completions"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "```json\n{\n  \"text\": \"Solve x + 1 = 2\",\n  \"problemType\": \"short-answer\",\n  \"graphDsl\": null,\n  \"providerMetadata\": {\"provider\": \"demo\"}\n}\n```",
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.text == "Solve x + 1 = 2"
+    assert result.problem_type == "short-answer"
 
 
 @pytest.mark.asyncio
@@ -132,7 +189,7 @@ async def test_vlm_non_retryable_client_failure() -> None:
 @pytest.mark.asyncio
 async def test_vlm_invalid_response_shape_is_rejected() -> None:
     async def invalid_shape_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"text": "missing required fields"})
+        return httpx.Response(200, json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "not json"}}]})
 
     client = _build_client(invalid_shape_handler)
 
@@ -142,6 +199,12 @@ async def test_vlm_invalid_response_shape_is_rejected() -> None:
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
+
+
+def test_strip_json_code_fences_leaves_plain_json_unchanged() -> None:
+    plain = '{"text":"hello"}'
+
+    assert VLMClient._strip_json_code_fences(plain) == plain
 
 
 @pytest.mark.asyncio

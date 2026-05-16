@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.domain.models import (
@@ -287,24 +287,35 @@ def _serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
 
 
 def _problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
-    return Problem.model_validate(
-        {
-            "id": str(problem["_id"]),
-            "userId": str(problem["userId"]),
-            "text": problem["text"],
-            "problemType": problem["problemType"],
-            "graphDsl": problem.get("graphDsl"),
-            "correctAnswer": problem["correctAnswer"],
-            "tags": list(problem.get("tags", [])),
-            "sourceImage": problem.get("sourceImage"),
-            "origin": problem.get("origin", {}),
-            "tracking": problem.get("tracking", {}),
-            "isDeleted": problem.get("isDeleted", False),
-            "deletedAt": problem.get("deletedAt"),
-            "createdAt": problem["createdAt"],
-            "updatedAt": problem["updatedAt"],
-        }
-    )
+    try:
+        return Problem.model_validate(
+            {
+                "id": str(problem["_id"]),
+                "userId": str(problem["userId"]),
+                "text": problem["text"],
+                "problemType": problem["problemType"],
+                "graphDsl": problem.get("graphDsl"),
+                "correctAnswer": problem["correctAnswer"],
+                "tags": list(problem.get("tags", [])),
+                "sourceImage": problem.get("sourceImage"),
+                "origin": problem.get("origin", {}),
+                "tracking": problem.get("tracking", {}),
+                "isDeleted": problem.get("isDeleted", False),
+                "deletedAt": problem.get("deletedAt"),
+                "createdAt": problem["createdAt"],
+                "updatedAt": problem["updatedAt"],
+            }
+        )
+    except ValidationError as exc:
+        raise ApiError(
+            422,
+            "INVALID_PROBLEM_DATA",
+            "Problem contains invalid data for exam creation",
+            details={
+                "problemId": str(problem.get("_id", "")),
+                "errors": exc.errors(include_url=False),
+            },
+        ) from exc
 
 
 def _build_exam_summary(items: list[dict[str, Any]]) -> dict[str, Any]:

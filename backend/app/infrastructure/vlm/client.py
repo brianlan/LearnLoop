@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+import json
 from typing import Any, Literal
 
 import httpx
@@ -97,6 +98,40 @@ class _GradingProviderPayload(BaseModel):
     is_correct: bool = Field(alias="isCorrect")
     feedback: str
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
+
+
+class _ChatMessageContentText(BaseModel):
+    type: Literal["text"]
+    text: str
+
+
+class _ChatMessageContentImageUrl(BaseModel):
+    type: Literal["image_url"]
+    image_url: dict[str, str]
+
+
+class _ChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] | str
+
+
+class _ChatCompletionRequest(BaseModel):
+    model: str
+    messages: list[_ChatMessage]
+
+
+class _ChatCompletionMessage(BaseModel):
+    role: str
+    content: str | None = None
+
+
+class _ChatCompletionChoice(BaseModel):
+    index: int
+    message: _ChatCompletionMessage
+
+
+class _ChatCompletionResponse(BaseModel):
+    choices: list[_ChatCompletionChoice]
 
 
 class ExtractionResult(BaseModel):
@@ -225,8 +260,9 @@ class VLMClient:
         )
 
     async def _send_request(self, request: _RequestBase) -> dict[str, Any]:
+        payload = self._build_chat_completion_payload(request)
         try:
-            response = await self.http_client.post("", json=request.model_dump(by_alias=True, exclude_none=True))
+            response = await self.http_client.post("/chat/completions", json=payload)
         except httpx.TimeoutException as exc:
             raise VLMError(
                 "VLM request timed out",
@@ -269,7 +305,7 @@ class VLMClient:
                 raw_provider_response=raw_body,
             )
 
-        return raw_body
+        return self._parse_chat_completion_response(raw_body)
 
     @staticmethod
     def _decode_raw_response(response: httpx.Response) -> Any:
@@ -277,6 +313,25 @@ class VLMClient:
             return response.json()
         except ValueError:
             return response.text
+
+    @staticmethod
+    def _strip_json_code_fences(content: str) -> str:
+        stripped = content.strip()
+        if not stripped.startswith("```"):
+            return stripped
+
+        lines = stripped.splitlines()
+        if not lines:
+            return stripped
+
+        first_line = lines[0].strip()
+        if first_line not in {"```", "```json"}:
+            return stripped
+
+        if len(lines) < 2 or lines[-1].strip() != "```":
+            return stripped
+
+        return "\n".join(lines[1:-1]).strip()
 
     @staticmethod
     def _validate_extraction_response(
@@ -305,6 +360,101 @@ class VLMClient:
                 retryable=False,
                 raw_provider_response=raw_provider_response,
             ) from exc
+
+    @staticmethod
+    def _build_chat_completion_payload(request: _RequestBase) -> dict[str, Any]:
+        content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] = [
+            _ChatMessageContentText(type="text", text=request.prompt)
+        ]
+
+        if request.image_base64:
+            content.append(
+                _ChatMessageContentImageUrl(
+                    type="image_url",
+                    image_url={"url": f"data:image/png;base64,{request.image_base64}"},
+                )
+            )
+        elif request.image_url:
+            content.append(
+                _ChatMessageContentImageUrl(type="image_url", image_url={"url": request.image_url})
+            )
+
+        if isinstance(request, GradingRequest):
+            content.append(
+                _ChatMessageContentText(
+                    type="text",
+                    text=(
+                        "\n\nGrade the user's answer against the stored answer key. "
+                        'Return only JSON with keys "isCorrect", "feedback", and optional "providerMetadata". '
+                        f"User answer: {request.user_answer}\nCorrect answer: {request.correct_answer}"
+                    ),
+                )
+            )
+        else:
+            content.append(
+                _ChatMessageContentText(
+                    type="text",
+                    text=(
+                        "\n\nReturn only JSON with keys "
+                        '"text", "problemType", "graphDsl", and optional "providerMetadata".'
+                    ),
+                )
+            )
+
+        chat_request = _ChatCompletionRequest(
+            model=request.model,
+            messages=[_ChatMessage(role="user", content=content)],
+        )
+        return chat_request.model_dump(exclude_none=True)
+
+    @staticmethod
+    def _parse_chat_completion_response(raw_body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            completion = _ChatCompletionResponse.model_validate(raw_body)
+        except ValidationError as exc:
+            raise VLMError(
+                "VLM provider response failed chat completion validation",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            ) from exc
+
+        if not completion.choices:
+            raise VLMError(
+                "VLM provider returned no choices",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+
+        content = completion.choices[0].message.content
+        if not content:
+            raise VLMError(
+                "VLM provider response content was empty",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+
+        try:
+            parsed = json.loads(VLMClient._strip_json_code_fences(content))
+        except json.JSONDecodeError as exc:
+            raise VLMError(
+                "VLM provider content was not valid JSON",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            ) from exc
+
+        if not isinstance(parsed, dict):
+            raise VLMError(
+                "VLM provider content must decode to a JSON object",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+
+        return parsed
 
 
 def recover_stale_preview(

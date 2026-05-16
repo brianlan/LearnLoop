@@ -70,6 +70,7 @@ describe("ProblemsPage", () => {
     expect(screen.getByText("If A then B")).toBeInTheDocument();
     expect(screen.getAllByText("single-choice").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("multi-choice").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Showing 2 of 2 problems")).toBeInTheDocument();
   });
 
   it("navigates to problem detail on click", async () => {
@@ -146,6 +147,52 @@ describe("ProblemsPage", () => {
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining("tag=algebra"),
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("filters by problem type", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            { id: "1", problemType: "single-choice", text: "Test", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: ["algebra", "geometry"] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            { id: "2", problemType: "short-answer", text: "Explain", tags: ["geometry"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20,
+        }),
+      });
+
+    renderProblemsPage();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Filter by Type:")).toBeInTheDocument();
+    });
+
+    await user.selectOptions(screen.getByLabelText("Filter by Type:"), "short-answer");
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("type=short-answer"),
         expect.any(Object),
       );
     });

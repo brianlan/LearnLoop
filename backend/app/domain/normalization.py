@@ -19,14 +19,24 @@ def normalize_answer(raw_text: str, problem_type: ProblemType) -> CorrectAnswer:
         norm = re.sub(r'[^' + preserved[1:-1] + r']', '', norm)
         return norm
 
+    def normalize_choice_token(text: str) -> str:
+        choice_match = re.match(r'^\s*([A-Za-z]|\d+)\s*[.):\-]?(?:\s|$)', text)
+        if choice_match:
+            return normalize_token(choice_match.group(1))
+        return normalize_token(text)
+
     if problem_type == ProblemType.MULTI_CHOICE:
         # Split on commas first, then normalize each token individually
         raw_tokens = [token.strip() for token in raw_text.split(',') if token.strip()]
-        normalized_tokens = [normalize_token(token) for token in raw_tokens]
+        normalized_tokens = [normalize_choice_token(token) for token in raw_tokens]
         unique_tokens = sorted(list(set(normalized_tokens)))
         normalized_set = unique_tokens
         normalized_text = ','.join(unique_tokens)
         format_ = "set"
+    elif problem_type == ProblemType.SINGLE_CHOICE:
+        normalized_text = normalize_choice_token(raw_text)
+        normalized_set = []
+        format_ = "single"
     else:
         normalized_text = normalize_token(raw_text)
         normalized_set = []

@@ -66,6 +66,10 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Problems" })).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: "Problems" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ingest" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Exams" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Logout" })).toBeInTheDocument();
   });
 });
 
@@ -285,7 +289,7 @@ describe("AuthContext", () => {
     expect(screen.getByTestId("username").textContent).toBe("none");
   });
 
-  it("register function updates auth state", async () => {
+  it("register function keeps auth state unauthenticated until login", async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -325,9 +329,9 @@ describe("AuthContext", () => {
     screen.getByText("Register").click();
 
     await waitFor(() => {
-      expect(screen.getByTestId("auth").textContent).toBe("true");
+      expect(screen.getByTestId("auth").textContent).toBe("false");
     });
-    expect(screen.getByTestId("username").textContent).toBe("registered");
+    expect(screen.getByTestId("username").textContent).toBe("none");
   });
 });
 

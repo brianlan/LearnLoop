@@ -185,7 +185,7 @@ async def test_login_wrong_username_and_wrong_password_share_same_error(
 
 
 @pytest.mark.asyncio
-async def test_logout_deletes_session_and_clears_cookie(client: AsyncClient) -> None:
+async def test_logout_invalidates_session_and_clears_cookie(client: AsyncClient, app: FastAPI) -> None:
     await client.post(
         "/api/v1/auth/register",
         json={"username": "student1", "password": "secret"},
@@ -200,6 +200,9 @@ async def test_logout_deletes_session_and_clears_cookie(client: AsyncClient) -> 
     assert logout_response.status_code == 200
     assert logout_response.json() == {"ok": True}
     assert 'll_session=""' in logout_response.headers["set-cookie"]
+    sessions = app.dependency_overrides[get_database]()["sessions"]._documents
+    assert len(sessions) == 1
+    assert sessions[0]["invalidatedAt"] is not None
 
     me_response = await client.get("/api/v1/auth/me")
     assert me_response.json() == {"authenticated": False}

@@ -79,4 +79,7 @@ async def extend_session(
 
 
 async def delete_session(database: AsyncDatabase[Document], token: str) -> None:
-    await database["sessions"].delete_one({"token": token})
+    await database["sessions"].update_one(
+        {"token": token},
+        {"$set": {"invalidatedAt": utc_now()}},
+    )

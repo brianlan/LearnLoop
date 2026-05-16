@@ -35,6 +35,17 @@ def test_fullwidth_conversion():
     assert result.normalizedText == "abc"
 
 
+def test_single_choice_option_text_normalizes_to_choice_key():
+    result = normalize_answer("B. (1, 3)", ProblemType.SINGLE_CHOICE)
+    assert result.normalizedText == "b"
+
+
+def test_multi_choice_option_text_normalizes_to_choice_keys():
+    result = normalize_answer("A. 1, C. 3", ProblemType.MULTI_CHOICE)
+    assert result.normalizedText == "a,c"
+    assert result.normalizedSet == ["a", "c"]
+
+
 def test_preserve_math_operators():
     result = normalize_answer("x + y = z * (2 / 3)", ProblemType.FILL_IN_THE_BLANK)
     assert result.normalizedText == "x + y = z * (2 / 3)"

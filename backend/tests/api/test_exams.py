@@ -333,6 +333,29 @@ async def test_create_exam_rejects_when_no_eligible_problems(exams_app: FastAPI,
 
 
 @pytest.mark.asyncio
+async def test_create_exam_returns_validation_error_for_malformed_problem_answer(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    malformed_problem = make_problem(
+        user_id,
+        text="Broken answer",
+        problem_type="fill-in-the-blank",
+        correct_answer="4",
+    )
+    malformed_problem["correctAnswer"] = {"display": "4"}
+    database["problems"].seed(malformed_problem)
+
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_PROBLEM_DATA"
+    assert response.json()["error"]["details"]["problemId"] == str(malformed_problem["_id"])
+
+
+@pytest.mark.asyncio
 async def test_get_active_exam_sets_started_at_once_and_resume_returns_saved_answer(
     exams_app: FastAPI,
     client: AsyncClient,

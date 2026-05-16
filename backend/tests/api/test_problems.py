@@ -413,6 +413,25 @@ async def test_list_detail_update_delete_tags_and_tracking(
 
 
 @pytest.mark.asyncio
+async def test_problem_detail_handles_none_origin(problems_app: FastAPI, client: AsyncClient) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    problem = make_problem(problems_app.state.primary_user["_id"])
+    problem["origin"] = None
+    database["problems"].seed(problem)
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}")
+
+    assert response.status_code == 200
+    assert response.json()["problem"]["origin"] == {
+        "previewId": None,
+        "vlmModel": None,
+        "rawExtractedText": None,
+        "rawExtractedProblemType": None,
+        "rawExtractedGraphDsl": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_problem_image_streams_for_owner_and_handles_missing_object(
     problems_app: FastAPI,
     client: AsyncClient,

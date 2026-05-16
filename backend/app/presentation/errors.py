@@ -1,18 +1,36 @@
+from typing import Any
+
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
 class ApiError(Exception):
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.details = details
 
 
-def error_payload(code: str, message: str) -> dict[str, dict[str, str]]:
-    return {"error": {"code": code, "message": message}}
+def error_payload(
+    code: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    payload: dict[str, Any] = {"code": code, "message": message}
+    if details is not None:
+        payload["details"] = details
+    return {"error": payload}
 
 
 async def api_error_handler(_: Request, exc: Exception) -> JSONResponse:
@@ -20,7 +38,7 @@ async def api_error_handler(_: Request, exc: Exception) -> JSONResponse:
         raise exc
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_payload(exc.code, exc.message),
+        content=error_payload(exc.code, exc.message, details=exc.details),
     )
 
 

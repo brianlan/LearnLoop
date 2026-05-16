@@ -32,20 +32,34 @@ interface TagsResponse {
   items: string[];
 }
 
+const PROBLEM_TYPE_OPTIONS = [
+  { value: "", label: "All Types" },
+  { value: "single-choice", label: "Single Choice" },
+  { value: "multi-choice", label: "Multi Choice" },
+  { value: "fill-in-the-blank", label: "Fill in the Blank" },
+  { value: "short-answer", label: "Short Answer" },
+];
+
+function formatProblemReference(problemId: string): string {
+  return problemId.length > 8 ? problemId.slice(0, 8) : problemId;
+}
+
 export function ProblemsPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [selectedTag, setSelectedTag] = useState<string>("");
+  const [selectedProblemType, setSelectedProblemType] = useState<string>("");
   const pageSize = 20;
 
   const { data: problemsData, isLoading: isLoadingProblems } = useQuery({
-    queryKey: ["problems", page, selectedTag],
+    queryKey: ["problems", page, selectedTag, selectedProblemType],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       });
       if (selectedTag) params.append("tag", selectedTag);
+      if (selectedProblemType) params.append("type", selectedProblemType);
       return api.get<ProblemsResponse>(`/problems?${params.toString()}`);
     },
   });
@@ -66,7 +80,17 @@ export function ProblemsPage() {
     <main style={{ padding: "1rem" }}>
       <h1>Problems</h1>
 
-      <div style={{ marginBottom: "1rem", display: "flex", gap: "1rem" }}>
+      <div
+        style={{
+          marginBottom: "1rem",
+          display: "flex",
+          gap: "1rem",
+          alignItems: "end",
+          flexWrap: "wrap",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
         <div>
           <label htmlFor="tag-filter">Filter by Tag: </label>
           <select
@@ -84,6 +108,29 @@ export function ProblemsPage() {
               </option>
             ))}
           </select>
+        </div>
+          <div>
+            <label htmlFor="type-filter">Filter by Type: </label>
+            <select
+              id="type-filter"
+              value={selectedProblemType}
+              onChange={(e) => {
+                setSelectedProblemType(e.target.value);
+                setPage(1);
+              }}
+            >
+              {PROBLEM_TYPE_OPTIONS.map((option) => (
+                <option key={option.value || "all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ color: "#4b5563", fontSize: "0.875rem" }}>
+          {total === 0
+            ? "No problems found"
+            : `Showing ${problems.length} of ${total} problem${total === 1 ? "" : "s"}`}
         </div>
       </div>
 
@@ -111,7 +158,7 @@ export function ProblemsPage() {
                 }}
               >
                 <div style={{ marginBottom: "0.5rem" }}>
-                  <strong>ID: {problem.id}</strong>
+                  <strong title={problem.id}>Problem {formatProblemReference(problem.id)}</strong>
                   <span
                     style={{
                       marginLeft: "0.5rem",
@@ -147,16 +194,23 @@ export function ProblemsPage() {
                   {problem.text}
                 </div>
                 {problem.tags.length > 0 && (
-                  <div style={{ marginTop: "0.5rem" }}>
+                  <div
+                    style={{
+                      marginTop: "0.5rem",
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "0.375rem",
+                    }}
+                  >
                     {problem.tags.map((tag) => (
                       <span
                         key={tag}
                         style={{
-                          marginRight: "0.25rem",
                           padding: "0.125rem 0.375rem",
                           background: "#f0f0f0",
                           borderRadius: "4px",
                           fontSize: "0.75rem",
+                          display: "inline-flex",
                         }}
                       >
                         {tag}

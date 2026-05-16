@@ -27,7 +27,7 @@ function createQueryClient() {
   });
 }
 
-function renderLoginPage() {
+function renderLoginPage(initialEntries: Array<string | { pathname: string; state?: unknown }> = ["/login"]) {
   mockFetch.mockResolvedValueOnce({
     ok: true,
     json: async () => ({ authenticated: false }),
@@ -35,7 +35,7 @@ function renderLoginPage() {
 
   return render(
     <QueryClientProvider client={createQueryClient()}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={initialEntries}>
         <AuthProvider>
           <LoginPage />
         </AuthProvider>
@@ -81,6 +81,21 @@ describe("LoginPage", () => {
 
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith("/problems");
+    });
+  });
+
+  it("shows registration success message when redirected from register", async () => {
+    renderLoginPage([
+      {
+        pathname: "/login",
+        state: { registrationSuccess: true, username: "newuser" },
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Account created for newuser. Please log in.",
+      );
     });
   });
 

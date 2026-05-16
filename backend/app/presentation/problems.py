@@ -139,7 +139,7 @@ def _serialize_tracking(problem: dict[str, Any]) -> TrackingPayload:
 
 
 def _serialize_origin(problem: dict[str, Any]) -> OriginPayload:
-    origin = dict(problem.get("origin", {}))
+    origin = dict(problem.get("origin") or {})
     preview_id = origin.get("previewId")
     return OriginPayload(
         previewId=str(preview_id) if preview_id is not None else None,
