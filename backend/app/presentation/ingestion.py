@@ -731,5 +731,12 @@ async def confirm_preview(
         "createdAt": now,
         "updatedAt": now,
     }
-    await database["problems"].insert_one(problem)
+    try:
+        await database["problems"].insert_one(problem)
+    except Exception:
+        await previews.update_one(
+            {"_id": preview_oid},
+            {"$set": {"status": claimed_preview["status"], "updatedAt": now}},
+        )
+        raise ApiError(500, "PROBLEM_CREATION_FAILED", "Failed to create problem. Please retry confirmation.")
     return ProblemResponse(problem=_serialize_problem(problem))
