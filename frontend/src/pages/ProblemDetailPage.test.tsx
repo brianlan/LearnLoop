@@ -6,6 +6,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { ProblemDetailPage } from "./ProblemDetailPage";
 
+vi.mock("@/hooks/useTagSuggestions", () => ({
+  useTagSuggestions: () => [],
+}));
+
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 

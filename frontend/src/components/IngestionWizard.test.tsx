@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { IngestionWizard } from "./IngestionWizard";
 
+vi.mock("@/hooks/useTagSuggestions", () => ({
+  useTagSuggestions: () => [],
+}));
+
 describe("IngestionWizard", () => {
   beforeEach(() => {
     localStorage.clear();

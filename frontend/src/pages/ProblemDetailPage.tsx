@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { TagInput } from "@/components/TagInput";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
 interface CorrectAnswer {
   display: string;
@@ -60,6 +62,7 @@ export function ProblemDetailPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
   const [error, setError] = useState<string | null>(null);
+  const tagSuggestions = useTagSuggestions();
 
   const {
     data: problem,
@@ -241,17 +244,12 @@ export function ProblemDetailPage() {
         <div style={{ marginBottom: "1rem" }}>
           <label style={{ fontWeight: "bold" }}>Tags:</label>
           {isEditing ? (
-            <input
-              type="text"
-              value={(editForm.tags || []).join(", ")}
-              onChange={(e) =>
-                setEditForm((prev) => ({
-                  ...prev,
-                  tags: e.target.value.split(",").map((t) => t.trim()),
-                }))
-              }
-              placeholder="Comma-separated tags"
-              style={{ width: "100%", marginTop: "0.5rem" }}
+            <TagInput
+              tags={editForm.tags || []}
+              onChange={(tags) => setEditForm((prev) => ({ ...prev, tags }))}
+              suggestions={tagSuggestions}
+              placeholder="Add a tag..."
+              testId="edit-tags-input"
             />
           ) : problem.tags.length > 0 ? (
             <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.375rem" }}>
