@@ -8,7 +8,6 @@ from app.infrastructure.vlm.client import (
     GradingResult,
     VLMClient,
     VLMError,
-    recover_stale_preview,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "GradingResult",
     "VLMClient",
     "VLMError",
-    "recover_stale_preview",
 ]

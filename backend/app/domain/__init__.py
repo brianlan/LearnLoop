@@ -28,6 +28,7 @@ from .models import (
 from .normalization import normalize_answer
 from .selection import select_problems
 from .state import (
+    recover_stale_preview,
     transition_preview_state,
     transition_exam_state,
     InvalidStateTransitionError,
@@ -59,6 +60,7 @@ __all__ = [
     "Problem",
     "Exam",
     "normalize_answer",
+    "recover_stale_preview",
     "select_problems",
     "transition_preview_state",
     "transition_exam_state",

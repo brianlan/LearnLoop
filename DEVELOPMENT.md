@@ -8,6 +8,13 @@
 3. Local backend parity uses Python 3.11 and `uv`.
 4. Local frontend parity uses Node.js 20 and npm.
 
+For a non-default local object-store credential, set `S3_ACCESS_KEY` and `S3_SECRET_KEY` in `.env` before first starting RustFS. Docker Compose uses these values for both the RustFS container credentials and the backend S3 client.
+
+```bash
+S3_ACCESS_KEY=learnloop-local
+S3_SECRET_KEY="$(openssl rand -base64 32)"
+```
+
 ## Startup paths
 
 ### Option 1: Docker Compose for MongoDB + RustFS only
@@ -114,6 +121,27 @@ Create the bucket used by LearnLoop:
 docker compose --profile bootstrap run --rm rustfs-bootstrap
 ```
 
+### Volume backup and restore
+
+To move Docker-managed data to another machine, stop the stack and archive the named volumes:
+
+```bash
+docker compose down
+./scripts/backup-volumes.sh
+```
+
+This creates `mongodb_data.tar.gz` and `rustfs_data_*.tar.gz` under `./volume-backups/<timestamp>`.
+
+On the target machine, copy that directory over, then restore into the same Docker volume names:
+
+```bash
+docker compose down
+./scripts/restore-volumes.sh --wipe ./volume-backups/<timestamp>
+./scripts/start-local.sh full --bootstrap
+```
+
+Keep `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `S3_BUCKET` aligned with the source machine when restoring RustFS volumes directly.
+
 ## Running tests
 
 Backend:
@@ -147,13 +175,11 @@ The canonical template lives in `.env.example`.
 | `MONGODB_URI` | Mongo replica-set connection string | `mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true` |
 | `MONGODB_DATABASE` | Mongo database name | `learnloop` |
 | `S3_ENDPOINT` | S3-compatible storage endpoint | `http://localhost:9000` |
-| `S3_ACCESS_KEY` | RustFS access key | `replace-me` |
-| `S3_SECRET_KEY` | RustFS secret key | `replace-me` |
+| `S3_ACCESS_KEY` | S3-compatible storage access key | `replace-me` |
+| `S3_SECRET_KEY` | S3-compatible storage secret key | `replace-me` |
 | `S3_BUCKET` | Media bucket name | `learnloop-media` |
 | `S3_REGION` | S3 region | `us-east-1` |
 | `S3_FORCE_PATH_STYLE` | Path-style S3 URLs | `true` |
-| `RUSTFS_ENDPOINT` | RustFS API base URL | `http://localhost:9000` |
-| `RUSTFS_CONSOLE_ENDPOINT` | RustFS console URL | `http://localhost:9001` |
 | `VLM_ENDPOINT` | External VLM API endpoint | example placeholder |
 | `VLM_MODEL` | External VLM model identifier | `replace-me` |
 | `VLM_API_KEY` | External VLM credential | `replace-me` |

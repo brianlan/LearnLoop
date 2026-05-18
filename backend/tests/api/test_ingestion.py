@@ -40,6 +40,13 @@ class FakeDeleteResult:
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
         actual = document.get(key)
+        if isinstance(value, dict):
+            allowed_values = value.get("$in")
+            if allowed_values is not None:
+                if actual not in allowed_values:
+                    return False
+                continue
+            return False
         if isinstance(actual, list):
             if value not in actual:
                 return False
@@ -52,6 +59,7 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
 class FakeCollection:
     def __init__(self) -> None:
         self._documents: list[dict[str, Any]] = []
+        self._insert_one_error: Exception | None = None
 
     def seed(self, *documents: dict[str, Any]) -> None:
         self._documents.extend(deepcopy(list(documents)))
@@ -63,6 +71,8 @@ class FakeCollection:
         return None
 
     async def insert_one(self, document: dict[str, Any]) -> FakeInsertOneResult:
+        if self._insert_one_error is not None:
+            raise self._insert_one_error
         stored_document = deepcopy(document)
         if "_id" not in stored_document:
             stored_document["_id"] = ObjectId()
@@ -76,6 +86,19 @@ class FakeCollection:
                     document[key] = deepcopy(value)
                 return FakeUpdateResult(1)
         return FakeUpdateResult(0)
+
+    async def find_one_and_update(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        for document in self._documents:
+            if _matches(document, query):
+                original_document = deepcopy(document)
+                for key, value in update.get("$set", {}).items():
+                    document[key] = deepcopy(value)
+                return original_document
+        return None
 
     async def delete_one(self, query: dict[str, Any]) -> FakeDeleteResult:
         for index, document in enumerate(self._documents):
@@ -588,6 +611,98 @@ async def test_confirm_preview_allows_manual_confirmation_after_vlm_failure(
     updated_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
     assert updated_preview is not None
     assert updated_preview["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_rolls_back_status_when_draft_missing_required_fields(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    preview["editableDraft"] = {
+        "text": None,
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": "42",
+        "tags": [],
+    }
+    original_status = preview["status"]
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_PREVIEW"
+
+    stored_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+    assert stored_preview is not None
+    assert stored_preview["status"] == original_status
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_rolls_back_status_when_problem_insert_fails(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    original_status = "ready"
+    preview = make_preview(owner["_id"], status=original_status)
+    preview["editableDraft"] = {
+        "text": "Solve for x",
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": "42",
+        "tags": [],
+    }
+    database["ingestion_previews"].seed(preview)
+
+    database["problems"]._insert_one_error = RuntimeError("simulated database error")
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "PROBLEM_CREATION_FAILED"
+
+    stored_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+    assert stored_preview is not None
+    assert stored_preview["status"] == original_status
+
+    stored_problem = await database["problems"].find_one({"userId": owner["_id"]})
+    assert stored_problem is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_rejects_double_confirmation(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    database["ingestion_previews"].seed(preview)
+
+    first_response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert first_response.status_code == 201
+
+    second_response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert second_response.status_code == 409
+    assert second_response.json()["error"]["code"] == "PREVIEW_ALREADY_CONFIRMED"
 
 
 @pytest.mark.asyncio

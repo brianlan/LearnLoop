@@ -1,1 +1,0 @@
-"""Media application namespace."""

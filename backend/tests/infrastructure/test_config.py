@@ -1,4 +1,9 @@
 from app.infrastructure.config.settings import Settings
+from pydantic_settings import SettingsConfigDict
+
+
+class _IsolatedSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
 
 def test_settings_load_from_environment(monkeypatch) -> None:
@@ -23,7 +28,7 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("SESSION_SECURE", "true")
     monkeypatch.setenv("SESSION_SAMESITE", "strict")
 
-    settings = Settings()
+    settings = _IsolatedSettings()
 
     assert settings.app_env == "test"
     assert settings.app_host == "127.0.0.1"
@@ -72,7 +77,7 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = Settings()
+    settings = _IsolatedSettings()
 
     assert settings.mongodb_uri == "mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true"
     assert settings.s3_force_path_style is True

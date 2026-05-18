@@ -6,19 +6,15 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
-from app.presentation.deps import get_current_user, get_database
+from app.infrastructure.storage.s3 import StorageObjectNotFoundError
+from app.presentation.deps import DatabaseDependency, StorageDependency, get_current_user, get_s3_storage
 from app.presentation.errors import ApiError
-from app.presentation.problems import DatabaseDependency, get_problem_for_owner
+from app.presentation.helpers import get_owned_problem
 
 router = APIRouter(tags=["media"])
 
+get_problem_storage = get_s3_storage
 
-def get_problem_storage() -> S3StorageAdapter:
-    return S3StorageAdapter()
-
-
-StorageDependency = Annotated[S3StorageAdapter, Depends(get_problem_storage)]
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 
 
@@ -29,11 +25,11 @@ async def stream_problem_image(
     current_user: CurrentUserDependency,
     storage: StorageDependency,
 ) -> StreamingResponse:
-    problem = await get_problem_for_owner(
+    problem = await get_owned_problem(
         database,
         problem_id,
         current_user["_id"],
-        allow_deleted=True,
+        allow_deleted=False,
     )
     source_image = dict(problem.get("sourceImage") or {})
     bucket = source_image.get("bucket")

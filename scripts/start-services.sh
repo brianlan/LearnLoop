@@ -50,8 +50,7 @@ Services requested.
 Local backend contract:
   MONGODB_URI=mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true
   S3_ENDPOINT=http://localhost:9000
-  RUSTFS_ENDPOINT=http://localhost:9000
-  RUSTFS_CONSOLE_ENDPOINT=http://localhost:9001
+  RustFS console: http://localhost:9001
 
 Run the backend outside Compose with either:
   /Users/rlan/miniforge3/envs/mykik_py311/bin/python -m uvicorn app.main:app --reload --app-dir backend

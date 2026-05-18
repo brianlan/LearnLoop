@@ -457,40 +457,9 @@ class VLMClient:
         return parsed
 
 
-def recover_stale_preview(
-    preview: Mapping[str, Any],
-    *,
-    now: datetime | None = None,
-    extracting_window_seconds: float | None = None,
-) -> dict[str, Any] | None:
-    status = preview.get("status")
-    if status != "extracting":
-        return None
+def __getattr__(name: str) -> object:
+    if name == "recover_stale_preview":
+        from app.domain.state import recover_stale_preview  # noqa: F811
 
-    current_time = now or datetime.now(UTC)
-    extraction = deepcopy(dict(preview.get("extraction", {})))
-    started_at = extraction.get("requestStartedAt") or preview.get("updatedAt") or preview.get("createdAt")
-    if not isinstance(started_at, datetime):
-        return None
-
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=UTC)
-
-    window = timedelta(seconds=extracting_window_seconds if extracting_window_seconds is not None else get_settings().vlm_timeout_seconds)
-    if current_time - started_at <= window:
-        return None
-
-    recovered_preview = deepcopy(dict(preview))
-    recovered_extraction = deepcopy(dict(recovered_preview.get("extraction", {})))
-    recovered_extraction.update(
-        {
-            "success": False,
-            "requestFinishedAt": current_time,
-            "failureCode": FAILURE_CODE_STALE_PREVIEW,
-            "failureMessage": "Preview extraction exceeded the configured extracting window.",
-        }
-    )
-    recovered_preview["status"] = "vlm-failed"
-    recovered_preview["extraction"] = recovered_extraction
-    recovered_preview["updatedAt"] = current_time
-    return recovered_preview
+        return recover_stale_preview
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -464,30 +464,10 @@ async def create_problem_via_api(
         )
 
         response = await client.post(
-            "/api/v1/problems",
-            json={
-                "previewId": str(preview["_id"]),
-                "text": text,
-                "problemType": problem_type,
-                "graphDsl": graph_dsl,
-                "correctAnswer": correct_answer,
-                "tags": tags,
-            },
+            f"/api/v1/ingestion-previews/{preview['_id']}/confirm",
         )
         assert response.status_code == 201
         problem = response.json()["problem"]
-        stored_problem = await app.state.fake_database["problems"].find_one(
-            {"_id": ObjectId(problem["id"])}
-        )
-        assert stored_problem is not None
-        origin = dict(stored_problem.get("origin", {}))
-        preview_id = origin.get("previewId")
-        if preview_id is not None:
-            origin["previewId"] = str(preview_id)
-            await app.state.fake_database["problems"].update_one(
-                {"_id": stored_problem["_id"]},
-                {"$set": {"origin": origin}},
-            )
         return problem
 
     return _create_problem_via_api
