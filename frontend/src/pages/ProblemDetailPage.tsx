@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { TagInput } from "@/components/TagInput";
 
 interface CorrectAnswer {
   display: string;
@@ -238,44 +239,39 @@ export function ProblemDetailPage() {
           )}
         </div>
 
-        <div style={{ marginBottom: "1rem" }}>
-          <label style={{ fontWeight: "bold" }}>Tags:</label>
-          {isEditing ? (
-            <input
-              type="text"
-              value={(editForm.tags || []).join(", ")}
-              onChange={(e) =>
-                setEditForm((prev) => ({
-                  ...prev,
-                  tags: e.target.value.split(",").map((t) => t.trim()),
-                }))
-              }
-              placeholder="Comma-separated tags"
-              style={{ width: "100%", marginTop: "0.5rem" }}
-            />
-          ) : problem.tags.length > 0 ? (
-            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.375rem" }}>
-              {problem.tags.map((tag) => (
-                <span
-                  key={tag}
-                  style={{
-                    padding: "0.125rem 0.375rem",
-                    background: "#f0f0f0",
-                    borderRadius: "4px",
-                    fontSize: "0.75rem",
-                    display: "inline-flex",
-                  }}
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div style={{ marginTop: "0.5rem", color: "#666" }}>
-              No tags
-            </div>
-          )}
-        </div>
+         <div style={{ marginBottom: "1rem" }}>
+           <label style={{ fontWeight: "bold" }}>Tags:</label>
+           {isEditing ? (
+             <div style={{ marginTop: "0.5rem" }}>
+               <TagInput
+                 value={editForm.tags || []}
+                 onChange={(tags) => setEditForm((prev) => ({ ...prev, tags }))}
+                 placeholder="Comma-separated tags"
+               />
+             </div>
+           ) : problem.tags.length > 0 ? (
+             <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.375rem" }}>
+               {problem.tags.map((tag) => (
+                 <span
+                   key={tag}
+                   style={{
+                     padding: "0.25rem 0.5rem",
+                     background: "#eff6ff",
+                     color: "#1d4ed8",
+                     borderRadius: "9999px",
+                     fontSize: "0.875rem",
+                   }}
+                 >
+                   {tag}
+                 </span>
+               ))}
+             </div>
+           ) : (
+             <div style={{ marginTop: "0.5rem", color: "#666" }}>
+               No tags
+             </div>
+           )}
+         </div>
 
         {(problem.graphDsl || isEditing) && (
           <div style={{ marginBottom: "1rem" }}>
