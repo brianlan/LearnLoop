@@ -218,6 +218,16 @@ export function TagInput({
 
         <input
           type="text"
+          role="combobox"
+          aria-expanded={showSuggestions}
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          aria-controls={showSuggestions ? `${testId}-suggestions` : undefined}
+          aria-activedescendant={
+            showSuggestions && filteredSuggestions[highlightedIndex]
+              ? `${testId}-suggestion-${filteredSuggestions[highlightedIndex]}`
+              : undefined
+          }
           value={inputValue}
           disabled={disabled}
           placeholder={placeholder}
@@ -249,6 +259,7 @@ export function TagInput({
 
       {showSuggestions ? (
         <div
+          role="listbox"
           style={{
             position: "absolute",
             top: "100%",
@@ -266,14 +277,16 @@ export function TagInput({
           data-testid={`${testId}-suggestions`}
         >
           {filteredSuggestions.map((suggestion, index) => (
-            <button
+            <div
               key={suggestion}
-              type="button"
+              role="option"
+              aria-selected={index === highlightedIndex}
               onMouseDown={(event) => {
                 event.preventDefault();
               }}
               onClick={() => addTag(suggestion)}
               data-testid={`${testId}-suggestion-${suggestion}`}
+              id={`${testId}-suggestion-${suggestion}`}
               style={{
                 width: "100%",
                 border: "none",
@@ -285,7 +298,7 @@ export function TagInput({
               }}
             >
               {suggestion}
-            </button>
+            </div>
           ))}
         </div>
       ) : null}

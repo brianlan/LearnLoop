@@ -138,4 +138,78 @@ describe("TagInput", () => {
     expect(onChange).toHaveBeenNthCalledWith(1, []);
     expect(onChange).toHaveBeenNthCalledWith(2, ["math", "geometry"]);
   });
+
+  describe("accessibility", () => {
+    it("has combobox role on the input", () => {
+      render(<TagInput tags={[]} onChange={vi.fn()} testId="tags-input" />);
+
+      const input = screen.getByTestId("tags-input-field");
+      expect(input).toHaveAttribute("role", "combobox");
+      expect(input).toHaveAttribute("aria-expanded", "false");
+      expect(input).toHaveAttribute("aria-haspopup", "listbox");
+      expect(input).toHaveAttribute("aria-autocomplete", "list");
+    });
+
+    it("sets aria-expanded to true when suggestions are shown", async () => {
+      const user = userEvent.setup();
+
+      render(
+        <TagInput tags={[]} onChange={vi.fn()} suggestions={["algebra", "geometry"]} testId="tags-input" />,
+      );
+
+      const input = screen.getByTestId("tags-input-field");
+      expect(input).toHaveAttribute("aria-expanded", "false");
+
+      await user.type(input, "al");
+
+      expect(input).toHaveAttribute("aria-expanded", "true");
+      expect(input).toHaveAttribute("aria-controls", "tags-input-suggestions");
+    });
+
+    it("has listbox role on the suggestions dropdown", async () => {
+      const user = userEvent.setup();
+
+      render(<TagInput tags={[]} onChange={vi.fn()} suggestions={["algebra"]} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "al");
+
+      const listbox = screen.getByTestId("tags-input-suggestions");
+      expect(listbox).toHaveAttribute("role", "listbox");
+    });
+
+    it("has option role with aria-selected on suggestion items", async () => {
+      const user = userEvent.setup();
+
+      render(
+        <TagInput tags={[]} onChange={vi.fn()} suggestions={["algebra", "algorithm"]} testId="tags-input" />,
+      );
+
+      await user.type(screen.getByTestId("tags-input-field"), "al");
+
+      const firstOption = screen.getByTestId("tags-input-suggestion-algebra");
+      expect(firstOption).toHaveAttribute("role", "option");
+      expect(firstOption).toHaveAttribute("aria-selected", "true");
+
+      const secondOption = screen.getByTestId("tags-input-suggestion-algorithm");
+      expect(secondOption).toHaveAttribute("role", "option");
+      expect(secondOption).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("sets aria-activedescendant to the highlighted suggestion", async () => {
+      const user = userEvent.setup();
+
+      render(
+        <TagInput tags={[]} onChange={vi.fn()} suggestions={["algebra", "algorithm"]} testId="tags-input" />,
+      );
+
+      await user.type(screen.getByTestId("tags-input-field"), "al");
+
+      const input = screen.getByTestId("tags-input-field");
+      expect(input).toHaveAttribute("aria-activedescendant", "tags-input-suggestion-algebra");
+
+      await user.type(input, "{arrowDown}");
+
+      expect(input).toHaveAttribute("aria-activedescendant", "tags-input-suggestion-algorithm");
+    });
+  });
 });
