@@ -13,8 +13,6 @@ x-app-env: &app-env
   S3_BUCKET: ${S3_BUCKET:-learnloop-media}
   S3_REGION: ${S3_REGION:-us-east-1}
   S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-  RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-http://localhost:9000}
-  RUSTFS_CONSOLE_ENDPOINT: ${RUSTFS_CONSOLE_ENDPOINT:-http://localhost:9001}
 
 services:
   mongodb:
@@ -155,17 +153,17 @@ services:
         from pymongo import MongoClient
 
         mongo_uri = os.environ["MONGODB_URI"]
-        rustfs_health_url = os.environ["RUSTFS_ENDPOINT"].rstrip("/") + "/health"
+        object_storage_health_url = "http://rustfs:9000/health"
         deadline = time.time() + 60
         last_error = "dependency readiness timed out"
 
         while time.time() < deadline:
             try:
                 MongoClient(mongo_uri, serverSelectionTimeoutMS=3000).admin.command("ping")
-                with urllib.request.urlopen(rustfs_health_url, timeout=3) as response:
+                with urllib.request.urlopen(object_storage_health_url, timeout=3) as response:
                     if 200 <= response.status < 400:
                         break
-                    last_error = f"unexpected RustFS health status: {response.status}"
+                    last_error = f"unexpected object storage health status: {response.status}"
             except Exception as exc:  # pragma: no cover - startup only
                 last_error = str(exc)
                 time.sleep(2)
@@ -198,7 +196,7 @@ services:
           except Exception:
               sys.exit(1)
 
-          rustfs_ok = http_ok(os.environ["RUSTFS_ENDPOINT"].rstrip("/") + "/health")
+          object_storage_ok = http_ok("http://rustfs:9000/health")
           app_ok = any(
               http_ok(url)
               for url in (
@@ -207,7 +205,7 @@ services:
               )
           )
 
-          sys.exit(0 if rustfs_ok and app_ok else 1)
+          sys.exit(0 if object_storage_ok and app_ok else 1)
           PY
       interval: 10s
       timeout: 5s

@@ -68,8 +68,7 @@ Hybrid local-dev contract
 3. Local service endpoints:
    MONGODB_URI=mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true
    S3_ENDPOINT=http://localhost:9000
-   RUSTFS_ENDPOINT=http://localhost:9000
-   RUSTFS_CONSOLE_ENDPOINT=http://localhost:9001
+   RustFS console: http://localhost:9001
 
 4. Tests:
    cd backend && uv run pytest

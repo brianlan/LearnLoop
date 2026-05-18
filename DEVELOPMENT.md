@@ -147,13 +147,11 @@ The canonical template lives in `.env.example`.
 | `MONGODB_URI` | Mongo replica-set connection string | `mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true` |
 | `MONGODB_DATABASE` | Mongo database name | `learnloop` |
 | `S3_ENDPOINT` | S3-compatible storage endpoint | `http://localhost:9000` |
-| `S3_ACCESS_KEY` | RustFS access key | `replace-me` |
-| `S3_SECRET_KEY` | RustFS secret key | `replace-me` |
+| `S3_ACCESS_KEY` | S3-compatible storage access key | `replace-me` |
+| `S3_SECRET_KEY` | S3-compatible storage secret key | `replace-me` |
 | `S3_BUCKET` | Media bucket name | `learnloop-media` |
 | `S3_REGION` | S3 region | `us-east-1` |
 | `S3_FORCE_PATH_STYLE` | Path-style S3 URLs | `true` |
-| `RUSTFS_ENDPOINT` | RustFS API base URL | `http://localhost:9000` |
-| `RUSTFS_CONSOLE_ENDPOINT` | RustFS console URL | `http://localhost:9001` |
 | `VLM_ENDPOINT` | External VLM API endpoint | example placeholder |
 | `VLM_MODEL` | External VLM model identifier | `replace-me` |
 | `VLM_API_KEY` | External VLM credential | `replace-me` |
