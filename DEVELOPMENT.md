@@ -121,6 +121,27 @@ Create the bucket used by LearnLoop:
 docker compose --profile bootstrap run --rm rustfs-bootstrap
 ```
 
+### Volume backup and restore
+
+To move Docker-managed data to another machine, stop the stack and archive the named volumes:
+
+```bash
+docker compose down
+./scripts/backup-volumes.sh
+```
+
+This creates `mongodb_data.tar.gz` and `rustfs_data_*.tar.gz` under `./volume-backups/<timestamp>`.
+
+On the target machine, copy that directory over, then restore into the same Docker volume names:
+
+```bash
+docker compose down
+./scripts/restore-volumes.sh --wipe ./volume-backups/<timestamp>
+./scripts/start-local.sh full --bootstrap
+```
+
+Keep `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `S3_BUCKET` aligned with the source machine when restoring RustFS volumes directly.
+
 ## Running tests
 
 Backend:
