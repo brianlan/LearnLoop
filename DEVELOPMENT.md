@@ -8,6 +8,13 @@
 3. Local backend parity uses Python 3.11 and `uv`.
 4. Local frontend parity uses Node.js 20 and npm.
 
+For a non-default local object-store credential, set `S3_ACCESS_KEY` and `S3_SECRET_KEY` in `.env` before first starting RustFS. Docker Compose uses these values for both the RustFS container credentials and the backend S3 client.
+
+```bash
+S3_ACCESS_KEY=learnloop-local
+S3_SECRET_KEY="$(openssl rand -base64 32)"
+```
+
 ## Startup paths
 
 ### Option 1: Docker Compose for MongoDB + RustFS only
