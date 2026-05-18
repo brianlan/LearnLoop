@@ -12,8 +12,9 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
 from app.infrastructure.storage.mongo import Document
-from app.presentation.deps import get_current_user, get_database
+from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
+from app.presentation.helpers import build_problem_image_url, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
 
 router = APIRouter(prefix="/problems", tags=["problems"])
@@ -86,30 +87,7 @@ class ProblemTagsResponse(BaseModel):
     items: list[str]
 
 
-DatabaseDependency = Annotated[AsyncDatabase[Document], Depends(get_database)]
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
-
-
-def _normalize_tags(tags: list[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for tag in tags:
-        trimmed = tag.strip()
-        if not trimmed or trimmed in seen:
-            continue
-        seen.add(trimmed)
-        normalized.append(trimmed)
-    return normalized
-
-
-def _parse_object_id(raw_id: str, *, resource_name: str) -> ObjectId:
-    if not ObjectId.is_valid(raw_id):
-        raise ApiError(404, "NOT_FOUND", f"{resource_name} not found")
-    return ObjectId(raw_id)
-
-
-def _build_problem_image_url(problem_id: str) -> str | None:
-    return f"/api/v1/problems/{problem_id}/image"
 
 
 def _serialize_tracking(problem: dict[str, Any]) -> TrackingPayload:
@@ -157,7 +135,7 @@ def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload
         deletedAt=problem.get("deletedAt"),
         createdAt=problem["createdAt"],
         updatedAt=problem["updatedAt"],
-        imageUrl=_build_problem_image_url(str(problem["_id"]))
+        imageUrl=build_problem_image_url(str(problem["_id"]))
         if problem.get("sourceImage")
         else None,
     )
@@ -179,7 +157,7 @@ async def _get_owned_problem(
     *,
     allow_deleted: bool,
 ) -> dict[str, Any]:
-    object_id = _parse_object_id(problem_id, resource_name="Problem")
+    object_id = parse_object_id(problem_id, resource_name="Problem")
     problem = await database["problems"].find_one({"_id": object_id})
     if problem is None:
         raise ApiError(404, "NOT_FOUND", "Problem not found")
@@ -190,27 +168,12 @@ async def _get_owned_problem(
     return problem
 
 
-async def get_problem_for_owner(
-    database: AsyncDatabase[Document],
-    problem_id: str,
-    user_id: ObjectId,
-    *,
-    allow_deleted: bool = False,
-) -> dict[str, Any]:
-    return await _get_owned_problem(
-        database,
-        problem_id,
-        user_id,
-        allow_deleted=allow_deleted,
-    )
-
-
 async def _get_owned_preview(
     database: AsyncDatabase[Document],
     preview_id: str,
     user_id: ObjectId,
 ) -> dict[str, Any]:
-    object_id = _parse_object_id(preview_id, resource_name="Preview")
+    object_id = parse_object_id(preview_id, resource_name="Preview")
     preview = await database["ingestion_previews"].find_one({"_id": object_id})
     if preview is None:
         raise ApiError(404, "NOT_FOUND", "Preview not found")
@@ -302,7 +265,7 @@ async def update_problem(
     if "graphDsl" in payload.model_fields_set:
         updates["graphDsl"] = payload.graphDsl
     if "tags" in payload.model_fields_set and payload.tags is not None:
-        updates["tags"] = _normalize_tags(payload.tags)
+        updates["tags"] = normalize_tags(payload.tags)
     if payload.correctAnswer is not None or payload.problemType is not None:
         updates["correctAnswer"] = normalize_answer(
             raw_correct_answer,

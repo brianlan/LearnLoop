@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from base64 import b64encode
-from collections.abc import AsyncIterator, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from random import Random
@@ -9,147 +7,40 @@ from typing import Annotated, Any
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field, ValidationError
-from pymongo.asynchronous.database import AsyncDatabase
 
-from app.domain.models import (
-    ExamItem,
-    ExamState,
-    GradingStatus,
-    Problem,
-    ProblemType,
-    SelectionPolicyConfig,
-)
-from app.domain.normalization import normalize_answer
-from app.domain.scoring import compute_summary
+from app.domain.models import ExamState, GradingStatus, ProblemType
 from app.domain.selection import select_problems
 from app.domain.state import transition_exam_state
 from app.infrastructure.storage.mongo import Document, MongoClientAdapter, get_mongo_adapter
-from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
-from app.infrastructure.vlm.client import VLMClient, VLMError
-from app.presentation.deps import get_current_user, get_database
+from app.presentation.exam_grading import build_tracking_update, grade_item
+from app.presentation.exam_helpers import (
+    DEFAULT_SELECTION_POLICY,
+    build_exam_summary,
+    find_item,
+    get_owned_exam,
+    make_exam_item,
+    problem_document_to_model,
+)
+from app.presentation.deps import DatabaseDependency, StorageDependency, VLMDependency, get_current_user, get_s3_storage, get_vlm_client
 from app.presentation.errors import ApiError
-from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload
+from app.presentation.exam_serialization import (
+    CreateExamRequest,
+    CreateExamResponse,
+    ExamHistoryItemPayload,
+    ExamHistoryResponse,
+    ExamResponse,
+    SaveAnswerRequest,
+    SaveAnswerResponse,
+    SelfReportRequest,
+    SelfReportResponse,
+    serialize_exam,
+    serialize_exam_item,
+    serialize_exam_summary,
+)
 
 router = APIRouter(prefix="/exams", tags=["exams"])
 
-DEFAULT_SELECTION_POLICY = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0)
 
-
-class CreateExamRequest(BaseModel):
-    maxProblemCount: int = Field(ge=1, le=100)
-
-
-class SaveAnswerRequest(BaseModel):
-    answer: str | None = None
-
-
-class SelfReportRequest(BaseModel):
-    isCorrect: bool
-
-
-class ExamProblemPayload(BaseModel):
-    text: str
-    problemType: ProblemType
-    graphDsl: str | None = None
-    correctAnswer: CorrectAnswerPayload | None = None
-    sourceImage: SourceImagePayload | None = None
-    imageUrl: str | None = None
-
-
-class ExamAnswerPayload(BaseModel):
-    raw: str | None = None
-    savedAt: datetime | None = None
-
-
-class ExamGradingPayload(BaseModel):
-    status: GradingStatus
-    method: str | None = None
-    isCorrect: bool | None = None
-    score: float | None = None
-    feedback: str | None = None
-    providerModel: str | None = None
-    rawProviderResponse: dict[str, Any] | None = None
-    gradedAt: datetime | None = None
-    retryCount: int = 0
-    selfReportedCorrect: bool | None = None
-
-
-class ExamItemPayload(BaseModel):
-    itemId: str
-    order: int
-    problemId: str
-    problem: ExamProblemPayload
-    answer: ExamAnswerPayload
-    grading: ExamGradingPayload
-
-
-class SelectionPolicyPayload(BaseModel):
-    recencyWeight: float
-    failureWeight: float
-
-
-class ExamConfigSnapshotPayload(BaseModel):
-    maxProblemCount: int
-    selectionPolicy: SelectionPolicyPayload
-    generatedAt: datetime
-
-
-class ExamSummaryPayload(BaseModel):
-    totalProblems: int
-    answeredProblems: int
-    gradedProblems: int
-    pendingProblems: int
-    correctProblems: int
-    failedProblems: int
-    score: float | None = None
-
-
-class ExamPayload(BaseModel):
-    id: str
-    state: ExamState
-    configSnapshot: ExamConfigSnapshotPayload
-    items: list[ExamItemPayload]
-    summary: ExamSummaryPayload
-    createdAt: datetime
-    startedAt: datetime | None = None
-    submittedAt: datetime | None = None
-    updatedAt: datetime
-
-
-class CreateExamResponse(BaseModel):
-    exam: ExamPayload
-
-
-class ExamResponse(BaseModel):
-    exam: ExamPayload
-
-
-class SaveAnswerResponse(BaseModel):
-    item: ExamItemPayload
-
-
-class SelfReportResponse(BaseModel):
-    item: ExamItemPayload
-    summary: ExamSummaryPayload
-
-
-class ExamHistoryItemPayload(BaseModel):
-    id: str
-    state: ExamState
-    createdAt: datetime
-    submittedAt: datetime
-    summary: ExamSummaryPayload
-
-
-class ExamHistoryResponse(BaseModel):
-    items: list[ExamHistoryItemPayload]
-    page: int
-    pageSize: int
-    total: int
-
-
-DatabaseDependency = Annotated[AsyncDatabase[Document], Depends(get_database)]
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 
 
@@ -157,374 +48,9 @@ def get_exam_mongo_adapter() -> MongoClientAdapter:
     return get_mongo_adapter()
 
 
-async def get_exam_vlm_client() -> AsyncIterator[VLMClient]:
-    client = VLMClient()
-    try:
-        yield client
-    finally:
-        await client.aclose()
-
-
-def get_exam_storage() -> S3StorageAdapter:
-    return S3StorageAdapter()
-
-
 AdapterDependency = Annotated[MongoClientAdapter, Depends(get_exam_mongo_adapter)]
-VLMDependency = Annotated[VLMClient, Depends(get_exam_vlm_client)]
-StorageDependency = Annotated[S3StorageAdapter, Depends(get_exam_storage)]
-
-
-def _parse_object_id(raw_id: str, *, resource_name: str) -> ObjectId:
-    if not ObjectId.is_valid(raw_id):
-        raise ApiError(404, "NOT_FOUND", f"{resource_name} not found")
-    return ObjectId(raw_id)
-
-
-def _serialize_exam_summary(summary: Mapping[str, Any]) -> ExamSummaryPayload:
-    return ExamSummaryPayload(
-        totalProblems=int(summary.get("totalProblems", 0)),
-        answeredProblems=int(summary.get("answeredProblems", 0)),
-        gradedProblems=int(summary.get("gradedProblems", 0)),
-        pendingProblems=int(summary.get("pendingProblems", 0)),
-        correctProblems=int(summary.get("correctProblems", 0)),
-        failedProblems=int(summary.get("failedProblems", 0)),
-        score=summary.get("score"),
-    )
-
-
-def _build_problem_image_url(problem_id: Any) -> str:
-    return f"/api/v1/problems/{problem_id}/image"
-
-
-def _serialize_exam_item(
-    item: Mapping[str, Any],
-    *,
-    include_correct_answer: bool,
-) -> ExamItemPayload:
-    snapshot = dict(item.get("problemSnapshot", {}))
-    source_image = snapshot.get("sourceImage")
-    grading = dict(item.get("grading", {}))
-    answer = dict(item.get("answer", {}))
-    return ExamItemPayload(
-        itemId=str(item["itemId"]),
-        order=int(item["order"]),
-        problemId=str(item["problemId"]),
-        problem=ExamProblemPayload(
-            text=str(snapshot.get("text", "")),
-            problemType=ProblemType(snapshot["problemType"]),
-            graphDsl=snapshot.get("graphDsl"),
-            correctAnswer=(
-                CorrectAnswerPayload.model_validate(snapshot.get("correctAnswer", {}))
-                if include_correct_answer and snapshot.get("correctAnswer") is not None
-                else None
-            ),
-            sourceImage=(
-                SourceImagePayload.model_validate(source_image)
-                if include_correct_answer and source_image is not None
-                else None
-            ),
-            imageUrl=_build_problem_image_url(item["problemId"]) if source_image is not None else None,
-        ),
-        answer=ExamAnswerPayload(
-            raw=answer.get("raw"),
-            savedAt=answer.get("savedAt"),
-        ),
-        grading=ExamGradingPayload(
-            status=GradingStatus(grading.get("status", GradingStatus.UNGRADED.value)),
-            method=grading.get("method"),
-            isCorrect=grading.get("isCorrect"),
-            score=grading.get("score"),
-            feedback=grading.get("feedback"),
-            providerModel=grading.get("providerModel"),
-            rawProviderResponse=grading.get("rawProviderResponse"),
-            gradedAt=grading.get("gradedAt"),
-            retryCount=int(grading.get("retryCount", 0)),
-            selfReportedCorrect=grading.get("selfReportedCorrect"),
-        ),
-    )
-
-
-def _serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
-    include_correct_answer = str(exam.get("state")) == ExamState.SUBMITTED.value
-    config_snapshot = dict(exam.get("configSnapshot", {}))
-    selection_policy = dict(config_snapshot.get("selectionPolicy", {}))
-    return ExamPayload(
-        id=str(exam["_id"]),
-        state=ExamState(exam["state"]),
-        configSnapshot=ExamConfigSnapshotPayload(
-            maxProblemCount=int(config_snapshot.get("maxProblemCount", 0)),
-            selectionPolicy=SelectionPolicyPayload(
-                recencyWeight=float(selection_policy.get("recencyWeight", 1.0)),
-                failureWeight=float(selection_policy.get("failureWeight", 1.0)),
-            ),
-            generatedAt=config_snapshot["generatedAt"],
-        ),
-        items=[
-            _serialize_exam_item(item, include_correct_answer=include_correct_answer)
-            for item in exam.get("items", [])
-        ],
-        summary=_serialize_exam_summary(dict(exam.get("summary", {}))),
-        createdAt=exam["createdAt"],
-        startedAt=exam.get("startedAt"),
-        submittedAt=exam.get("submittedAt"),
-        updatedAt=exam["updatedAt"],
-    )
-
-
-def _problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
-    try:
-        return Problem.model_validate(
-            {
-                "id": str(problem["_id"]),
-                "userId": str(problem["userId"]),
-                "text": problem["text"],
-                "problemType": problem["problemType"],
-                "graphDsl": problem.get("graphDsl"),
-                "correctAnswer": problem["correctAnswer"],
-                "tags": list(problem.get("tags", [])),
-                "sourceImage": problem.get("sourceImage"),
-                "origin": problem.get("origin", {}),
-                "tracking": problem.get("tracking", {}),
-                "isDeleted": problem.get("isDeleted", False),
-                "deletedAt": problem.get("deletedAt"),
-                "createdAt": problem["createdAt"],
-                "updatedAt": problem["updatedAt"],
-            }
-        )
-    except ValidationError as exc:
-        raise ApiError(
-            422,
-            "INVALID_PROBLEM_DATA",
-            "Problem contains invalid data for exam creation",
-            details={
-                "problemId": str(problem.get("_id", "")),
-                "errors": exc.errors(include_url=False),
-            },
-        ) from exc
-
-
-def _build_exam_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
-    models = [
-        ExamItem.model_validate(
-            {
-                **item,
-                "problemId": str(item["problemId"]),
-            }
-        )
-        for item in items
-    ]
-    return compute_summary(models).model_dump()
-
-
-def _make_exam_item(problem: Mapping[str, Any], *, order: int) -> dict[str, Any]:
-    return {
-        "itemId": str(ObjectId()),
-        "order": order,
-        "problemId": problem["_id"],
-        "problemSnapshot": {
-            "text": problem["text"],
-            "problemType": problem["problemType"],
-            "graphDsl": problem.get("graphDsl"),
-            "correctAnswer": deepcopy(problem["correctAnswer"]),
-            "sourceImage": deepcopy(problem.get("sourceImage")),
-        },
-        "answer": {
-            "raw": None,
-            "savedAt": None,
-        },
-        "grading": {
-            "status": GradingStatus.UNGRADED.value,
-            "method": None,
-            "isCorrect": None,
-            "score": None,
-            "feedback": None,
-            "providerModel": None,
-            "rawProviderResponse": None,
-            "gradedAt": None,
-            "retryCount": 0,
-            "selfReportedCorrect": None,
-        },
-    }
-
-
-async def _get_owned_exam(
-    database: AsyncDatabase[Document],
-    exam_id: str,
-    user_id: ObjectId,
-) -> dict[str, Any]:
-    object_id = _parse_object_id(exam_id, resource_name="Exam")
-    exam = await database["exams"].find_one({"_id": object_id})
-    if exam is None:
-        raise ApiError(404, "NOT_FOUND", "Exam not found")
-    if exam.get("userId") != user_id:
-        raise ApiError(403, "FORBIDDEN", "Forbidden")
-    return exam
-
-
-def _find_item(exam: Mapping[str, Any], item_id: str) -> tuple[int, dict[str, Any]]:
-    for index, item in enumerate(exam.get("items", [])):
-        if str(item.get("itemId")) == item_id:
-            return index, deepcopy(item)
-    raise ApiError(404, "NOT_FOUND", "Exam item not found")
-
-
-def _grade_objective_item(item: Mapping[str, Any], *, now: datetime) -> dict[str, Any]:
-    answer = dict(item.get("answer", {}))
-    answer_raw = answer.get("raw")
-    snapshot = dict(item.get("problemSnapshot", {}))
-    if answer_raw is None:
-        is_correct = False
-    else:
-        problem_type = ProblemType(snapshot["problemType"])
-        normalized = normalize_answer(str(answer_raw), problem_type)
-        correct_answer = dict(snapshot.get("correctAnswer", {}))
-        if problem_type == ProblemType.MULTI_CHOICE:
-            is_correct = normalized.normalizedSet == list(correct_answer.get("normalizedSet", []))
-        else:
-            is_correct = normalized.normalizedText == str(correct_answer.get("normalizedText", ""))
-
-    grading = dict(item.get("grading", {}))
-    grading.update(
-        {
-            "status": GradingStatus.CORRECT.value if is_correct else GradingStatus.INCORRECT.value,
-            "method": "normalized-match",
-            "isCorrect": is_correct,
-            "score": 1.0 if is_correct else 0.0,
-            "feedback": None,
-            "providerModel": None,
-            "rawProviderResponse": None,
-            "gradedAt": now,
-            "retryCount": 0,
-            "selfReportedCorrect": None,
-        }
-    )
-    graded_item = deepcopy(dict(item))
-    graded_item["grading"] = grading
-    return graded_item
-
-
-async def _load_item_image_base64(item: Mapping[str, Any], storage: S3StorageAdapter) -> str | None:
-    snapshot = dict(item.get("problemSnapshot", {}))
-    source_image = dict(snapshot.get("sourceImage") or {})
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        return None
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError:
-        return None
-    return b64encode(image_bytes).decode("ascii")
-
-
-async def _grade_short_answer_item(
-    item: Mapping[str, Any],
-    *,
-    vlm_client: VLMClient,
-    storage: S3StorageAdapter,
-    now: datetime,
-) -> dict[str, Any]:
-    graded_item = deepcopy(dict(item))
-    answer = dict(graded_item.get("answer", {}))
-    answer_raw = answer.get("raw")
-    if answer_raw is None:
-        graded_item["grading"] = {
-            "status": GradingStatus.INCORRECT.value,
-            "method": "normalized-match",
-            "isCorrect": False,
-            "score": 0.0,
-            "feedback": None,
-            "providerModel": None,
-            "rawProviderResponse": None,
-            "gradedAt": now,
-            "retryCount": 0,
-            "selfReportedCorrect": None,
-        }
-        return graded_item
-
-    snapshot = dict(graded_item.get("problemSnapshot", {}))
-    correct_answer = dict(snapshot.get("correctAnswer", {}))
-    image_base64 = await _load_item_image_base64(graded_item, storage)
-
-    retry_count = 0
-    while True:
-        try:
-            result = await vlm_client.grade_short_answer(
-                image_base64=image_base64,
-                user_answer=str(answer_raw),
-                correct_answer=str(correct_answer.get("display", "")),
-            )
-            graded_item["grading"] = {
-                "status": GradingStatus.CORRECT.value if result.is_correct else GradingStatus.INCORRECT.value,
-                "method": "vlm",
-                "isCorrect": result.is_correct,
-                "score": 1.0 if result.is_correct else 0.0,
-                "feedback": result.feedback,
-                "providerModel": result.model,
-                "rawProviderResponse": result.raw_provider_response,
-                "gradedAt": now,
-                "retryCount": retry_count,
-                "selfReportedCorrect": None,
-            }
-            return graded_item
-        except VLMError as exc:
-            if exc.retryable and retry_count < 1:
-                retry_count += 1
-                continue
-            graded_item["grading"] = {
-                "status": GradingStatus.PENDING_REVIEW.value,
-                "method": "vlm",
-                "isCorrect": None,
-                "score": None,
-                "feedback": str(exc),
-                "providerModel": None,
-                "rawProviderResponse": exc.raw_provider_response,
-                "gradedAt": now,
-                "retryCount": retry_count,
-                "selfReportedCorrect": None,
-            }
-            return graded_item
-        except Exception as exc:
-            graded_item["grading"] = {
-                "status": GradingStatus.PENDING_REVIEW.value,
-                "method": "vlm",
-                "isCorrect": None,
-                "score": None,
-                "feedback": str(exc),
-                "providerModel": None,
-                "rawProviderResponse": None,
-                "gradedAt": now,
-                "retryCount": retry_count,
-                "selfReportedCorrect": None,
-            }
-            return graded_item
-
-
-async def _grade_item(
-    item: Mapping[str, Any],
-    *,
-    vlm_client: VLMClient,
-    storage: S3StorageAdapter,
-    now: datetime,
-) -> dict[str, Any]:
-    snapshot = dict(item.get("problemSnapshot", {}))
-    problem_type = ProblemType(snapshot["problemType"])
-    if problem_type == ProblemType.SHORT_ANSWER:
-        return await _grade_short_answer_item(item, vlm_client=vlm_client, storage=storage, now=now)
-    return _grade_objective_item(item, now=now)
-
-
-def _build_tracking_update(tracking: Mapping[str, Any], *, now: datetime, is_correct: bool) -> dict[str, Any]:
-    exposure_count = int(tracking.get("exposureCount", 0)) + 1
-    correct_count = int(tracking.get("correctCount", 0)) + (1 if is_correct else 0)
-    failed_count = int(tracking.get("failedCount", 0)) + (0 if is_correct else 1)
-    return {
-        "exposureCount": exposure_count,
-        "correctCount": correct_count,
-        "failedCount": failed_count,
-        "lastTestedAt": now,
-        "lastAttemptCorrect": is_correct,
-    }
+get_exam_storage = get_s3_storage
+get_exam_vlm_client = get_vlm_client
 
 
 @router.post("", response_model=CreateExamResponse, status_code=201)
@@ -555,7 +81,7 @@ async def create_exam(
             raise ApiError(422, "NO_ELIGIBLE_PROBLEMS", "No eligible problems available")
 
         selected_models = select_problems(
-            [_problem_document_to_model(problem) for problem in eligible_documents],
+            [problem_document_to_model(problem) for problem in eligible_documents],
             payload.maxProblemCount,
             DEFAULT_SELECTION_POLICY,
             rng=Random(),
@@ -572,7 +98,7 @@ async def create_exam(
 
         now = datetime.now(UTC)
         items = [
-            _make_exam_item(problem, order=index)
+            make_exam_item(problem, order=index)
             for index, problem in enumerate(selected_documents, start=1)
         ]
         exam = {
@@ -585,7 +111,7 @@ async def create_exam(
                 "generatedAt": now,
             },
             "items": items,
-            "summary": _build_exam_summary(items),
+            "summary": build_exam_summary(items),
             "createdAt": now,
             "startedAt": None,
             "submittedAt": None,
@@ -596,7 +122,7 @@ async def create_exam(
 
     async with adapter.start_session() as session:
         exam = await session.with_transaction(_transaction)
-    return CreateExamResponse(exam=_serialize_exam(exam))
+    return CreateExamResponse(exam=serialize_exam(exam))
 
 
 @router.get("/active", response_model=ExamResponse)
@@ -619,7 +145,7 @@ async def get_active_exam(
         exam["startedAt"] = now
         exam["updatedAt"] = now
 
-    return ExamResponse(exam=_serialize_exam(exam))
+    return ExamResponse(exam=serialize_exam(exam))
 
 
 @router.get("/{exam_id}", response_model=ExamResponse)
@@ -628,8 +154,8 @@ async def get_exam_detail(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
 ) -> ExamResponse:
-    exam = await _get_owned_exam(database, exam_id, current_user["_id"])
-    return ExamResponse(exam=_serialize_exam(exam))
+    exam = await get_owned_exam(database, exam_id, current_user["_id"])
+    return ExamResponse(exam=serialize_exam(exam))
 
 
 @router.patch("/{exam_id}/items/{item_id}/answer", response_model=SaveAnswerResponse)
@@ -640,11 +166,11 @@ async def save_exam_answer(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
 ) -> SaveAnswerResponse:
-    exam = await _get_owned_exam(database, exam_id, current_user["_id"])
+    exam = await get_owned_exam(database, exam_id, current_user["_id"])
     if exam.get("state") != ExamState.IN_PROGRESS.value:
         raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
 
-    item_index, item = _find_item(exam, item_id)
+    item_index, item = find_item(exam, item_id)
     now = datetime.now(UTC)
     item["answer"] = {
         "raw": payload.answer,
@@ -657,12 +183,12 @@ async def save_exam_answer(
         {
             "$set": {
                 "items": items,
-                "summary": _build_exam_summary(items),
+                "summary": build_exam_summary(items),
                 "updatedAt": now,
             }
         },
     )
-    return SaveAnswerResponse(item=_serialize_exam_item(item, include_correct_answer=False))
+    return SaveAnswerResponse(item=serialize_exam_item(item, include_correct_answer=False))
 
 
 @router.post("/{exam_id}/submit", response_model=ExamResponse)
@@ -674,7 +200,7 @@ async def submit_exam(
     vlm_client: VLMDependency,
     storage: StorageDependency,
 ) -> ExamResponse:
-    exam = await _get_owned_exam(database, exam_id, current_user["_id"])
+    exam = await get_owned_exam(database, exam_id, current_user["_id"])
     if exam.get("state") != ExamState.IN_PROGRESS.value:
         raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
 
@@ -682,9 +208,9 @@ async def submit_exam(
     graded_items: list[dict[str, Any]] = []
     for item in exam.get("items", []):
         graded_items.append(
-            await _grade_item(item, vlm_client=vlm_client, storage=storage, now=grading_time)
+            await grade_item(item, vlm_client=vlm_client, storage=storage, now=grading_time)
         )
-    summary = _build_exam_summary(graded_items)
+    summary = build_exam_summary(graded_items)
 
     async def _transaction(session: Any) -> dict[str, Any]:
         current_exam = await database["exams"].find_one(
@@ -746,7 +272,7 @@ async def submit_exam(
             )
             if problem is None:
                 continue
-            tracking_update = _build_tracking_update(
+            tracking_update = build_tracking_update(
                 dict(problem.get("tracking", {})),
                 now=submitted_at,
                 is_correct=is_correct,
@@ -777,7 +303,7 @@ async def submit_exam(
     except Exception as exc:
         raise ApiError(500, "SUBMISSION_FAILED", "Failed to submit exam") from exc
 
-    return ExamResponse(exam=_serialize_exam(submitted_exam))
+    return ExamResponse(exam=serialize_exam(submitted_exam))
 
 
 @router.post("/{exam_id}/items/{item_id}/self-report", response_model=SelfReportResponse)
@@ -789,11 +315,11 @@ async def self_report_exam_item(
     current_user: CurrentUserDependency,
     adapter: AdapterDependency,
 ) -> SelfReportResponse:
-    exam = await _get_owned_exam(database, exam_id, current_user["_id"])
+    exam = await get_owned_exam(database, exam_id, current_user["_id"])
     if exam.get("state") != ExamState.SUBMITTED.value:
         raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not submitted")
 
-    item_index, item = _find_item(exam, item_id)
+    item_index, item = find_item(exam, item_id)
     grading = dict(item.get("grading", {}))
     if grading.get("status") != GradingStatus.PENDING_REVIEW.value:
         raise ApiError(409, "ITEM_NOT_PENDING_REVIEW", "Exam item is not pending review")
@@ -813,7 +339,7 @@ async def self_report_exam_item(
     updated_item["grading"] = grading
     items = deepcopy(list(exam.get("items", [])))
     items[item_index] = updated_item
-    summary = _build_exam_summary(items)
+    summary = build_exam_summary(items)
 
     async def _transaction(session: Any) -> dict[str, Any]:
         current_exam = await database["exams"].find_one(
@@ -836,7 +362,7 @@ async def self_report_exam_item(
             session=session,
         )
         if problem is not None:
-            tracking_update = _build_tracking_update(
+            tracking_update = build_tracking_update(
                 dict(problem.get("tracking", {})),
                 now=resolved_at,
                 is_correct=payload.isCorrect,
@@ -854,8 +380,8 @@ async def self_report_exam_item(
     async with adapter.start_session() as session:
         updated_exam = await session.with_transaction(_transaction)
     return SelfReportResponse(
-        item=_serialize_exam_item(updated_item, include_correct_answer=True),
-        summary=_serialize_exam_summary(dict(updated_exam["summary"])),
+        item=serialize_exam_item(updated_item, include_correct_answer=True),
+        summary=serialize_exam_summary(dict(updated_exam["summary"])),
     )
 
 
@@ -878,7 +404,7 @@ async def list_exam_history(
                 state=ExamState(document["state"]),
                 createdAt=document["createdAt"],
                 submittedAt=document["submittedAt"],
-                summary=_serialize_exam_summary(dict(document.get("summary", {}))),
+                summary=serialize_exam_summary(dict(document.get("summary", {}))),
             )
             for document in documents
         ],

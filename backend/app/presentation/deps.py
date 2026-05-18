@@ -1,4 +1,5 @@
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Annotated, Any
 
 from fastapi import Depends, Request, Response
 from pymongo.asynchronous.database import AsyncDatabase
@@ -13,11 +14,16 @@ from app.infrastructure.auth.session import (
 )
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document, get_database as get_mongo_database
+from app.infrastructure.storage.s3 import S3StorageAdapter
+from app.infrastructure.vlm.client import VLMClient
 from app.presentation.errors import ApiError
 
 
 def get_database() -> AsyncDatabase[Document]:
     return get_mongo_database()
+
+
+DatabaseDependency = Annotated[AsyncDatabase[Document], Depends(get_database)]
 
 
 def get_app_settings() -> Settings:
@@ -104,3 +110,29 @@ async def get_current_user(
     if user is None:
         raise ApiError(401, "UNAUTHENTICATED", "Authentication required")
     return user
+
+
+def get_s3_storage(
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> S3StorageAdapter:
+    return S3StorageAdapter(settings=settings)
+
+
+def create_vlm_client(
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> VLMClient:
+    return VLMClient(settings=settings)
+
+
+async def get_vlm_client(
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> AsyncIterator[VLMClient]:
+    client = VLMClient(settings=settings)
+    try:
+        yield client
+    finally:
+        await client.aclose()
+
+
+StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
+VLMDependency = Annotated[VLMClient, Depends(get_vlm_client)]

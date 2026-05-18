@@ -50,9 +50,6 @@ class UnauthenticatedMeResponse(BaseModel):
     authenticated: Literal[False]
 
 
-CredentialsDependency = Annotated[CredentialsRequest, Depends()]
-
-
 def normalize_username(username: str) -> str:
     return username.strip()
 
