@@ -231,6 +231,7 @@ describe("ProblemDetailPage", () => {
   });
 
   it("displays image when imageUrl exists", async () => {
+    const user = userEvent.setup();
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -243,14 +244,18 @@ describe("ProblemDetailPage", () => {
 
     renderProblemDetailPage();
 
-    await waitFor(() => {
-      const img = screen.getByAltText("Problem");
-      expect(img).toBeInTheDocument();
-      expect(img).toHaveAttribute("src", "/api/v1/problems/abc123/image");
-    });
+    await screen.findByRole("button", { name: /Show Original Image/i });
+    expect(screen.queryByAltText("Problem")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Show Original Image/i }));
+
+    const img = await screen.findByAltText("Problem");
+    expect(img).toBeInTheDocument();
+    expect(img).toHaveAttribute("src", "/api/v1/problems/abc123/image");
   });
 
   it("hides broken image after load error", async () => {
+    const user = userEvent.setup();
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -262,6 +267,8 @@ describe("ProblemDetailPage", () => {
       });
 
     renderProblemDetailPage();
+
+    await user.click(await screen.findByRole("button", { name: /Show Original Image/i }));
 
     const img = await screen.findByAltText("Problem");
     fireEvent.error(img);
