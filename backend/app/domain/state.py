@@ -83,8 +83,9 @@ def transition_preview_state(
 
 # Exam State Transitions
 EXAM_TRANSITIONS = {
-    ExamState.IN_PROGRESS: [ExamState.SUBMITTED],
+    ExamState.IN_PROGRESS: [ExamState.SUBMITTED, ExamState.DISCARDED],
     ExamState.SUBMITTED: [],
+    ExamState.DISCARDED: [],
 }
 
 

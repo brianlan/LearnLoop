@@ -73,6 +73,7 @@ describe("ProblemDetailPage", () => {
   });
 
   it("renders problem details", async () => {
+    const user = userEvent.setup();
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -92,8 +93,19 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByText("single-choice")).toBeInTheDocument();
     expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
     expect(screen.getByText("algebra")).toBeInTheDocument();
-    expect(screen.getByText("42")).toBeInTheDocument();
     expect(screen.getByText("Reference: abc123")).toBeInTheDocument();
+
+    // Answer is hidden by default
+    expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
+    expect(screen.queryByText("42")).not.toBeInTheDocument();
+
+    // Click to reveal answer
+    await user.click(screen.getByRole("button", { name: "Show Answer" }));
+
+    expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
+
+    // Tracking statistics still show exposure count
     expect(screen.getAllByText("4").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -119,6 +131,41 @@ describe("ProblemDetailPage", () => {
 
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    // Answer input is shown directly in edit mode (no toggle needed)
+    expect(screen.getByDisplayValue("4")).toBeInTheDocument();
+  });
+
+  it("hides answer by default and toggles visibility", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ problem: baseProblem }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => baseTracking,
+      });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+
+    // Answer hidden by default - check for the answer container not existing
+    expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
+
+    // Show answer
+    await user.click(screen.getByRole("button", { name: "Show Answer" }));
+    // The answer should now be visible in a styled container
+    expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+
+    // Hide answer again
+    await user.click(screen.getByRole("button", { name: "Hide Answer" }));
+    expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
   });
 
   it("saves edited problem", async () => {

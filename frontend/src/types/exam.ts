@@ -4,7 +4,7 @@ export type ProblemType =
   | "fill-in-the-blank"
   | "short-answer";
 
-export type ExamState = "in-progress" | "submitted";
+export type ExamState = "in-progress" | "submitted" | "discarded";
 
 export type GradingStatus =
   | "ungraded"
@@ -94,6 +94,7 @@ export interface Exam {
   createdAt: string;
   startedAt?: string;
   submittedAt?: string;
+  discardedAt?: string;
   updatedAt: string;
 }
 
@@ -101,7 +102,8 @@ export interface ExamHistoryItem {
   id: string;
   state: ExamState;
   createdAt: string;
-  submittedAt: string;
+  submittedAt?: string;
+  discardedAt?: string;
   summary: ExamSummary;
 }
 

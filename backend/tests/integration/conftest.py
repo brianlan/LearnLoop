@@ -72,6 +72,10 @@ class FakeCursor:
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
         actual = document.get(key)
+        if isinstance(value, dict) and "$in" in value:
+            if actual not in value["$in"]:
+                return False
+            continue
         if isinstance(actual, list):
             if value not in actual:
                 return False

@@ -168,7 +168,10 @@ class FakeVLMClient:
 
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
-        if document.get(key) != value:
+        if isinstance(value, dict) and "$in" in value:
+            if document.get(key) not in value["$in"]:
+                return False
+        elif document.get(key) != value:
             return False
     return True
 
