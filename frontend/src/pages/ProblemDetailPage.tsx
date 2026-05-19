@@ -315,11 +315,13 @@ export function ProblemDetailPage() {
                 <button
                   type="button"
                   onClick={() => setShowAnswer((prev) => !prev)}
+                  aria-expanded={showAnswer}
+                  aria-controls="answer-container"
                   style={{
                     padding: "0.375rem 0.75rem",
-                    backgroundColor: showAnswer ? "#fee2e2" : "#dcfce7",
+                    backgroundColor: showAnswer ? "#fee2e2" : "#e0f2fe",
                     border: "1px solid",
-                    borderColor: showAnswer ? "#fecaca" : "#bbf7d0",
+                    borderColor: showAnswer ? "#fecaca" : "#bae6fd",
                     borderRadius: "0.25rem",
                     cursor: "pointer",
                     marginBottom: showAnswer ? "0.5rem" : 0,
@@ -329,6 +331,9 @@ export function ProblemDetailPage() {
                 </button>
                 {showAnswer && (
                   <div
+                    id="answer-container"
+                    role="region"
+                    aria-live="polite"
                     style={{
                       padding: "0.5rem",
                       backgroundColor: "#f9fafb",
