@@ -12,6 +12,7 @@ from app.presentation.errors import ApiError, api_error_handler, validation_erro
 from app.presentation.ingestion import router as ingestion_router
 from app.presentation.media import router as media_router
 from app.presentation.problems import router as problems_router
+from app.presentation.tags import router as tags_router
 
 
 def create_app() -> FastAPI:
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(problems_router)
     api_v1_router.include_router(exams_router)
     api_v1_router.include_router(media_router)
+    api_v1_router.include_router(tags_router)
     application.include_router(api_v1_router)
 
     return application

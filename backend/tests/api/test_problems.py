@@ -78,6 +78,13 @@ class FakeCollection:
         self._documents.append(stored)
         return FakeInsertOneResult(stored["_id"])
 
+    async def insert_many(self, documents: list[dict[str, Any]]) -> None:
+        for document in documents:
+            stored = deepcopy(document)
+            if "_id" not in stored:
+                stored["_id"] = ObjectId()
+            self._documents.append(stored)
+
     async def update_one(self, query: dict[str, Any], update: dict[str, Any]) -> FakeUpdateResult:
         for document in self._documents:
             if _matches(document, query):
@@ -113,6 +120,7 @@ class FakeDatabase:
     def __init__(self) -> None:
         self._collections = {
             "problems": FakeCollection(),
+            "tags": FakeCollection(),
             "ingestion_previews": FakeCollection(),
             "users": FakeCollection(),
             "sessions": FakeCollection(),
@@ -139,6 +147,10 @@ class FakeStorage:
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
         actual = document.get(key)
+        if isinstance(value, dict) and "$in" in value:
+            if actual not in value["$in"]:
+                return False
+            continue
         if isinstance(actual, list):
             if value not in actual:
                 return False

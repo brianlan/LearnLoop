@@ -169,6 +169,13 @@ class Session(BaseModel):
     clientMeta: ClientMeta = Field(default_factory=ClientMeta)
 
 
+class Tag(BaseModel):
+    id: Optional[str] = None
+    userId: str
+    name: str
+    createdAt: datetime = Field(default_factory=datetime.utcnow)
+
+
 class IngestionPreview(BaseModel):
     id: Optional[str] = None
     userId: str

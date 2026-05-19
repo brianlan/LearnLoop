@@ -16,6 +16,7 @@ from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
 from app.presentation.helpers import build_problem_image_url, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
+from app.presentation.tags import _register_tags
 
 router = APIRouter(prefix="/problems", tags=["problems"])
 
@@ -266,6 +267,7 @@ async def update_problem(
         updates["graphDsl"] = payload.graphDsl
     if "tags" in payload.model_fields_set and payload.tags is not None:
         updates["tags"] = normalize_tags(payload.tags)
+        await _register_tags(database, current_user["_id"], payload.tags)
     if payload.correctAnswer is not None or payload.problemType is not None:
         updates["correctAnswer"] = normalize_answer(
             raw_correct_answer,
