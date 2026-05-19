@@ -60,6 +60,7 @@ export function ProblemDetailPage() {
   const problemId = id ?? "";
 
   const [isEditing, setIsEditing] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
   const [error, setError] = useState<string | null>(null);
   const tagSuggestions = useTagSuggestions();
@@ -310,7 +311,35 @@ export function ProblemDetailPage() {
                 style={{ width: "100%", marginTop: "0.5rem" }}
               />
             ) : (
-              <div>{problem.correctAnswer?.display}</div>
+              <div style={{ marginTop: "0.5rem" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAnswer((prev) => !prev)}
+                  style={{
+                    padding: "0.375rem 0.75rem",
+                    backgroundColor: showAnswer ? "#fee2e2" : "#dcfce7",
+                    border: "1px solid",
+                    borderColor: showAnswer ? "#fecaca" : "#bbf7d0",
+                    borderRadius: "0.25rem",
+                    cursor: "pointer",
+                    marginBottom: showAnswer ? "0.5rem" : 0,
+                  }}
+                >
+                  {showAnswer ? "Hide Answer" : "Show Answer"}
+                </button>
+                {showAnswer && (
+                  <div
+                    style={{
+                      padding: "0.5rem",
+                      backgroundColor: "#f9fafb",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "0.25rem",
+                    }}
+                  >
+                    {problem.correctAnswer?.display}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}
