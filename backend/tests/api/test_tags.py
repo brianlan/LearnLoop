@@ -61,6 +61,47 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     return True
 
 
+def _eval_pipeline_expr(expr: Any, doc: dict[str, Any]) -> Any:
+    if isinstance(expr, dict):
+        if "$eq" in expr:
+            args = expr["$eq"]
+            return _eval_pipeline_expr(args[0], doc) == _eval_pipeline_expr(args[1], doc)
+        if "$ne" in expr:
+            args = expr["$ne"]
+            return _eval_pipeline_expr(args[0], doc) != _eval_pipeline_expr(args[1], doc)
+        if "$cond" in expr:
+            cond_args = expr["$cond"]
+            condition = _eval_pipeline_expr(cond_args[0], doc)
+            return _eval_pipeline_expr(cond_args[1] if condition else cond_args[2], doc)
+        if "$map" in expr:
+            map_spec = expr["$map"]
+            input_val = _eval_pipeline_expr(map_spec["input"], doc)
+            var_name = map_spec["as"]
+            in_expr = map_spec["in"]
+            result = []
+            for item in input_val:
+                scoped = {**doc, f"$${var_name}": item}
+                result.append(_eval_pipeline_expr(in_expr, scoped))
+            return result
+        if "$filter" in expr:
+            filter_spec = expr["$filter"]
+            input_val = _eval_pipeline_expr(filter_spec["input"], doc)
+            var_name = filter_spec["as"]
+            cond_expr = filter_spec["cond"]
+            result = []
+            for item in input_val:
+                scoped = {**doc, f"$${var_name}": item}
+                if _eval_pipeline_expr(cond_expr, scoped):
+                    result.append(item)
+            return result
+    if isinstance(expr, str):
+        if expr.startswith("$$"):
+            return doc.get(expr)
+        if expr.startswith("$"):
+            return doc.get(expr[1:])
+    return expr
+
+
 class FakeCollection:
     def __init__(self) -> None:
         self._documents: list[dict[str, Any]] = []
@@ -81,20 +122,45 @@ class FakeCollection:
         self._documents.append(stored)
         return FakeInsertOneResult(stored["_id"])
 
-    async def insert_many(self, documents: list[dict[str, Any]]) -> None:
+    async def insert_many(
+        self, documents: list[dict[str, Any]], ordered: bool = True
+    ) -> None:
         for document in documents:
             stored = deepcopy(document)
             if "_id" not in stored:
                 stored["_id"] = ObjectId()
             self._documents.append(stored)
 
-    async def update_one(self, query: dict[str, Any], update: dict[str, Any]) -> FakeUpdateResult:
+    async def update_one(
+        self, query: dict[str, Any], update: dict[str, Any] | list[dict[str, Any]]
+    ) -> FakeUpdateResult:
         for document in self._documents:
             if _matches(document, query):
-                for key, value in update.get("$set", {}).items():
-                    document[key] = deepcopy(value)
+                if isinstance(update, list):
+                    for stage in update:
+                        for key, expr in stage.get("$set", {}).items():
+                            document[key] = _eval_pipeline_expr(expr, document)
+                else:
+                    for key, value in update.get("$set", {}).items():
+                        document[key] = deepcopy(value)
                 return FakeUpdateResult(1)
         return FakeUpdateResult(0)
+
+    async def update_many(
+        self, query: dict[str, Any], update: dict[str, Any] | list[dict[str, Any]]
+    ) -> FakeUpdateResult:
+        count = 0
+        for document in self._documents:
+            if _matches(document, query):
+                if isinstance(update, list):
+                    for stage in update:
+                        for key, expr in stage.get("$set", {}).items():
+                            document[key] = _eval_pipeline_expr(expr, document)
+                else:
+                    for key, value in update.get("$set", {}).items():
+                        document[key] = deepcopy(value)
+                count += 1
+        return FakeUpdateResult(count)
 
     async def delete_one(self, query: dict[str, Any]) -> FakeDeleteResult:
         for index, document in enumerate(self._documents):
@@ -109,6 +175,41 @@ class FakeCollection:
 
     async def count_documents(self, query: dict[str, Any]) -> int:
         return sum(1 for document in self._documents if _matches(document, query))
+
+    def aggregate(self, pipeline: list[dict[str, Any]]) -> FakeCursor:
+        docs = [deepcopy(d) for d in self._documents]
+        for stage in pipeline:
+            if "$match" in stage:
+                docs = [d for d in docs if _matches(d, stage["$match"])]
+            elif "$unwind" in stage:
+                field = stage["$unwind"].lstrip("$")
+                unwound = []
+                for d in docs:
+                    values = d.get(field, [])
+                    if isinstance(values, list):
+                        for v in values:
+                            copy = deepcopy(d)
+                            copy[field] = v
+                            unwound.append(copy)
+                docs = unwound
+            elif "$group" in stage:
+                group_spec = stage["$group"]
+                id_expr = group_spec["_id"]
+                groups: dict[Any, list[dict[str, Any]]] = {}
+                for d in docs:
+                    key = d.get(id_expr.lstrip("$")) if isinstance(id_expr, str) else id_expr
+                    groups.setdefault(key, []).append(d)
+                result = []
+                for key, group_docs in groups.items():
+                    row: dict[str, Any] = {"_id": key}
+                    for acc_name, acc_spec in group_spec.items():
+                        if acc_name == "_id":
+                            continue
+                        if isinstance(acc_spec, dict) and "$sum" in acc_spec:
+                            row[acc_name] = len(group_docs) if acc_spec["$sum"] == 1 else acc_spec["$sum"]
+                    result.append(row)
+                docs = result
+        return FakeCursor(docs)
 
 
 class FakeDatabase:

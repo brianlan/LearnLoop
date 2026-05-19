@@ -64,14 +64,35 @@ def _serialize_tag(tag: dict[str, Any], problem_count: int) -> TagPayload:
     )
 
 
+async def _count_problems_by_tag(
+    database: AsyncDatabase[Document], user_id: ObjectId
+) -> dict[str, int]:
+    """Aggregate problem counts by tag for a user in a single query."""
+    pipeline = [
+        {"$match": {"userId": user_id, "isDeleted": False}},
+        {"$unwind": "$tags"},
+        {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+    ]
+    cursor = database["problems"].aggregate(pipeline)
+    results = await cursor.to_list(length=None)
+    return {r["_id"]: r["count"] for r in results}
+
+
 async def _count_problems_with_tag(database: AsyncDatabase[Document], user_id: ObjectId, tag_name: str) -> int:
+    """Count problems containing a specific tag (for single-tag lookups)."""
     return await database["problems"].count_documents(
         {"userId": user_id, "tags": tag_name, "isDeleted": False}
     )
 
 
 async def _register_tags(database: AsyncDatabase[Document], user_id: ObjectId, tags: list[str]) -> None:
-    """Auto-register any new tags that don't already exist for the user."""
+    """Auto-register any new tags that don't already exist for the user.
+
+    Uses insert_many with ordered=False so that duplicate-key errors from
+    concurrent requests are silently skipped rather than aborting the batch.
+    """
+    from pymongo.errors import BulkWriteError
+
     normalized = normalize_tags(tags)
     if not normalized:
         return
@@ -81,12 +102,15 @@ async def _register_tags(database: AsyncDatabase[Document], user_id: ObjectId, t
     existing_names = {tag["name"] for tag in existing}
     now = datetime.now(UTC)
     new_tags = [
-        {"_id": ObjectId(), "userId": user_id, "name": name, "createdAt": now}
+        {"_id": ObjectId(), "userId": user_id, "name": name, "createdAt": now, "updatedAt": now}
         for name in normalized
         if name not in existing_names
     ]
     if new_tags:
-        await database["tags"].insert_many(new_tags)
+        try:
+            await database["tags"].insert_many(new_tags, ordered=False)
+        except BulkWriteError:
+            pass
 
 
 @router.get("", response_model=TagListResponse)
@@ -96,10 +120,8 @@ async def list_tags(
 ) -> TagListResponse:
     user_id = current_user["_id"]
     tags = await database["tags"].find({"userId": user_id}).sort("name", 1).to_list(length=None)
-    items = []
-    for tag in tags:
-        count = await _count_problems_with_tag(database, user_id, tag["name"])
-        items.append(_serialize_tag(tag, count))
+    counts = await _count_problems_by_tag(database, user_id)
+    items = [_serialize_tag(tag, counts.get(tag["name"], 0)) for tag in tags]
     return TagListResponse(items=items)
 
 
@@ -117,7 +139,7 @@ async def create_tag(
     if existing is not None:
         raise ApiError(409, "DUPLICATE_TAG", "Tag with this name already exists")
     now = datetime.now(UTC)
-    tag = {"_id": ObjectId(), "userId": user_id, "name": name, "createdAt": now}
+    tag = {"_id": ObjectId(), "userId": user_id, "name": name, "createdAt": now, "updatedAt": now}
     await database["tags"].insert_one(tag)
     return TagResponse(tag=_serialize_tag(tag, 0))
 
@@ -156,15 +178,21 @@ async def rename_tag(
     now = datetime.now(UTC)
     await database["tags"].update_one(
         {"_id": tag["_id"]},
-        {"$set": {"name": new_name}},
+        {"$set": {"name": new_name, "updatedAt": now}},
     )
-    problems = await database["problems"].find({"userId": user_id, "tags": old_name}).to_list(length=None)
-    for problem in problems:
-        updated_tags = [new_name if t == old_name else t for t in problem.get("tags", [])]
-        await database["problems"].update_one(
-            {"_id": problem["_id"]},
-            {"$set": {"tags": updated_tags, "updatedAt": now}},
-        )
+    await database["problems"].update_many(
+        {"userId": user_id, "tags": old_name},
+        [
+            {"$set": {
+                "tags": {"$map": {
+                    "input": "$tags",
+                    "as": "t",
+                    "in": {"$cond": [{"$eq": ["$$t", old_name]}, new_name, "$$t"]},
+                }},
+                "updatedAt": now,
+            }},
+        ],
+    )
     tag["name"] = new_name
     count = await _count_problems_with_tag(database, user_id, new_name)
     return TagResponse(tag=_serialize_tag(tag, count))
@@ -186,11 +214,17 @@ async def delete_tag(
     old_name = tag["name"]
     now = datetime.now(UTC)
     await database["tags"].delete_one({"_id": tag["_id"]})
-    problems = await database["problems"].find({"userId": user_id, "tags": old_name}).to_list(length=None)
-    for problem in problems:
-        updated_tags = [t for t in problem.get("tags", []) if t != old_name]
-        await database["problems"].update_one(
-            {"_id": problem["_id"]},
-            {"$set": {"tags": updated_tags, "updatedAt": now}},
-        )
+    await database["problems"].update_many(
+        {"userId": user_id, "tags": old_name},
+        [
+            {"$set": {
+                "tags": {"$filter": {
+                    "input": "$tags",
+                    "as": "t",
+                    "cond": {"$ne": ["$$t", old_name]},
+                }},
+                "updatedAt": now,
+            }},
+        ],
+    )
     return {"ok": True}

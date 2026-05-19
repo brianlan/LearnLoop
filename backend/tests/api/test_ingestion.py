@@ -94,7 +94,7 @@ class FakeCollection:
         self._documents.append(stored_document)
         return FakeInsertOneResult(stored_document["_id"])
 
-    async def insert_many(self, documents: list[dict[str, Any]]) -> None:
+    async def insert_many(self, documents: list[dict[str, Any]], ordered: bool = True) -> None:
         for document in documents:
             stored_document = deepcopy(document)
             if "_id" not in stored_document:

@@ -114,6 +114,7 @@ class FakeCollection:
     async def insert_many(
         self,
         documents: list[dict[str, Any]],
+        ordered: bool = True,
         session: Any | None = None,
     ) -> None:
         del session
