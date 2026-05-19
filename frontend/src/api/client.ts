@@ -31,9 +31,12 @@ export interface MeResponse {
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(
+    const error = new Error(
       errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`,
     );
+    (error as Error & { code?: string; status?: number }).code = errorData.error?.code;
+    (error as Error & { code?: string; status?: number }).status = response.status;
+    throw error;
   }
   return response.json() as Promise<T>;
 }

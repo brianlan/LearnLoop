@@ -306,6 +306,39 @@ async def submit_exam(
     return ExamResponse(exam=serialize_exam(submitted_exam))
 
 
+@router.post("/{exam_id}/discard", response_model=ExamResponse)
+async def discard_exam(
+    exam_id: str,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> ExamResponse:
+    exam = await get_owned_exam(database, exam_id, current_user["_id"])
+    if exam.get("state") != ExamState.IN_PROGRESS.value:
+        raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
+
+    discarded_at = datetime.now(UTC)
+    next_state = transition_exam_state(ExamState(exam["state"]), ExamState.DISCARDED)
+    await database["exams"].update_one(
+        {"_id": exam["_id"]},
+        {
+            "$set": {
+                "state": next_state.value,
+                "discardedAt": discarded_at,
+                "updatedAt": discarded_at,
+            }
+        },
+    )
+    updated_exam = deepcopy(exam)
+    updated_exam.update(
+        {
+            "state": next_state.value,
+            "discardedAt": discarded_at,
+            "updatedAt": discarded_at,
+        }
+    )
+    return ExamResponse(exam=serialize_exam(updated_exam))
+
+
 @router.post("/{exam_id}/items/{item_id}/self-report", response_model=SelfReportResponse)
 async def self_report_exam_item(
     exam_id: str,
@@ -392,9 +425,12 @@ async def list_exam_history(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ExamHistoryResponse:
-    query = {"userId": current_user["_id"], "state": ExamState.SUBMITTED.value}
+    query = {
+        "userId": current_user["_id"],
+        "state": {"$in": [ExamState.SUBMITTED.value, ExamState.DISCARDED.value]},
+    }
     total = await database["exams"].count_documents(query)
-    cursor = database["exams"].find(query).sort("submittedAt", -1)
+    cursor = database["exams"].find(query).sort("updatedAt", -1)
     cursor = cursor.skip((page - 1) * page_size).limit(page_size)
     documents = await cursor.to_list(length=page_size)
     return ExamHistoryResponse(
@@ -403,7 +439,8 @@ async def list_exam_history(
                 id=str(document["_id"]),
                 state=ExamState(document["state"]),
                 createdAt=document["createdAt"],
-                submittedAt=document["submittedAt"],
+                submittedAt=document.get("submittedAt"),
+                discardedAt=document.get("discardedAt"),
                 summary=serialize_exam_summary(dict(document.get("summary", {}))),
             )
             for document in documents

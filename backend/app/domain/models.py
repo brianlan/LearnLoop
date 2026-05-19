@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ class ProblemType(str, Enum):
 class ExamState(str, Enum):
     IN_PROGRESS = "in-progress"
     SUBMITTED = "submitted"
+    DISCARDED = "discarded"
 
 
 class IngestionPreviewStatus(str, Enum):
@@ -153,8 +154,8 @@ class User(BaseModel):
     id: Optional[str] = None
     username: str
     passwordHash: str
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
-    updatedAt: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     lastLoginAt: Optional[datetime] = None
     status: str = "active"
 
@@ -162,9 +163,9 @@ class User(BaseModel):
 class Session(BaseModel):
     id: Optional[str] = None
     userId: str
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expiresAt: datetime
-    lastSeenAt: datetime = Field(default_factory=datetime.utcnow)
+    lastSeenAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     invalidatedAt: Optional[datetime] = None
     clientMeta: ClientMeta = Field(default_factory=ClientMeta)
 
@@ -176,8 +177,8 @@ class IngestionPreview(BaseModel):
     sourceImage: SourceImage
     extraction: Extraction = Field(default_factory=Extraction)
     editableDraft: EditableDraft = Field(default_factory=EditableDraft)
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
-    updatedAt: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expiresAt: datetime
 
 
@@ -194,8 +195,8 @@ class Problem(BaseModel):
     tracking: Tracking = Field(default_factory=Tracking)
     isDeleted: bool = False
     deletedAt: Optional[datetime] = None
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
-    updatedAt: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Exam(BaseModel):
@@ -205,7 +206,8 @@ class Exam(BaseModel):
     configSnapshot: ExamConfigSnapshot
     items: List[ExamItem] = Field(default_factory=list)
     summary: ExamSummary
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     startedAt: Optional[datetime] = None
     submittedAt: Optional[datetime] = None
-    updatedAt: datetime = Field(default_factory=datetime.utcnow)
+    discardedAt: Optional[datetime] = None
+    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
