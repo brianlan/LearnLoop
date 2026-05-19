@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse, ExamResponse } from "@/types/exam";
+import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse } from "@/types/exam";
 
 function formatDate(dateString?: string) {
   if (!dateString) {
@@ -114,14 +114,6 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
   );
 }
 
-async function checkActiveExam(): Promise<ExamResponse | null> {
-  try {
-    return await api.get<ExamResponse>("/exams/active");
-  } catch {
-    return null;
-  }
-}
-
 export function ExamsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -135,13 +127,7 @@ export function ExamsPage() {
   });
 
   const createExamMutation = useMutation({
-    mutationFn: async (req: CreateExamRequest) => {
-      const activeExam = await checkActiveExam();
-      if (activeExam) {
-        throw new Error("ACTIVE_EXAM_EXISTS");
-      }
-      return api.post<CreateExamResponse>("/exams", req);
-    },
+    mutationFn: (req: CreateExamRequest) => api.post<CreateExamResponse>("/exams", req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["exams"] });
       navigate("/exams/active");
@@ -152,7 +138,8 @@ export function ExamsPage() {
     try {
       await createExamMutation.mutateAsync({ maxProblemCount: 10 });
     } catch (err) {
-      if (err instanceof Error && err.message === "ACTIVE_EXAM_EXISTS") {
+      const code = (err as Error & { code?: string }).code;
+      if (code === "ACTIVE_EXAM_EXISTS") {
         setShowActiveExamPrompt(true);
       }
     }

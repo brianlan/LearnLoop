@@ -296,6 +296,13 @@ export function ActiveExamPage() {
       queryClient.invalidateQueries({ queryKey: ["exams"] });
       navigate("/exams");
     },
+    onError: (err) => {
+      const code = (err as Error & { code?: string }).code;
+      if (code === "INVALID_EXAM_STATE") {
+        queryClient.invalidateQueries({ queryKey: ["exams"] });
+        navigate("/exams");
+      }
+    },
   });
 
   const isMutating = submitExamMutation.isPending || discardExamMutation.isPending;
