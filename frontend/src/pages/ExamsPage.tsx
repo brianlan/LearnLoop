@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse } from "@/types/exam";
+import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse, ExamResponse } from "@/types/exam";
 
 function formatDate(dateString?: string) {
   if (!dateString) {
@@ -21,7 +21,22 @@ function formatScore(score: number | null) {
   return `${Math.round(score * 100)}%`;
 }
 
+function getStateStyle(state: string) {
+  switch (state) {
+    case "submitted":
+      return { backgroundColor: "#dcfce7", color: "#166534" };
+    case "discarded":
+      return { backgroundColor: "#fee2e2", color: "#991b1b" };
+    default:
+      return { backgroundColor: "#fef3c7", color: "#92400e" };
+  }
+}
+
 function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () => void }) {
+  const stateStyle = getStateStyle(exam.state);
+  const completionDate = exam.state === "discarded" ? exam.discardedAt : exam.submittedAt;
+  const completionLabel = exam.state === "discarded" ? "Discarded" : "Submitted";
+
   return (
     <button
       type="button"
@@ -55,8 +70,7 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
           style={{
             padding: "0.25rem 0.75rem",
             borderRadius: "9999px",
-            backgroundColor: exam.state === "submitted" ? "#dcfce7" : "#fef3c7",
-            color: exam.state === "submitted" ? "#166534" : "#92400e",
+            ...stateStyle,
             alignSelf: "flex-start",
             fontSize: "0.875rem",
             fontWeight: 600,
@@ -76,12 +90,12 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
         }}
       >
         <div>
-          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Submitted</div>
-          <div>{formatDate(exam.submittedAt)}</div>
+          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>{completionLabel}</div>
+          <div>{formatDate(completionDate)}</div>
         </div>
         <div>
           <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Score</div>
-          <div>{formatScore(exam.summary.score)}</div>
+          <div>{exam.state === "discarded" ? "—" : formatScore(exam.summary.score)}</div>
         </div>
         <div>
           <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Total</div>
@@ -89,20 +103,30 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
         </div>
         <div>
           <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Correct</div>
-          <div>{exam.summary.correctProblems}</div>
+          <div>{exam.state === "discarded" ? "—" : exam.summary.correctProblems}</div>
         </div>
         <div>
           <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Incorrect</div>
-          <div>{exam.summary.failedProblems}</div>
+          <div>{exam.state === "discarded" ? "—" : exam.summary.failedProblems}</div>
         </div>
       </div>
     </button>
   );
 }
 
+async function checkActiveExam(): Promise<ExamResponse | null> {
+  try {
+    return await api.get<ExamResponse>("/exams/active");
+  } catch {
+    return null;
+  }
+}
+
 export function ExamsPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [showActiveExamPrompt, setShowActiveExamPrompt] = useState(false);
   const pageSize = 10;
 
   const { data, isLoading, error } = useQuery<ExamHistoryResponse>({
@@ -111,9 +135,28 @@ export function ExamsPage() {
   });
 
   const createExamMutation = useMutation({
-    mutationFn: (req: CreateExamRequest) => api.post<CreateExamResponse>("/exams", req),
-    onSuccess: () => navigate("/exams/active"),
+    mutationFn: async (req: CreateExamRequest) => {
+      const activeExam = await checkActiveExam();
+      if (activeExam) {
+        throw new Error("ACTIVE_EXAM_EXISTS");
+      }
+      return api.post<CreateExamResponse>("/exams", req);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["exams"] });
+      navigate("/exams/active");
+    },
   });
+
+  const handleCreateExam = async () => {
+    try {
+      await createExamMutation.mutateAsync({ maxProblemCount: 10 });
+    } catch (err) {
+      if (err instanceof Error && err.message === "ACTIVE_EXAM_EXISTS") {
+        setShowActiveExamPrompt(true);
+      }
+    }
+  };
 
   const exams = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -139,7 +182,7 @@ export function ExamsPage() {
         </div>
         <button
           type="button"
-          onClick={() => createExamMutation.mutate({ maxProblemCount: 10 })}
+          onClick={() => void handleCreateExam()}
           disabled={createExamMutation.isPending}
           style={{
             padding: "0.75rem 1rem",
@@ -153,12 +196,53 @@ export function ExamsPage() {
         >
           {createExamMutation.isPending ? "Creating..." : "Start New Exam"}
         </button>
-        {createExamMutation.error && (
-          <p style={{ color: "#dc2626", fontSize: "0.875rem", marginTop: "0.5rem" }}>
-            {(createExamMutation.error as Error).message}
-          </p>
-        )}
       </div>
+
+      {showActiveExamPrompt && (
+        <div
+          style={{
+            padding: "1rem",
+            backgroundColor: "#fef3c7",
+            border: "1px solid #fcd34d",
+            borderRadius: "0.5rem",
+            marginBottom: "1rem",
+          }}
+        >
+          <p style={{ margin: "0 0 0.75rem" }}>
+            An active exam already exists. Would you like to continue it?
+          </p>
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            <button
+              type="button"
+              onClick={() => navigate("/exams/active")}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: "#2563eb",
+                color: "white",
+                border: "none",
+                borderRadius: "0.375rem",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Continue Exam
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowActiveExamPrompt(false)}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: "#f3f4f6",
+                border: "1px solid #d1d5db",
+                borderRadius: "0.375rem",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <div>Loading exams...</div>

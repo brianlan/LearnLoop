@@ -89,6 +89,7 @@ class ExamPayload(BaseModel):
     createdAt: datetime
     startedAt: datetime | None = None
     submittedAt: datetime | None = None
+    discardedAt: datetime | None = None
     updatedAt: datetime
 
 
@@ -113,7 +114,8 @@ class ExamHistoryItemPayload(BaseModel):
     id: str
     state: ExamState
     createdAt: datetime
-    submittedAt: datetime
+    submittedAt: datetime | None = None
+    discardedAt: datetime | None = None
     summary: ExamSummaryPayload
 
 
@@ -207,5 +209,6 @@ def serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
         createdAt=exam["createdAt"],
         startedAt=exam.get("startedAt"),
         submittedAt=exam.get("submittedAt"),
+        discardedAt=exam.get("discardedAt"),
         updatedAt=exam["updatedAt"],
     )

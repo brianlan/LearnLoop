@@ -15,6 +15,7 @@ class ProblemType(str, Enum):
 class ExamState(str, Enum):
     IN_PROGRESS = "in-progress"
     SUBMITTED = "submitted"
+    DISCARDED = "discarded"
 
 
 class IngestionPreviewStatus(str, Enum):
@@ -208,4 +209,5 @@ class Exam(BaseModel):
     createdAt: datetime = Field(default_factory=datetime.utcnow)
     startedAt: Optional[datetime] = None
     submittedAt: Optional[datetime] = None
+    discardedAt: Optional[datetime] = None
     updatedAt: datetime = Field(default_factory=datetime.utcnow)

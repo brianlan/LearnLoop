@@ -38,6 +38,10 @@ async function submitExam(examId: string): Promise<ExamResponse> {
   return api.post<ExamResponse>(`/exams/${examId}/submit`, {});
 }
 
+async function discardExam(examId: string): Promise<ExamResponse> {
+  return api.post<ExamResponse>(`/exams/${examId}/discard`, {});
+}
+
 function parseOptions(text: string): string[] {
   const lines = text.split("\n");
   const options: string[] = [];
@@ -243,6 +247,7 @@ export function ActiveExamPage() {
   const [localAnswer, setLocalAnswer] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   const {
     data: examData,
@@ -280,9 +285,20 @@ export function ActiveExamPage() {
   const submitExamMutation = useMutation({
     mutationFn: (examId: string) => submitExam(examId),
     onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["exams"] });
       navigate(`/exams/${data.exam.id}`);
     },
   });
+
+  const discardExamMutation = useMutation({
+    mutationFn: (examId: string) => discardExam(examId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["exams"] });
+      navigate("/exams");
+    },
+  });
+
+  const isMutating = submitExamMutation.isPending || discardExamMutation.isPending;
 
   useEffect(() => {
     if (currentItem) {
@@ -329,6 +345,15 @@ export function ActiveExamPage() {
     await handleSaveAnswer();
     submitExamMutation.mutate(exam.id);
   }, [exam, handleSaveAnswer, submitExamMutation]);
+
+  const handleDiscard = useCallback(() => {
+    setShowDiscardConfirm(true);
+  }, []);
+
+  const confirmDiscard = useCallback(() => {
+    if (!exam) return;
+    discardExamMutation.mutate(exam.id);
+  }, [exam, discardExamMutation]);
 
   const handleCreateExam = useCallback(() => {
     createExamMutation.mutate({ maxProblemCount: 10 });
@@ -410,10 +435,10 @@ export function ActiveExamPage() {
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button
             onClick={handlePrevious}
-            disabled={isFirstItem || submitExamMutation.isPending}
+            disabled={isFirstItem || isMutating}
             style={{
               padding: "0.5rem 1rem",
-              cursor: isFirstItem || submitExamMutation.isPending ? "not-allowed" : "pointer",
+              cursor: isFirstItem || isMutating ? "not-allowed" : "pointer",
               opacity: isFirstItem ? 0.5 : 1,
             }}
           >
@@ -421,30 +446,46 @@ export function ActiveExamPage() {
           </button>
           <button
             onClick={handleNext}
-            disabled={isLastItem || submitExamMutation.isPending}
+            disabled={isLastItem || isMutating}
             style={{
               padding: "0.5rem 1rem",
-              cursor: isLastItem || submitExamMutation.isPending ? "not-allowed" : "pointer",
+              cursor: isLastItem || isMutating ? "not-allowed" : "pointer",
               opacity: isLastItem ? 0.5 : 1,
             }}
           >
             Next
           </button>
         </div>
-        <button
-          onClick={handleSubmit}
-          disabled={submitExamMutation.isPending}
-          style={{
-            padding: "0.5rem 1.5rem",
-            backgroundColor: submitExamMutation.isPending ? "#6ee7b7" : "#10b981",
-            color: "white",
-            border: "none",
-            borderRadius: "0.25rem",
-            cursor: submitExamMutation.isPending ? "not-allowed" : "pointer",
-          }}
-        >
-          {submitExamMutation.isPending ? "Submitting..." : "Submit Exam"}
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button
+            onClick={handleDiscard}
+            disabled={isMutating}
+            style={{
+              padding: "0.5rem 1rem",
+              backgroundColor: "#fee2e2",
+              color: "#dc2626",
+              border: "1px solid #fecaca",
+              borderRadius: "0.25rem",
+              cursor: isMutating ? "not-allowed" : "pointer",
+            }}
+          >
+            Discard
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={isMutating}
+            style={{
+              padding: "0.5rem 1.5rem",
+              backgroundColor: submitExamMutation.isPending ? "#6ee7b7" : "#10b981",
+              color: "white",
+              border: "none",
+              borderRadius: "0.25rem",
+              cursor: isMutating ? "not-allowed" : "pointer",
+            }}
+          >
+            {submitExamMutation.isPending ? "Submitting..." : "Submit Exam"}
+          </button>
+        </div>
       </div>
 
       <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
@@ -476,7 +517,7 @@ export function ActiveExamPage() {
             onChange={setLocalAnswer}
             onBlur={handleBlur}
             options={options}
-            disabled={submitExamMutation.isPending}
+            disabled={isMutating}
           />
           <div
             style={{ marginTop: "0.5rem", fontSize: "0.875rem", color:
@@ -519,6 +560,40 @@ export function ActiveExamPage() {
                 }}
               >
                 {submitExamMutation.isPending ? "Submitting..." : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDiscardConfirm && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ backgroundColor: "white", padding: "2rem", borderRadius: "0.5rem", maxWidth: "400px" }}>
+            <h2 style={{ marginTop: 0 }}>Discard Exam?</h2>
+            <p>
+              This exam will be closed and marked as discarded. It will appear in your exam history but will not affect your statistics.
+            </p>
+            <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowDiscardConfirm(false)}
+                disabled={discardExamMutation.isPending}
+                style={{ padding: "0.5rem 1rem" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void confirmDiscard()}
+                disabled={discardExamMutation.isPending}
+                style={{
+                  padding: "0.5rem 1rem",
+                  backgroundColor: discardExamMutation.isPending ? "#fca5a5" : "#dc2626",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.25rem",
+                  cursor: discardExamMutation.isPending ? "not-allowed" : "pointer",
+                }}
+              >
+                {discardExamMutation.isPending ? "Discarding..." : "Discard Exam"}
               </button>
             </div>
           </div>
