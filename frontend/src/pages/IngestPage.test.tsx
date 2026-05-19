@@ -3,6 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { IngestPage } from "./IngestPage";
 
+vi.mock("@/hooks/useTagSuggestions", () => ({
+  useTagSuggestions: () => [],
+}));
+
 const mockNavigate = vi.fn();
 
 vi.mock("react-router-dom", async () => {

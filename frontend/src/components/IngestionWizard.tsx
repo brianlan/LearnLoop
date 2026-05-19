@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent } from "react";
 import { GraphSandbox } from "./GraphSandbox";
+import { TagInput } from "./TagInput";
 import api from "@/api/client";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
 interface PreviewSourceImage {
   bucket: string;
@@ -86,7 +88,7 @@ function mapPreviewToFormData(preview: IngestionPreview) {
     problemType: preview.draft.problemType || "",
     graphDsl: preview.draft.graphDsl || "",
     correctAnswer: preview.draft.correctAnswer || "",
-    tags: preview.draft.tags.join(", "),
+    tags: preview.draft.tags,
   };
 }
 
@@ -210,17 +212,18 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     problemType: string;
     graphDsl: string;
     correctAnswer: string;
-    tags: string;
+    tags: string[];
   }>({
     text: "",
     problemType: "",
     graphDsl: "",
     correctAnswer: "",
-    tags: "",
+    tags: [] as string[],
   });
 
   const [graphError, setGraphError] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const tagSuggestions = useTagSuggestions();
 
   useEffect(() => {
     const savedDraft = localStorage.getItem("ingestion-draft");
@@ -232,7 +235,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
           problemType: draft.problemType || "",
           graphDsl: draft.graphDsl || "",
           correctAnswer: draft.correctAnswer || "",
-          tags: draft.tags || "",
+          tags: Array.isArray(draft.tags) ? draft.tags : [],
         });
       } catch {
       }
@@ -394,7 +397,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
   }, [previewId, startPolling]);
 
   const handleFieldChange = useCallback(
-    (field: keyof typeof formData, value: string) => {
+    (field: keyof typeof formData, value: string | string[]) => {
       setFormData((prev) => ({ ...prev, [field]: value }));
     },
     []
@@ -412,7 +415,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
         problemType: formData.problemType,
         graphDsl: formData.graphDsl,
         correctAnswer: formData.correctAnswer,
-        tags: formData.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        tags: formData.tags,
       });
 
       const result = await confirmPreview(previewId);
@@ -812,32 +815,12 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
             </div>
 
             <div style={{ marginBottom: "24px" }}>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  color: "#374151",
-                }}
-              >
-                Tags (comma-separated)
-              </label>
-              <input
-                type="text"
-                value={formData.tags}
-                onChange={(e) => handleFieldChange("tags", e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  fontSize: "14px",
-                  fontFamily: "inherit",
-                  boxSizing: "border-box",
-                }}
-                placeholder="e.g., difficult, exam, chapter-1..."
-                data-testid="tags-input"
+              <TagInput
+                tags={formData.tags}
+                onChange={(tags) => handleFieldChange("tags", tags)}
+                suggestions={tagSuggestions}
+                placeholder="Add a tag..."
+                testId="tags-input"
               />
             </div>
 
@@ -1003,7 +986,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                   Tags
                 </div>
                 <div style={{ fontSize: "14px", color: "#111827" }}>
-                  {formData.tags || "(empty)"}
+                  {formData.tags.length > 0 ? formData.tags.join(", ") : "(empty)"}
                 </div>
               </div>
             </div>
