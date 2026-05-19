@@ -18,6 +18,7 @@ from app.presentation.deps import DatabaseDependency, StorageDependency, create_
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags, parse_object_id
 from app.presentation.ingestion_serialization import ProblemResponse, PreviewResponse, serialize_preview, serialize_problem, _enum_value
+from app.presentation.tags import _register_tags
 from app.presentation.ingestion_workflow import (
     DEFAULT_SYNC_WAIT_SECONDS,
     _clean_optional_text,
@@ -338,4 +339,5 @@ async def confirm_preview(
             {"$set": {"status": claimed_preview["status"], "updatedAt": now}},
         )
         raise ApiError(500, "PROBLEM_CREATION_FAILED", "Failed to create problem. Please retry confirmation.")
+    await _register_tags(database, user["_id"], list(draft.get("tags", [])))
     return ProblemResponse(problem=serialize_problem(problem))

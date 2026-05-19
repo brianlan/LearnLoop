@@ -170,6 +170,14 @@ class Session(BaseModel):
     clientMeta: ClientMeta = Field(default_factory=ClientMeta)
 
 
+class Tag(BaseModel):
+    id: Optional[str] = None
+    userId: str
+    name: str
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class IngestionPreview(BaseModel):
     id: Optional[str] = None
     userId: str

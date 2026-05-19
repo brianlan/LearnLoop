@@ -1,10 +1,13 @@
+from contextlib import asynccontextmanager
 from typing import cast
 
 from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
+from pymongo import ASCENDING
 from starlette.types import ExceptionHandler
 
 from app.infrastructure.config.settings import get_settings
+from app.infrastructure.storage.mongo import get_database
 from app.observability import configure_logging
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
@@ -12,12 +15,24 @@ from app.presentation.errors import ApiError, api_error_handler, validation_erro
 from app.presentation.ingestion import router as ingestion_router
 from app.presentation.media import router as media_router
 from app.presentation.problems import router as problems_router
+from app.presentation.tags import router as tags_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    database = get_database()
+    await database["tags"].create_index(
+        [("userId", ASCENDING), ("name", ASCENDING)],
+        unique=True,
+        name="user_tag_unique",
+    )
+    yield
 
 
 def create_app() -> FastAPI:
     configure_logging(get_settings())
 
-    application = FastAPI(title="LearnLoop API")
+    application = FastAPI(title="LearnLoop API", lifespan=lifespan)
     application.add_exception_handler(
         ApiError, cast(ExceptionHandler, api_error_handler)
     )
@@ -35,6 +50,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(problems_router)
     api_v1_router.include_router(exams_router)
     api_v1_router.include_router(media_router)
+    api_v1_router.include_router(tags_router)
     application.include_router(api_v1_router)
 
     return application

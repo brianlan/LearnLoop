@@ -37,6 +37,21 @@ class FakeDeleteResult:
         self.deleted_count = deleted_count
 
 
+class FakeCursor:
+    def __init__(self, documents: list[dict[str, Any]]) -> None:
+        self._documents = [deepcopy(document) for document in documents]
+
+    def sort(self, field: str, direction: int) -> FakeCursor:
+        reverse = direction < 0
+        self._documents.sort(key=lambda document: document.get(field), reverse=reverse)
+        return self
+
+    async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
+        if length is None:
+            return [deepcopy(document) for document in self._documents]
+        return [deepcopy(document) for document in self._documents[:length]]
+
+
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
         actual = document.get(key)
@@ -79,6 +94,13 @@ class FakeCollection:
         self._documents.append(stored_document)
         return FakeInsertOneResult(stored_document["_id"])
 
+    async def insert_many(self, documents: list[dict[str, Any]], ordered: bool = True) -> None:
+        for document in documents:
+            stored_document = deepcopy(document)
+            if "_id" not in stored_document:
+                stored_document["_id"] = ObjectId()
+            self._documents.append(stored_document)
+
     async def update_one(self, query: dict[str, Any], update: dict[str, Any]) -> FakeUpdateResult:
         for document in self._documents:
             if _matches(document, query):
@@ -107,6 +129,13 @@ class FakeCollection:
                 return FakeDeleteResult(1)
         return FakeDeleteResult(0)
 
+    def find(self, query: dict[str, Any]) -> FakeCursor:
+        matching = [document for document in self._documents if _matches(document, query)]
+        return FakeCursor(matching)
+
+    async def count_documents(self, query: dict[str, Any]) -> int:
+        return sum(1 for document in self._documents if _matches(document, query))
+
 
 class FakeDatabase:
     def __init__(self) -> None:
@@ -115,6 +144,7 @@ class FakeDatabase:
             "sessions": FakeCollection(),
             "ingestion_previews": FakeCollection(),
             "problems": FakeCollection(),
+            "tags": FakeCollection(),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:
