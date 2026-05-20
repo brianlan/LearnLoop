@@ -1,21 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-
-interface TagItem {
-  id: string;
-  name: string;
-  createdAt: string;
-  problemCount: number;
-}
-
-interface TagsResponse {
-  items: TagItem[];
-}
-
-interface TagResponse {
-  tag: TagItem;
-}
+import type { TagItem, TagsResponse, TagResponse } from "@/types/tag";
 
 export function TagsPage() {
   const queryClient = useQueryClient();
@@ -77,6 +63,12 @@ export function TagsPage() {
       queryClient.invalidateQueries({ queryKey: ["tags"] });
       queryClient.invalidateQueries({ queryKey: ["problems"] });
       setDeletingTag(null);
+      setError(null);
+    },
+    onError: (err) => {
+      if (err instanceof Error) {
+        setError(err.message);
+      }
     },
   });
 

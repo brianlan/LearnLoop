@@ -1,16 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-
-interface TagItem {
-  id: string;
-  name: string;
-  createdAt: string;
-  problemCount: number;
-}
-
-interface TagsResponse {
-  items: TagItem[];
-}
+import type { TagsResponse } from "@/types/tag";
 
 export function useTagSuggestions() {
   const { data } = useQuery({
