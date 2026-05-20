@@ -34,6 +34,11 @@ class GradingStatus(str, Enum):
     PENDING_REVIEW = "pending-review"
 
 
+class GradingMethod(str, Enum):
+    NORMALIZED_MATCH = "normalized-match"
+    VLM = "vlm"
+
+
 # Nested Models
 class CorrectAnswer(BaseModel):
     display: str
@@ -219,3 +224,13 @@ class Exam(BaseModel):
     submittedAt: Optional[datetime] = None
     discardedAt: Optional[datetime] = None
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PracticeAttempt(BaseModel):
+    id: Optional[str] = None
+    userId: str
+    problemId: str
+    submittedAnswer: Optional[str] = None
+    gradingStatus: GradingStatus = GradingStatus.UNGRADED
+    gradingMethod: Optional[GradingMethod] = None
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
