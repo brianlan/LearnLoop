@@ -237,3 +237,4 @@ frontend/.vite/
 *.png
 *.jpg
 review_results.md
+scheduled_tasks.lock

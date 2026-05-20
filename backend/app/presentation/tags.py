@@ -73,7 +73,7 @@ async def _count_problems_by_tag(
         {"$unwind": "$tags"},
         {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
     ]
-    cursor = database["problems"].aggregate(pipeline)
+    cursor = await database["problems"].aggregate(pipeline)
     results = await cursor.to_list(length=None)
     return {r["_id"]: r["count"] for r in results}
 

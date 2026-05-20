@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import type { TagsResponse } from "@/types/tag";
 
 interface Problem {
   id: string;
@@ -26,10 +27,6 @@ interface ProblemsResponse {
   total: number;
   page: number;
   pageSize: number;
-}
-
-interface TagsResponse {
-  items: string[];
 }
 
 const PROBLEM_TYPE_OPTIONS = [
@@ -67,8 +64,8 @@ export function ProblemsPage() {
   const { data: tags = [] } = useQuery({
     queryKey: ["tags"],
     queryFn: async () => {
-      const response = await api.get<TagsResponse>("/problems/tags");
-      return response.items;
+      const response = await api.get<TagsResponse>("/tags");
+      return response.items?.map((item) => item.name) ?? [];
     },
   });
 
