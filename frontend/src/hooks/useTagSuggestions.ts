@@ -7,7 +7,7 @@ export function useTagSuggestions() {
     queryKey: ["tags"],
     queryFn: async () => {
       const response = await api.get<TagsResponse>("/tags");
-      return response.items.map((item) => item.name);
+      return response.items?.map((item) => item.name) ?? [];
     },
     staleTime: 30_000,
   });

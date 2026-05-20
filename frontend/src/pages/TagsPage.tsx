@@ -19,6 +19,8 @@ export function TagsPage() {
     },
   });
 
+  const tags = tagsData?.items ?? [];
+
   const createMutation = useMutation({
     mutationFn: async (name: string) => {
       const response = await api.post<TagResponse>("/tags", { name });
@@ -108,8 +110,6 @@ export function TagsPage() {
       deleteMutation.mutate(deletingTag.id);
     }
   };
-
-  const tags = tagsData?.items || [];
 
   return (
     <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
