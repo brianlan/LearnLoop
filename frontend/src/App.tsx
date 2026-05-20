@@ -13,6 +13,7 @@ import { ActiveExamPage } from "@/pages/ActiveExamPage";
 import { ExamsPage } from "@/pages/ExamsPage";
 import { ExamDetailPage } from "@/pages/ExamDetailPage";
 import { TagsPage } from "@/pages/TagsPage";
+import { PracticePage } from "@/pages/PracticePage";
 
 function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -24,6 +25,7 @@ function AppShell({ children }: { children: ReactNode }) {
     { label: "Ingest", path: "/ingest" },
     { label: "Exams", path: "/exams" },
     { label: "Tags", path: "/tags" },
+    { label: "Practice", path: "/practice" },
   ];
 
   const handleLogout = async () => {
@@ -161,6 +163,14 @@ export function AppRoutes() {
         element={
           <ProtectedPage>
             <TagsPage />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/practice"
+        element={
+          <ProtectedPage>
+            <PracticePage />
           </ProtectedPage>
         }
       />
