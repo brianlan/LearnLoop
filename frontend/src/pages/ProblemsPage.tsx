@@ -28,8 +28,15 @@ interface ProblemsResponse {
   pageSize: number;
 }
 
-interface TagsResponse {
-  items: string[];
+interface TagItem {
+  id: string;
+  name: string;
+  createdAt: string;
+  problemCount: number;
+}
+
+interface TagsListResponse {
+  items: TagItem[];
 }
 
 const PROBLEM_TYPE_OPTIONS = [
@@ -67,8 +74,8 @@ export function ProblemsPage() {
   const { data: tags = [] } = useQuery({
     queryKey: ["tags"],
     queryFn: async () => {
-      const response = await api.get<TagsResponse>("/problems/tags");
-      return response.items;
+      const response = await api.get<TagsListResponse>("/tags");
+      return response.items.map((item) => item.name);
     },
   });
 

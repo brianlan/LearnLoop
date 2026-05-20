@@ -58,7 +58,11 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ items: ["algebra", "deduction", "geometry"] }),
+        json: async () => ({ items: [
+          { id: "t1", name: "algebra", createdAt: "", problemCount: 1 },
+          { id: "t2", name: "deduction", createdAt: "", problemCount: 1 },
+          { id: "t3", name: "geometry", createdAt: "", problemCount: 0 },
+        ] }),
       });
 
     renderProblemsPage();
@@ -117,7 +121,10 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ items: ["algebra", "geometry"] }),
+        json: async () => ({ items: [
+          { id: "t1", name: "algebra", createdAt: "", problemCount: 1 },
+          { id: "t2", name: "geometry", createdAt: "", problemCount: 0 },
+        ] }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -168,7 +175,10 @@ describe("ProblemsPage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ items: ["algebra", "geometry"] }),
+        json: async () => ({ items: [
+          { id: "t1", name: "algebra", createdAt: "", problemCount: 1 },
+          { id: "t2", name: "geometry", createdAt: "", problemCount: 0 },
+        ] }),
       })
       .mockResolvedValueOnce({
         ok: true,
