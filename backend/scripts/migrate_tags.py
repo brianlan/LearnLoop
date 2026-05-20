@@ -45,7 +45,7 @@ async def migrate_tags(dry_run: bool = False) -> None:
         }},
     ]
 
-    cursor = db["problems"].aggregate(pipeline)
+    cursor = await db["problems"].aggregate(pipeline)
     user_tag_groups = await cursor.to_list(length=None)
 
     total_users = len(user_tag_groups)
