@@ -12,7 +12,7 @@ export function TagsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const { data: tagsData, isLoading } = useQuery({
-    queryKey: ["tags"],
+    queryKey: ["tags", "full"],
     queryFn: async () => {
       const response = await api.get<TagsResponse>("/tags");
       return response;
