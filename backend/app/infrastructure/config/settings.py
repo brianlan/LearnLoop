@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     session_secure: bool = Field(default=False)
     session_samesite: Literal["lax", "strict", "none"] = Field(default="lax")
 
+    # Practice mode configuration
+    practice_cooldown_days: int = Field(default=7, ge=0)
+    practice_last_wrong_weight: float = Field(default=1.0, ge=0)
+    practice_failure_rate_weight: float = Field(default=1.0, ge=0)
+    practice_recency_weight: float = Field(default=1.0, ge=0)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

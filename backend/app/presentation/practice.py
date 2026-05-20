@@ -1,0 +1,319 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from typing import Annotated, Any
+
+from bson import ObjectId
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+
+from app.domain.models import GradingStatus, GradingMethod, ProblemType
+from app.domain.normalization import normalize_answer
+from app.domain.practice_selection import (
+    PracticeSelectionConfig,
+    select_practice_problem,
+)
+from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.storage.mongo import Document
+from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
+from app.infrastructure.vlm.client import VLMClient, VLMError
+from app.presentation.deps import (
+    DatabaseDependency,
+    get_current_user,
+    get_app_settings,
+    get_s3_storage,
+    get_vlm_client,
+)
+from app.presentation.helpers import build_problem_image_url, parse_object_id
+
+router = APIRouter(prefix="/practice", tags=["practice"])
+
+
+CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
+SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
+StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
+VLMDependency = Annotated[VLMClient, Depends(get_vlm_client)]
+
+
+class PracticeNextResponse(BaseModel):
+    status: str
+    problem: dict[str, Any] | None = None
+
+
+class PracticeAttemptRequest(BaseModel):
+    problemId: str
+    submittedAnswer: str
+
+
+class PracticeAttemptResult(BaseModel):
+    gradingStatus: str
+    gradingMethod: str
+
+
+class PracticeAttemptDetail(BaseModel):
+    submittedAnswer: str
+    gradingStatus: str
+    gradingMethod: str
+    createdAt: datetime
+
+
+class PracticeHistorySummary(BaseModel):
+    totalAttempts: int
+    correctCount: int
+    wrongCount: int
+    lastPracticedAt: datetime | None = None
+    lastResult: str | None = None
+
+
+class PracticeHistoryItem(BaseModel):
+    problemId: str
+    problemText: str
+    problemType: str
+    imageUrl: str | None = None
+    summary: PracticeHistorySummary
+    attempts: list[PracticeAttemptDetail]
+
+
+class PracticeHistoryResponse(BaseModel):
+    items: list[PracticeHistoryItem]
+
+
+@router.post("/next", response_model=PracticeNextResponse)
+async def get_next_practice_problem(
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    settings: SettingsDependency,
+) -> PracticeNextResponse:
+    problem_documents = await database["problems"].find(
+        {"userId": current_user["_id"], "isDeleted": False}
+    ).to_list(length=None)
+
+    eligible_documents = [
+        problem
+        for problem in problem_documents
+        if problem.get("correctAnswer")
+        and str(problem.get("correctAnswer", {}).get("display", "")).strip()
+    ]
+
+    if not eligible_documents:
+        return PracticeNextResponse(status="no_problems")
+
+    config = PracticeSelectionConfig(
+        cooldown_days=settings.practice_cooldown_days,
+        last_wrong_weight=settings.practice_last_wrong_weight,
+        failure_rate_weight=settings.practice_failure_rate_weight,
+        recency_weight=settings.practice_recency_weight,
+    )
+
+    from app.presentation.exam_helpers import problem_document_to_model
+
+    problem_models = [problem_document_to_model(p) for p in eligible_documents]
+    now = datetime.now(UTC)
+
+    result = select_practice_problem(problem_models, config, now)
+
+    if result.status != "ok" or result.selected_problem is None:
+        return PracticeNextResponse(status=result.status)
+
+    selected_id = result.selected_problem.id
+    document_by_id = {str(p["_id"]): p for p in eligible_documents}
+    selected_document = document_by_id.get(selected_id)
+
+    if selected_document is None:
+        return PracticeNextResponse(status="no_problems")
+
+    tracking = selected_document.get("tracking", {})
+    tracking["exposureCount"] = tracking.get("exposureCount", 0) + 1
+    tracking["lastTestedAt"] = now
+
+    await database["problems"].update_one(
+        {"_id": selected_document["_id"]},
+        {"$set": {"tracking": tracking, "updatedAt": now}},
+    )
+
+    problem_response = {
+        "id": str(selected_document["_id"]),
+        "text": selected_document["text"],
+        "type": selected_document["problemType"],
+    }
+
+    if selected_document.get("sourceImage"):
+        problem_response["imageUrl"] = build_problem_image_url(selected_document["_id"])
+
+    return PracticeNextResponse(status="ok", problem=problem_response)
+
+
+async def _load_problem_image_base64(
+    problem: dict[str, Any],
+    storage: S3StorageAdapter,
+) -> str | None:
+    source_image = problem.get("sourceImage")
+    if not source_image:
+        return None
+    bucket = source_image.get("bucket")
+    object_key = source_image.get("objectKey")
+    if not bucket or not object_key:
+        return None
+    from base64 import b64encode
+    try:
+        image_bytes = storage.get_object(str(bucket), str(object_key))
+        return b64encode(image_bytes).decode("ascii")
+    except StorageObjectNotFoundError:
+        return None
+
+
+async def _grade_answer(
+    problem: dict[str, Any],
+    answer: str,
+    vlm_client: VLMClient,
+    storage: S3StorageAdapter,
+    now: datetime,
+) -> tuple[GradingStatus, GradingMethod]:
+    problem_type = ProblemType(problem["problemType"])
+    correct_answer = problem.get("correctAnswer", {})
+
+    if problem_type != ProblemType.SHORT_ANSWER:
+        normalized = normalize_answer(answer, problem_type)
+        if problem_type == ProblemType.MULTI_CHOICE:
+            is_correct = normalized.normalizedSet == list(correct_answer.get("normalizedSet", []))
+        else:
+            is_correct = normalized.normalizedText == str(correct_answer.get("normalizedText", ""))
+        status = GradingStatus.CORRECT if is_correct else GradingStatus.INCORRECT
+        return status, GradingMethod.NORMALIZED_MATCH
+
+    image_base64 = await _load_problem_image_base64(problem, storage)
+    retry_count = 0
+    while True:
+        try:
+            result = await vlm_client.grade_short_answer(
+                image_base64=image_base64,
+                user_answer=answer,
+                correct_answer=str(correct_answer.get("display", "")),
+            )
+            status = GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT
+            return status, GradingMethod.VLM
+        except VLMError as exc:
+            if exc.retryable and retry_count < 1:
+                retry_count += 1
+                continue
+            return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+        except Exception:
+            return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+
+
+@router.post("/attempts", response_model=PracticeAttemptResult, status_code=201)
+async def submit_practice_attempt(
+    payload: PracticeAttemptRequest,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    vlm_client: VLMDependency,
+    storage: StorageDependency,
+) -> PracticeAttemptResult:
+    problem_id = parse_object_id(payload.problemId, resource_name="Problem")
+    problem = await database["problems"].find_one(
+        {"_id": problem_id, "userId": current_user["_id"], "isDeleted": False}
+    )
+    if problem is None:
+        from app.presentation.errors import ApiError
+        raise ApiError(404, "NOT_FOUND", "Problem not found")
+
+    now = datetime.now(UTC)
+    grading_status, grading_method = await _grade_answer(
+        problem, payload.submittedAnswer, vlm_client, storage, now
+    )
+
+    attempt = {
+        "_id": ObjectId(),
+        "userId": current_user["_id"],
+        "problemId": problem_id,
+        "submittedAnswer": payload.submittedAnswer,
+        "gradingStatus": grading_status.value,
+        "gradingMethod": grading_method.value,
+        "createdAt": now,
+    }
+    await database["practice_attempts"].insert_one(attempt)
+
+    tracking = problem.get("tracking", {})
+    is_correct = grading_status == GradingStatus.CORRECT
+    tracking["correctCount"] = tracking.get("correctCount", 0) + (1 if is_correct else 0)
+    tracking["failedCount"] = tracking.get("failedCount", 0) + (0 if is_correct else 1)
+    tracking["lastTestedAt"] = now
+    tracking["lastAttemptCorrect"] = is_correct
+
+    await database["problems"].update_one(
+        {"_id": problem_id},
+        {"$set": {"tracking": tracking, "updatedAt": now}},
+    )
+
+    return PracticeAttemptResult(
+        gradingStatus=grading_status.value,
+        gradingMethod=grading_method.value,
+    )
+
+
+@router.get("/history", response_model=PracticeHistoryResponse)
+async def get_practice_history(
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> PracticeHistoryResponse:
+    attempts = await database["practice_attempts"].find(
+        {"userId": current_user["_id"]}
+    ).sort("createdAt", -1).to_list(length=None)
+
+    if not attempts:
+        return PracticeHistoryResponse(items=[])
+
+    problem_ids = [ObjectId(a["problemId"]) for a in attempts]
+    problems = await database["problems"].find(
+        {"_id": {"$in": problem_ids}}
+    ).to_list(length=None)
+    problems_by_id = {str(p["_id"]): p for p in problems}
+
+    attempts_by_problem: dict[str, list[dict[str, Any]]] = {}
+    for attempt in attempts:
+        pid = str(attempt["problemId"])
+        attempts_by_problem.setdefault(pid, []).append(attempt)
+
+    items = []
+    for problem_id, problem_attempts in attempts_by_problem.items():
+        problem = problems_by_id.get(problem_id)
+        if problem is None:
+            continue
+
+        total = len(problem_attempts)
+        correct = sum(1 for a in problem_attempts if a["gradingStatus"] == GradingStatus.CORRECT.value)
+        wrong = sum(1 for a in problem_attempts if a["gradingStatus"] == GradingStatus.INCORRECT.value)
+
+        last_practiced = max(a["createdAt"] for a in problem_attempts)
+        last_result = problem_attempts[0]["gradingStatus"] if problem_attempts else None
+
+        attempt_details = [
+            PracticeAttemptDetail(
+                submittedAnswer=a["submittedAnswer"],
+                gradingStatus=a["gradingStatus"],
+                gradingMethod=a["gradingMethod"],
+                createdAt=a["createdAt"],
+            )
+            for a in problem_attempts
+        ]
+
+        item = PracticeHistoryItem(
+            problemId=problem_id,
+            problemText=problem.get("text", ""),
+            problemType=problem.get("problemType", ""),
+            imageUrl=build_problem_image_url(problem["_id"]) if problem.get("sourceImage") else None,
+            summary=PracticeHistorySummary(
+                totalAttempts=total,
+                correctCount=correct,
+                wrongCount=wrong,
+                lastPracticedAt=last_practiced,
+                lastResult=last_result,
+            ),
+            attempts=attempt_details,
+        )
+        items.append(item)
+
+    items.sort(key=lambda x: x.summary.lastPracticedAt or datetime.min, reverse=True)
+
+    return PracticeHistoryResponse(items=items)
