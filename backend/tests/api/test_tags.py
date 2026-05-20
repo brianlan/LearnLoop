@@ -176,7 +176,7 @@ class FakeCollection:
     async def count_documents(self, query: dict[str, Any]) -> int:
         return sum(1 for document in self._documents if _matches(document, query))
 
-    def aggregate(self, pipeline: list[dict[str, Any]]) -> FakeCursor:
+    async def aggregate(self, pipeline: list[dict[str, Any]]) -> FakeCursor:
         docs = [deepcopy(d) for d in self._documents]
         for stage in pipeline:
             if "$match" in stage:
