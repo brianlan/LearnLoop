@@ -347,6 +347,24 @@ async def test_history_pagination(client: AsyncClient, practice_app: FastAPI) ->
 
 
 @pytest.mark.asyncio
+async def test_history_pagination_rejects_invalid_limit(client: AsyncClient, practice_app: FastAPI) -> None:
+    response = await client.get("/api/v1/practice/history?limit=0")
+    assert response.status_code == 422
+
+    response = await client.get("/api/v1/practice/history?limit=-1")
+    assert response.status_code == 422
+
+    response = await client.get("/api/v1/practice/history?limit=201")
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_history_pagination_rejects_invalid_offset(client: AsyncClient, practice_app: FastAPI) -> None:
+    response = await client.get("/api/v1/practice/history?offset=-1")
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_no_correct_answer_in_result(client: AsyncClient, practice_app: FastAPI) -> None:
     database: FakeDatabase = practice_app.state.fake_database
     user_id = practice_app.state.user["_id"]

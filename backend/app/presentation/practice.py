@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.domain.models import GradingStatus, GradingMethod, ProblemType
@@ -257,8 +257,8 @@ async def submit_practice_attempt(
 async def get_practice_history(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> PracticeHistoryResponse:
     attempts = await database["practice_attempts"].find(
         {"userId": current_user["_id"]}
