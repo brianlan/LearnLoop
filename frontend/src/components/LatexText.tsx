@@ -19,7 +19,16 @@ function isValidInlineDelimiter(
   const charBefore = beforeIndex >= 0 ? text[beforeIndex] : null;
   const charAfter = afterIndex < text.length ? text[afterIndex] : null;
 
-  if (/\d/.test(fullMatch[1])) {
+  const content = fullMatch.slice(1, -1).trim();
+  // Reject currency-like patterns:
+  // - Pure integer (e.g., $5$, $10$, $100$)
+  // - Decimal with 2 decimal places (typical price format, e.g., $5.00$, $10.50$)
+  // - Thousands format (e.g., $1,000$)
+  if (
+    /^\d+$/.test(content) ||
+    /^\d+[.,]\d{2}$/.test(content) ||
+    /^\d{1,3},\d{3}/.test(content)
+  ) {
     return false;
   }
   if (charBefore !== null && !/[\s({\[,;:!?]/.test(charBefore)) {
