@@ -8,6 +8,38 @@ interface LatexTextProps {
   "data-testid"?: string;
 }
 
+function isValidInlineDelimiter(
+  text: string,
+  matchIndex: number,
+  fullMatch: string
+): boolean {
+  const beforeIndex = matchIndex - 1;
+  const afterIndex = matchIndex + fullMatch.length;
+
+  const charBefore = beforeIndex >= 0 ? text[beforeIndex] : null;
+  const charAfter = afterIndex < text.length ? text[afterIndex] : null;
+
+  const content = fullMatch.slice(1, -1).trim();
+  // Reject currency-like patterns:
+  // - Pure integer (e.g., $5$, $10$, $100$)
+  // - Decimal with 2 decimal places (typical price format, e.g., $5.00$, $10.50$)
+  // - Thousands format (e.g., $1,000$)
+  if (
+    /^\d+$/.test(content) ||
+    /^\d+[.,]\d{2}$/.test(content) ||
+    /^\d{1,3},\d{3}/.test(content)
+  ) {
+    return false;
+  }
+  if (charBefore !== null && !/[\s({\[,;:!?]/.test(charBefore)) {
+    return false;
+  }
+  if (charAfter !== null && !/[\s)}\].,;:!?]/.test(charAfter)) {
+    return false;
+  }
+  return true;
+}
+
 function renderLatex(text: string): string {
   const parts: string[] = [];
   let remaining = text;
@@ -17,6 +49,7 @@ function renderLatex(text: string): string {
     const inlineMatch = remaining.match(/\$([^\$\n]+?)\$/);
     let match: RegExpMatchArray | null = null;
     let isDisplay = false;
+    let skipInline = false;
 
     if (displayMatch && inlineMatch) {
       const displayIndex = remaining.indexOf(displayMatch[0]);
@@ -42,6 +75,17 @@ function renderLatex(text: string): string {
     }
 
     const matchIndex = remaining.indexOf(match[0]);
+
+    if (!isDisplay && !isValidInlineDelimiter(remaining, matchIndex, match[0])) {
+      skipInline = true;
+    }
+
+    if (skipInline) {
+      parts.push(escapeHtml(remaining.slice(0, matchIndex + 1)));
+      remaining = remaining.slice(matchIndex + 1);
+      continue;
+    }
+
     if (matchIndex > 0) {
       parts.push(escapeHtml(remaining.slice(0, matchIndex)));
     }

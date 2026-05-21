@@ -80,4 +80,50 @@ describe("LatexText", () => {
     render(<LatexText text="hello" data-testid="latex-output" />);
     expect(screen.getByTestId("latex-output")).toBeInTheDocument();
   });
+
+  it("does not treat currency dollar signs as LaTeX", () => {
+    const { container } = render(<LatexText text="Price is $5.00$" />);
+    expect(container.innerHTML).not.toContain("katex-wrapper");
+    expect(container.textContent).toContain("$5.00$");
+  });
+
+  it("does not treat integer dollar amounts as LaTeX", () => {
+    const { container } = render(<LatexText text="I have $5$ and $10$" />);
+    expect(container.innerHTML).not.toContain("katex-wrapper");
+  });
+
+  it("renders inline LaTeX at start of string", () => {
+    const { container } = render(<LatexText text="$x^2$ is squared" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
+
+  it("renders inline LaTeX followed by punctuation", () => {
+    const { container } = render(<LatexText text="Value $x^2$, then" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
+
+  it("renders inline LaTeX after opening parenthesis", () => {
+    const { container } = render(<LatexText text="($x^2$)" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
+
+  it("renders LaTeX starting with a digit", () => {
+    const { container } = render(<LatexText text="$2+2$" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
+
+  it("renders polynomial LaTeX starting with a digit", () => {
+    const { container } = render(<LatexText text="$3x^2 + 2x + 1$" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
+
+  it("renders decimal in math mode", () => {
+    const { container } = render(<LatexText text="$0.5$" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
+
+  it("renders factorial starting with digit", () => {
+    const { container } = render(<LatexText text="$100!$" />);
+    expect(container.innerHTML).toContain("katex-wrapper");
+  });
 });
