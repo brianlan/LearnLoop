@@ -26,6 +26,7 @@ from app.presentation.deps import (
     get_vlm_client,
 )
 from app.presentation.helpers import build_problem_image_url, parse_object_id
+from app.presentation.exam_helpers import problem_document_to_model
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -105,8 +106,6 @@ async def get_next_practice_problem(
         failure_rate_weight=settings.practice_failure_rate_weight,
         recency_weight=settings.practice_recency_weight,
     )
-
-    from app.presentation.exam_helpers import problem_document_to_model
 
     problem_models = [problem_document_to_model(p) for p in eligible_documents]
     now = datetime.now(UTC)
