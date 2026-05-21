@@ -188,6 +188,10 @@ The canonical template lives in `.env.example`.
 | `SESSION_COOKIE_NAME` | Session cookie name | `ll_session` |
 | `SESSION_SECURE` | HTTPS-only session cookie toggle | `false` |
 | `SESSION_SAMESITE` | Session cookie same-site policy | `lax` |
+| `PRACTICE_COOLDOWN_DAYS` | Days before revisiting a correctly answered problem | `7` |
+| `PRACTICE_LAST_WRONG_WEIGHT` | Weight for problems last answered incorrectly | `1.0` |
+| `PRACTICE_FAILURE_RATE_WEIGHT` | Weight for problems with high failure rates | `1.0` |
+| `PRACTICE_RECENCY_WEIGHT` | Weight for recently tested problems | `1.0` |
 
 ## Health checks and parity notes
 
