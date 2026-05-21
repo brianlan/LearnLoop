@@ -17,6 +17,7 @@ from app.presentation.media import router as media_router
 from app.presentation.problems import router as problems_router
 from app.presentation.tags import router as tags_router
 from app.presentation.practice import router as practice_router
+from app.presentation.settings import router as settings_router
 
 
 @asynccontextmanager
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(media_router)
     api_v1_router.include_router(tags_router)
     api_v1_router.include_router(practice_router)
+    api_v1_router.include_router(settings_router)
     application.include_router(api_v1_router)
 
     return application
