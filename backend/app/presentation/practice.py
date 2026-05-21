@@ -183,8 +183,7 @@ async def _grade_answer(
         return status, GradingMethod.NORMALIZED_MATCH
 
     image_base64 = await _load_problem_image_base64(problem, storage)
-    retry_count = 0
-    while True:
+    for _ in range(2):
         try:
             result = await vlm_client.grade_short_answer(
                 image_base64=image_base64,
@@ -194,12 +193,12 @@ async def _grade_answer(
             status = GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT
             return status, GradingMethod.VLM
         except VLMError as exc:
-            if exc.retryable and retry_count < 1:
-                retry_count += 1
-                continue
-            return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+            if not exc.retryable:
+                return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+            continue
         except Exception:
             return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+    return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
 
 
 @router.post("/attempts", response_model=PracticeAttemptResult, status_code=201)
