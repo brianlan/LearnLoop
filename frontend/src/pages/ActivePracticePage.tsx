@@ -164,10 +164,6 @@ export function ActivePracticePage() {
     nextMutation.mutate();
   };
 
-  const handleSkip = () => {
-    nextMutation.mutate();
-  };
-
   const handleQuit = () => {
     queryClient.invalidateQueries({ queryKey: ["practice-history"] });
     navigate("/practice");
@@ -187,7 +183,7 @@ export function ActivePracticePage() {
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button
             type="button"
-            onClick={handleSkip}
+            onClick={handleNext}
             disabled={isMutating}
             data-testid="skip-button"
             style={{
