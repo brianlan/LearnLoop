@@ -56,3 +56,38 @@ jobs:
       - name: Run frontend unit tests
         working-directory: frontend
         run: npm test -- --run
+
+  docker-smoke-test:
+    name: Docker Compose Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e46817165094654c6fae5c3f524c6d6e735042ae # v3.11.0
+
+      - name: Create .env file
+        run: |
+          echo "VLM_API_KEY=ci-placeholder" >> .env
+          echo "S3_ACCESS_KEY=minioadmin" >> .env
+          echo "S3_SECRET_KEY=minioadmin" >> .env
+
+      - name: Build and start services
+        run: docker compose up -d --build --wait
+        env:
+          DOCKER_BUILDKIT: 1
+
+      - name: Create S3 bucket
+        run: docker compose --profile bootstrap run --rm rustfs-bootstrap
+
+      - name: Smoke test backend health
+        run: curl -fsS http://localhost:8000/api/health
+
+      - name: Smoke test frontend health
+        run: curl -fsS http://localhost:8080/healthz
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes
