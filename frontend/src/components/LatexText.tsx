@@ -11,7 +11,6 @@ interface LatexTextProps {
 function renderLatex(text: string): string {
   const parts: string[] = [];
   let remaining = text;
-  let key = 0;
 
   while (remaining.length > 0) {
     const displayMatch = remaining.match(/\$\$([\s\S]*?)\$\$/);
@@ -61,7 +60,6 @@ function renderLatex(text: string): string {
     }
 
     remaining = remaining.slice(matchIndex + match[0].length);
-    key++;
   }
 
   return parts.join("");
