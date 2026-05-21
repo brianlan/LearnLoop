@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.domain.models import GradingStatus, GradingMethod, ProblemType
@@ -80,6 +80,8 @@ class PracticeHistoryItem(BaseModel):
 
 class PracticeHistoryResponse(BaseModel):
     items: list[PracticeHistoryItem]
+    total: int
+    hasMore: bool
 
 
 @router.post("/next", response_model=PracticeNextResponse)
@@ -183,8 +185,7 @@ async def _grade_answer(
         return status, GradingMethod.NORMALIZED_MATCH
 
     image_base64 = await _load_problem_image_base64(problem, storage)
-    retry_count = 0
-    while True:
+    for _ in range(2):
         try:
             result = await vlm_client.grade_short_answer(
                 image_base64=image_base64,
@@ -194,12 +195,12 @@ async def _grade_answer(
             status = GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT
             return status, GradingMethod.VLM
         except VLMError as exc:
-            if exc.retryable and retry_count < 1:
-                retry_count += 1
-                continue
-            return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+            if not exc.retryable:
+                return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+            continue
         except Exception:
             return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+    return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
 
 
 @router.post("/attempts", response_model=PracticeAttemptResult, status_code=201)
@@ -255,13 +256,15 @@ async def submit_practice_attempt(
 async def get_practice_history(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> PracticeHistoryResponse:
     attempts = await database["practice_attempts"].find(
         {"userId": current_user["_id"]}
     ).sort("createdAt", -1).to_list(length=None)
 
     if not attempts:
-        return PracticeHistoryResponse(items=[])
+        return PracticeHistoryResponse(items=[], total=0, hasMore=False)
 
     problem_ids = [ObjectId(a["problemId"]) for a in attempts]
     problems = await database["problems"].find(
@@ -315,4 +318,8 @@ async def get_practice_history(
 
     items.sort(key=lambda x: x.summary.lastPracticedAt or datetime.min, reverse=True)
 
-    return PracticeHistoryResponse(items=items)
+    total_count = len(items)
+    has_more = offset + limit < total_count
+    paginated_items = items[offset : offset + limit]
+
+    return PracticeHistoryResponse(items=paginated_items, total=total_count, hasMore=has_more)
