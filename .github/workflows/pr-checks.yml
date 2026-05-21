@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e46817165094654c6fae5c3f524c6d6e735042ae # v3.11.0
+        uses: docker/setup-buildx-action@v3
 
       - name: Create .env file
         run: |
