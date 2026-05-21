@@ -8,6 +8,29 @@ interface LatexTextProps {
   "data-testid"?: string;
 }
 
+function isValidInlineDelimiter(
+  text: string,
+  matchIndex: number,
+  fullMatch: string
+): boolean {
+  const beforeIndex = matchIndex - 1;
+  const afterIndex = matchIndex + fullMatch.length;
+
+  const charBefore = beforeIndex >= 0 ? text[beforeIndex] : null;
+  const charAfter = afterIndex < text.length ? text[afterIndex] : null;
+
+  if (/\d/.test(fullMatch[1])) {
+    return false;
+  }
+  if (charBefore !== null && !/[\s({\[,;:!?]/.test(charBefore)) {
+    return false;
+  }
+  if (charAfter !== null && !/[\s)}\].,;:!?]/.test(charAfter)) {
+    return false;
+  }
+  return true;
+}
+
 function renderLatex(text: string): string {
   const parts: string[] = [];
   let remaining = text;
@@ -17,6 +40,7 @@ function renderLatex(text: string): string {
     const inlineMatch = remaining.match(/\$([^\$\n]+?)\$/);
     let match: RegExpMatchArray | null = null;
     let isDisplay = false;
+    let skipInline = false;
 
     if (displayMatch && inlineMatch) {
       const displayIndex = remaining.indexOf(displayMatch[0]);
@@ -42,6 +66,17 @@ function renderLatex(text: string): string {
     }
 
     const matchIndex = remaining.indexOf(match[0]);
+
+    if (!isDisplay && !isValidInlineDelimiter(remaining, matchIndex, match[0])) {
+      skipInline = true;
+    }
+
+    if (skipInline) {
+      parts.push(escapeHtml(remaining.slice(0, matchIndex + 1)));
+      remaining = remaining.slice(matchIndex + 1);
+      continue;
+    }
+
     if (matchIndex > 0) {
       parts.push(escapeHtml(remaining.slice(0, matchIndex)));
     }
