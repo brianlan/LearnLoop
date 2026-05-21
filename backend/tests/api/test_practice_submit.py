@@ -262,7 +262,10 @@ async def test_submit_nonexistent_problem(client: AsyncClient, practice_app: Fas
 async def test_history_returns_empty(client: AsyncClient, practice_app: FastAPI) -> None:
     response = await client.get("/api/v1/practice/history")
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    data = response.json()
+    assert data["items"] == []
+    assert data["total"] == 0
+    assert data["hasMore"] is False
 
 
 @pytest.mark.asyncio
@@ -286,14 +289,61 @@ async def test_history_returns_data(client: AsyncClient, practice_app: FastAPI) 
 
     response = await client.get("/api/v1/practice/history")
     assert response.status_code == 200
-    items = response.json()["items"]
+    data = response.json()
+    items = data["items"]
     assert len(items) == 1
+    assert data["total"] == 1
+    assert data["hasMore"] is False
     item = items[0]
     assert item["problemId"] == str(problem["_id"])
     assert item["problemText"] == "Test problem"
     assert item["summary"]["totalAttempts"] == 1
     assert item["summary"]["correctCount"] == 1
     assert len(item["attempts"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_pagination(client: AsyncClient, practice_app: FastAPI) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+
+    problems = [make_problem(user_id, text=f"Problem {i}") for i in range(5)]
+    database.seed("problems", problems)
+
+    now = datetime.now(UTC)
+    attempts = []
+    for i, problem in enumerate(problems):
+        attempts.append({
+            "_id": ObjectId(),
+            "userId": user_id,
+            "problemId": problem["_id"],
+            "submittedAnswer": "answer",
+            "gradingStatus": "correct",
+            "gradingMethod": "normalized-match",
+            "createdAt": now - timedelta(hours=i),
+        })
+    database.seed("practice_attempts", attempts)
+
+    response = await client.get("/api/v1/practice/history?limit=2&offset=0")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 5
+    assert data["hasMore"] is True
+
+    response = await client.get("/api/v1/practice/history?limit=2&offset=2")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 5
+    assert data["hasMore"] is True
+
+    response = await client.get("/api/v1/practice/history?limit=2&offset=4")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["total"] == 5
+    assert data["hasMore"] is False
 
 
 @pytest.mark.asyncio

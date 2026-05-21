@@ -80,6 +80,8 @@ class PracticeHistoryItem(BaseModel):
 
 class PracticeHistoryResponse(BaseModel):
     items: list[PracticeHistoryItem]
+    total: int
+    hasMore: bool
 
 
 @router.post("/next", response_model=PracticeNextResponse)
@@ -255,13 +257,15 @@ async def submit_practice_attempt(
 async def get_practice_history(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    limit: int = 50,
+    offset: int = 0,
 ) -> PracticeHistoryResponse:
     attempts = await database["practice_attempts"].find(
         {"userId": current_user["_id"]}
     ).sort("createdAt", -1).to_list(length=None)
 
     if not attempts:
-        return PracticeHistoryResponse(items=[])
+        return PracticeHistoryResponse(items=[], total=0, hasMore=False)
 
     problem_ids = [ObjectId(a["problemId"]) for a in attempts]
     problems = await database["problems"].find(
@@ -315,4 +319,8 @@ async def get_practice_history(
 
     items.sort(key=lambda x: x.summary.lastPracticedAt or datetime.min, reverse=True)
 
-    return PracticeHistoryResponse(items=items)
+    total_count = len(items)
+    has_more = offset + limit < total_count
+    paginated_items = items[offset : offset + limit]
+
+    return PracticeHistoryResponse(items=paginated_items, total=total_count, hasMore=has_more)
