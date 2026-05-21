@@ -2,8 +2,11 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+RUN sed -i 's|http://dl-cdn.alpinelinux.org|http://mirrors.bfsu.edu.cn|g' /etc/apk/repositories \
+    && apk update
+
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com
 
 COPY . .
 RUN npm run build
