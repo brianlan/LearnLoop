@@ -120,6 +120,8 @@ services:
         condition: service_healthy
       rustfs:
         condition: service_healthy
+    env_file:
+      - ./backend/.env
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_HOST: ${APP_HOST:-0.0.0.0}
