@@ -28,6 +28,8 @@ interface PreviewExtraction {
   rawGraphDsl?: string | null;
   rawCorrectAnswer?: string | null;
   rawTags?: string[];
+  failureCode?: string | null;
+  failureMessage?: string | null;
   [key: string]: unknown;
 }
 
@@ -570,6 +572,37 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                 <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
                   The AI was unable to extract problem data from the image.
                 </p>
+                {(preview?.extraction?.failureCode || preview?.extraction?.failureMessage) && (
+                  <details style={{ marginBottom: "12px" }}>
+                    <summary style={{ cursor: "pointer", color: "#7f1d1d", fontSize: "13px" }}>
+                      View error details
+                    </summary>
+                    <div
+                      style={{
+                        marginTop: "8px",
+                        padding: "12px",
+                        backgroundColor: "#fee2e2",
+                        borderRadius: "4px",
+                        fontSize: "12px",
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {preview.extraction.failureCode && (
+                        <div style={{ marginBottom: "8px" }}>
+                          <span style={{ fontWeight: 600 }}>Code:</span> {preview.extraction.failureCode}
+                        </div>
+                      )}
+                      {preview.extraction.failureMessage && (
+                        <div>
+                          <span style={{ fontWeight: 600 }}>Message:</span>{" "}
+                          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                            {preview.extraction.failureMessage}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                )}
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                   <button
                     onClick={handleRetry}
