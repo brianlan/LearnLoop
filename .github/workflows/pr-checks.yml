@@ -70,9 +70,10 @@ jobs:
 
       - name: Create .env file
         run: |
-          echo "VLM_API_KEY=ci-placeholder" >> .env
-          echo "S3_ACCESS_KEY=minioadmin" >> .env
-          echo "S3_SECRET_KEY=minioadmin" >> .env
+          mkdir -p backend
+          echo "VLM_API_KEY=ci-placeholder" >> backend/.env
+          echo "S3_ACCESS_KEY=minioadmin" >> backend/.env
+          echo "S3_SECRET_KEY=minioadmin" >> backend/.env
 
       - name: Build and start services
         run: docker compose up -d --build --wait
