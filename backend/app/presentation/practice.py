@@ -14,6 +14,7 @@ from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document
 from app.presentation.deps import DatabaseDependency, get_current_user, get_app_settings
 from app.presentation.helpers import build_problem_image_url
+from app.presentation.exam_helpers import problem_document_to_model
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -53,8 +54,6 @@ async def get_next_practice_problem(
         failure_rate_weight=settings.practice_failure_rate_weight,
         recency_weight=settings.practice_recency_weight,
     )
-
-    from app.presentation.exam_helpers import problem_document_to_model
 
     problem_models = [problem_document_to_model(p) for p in eligible_documents]
     now = datetime.now(UTC)
