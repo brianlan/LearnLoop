@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from base64 import b64encode
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -27,6 +28,7 @@ from app.presentation.deps import (
 )
 from app.presentation.helpers import build_problem_image_url, parse_object_id
 from app.presentation.exam_helpers import problem_document_to_model
+from app.presentation.errors import ApiError
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -154,7 +156,6 @@ async def _load_problem_image_base64(
     object_key = source_image.get("objectKey")
     if not bucket or not object_key:
         return None
-    from base64 import b64encode
     try:
         image_bytes = storage.get_object(str(bucket), str(object_key))
         return b64encode(image_bytes).decode("ascii")
@@ -214,7 +215,6 @@ async def submit_practice_attempt(
         {"_id": problem_id, "userId": current_user["_id"], "isDeleted": False}
     )
     if problem is None:
-        from app.presentation.errors import ApiError
         raise ApiError(404, "NOT_FOUND", "Problem not found")
 
     now = datetime.now(UTC)
