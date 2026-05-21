@@ -14,6 +14,7 @@ import { ExamsPage } from "@/pages/ExamsPage";
 import { ExamDetailPage } from "@/pages/ExamDetailPage";
 import { TagsPage } from "@/pages/TagsPage";
 import { PracticePage } from "@/pages/PracticePage";
+import { ActivePracticePage } from "@/pages/ActivePracticePage";
 
 function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -171,6 +172,14 @@ export function AppRoutes() {
         element={
           <ProtectedPage>
             <PracticePage />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/practice/active"
+        element={
+          <ProtectedPage>
+            <ActivePracticePage />
           </ProtectedPage>
         }
       />
