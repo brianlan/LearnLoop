@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { LatexText } from "@/components/LatexText";
 import type {
   ExamItem,
   CreateExamRequest,
@@ -496,9 +497,10 @@ export function ActiveExamPage() {
       </div>
 
       <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
-        <div style={{ fontSize: "1.125rem", lineHeight: "1.75", marginBottom: "1.5rem", whiteSpace: "pre-wrap" }}>
-          {currentItem.problem.text}
-        </div>
+        <LatexText
+          text={currentItem.problem.text}
+          style={{ fontSize: "1.125rem", lineHeight: "1.75", marginBottom: "1.5rem", whiteSpace: "pre-wrap" }}
+        />
 
         {currentItem.problem.graphDsl && (
           <div style={{ marginBottom: "1.5rem" }}>

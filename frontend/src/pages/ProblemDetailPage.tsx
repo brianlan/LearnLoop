@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { LatexText } from "@/components/LatexText";
 import { TagInput } from "@/components/TagInput";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
@@ -238,7 +239,7 @@ export function ProblemDetailPage() {
               style={{ width: "100%", minHeight: "100px", marginTop: "0.5rem" }}
             />
           ) : (
-            <div style={{ whiteSpace: "pre-wrap" }}>{problem.text}</div>
+            <LatexText text={problem.text} style={{ whiteSpace: "pre-wrap" }} />
           )}
         </div>
 

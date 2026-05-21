@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { LatexText } from "@/components/LatexText";
 import type { ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
 
 async function fetchExam(examId: string): Promise<ExamResponse> {
@@ -61,9 +62,10 @@ function ExamItemReview({ item, onSelfReport, isSelfReporting }: ExamItemReviewP
         <GradingStatusBadge status={item.grading.status} />
       </div>
 
-      <div style={{ fontSize: "1rem", lineHeight: "1.75", marginBottom: "1rem", whiteSpace: "pre-wrap" }}>
-        {item.problem.text}
-      </div>
+      <LatexText
+        text={item.problem.text}
+        style={{ fontSize: "1rem", lineHeight: "1.75", marginBottom: "1rem", whiteSpace: "pre-wrap" }}
+      />
 
       {item.problem.graphDsl && (
         <div style={{ marginBottom: "1rem" }}>

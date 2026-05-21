@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent } from "react";
 import { GraphSandbox } from "./GraphSandbox";
 import { TagInput } from "./TagInput";
+import { LatexText } from "./LatexText";
 import api from "@/api/client";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
@@ -936,9 +937,10 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                 >
                   Problem Text
                 </div>
-                <div style={{ fontSize: "14px", color: "#111827" }}>
-                  {formData.text || "(empty)"}
-                </div>
+                <LatexText
+                  text={formData.text || "(empty)"}
+                  style={{ fontSize: "14px", color: "#111827" }}
+                />
               </div>
 
               <div style={{ marginBottom: "16px" }}>
