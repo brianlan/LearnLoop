@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
+import { LatexText } from "@/components/LatexText";
 import type { PracticeHistoryItem, PracticeNextResponse } from "@/types/practice";
 
 interface PracticeHistoryResponse {
@@ -76,7 +77,7 @@ function HistoryRow({
                 whiteSpace: "nowrap",
               }}
             >
-              {item.problemText}
+              <LatexText text={item.problemText} />
             </div>
             <div style={{ color: "#6b7280", fontSize: "0.875rem" }}>
               {item.problemType}

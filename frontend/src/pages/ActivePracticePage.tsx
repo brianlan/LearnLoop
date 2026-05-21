@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { LatexText } from "@/components/LatexText";
 import type { PracticeProblem, PracticeNextResponse, PracticeAttemptResult } from "@/types/practice";
 
 type PracticePhase = "showing" | "grading" | "feedback";
@@ -238,7 +239,8 @@ export function ActivePracticePage() {
           marginBottom: "1rem",
         }}
       >
-        <div
+        <LatexText
+          text={currentProblem.text}
           style={{
             fontSize: "1.125rem",
             lineHeight: "1.75",
@@ -246,9 +248,7 @@ export function ActivePracticePage() {
             whiteSpace: "pre-wrap",
           }}
           data-testid="problem-text"
-        >
-          {currentProblem.text}
-        </div>
+        />
 
         {currentProblem.imageUrl && (
           <CollapsibleImage
