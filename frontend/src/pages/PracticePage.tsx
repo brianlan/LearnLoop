@@ -187,7 +187,7 @@ export function PracticePage() {
     mutationFn: () => api.post<PracticeNextResponse>("/practice/next", {}),
     onSuccess: (response) => {
       if (response.status === "ok" && response.problem) {
-        navigate("/practice/active");
+        navigate("/practice/active", { state: { problem: response.problem } });
       } else if (response.status === "no_eligible") {
         setStatusMessage("No problems available for practice right now. Try again later.");
       } else if (response.status === "no_problems") {
