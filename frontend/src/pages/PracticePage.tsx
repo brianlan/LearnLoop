@@ -10,6 +10,10 @@ interface PracticeHistoryResponse {
   items: PracticeHistoryItem[];
 }
 
+interface PracticeStatsResponse {
+  practiceableCount: number;
+}
+
 function formatDate(dateString?: string) {
   if (!dateString) return "—";
   return new Date(dateString).toLocaleString();
@@ -183,6 +187,11 @@ export function PracticePage() {
     queryFn: () => api.get<PracticeHistoryResponse>("/practice/history"),
   });
 
+  const { data: statsData } = useQuery<PracticeStatsResponse>({
+    queryKey: ["practice-stats"],
+    queryFn: () => api.get<PracticeStatsResponse>("/practice/stats"),
+  });
+
   const startPracticeMutation = useMutation({
     mutationFn: () => api.post<PracticeNextResponse>("/practice/next", {}),
     onSuccess: (response) => {
@@ -218,7 +227,9 @@ export function PracticePage() {
         <div>
           <h1 style={{ margin: 0 }}>Practice</h1>
           <p style={{ color: "#6b7280", margin: "0.5rem 0 0" }}>
-            Review your practice history or start a new session.
+            {statsData?.practiceableCount !== undefined
+              ? `${statsData.practiceableCount} problems available for practice.`
+              : "Review your practice history or start a new session."}
           </p>
         </div>
         <button

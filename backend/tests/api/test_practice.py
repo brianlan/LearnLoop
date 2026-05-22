@@ -163,3 +163,26 @@ async def test_no_correct_answer_in_response(
     assert data["status"] == "ok"
     assert "correctAnswer" not in data["problem"]
     assert "secret" not in str(data["problem"])
+
+
+@pytest.mark.asyncio
+async def test_stats_returns_practiceable_count(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+
+    # Create 3 problems with correct answers
+    problems = [
+        make_problem(user_id, text=f"Problem {i}", correct_answer_display=str(i))
+        for i in range(3)
+    ]
+    # Create 1 problem without correct answer (should not be counted)
+    no_answer = make_problem(user_id, text="No answer", correct_answer_display="")
+    database.seed("problems", problems + [no_answer])
+
+    response = await client.get("/api/v1/practice/stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["practiceableCount"] == 3

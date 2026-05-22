@@ -41,10 +41,15 @@ describe("PracticePage", () => {
   });
 
   it("renders empty state when no history", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ items: [] }),
-    });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 0 }),
+      });
 
     renderPracticePage();
 
@@ -55,26 +60,31 @@ describe("PracticePage", () => {
   });
 
   it("renders history with per-problem summary", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        items: [
-          {
-            problemId: "problem-1",
-            problemText: "What is 2+2?",
-            problemType: "short-answer",
-            summary: {
-              totalAttempts: 3,
-              correctCount: 2,
-              wrongCount: 1,
-              lastPracticedAt: "2024-01-01T12:00:00Z",
-              lastResult: "correct",
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "What is 2+2?",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 3,
+                correctCount: 2,
+                wrongCount: 1,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "correct",
+              },
+              attempts: [],
             },
-            attempts: [],
-          },
-        ],
-      }),
-    });
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 5 }),
+      });
 
     renderPracticePage();
 
@@ -87,33 +97,38 @@ describe("PracticePage", () => {
 
   it("expands row to show attempt details on click", async () => {
     const user = userEvent.setup();
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        items: [
-          {
-            problemId: "problem-1",
-            problemText: "Test problem",
-            problemType: "short-answer",
-            summary: {
-              totalAttempts: 1,
-              correctCount: 1,
-              wrongCount: 0,
-              lastPracticedAt: "2024-01-01T12:00:00Z",
-              lastResult: "correct",
-            },
-            attempts: [
-              {
-                submittedAnswer: "my answer",
-                gradingStatus: "correct",
-                gradingMethod: "normalized-match",
-                createdAt: "2024-01-01T12:00:00Z",
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "Test problem",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 1,
+                wrongCount: 0,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "correct",
               },
-            ],
-          },
-        ],
-      }),
-    });
+              attempts: [
+                {
+                  submittedAnswer: "my answer",
+                  gradingStatus: "correct",
+                  gradingMethod: "normalized-match",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      });
 
     renderPracticePage();
 
@@ -130,10 +145,15 @@ describe("PracticePage", () => {
   });
 
   it("shows Start Practice button", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ items: [] }),
-    });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 0 }),
+      });
 
     renderPracticePage();
 
@@ -152,6 +172,10 @@ describe("PracticePage", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => ({ practiceableCount: 5 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ status: "ok", problem: { id: "p1", text: "Test", type: "short-answer" } }),
       });
 
@@ -164,10 +188,10 @@ describe("PracticePage", () => {
     await user.click(screen.getByTestId("start-practice-button"));
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      const secondCall = mockFetch.mock.calls[1];
-      expect(secondCall[0]).toBe("/api/v1/practice/next");
-      expect(secondCall[1].method).toBe("POST");
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      const lastCall = mockFetch.mock.calls[2];
+      expect(lastCall[0]).toBe("/api/v1/practice/next");
+      expect(lastCall[1].method).toBe("POST");
     });
   });
 
@@ -177,6 +201,10 @@ describe("PracticePage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ items: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 5 }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -203,6 +231,10 @@ describe("PracticePage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ items: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 0 }),
       })
       .mockResolvedValueOnce({
         ok: true,
