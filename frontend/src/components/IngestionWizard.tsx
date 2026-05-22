@@ -695,6 +695,33 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
               Edit Problem Details
             </h3>
 
+            {previewId && preview?.sourceImage && (
+              <div style={{ marginBottom: "24px" }}>
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: "6px",
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    color: "#374151",
+                  }}
+                >
+                  Original Image
+                </label>
+                <img
+                  src={`/api/v1/ingestion-previews/${previewId}/image`}
+                  alt="Original problem image"
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "300px",
+                    borderRadius: "6px",
+                    border: "1px solid #e5e7eb",
+                  }}
+                  data-testid="source-image"
+                />
+              </div>
+            )}
+
             <div style={{ marginBottom: "24px" }}>
               <label
                 style={{
