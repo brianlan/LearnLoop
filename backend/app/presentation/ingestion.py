@@ -3,16 +3,19 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Annotated
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.domain import IngestionPreviewStatus, ProblemType, normalize_answer
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
+from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import VLMClient
 from app.presentation.deps import DatabaseDependency, StorageDependency, create_vlm_client, get_app_settings, get_current_user, get_s3_storage
 from app.presentation.errors import ApiError
@@ -341,3 +344,28 @@ async def confirm_preview(
         raise ApiError(500, "PROBLEM_CREATION_FAILED", "Failed to create problem. Please retry confirmation.")
     await _register_tags(database, user["_id"], list(draft.get("tags", [])))
     return ProblemResponse(problem=serialize_problem(problem))
+
+
+@router.get("/{preview_id}/image")
+async def stream_preview_image(
+    preview_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+    s3_storage: S3Dependency,
+) -> StreamingResponse:
+    preview = await _get_owned_preview(database, preview_id, user)
+    source_image = dict(preview.get("sourceImage") or {})
+    bucket = source_image.get("bucket")
+    object_key = source_image.get("objectKey")
+    if not bucket or not object_key:
+        raise ApiError(404, "NOT_FOUND", "Preview image not found")
+
+    try:
+        image_bytes = s3_storage.get_object(str(bucket), str(object_key))
+    except StorageObjectNotFoundError as exc:
+        raise ApiError(404, "NOT_FOUND", "Preview image not found") from exc
+
+    return StreamingResponse(
+        BytesIO(image_bytes),
+        media_type=str(source_image.get("contentType") or "application/octet-stream"),
+    )
