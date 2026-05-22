@@ -159,6 +159,7 @@ class User(BaseModel):
     id: Optional[str] = None
     username: str
     passwordHash: str
+    teacherPasswordHash: Optional[str] = None
     createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     lastLoginAt: Optional[datetime] = None
