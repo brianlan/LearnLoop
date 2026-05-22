@@ -189,6 +189,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        ALPINE_MIRROR: ${ALPINE_MIRROR:-http://dl-cdn.alpinelinux.org}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     container_name: learnloop-frontend
     restart: unless-stopped
     depends_on:
