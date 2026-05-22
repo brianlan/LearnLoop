@@ -1,9 +1,7 @@
 """Tests for matches_query utility function."""
 from __future__ import annotations
 
-import pytest
-
-from backend.tests.api.conftest import matches_query
+from tests.api.conftest import matches_query
 
 
 def test_matches_query_simple_equality():
