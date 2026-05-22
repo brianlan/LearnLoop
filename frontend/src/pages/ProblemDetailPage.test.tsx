@@ -89,6 +89,8 @@ describe("ProblemDetailPage", () => {
       .mockResolvedValueOnce({ problem: { ...baseProblem, graphDsl: "graph { a -- b }", correctAnswer: { display: "42", normalizedText: "42", normalizedSet: ["42"], format: "single" } } })
       .mockResolvedValueOnce(baseTracking);
 
+    vi.mocked(api.verifyTeacherPassword).mockResolvedValueOnce({ ok: true });
+
     renderProblemDetailPage();
 
     await waitFor(() => {
@@ -104,10 +106,20 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
     expect(screen.queryByText("42")).not.toBeInTheDocument();
 
-    // Click to reveal answer (view mode uses direct toggle)
+// Click to open modal
     await user.click(screen.getByRole("button", { name: "Show Answer" }));
 
-    expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    // Modal appears
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
+
+    // Enter password and submit
+    await user.type(screen.getByTestId("teacher-password-input"), "teacher-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    // After verification, answer is revealed
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    });
     expect(screen.getByText("42")).toBeInTheDocument();
   });
 
@@ -171,6 +183,8 @@ describe("ProblemDetailPage", () => {
       .mockResolvedValueOnce({ problem: baseProblem })
       .mockResolvedValueOnce(baseTracking);
 
+    vi.mocked(api.verifyTeacherPassword).mockResolvedValueOnce({ ok: true });
+
     renderProblemDetailPage();
 
     await waitFor(() => {
@@ -181,11 +195,20 @@ describe("ProblemDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
 
-    // Show answer - direct toggle in view mode
+// Show answer - opens modal first
     await user.click(screen.getByRole("button", { name: "Show Answer" }));
-    expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
 
-    // Hide answer again (direct toggle)
+    // Enter password and submit
+    await user.type(screen.getByTestId("teacher-password-input"), "teacher-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    // After verification, answer is visible
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    });
+
+    // Hide answer again (direct toggle, no modal)
     await user.click(screen.getByRole("button", { name: "Hide Answer" }));
     expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();

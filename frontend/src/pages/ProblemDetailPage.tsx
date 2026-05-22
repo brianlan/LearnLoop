@@ -338,7 +338,13 @@ export function ProblemDetailPage() {
               <div style={{ marginTop: "0.5rem" }}>
                 <button
                   type="button"
-                  onClick={() => setShowAnswer((prev) => !prev)}
+                  onClick={() => {
+                    if (showAnswer) {
+                      setShowAnswer(false);
+                    } else {
+                      setShowTeacherPasswordModal(true);
+                    }
+                  }}
                   aria-expanded={showAnswer}
                   aria-controls="answer-container"
                   style={{
