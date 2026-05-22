@@ -6,6 +6,7 @@ import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
 import { TagInput } from "@/components/TagInput";
+import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
 interface CorrectAnswer {
@@ -62,6 +63,7 @@ export function ProblemDetailPage() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [showTeacherPasswordModal, setShowTeacherPasswordModal] = useState(false);
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
   const [error, setError] = useState<string | null>(null);
   const tagSuggestions = useTagSuggestions();
@@ -315,7 +317,13 @@ export function ProblemDetailPage() {
               <div style={{ marginTop: "0.5rem" }}>
                 <button
                   type="button"
-                  onClick={() => setShowAnswer((prev) => !prev)}
+                  onClick={() => {
+                    if (showAnswer) {
+                      setShowAnswer(false);
+                    } else {
+                      setShowTeacherPasswordModal(true);
+                    }
+                  }}
                   aria-expanded={showAnswer}
                   aria-controls="answer-container"
                   style={{
@@ -416,6 +424,15 @@ export function ProblemDetailPage() {
           <div>No tracking data available</div>
         )}
       </div>
+
+      <TeacherPasswordModal
+        isOpen={showTeacherPasswordModal}
+        onClose={() => setShowTeacherPasswordModal(false)}
+        onVerified={() => {
+          setShowAnswer(true);
+          setShowTeacherPasswordModal(false);
+        }}
+      />
     </main>
   );
 }
