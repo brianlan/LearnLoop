@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
+import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import type { ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
 
 async function fetchExam(examId: string): Promise<ExamResponse> {
@@ -50,9 +52,11 @@ interface ExamItemReviewProps {
   item: ExamItem;
   onSelfReport: (itemId: string, isCorrect: boolean) => void;
   isSelfReporting: boolean;
+  isAnswerRevealed: boolean;
+  onRevealAnswer: (itemId: string) => void;
 }
 
-function ExamItemReview({ item, onSelfReport, isSelfReporting }: ExamItemReviewProps) {
+function ExamItemReview({ item, onSelfReport, isSelfReporting, isAnswerRevealed, onRevealAnswer }: ExamItemReviewProps) {
   const isPendingReview = item.grading.status === "pending-review";
 
   return (
@@ -87,10 +91,27 @@ function ExamItemReview({ item, onSelfReport, isSelfReporting }: ExamItemReviewP
       </div>
 
       {item.problem.correctAnswer && (
-        <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "#ecfdf5", borderRadius: "0.25rem" }}>
-          <div style={{ fontSize: "0.875rem", color: "#065f46", marginBottom: "0.25rem" }}>Correct Answer:</div>
-          <div>{item.problem.correctAnswer.display}</div>
-        </div>
+        isAnswerRevealed ? (
+          <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "#ecfdf5", borderRadius: "0.25rem" }}>
+            <div style={{ fontSize: "0.875rem", color: "#065f46", marginBottom: "0.25rem" }}>Correct Answer:</div>
+            <div>{item.problem.correctAnswer.display}</div>
+          </div>
+        ) : (
+          <button
+            onClick={() => onRevealAnswer(item.itemId)}
+            style={{
+              marginTop: "1rem",
+              padding: "0.5rem 1rem",
+              backgroundColor: "#e0f2fe",
+              border: "1px solid #bae6fd",
+              borderRadius: "0.25rem",
+              cursor: "pointer",
+            }}
+            data-testid={`reveal-answer-${item.itemId}`}
+          >
+            Reveal Answer
+          </button>
+        )
       )}
 
       {item.grading.feedback && (
@@ -145,6 +166,9 @@ export function ExamDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [revealedAnswers, setRevealedAnswers] = useState<Set<string>>(new Set());
+  const [pendingRevealItemId, setPendingRevealItemId] = useState<string | null>(null);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   const {
     data: examData,
@@ -273,9 +297,26 @@ export function ExamDetailPage() {
             item={item}
             onSelfReport={handleSelfReport}
             isSelfReporting={selfReportMutation.isPending}
+            isAnswerRevealed={revealedAnswers.has(item.itemId)}
+            onRevealAnswer={(itemId) => {
+              setPendingRevealItemId(itemId);
+              setShowPasswordModal(true);
+            }}
           />
         ))}
       </div>
+
+      <TeacherPasswordModal
+        isOpen={showPasswordModal}
+        onClose={() => setShowPasswordModal(false)}
+        onVerified={() => {
+          if (pendingRevealItemId) {
+            setRevealedAnswers((prev) => new Set(prev).add(pendingRevealItemId));
+          }
+          setShowPasswordModal(false);
+          setPendingRevealItemId(null);
+        }}
+      />
     </main>
   );
 }
