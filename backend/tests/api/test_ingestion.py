@@ -797,3 +797,81 @@ async def test_ingestion_routes_require_authentication(
     assert response.json() == {
         "error": {"code": "UNAUTHENTICATED", "message": "Authentication required"}
     }
+
+
+@pytest.mark.asyncio
+async def test_stream_preview_image_returns_image(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    storage: FakeStorage = ingestion_app.state.fake_storage
+    user = await database["users"].find_one({"username": "student1"})
+    assert user is not None
+    user_id = user["_id"]
+
+    image_bytes = make_png_bytes()
+    preview = make_preview(user_id)
+    preview["sourceImage"] = {
+        "bucket": "learnloop-media",
+        "objectKey": "test/preview-image.png",
+        "contentType": "image/png",
+        "sizeBytes": len(image_bytes),
+    }
+    storage.seed("learnloop-media", "test/preview-image.png", image_bytes)
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.get(f"/api/v1/ingestion-previews/{preview['_id']}/image")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == image_bytes
+
+
+@pytest.mark.asyncio
+async def test_stream_preview_image_returns_404_for_missing_source_image(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    user = await database["users"].find_one({"username": "student1"})
+    assert user is not None
+    user_id = user["_id"]
+
+    preview = make_preview(user_id)
+    preview["sourceImage"] = {}
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.get(f"/api/v1/ingestion-previews/{preview['_id']}/image")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "NOT_FOUND", "message": "Preview image not found"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_preview_image_returns_404_for_other_user_preview(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    storage: FakeStorage = ingestion_app.state.fake_storage
+    other_user_id = ObjectId()
+
+    image_bytes = make_png_bytes()
+    preview = make_preview(other_user_id)
+    preview["sourceImage"] = {
+        "bucket": "learnloop-media",
+        "objectKey": "test/other-user-image.png",
+        "contentType": "image/png",
+    }
+    storage.seed("learnloop-media", "test/other-user-image.png", image_bytes)
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.get(f"/api/v1/ingestion-previews/{preview['_id']}/image")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "NOT_FOUND", "message": "Preview not found"}
+    }
