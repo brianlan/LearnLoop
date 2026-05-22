@@ -49,6 +49,12 @@ class FakeCollection:
                 return deepcopy(document)
         return None
 
+    async def count_documents(self, query: dict[str, Any]) -> int:
+        return len([
+            doc for doc in self._documents
+            if matches_query(doc, query)
+        ])
+
     async def update_one(
         self,
         query: dict[str, Any],
@@ -86,19 +92,38 @@ class FakeDatabase:
 
 def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
-        actual = document.get(key)
-        if actual is None:
-            return False
-        if isinstance(value, dict) and "$in" in value:
-            if actual not in value["$in"]:
+        # Handle nested keys like "correctAnswer.display"
+        if "." in key:
+            parts = key.split(".")
+            actual = document
+            for part in parts:
+                if not isinstance(actual, dict):
+                    return False
+                actual = actual.get(part)
+        else:
+            actual = document.get(key)
+
+        if isinstance(value, dict):
+            if "$in" in value:
+                if actual not in value["$in"]:
+                    return False
+                continue
+            if "$ne" in value:
+                if actual == value["$ne"]:
+                    return False
+                continue
+            if "$exists" in value:
+                if value["$exists"]:
+                    if actual is None:
+                        return False
+                else:
+                    if actual is not None:
+                        return False
+                continue
+        else:
+            # Simple value comparison
+            if actual != value:
                 return False
-            continue
-        if isinstance(value, dict) and "$ne" in value:
-            if actual == value["$ne"]:
-                return False
-            continue
-        if actual != value:
-            return False
     return True
 
 

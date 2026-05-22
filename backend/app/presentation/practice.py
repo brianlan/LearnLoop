@@ -84,6 +84,24 @@ class PracticeHistoryResponse(BaseModel):
     hasMore: bool
 
 
+class PracticeStatsResponse(BaseModel):
+    practiceableCount: int
+
+
+@router.get("/stats", response_model=PracticeStatsResponse)
+async def get_practice_stats(
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> PracticeStatsResponse:
+    """Return count of problems eligible for practice (has correctAnswer, not deleted)."""
+    count = await database["problems"].count_documents({
+        "userId": current_user["_id"],
+        "isDeleted": False,
+        "correctAnswer.display": {"$exists": True, "$ne": ""},
+    })
+    return PracticeStatsResponse(practiceableCount=count)
+
+
 @router.post("/next", response_model=PracticeNextResponse)
 async def get_next_practice_problem(
     database: DatabaseDependency,
