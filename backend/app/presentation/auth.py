@@ -58,6 +58,7 @@ def normalize_username(username: str) -> str:
 async def register(
     payload: CredentialsRequest,
     database=Depends(get_database),
+    settings: Settings = Depends(get_app_settings),
 ) -> UserResponse:
     username = normalize_username(payload.username)
     existing_user = await database["users"].find_one({"username": username})
@@ -70,6 +71,7 @@ async def register(
         "_id": ObjectId(),
         "username": username,
         "passwordHash": hash_password(payload.password),
+        "teacherPasswordHash": hash_password(settings.teacher_password_default),
         "createdAt": now,
         "updatedAt": now,
         "lastLoginAt": None,
