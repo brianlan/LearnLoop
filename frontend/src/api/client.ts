@@ -98,6 +98,21 @@ export const api = {
   },
 
   /**
+   * Verify teacher password
+   */
+  async verifyTeacherPassword(password: string): Promise<{ ok: boolean }> {
+    const response = await fetch(`${API_BASE}/teacher-password/verify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({ password }),
+    });
+    return handleResponse<{ ok: boolean }>(response);
+  },
+
+  /**
    * Generic GET request
    */
   async get<T>(path: string): Promise<T> {
