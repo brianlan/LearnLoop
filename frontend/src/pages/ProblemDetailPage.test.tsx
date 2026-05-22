@@ -10,8 +10,16 @@ vi.mock("@/hooks/useTagSuggestions", () => ({
   useTagSuggestions: () => [],
 }));
 
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock("@/api/client", () => ({
+  api: {
+    get: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+    verifyTeacherPassword: vi.fn(),
+  },
+}));
+
+import { api } from "@/api/client";
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -68,21 +76,20 @@ const baseTracking = {
 
 describe("ProblemDetailPage", () => {
   beforeEach(() => {
-    mockFetch.mockReset();
+    vi.mocked(api.get).mockReset();
+    vi.mocked(api.patch).mockReset();
+    vi.mocked(api.delete).mockReset();
+    vi.mocked(api.verifyTeacherPassword).mockReset();
     mockNavigate.mockReset();
   });
 
   it("renders problem details", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, graphDsl: "graph { a -- b }", correctAnswer: { display: "42", normalizedText: "42", normalizedSet: ["42"], format: "single" } } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => baseTracking,
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, graphDsl: "graph { a -- b }", correctAnswer: { display: "42", normalizedText: "42", normalizedSet: ["42"], format: "single" } } })
+      .mockResolvedValueOnce(baseTracking);
+
+    vi.mocked(api.verifyTeacherPassword).mockResolvedValueOnce({ ok: true });
 
     renderProblemDetailPage();
 
@@ -99,10 +106,20 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
     expect(screen.queryByText("42")).not.toBeInTheDocument();
 
-    // Click to reveal answer
+    // Click to open modal
     await user.click(screen.getByRole("button", { name: "Show Answer" }));
 
-    expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    // Modal appears
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
+
+    // Enter password and submit
+    await user.type(screen.getByTestId("teacher-password-input"), "teacher-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    // After verification, answer is revealed
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    });
     expect(screen.getByText("42")).toBeInTheDocument();
 
     // Tracking statistics still show exposure count
@@ -111,15 +128,9 @@ describe("ProblemDetailPage", () => {
 
   it("enters edit mode when clicking edit", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
 
     renderProblemDetailPage();
 
@@ -137,15 +148,11 @@ describe("ProblemDetailPage", () => {
 
   it("hides answer by default and toggles visibility", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: baseProblem }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => baseTracking,
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+
+    vi.mocked(api.verifyTeacherPassword).mockResolvedValueOnce({ ok: true });
 
     renderProblemDetailPage();
 
@@ -157,12 +164,20 @@ describe("ProblemDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
 
-    // Show answer
+    // Show answer - opens modal first
     await user.click(screen.getByRole("button", { name: "Show Answer" }));
-    // The answer should now be visible in a styled container
-    expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
 
-    // Hide answer again
+    // Enter password and submit
+    await user.type(screen.getByTestId("teacher-password-input"), "teacher-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    // After verification, answer is visible
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
+    });
+
+    // Hide answer again (direct toggle, no modal)
     await user.click(screen.getByRole("button", { name: "Hide Answer" }));
     expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
@@ -170,27 +185,14 @@ describe("ProblemDetailPage", () => {
 
   it("saves edited problem", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } })
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } })
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    vi.mocked(api.patch).mockResolvedValueOnce({ problem: { ...baseProblem, text: "Edited text", tags: ["tag1", "tag2"] } });
 
     renderProblemDetailPage();
 
@@ -207,9 +209,9 @@ describe("ProblemDetailPage", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/problems/abc123"),
-        expect.objectContaining({ method: "PATCH" }),
+      expect(api.patch).toHaveBeenCalledWith(
+        "/problems/abc123",
+        expect.objectContaining({ text: "Edited text" }),
       );
     });
 
@@ -222,19 +224,11 @@ describe("ProblemDetailPage", () => {
     const user = userEvent.setup();
     vi.stubGlobal("confirm", () => true);
 
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ ok: true }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    vi.mocked(api.delete).mockResolvedValueOnce({ ok: true });
 
     renderProblemDetailPage();
 
@@ -252,22 +246,16 @@ describe("ProblemDetailPage", () => {
   });
 
   it("displays tracking statistics", async () => {
-    mockFetch
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test" } })
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          problemId: "abc123",
-          tracking: {
-            exposureCount: 10,
-            correctCount: 8,
-            failedCount: 2,
-            lastTestedAt: "2024-01-15T10:30:00Z",
-          },
-        }),
+        problemId: "abc123",
+        tracking: {
+          exposureCount: 10,
+          correctCount: 8,
+          failedCount: 2,
+          lastTestedAt: "2024-01-15T10:30:00Z",
+        },
       });
 
     renderProblemDetailPage();
@@ -283,15 +271,9 @@ describe("ProblemDetailPage", () => {
 
   it("displays image when imageUrl exists", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test", imageUrl: "/api/v1/problems/abc123/image" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test", imageUrl: "/api/v1/problems/abc123/image" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
 
     renderProblemDetailPage();
 
@@ -307,15 +289,9 @@ describe("ProblemDetailPage", () => {
 
   it("hides broken image after load error", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test", imageUrl: "/api/v1/problems/abc123/image" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test", imageUrl: "/api/v1/problems/abc123/image" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
 
     renderProblemDetailPage();
 
@@ -330,15 +306,9 @@ describe("ProblemDetailPage", () => {
   });
 
   it("shows deleted indicator for soft-deleted problems", async () => {
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test", isDeleted: true } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test", isDeleted: true } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
 
     renderProblemDetailPage();
 
@@ -349,15 +319,9 @@ describe("ProblemDetailPage", () => {
 
   it("navigates back when clicking back button", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
 
     renderProblemDetailPage();
 
@@ -372,20 +336,11 @@ describe("ProblemDetailPage", () => {
 
   it("displays error on update failure", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Original text" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: async () => ({ error: { message: "Update failed" } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Original text" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    vi.mocked(api.patch).mockRejectedValueOnce(new Error("Update failed"));
 
     renderProblemDetailPage();
 
@@ -410,20 +365,11 @@ describe("ProblemDetailPage", () => {
     const user = userEvent.setup();
     vi.stubGlobal("confirm", () => true);
 
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problem: { ...baseProblem, text: "Test" } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: async () => ({ error: { message: "Delete failed" } }),
-      });
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    vi.mocked(api.delete).mockRejectedValueOnce(new Error("Delete failed"));
 
     renderProblemDetailPage();
 
