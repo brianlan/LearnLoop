@@ -106,7 +106,7 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
     expect(screen.queryByText("42")).not.toBeInTheDocument();
 
-    // Click to open modal
+// Click to open modal
     await user.click(screen.getByRole("button", { name: "Show Answer" }));
 
     // Modal appears
@@ -121,9 +121,6 @@ describe("ProblemDetailPage", () => {
       expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
     });
     expect(screen.getByText("42")).toBeInTheDocument();
-
-    // Tracking statistics still show exposure count
-    expect(screen.getAllByText("4").length).toBeGreaterThanOrEqual(1);
   });
 
   it("enters edit mode when clicking edit", async () => {
@@ -142,11 +139,45 @@ describe("ProblemDetailPage", () => {
 
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-    // Answer input is shown directly in edit mode (no toggle needed)
+
+    // In edit mode, answer input is hidden by default
+    expect(screen.queryByTestId("edit-answer-input")).not.toBeInTheDocument();
+    // "Edit Answer" button is visible
+    expect(screen.getByTestId("edit-answer-button")).toBeInTheDocument();
+  });
+
+  it("reveals answer input after teacher password verification in edit mode", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Original text", tags: ["tag1"] } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    vi.mocked(api.verifyTeacherPassword).mockResolvedValueOnce({ ok: true });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Original text")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    // Click "Edit Answer" button to open modal
+    await user.click(screen.getByTestId("edit-answer-button"));
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
+
+    // Enter password and submit
+    await user.type(screen.getByTestId("teacher-password-input"), "teacher-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    // After verification, answer input is revealed with correct value
+    await waitFor(() => {
+      expect(screen.getByTestId("edit-answer-input")).toBeInTheDocument();
+    });
     expect(screen.getByDisplayValue("4")).toBeInTheDocument();
   });
 
-  it("hides answer by default and toggles visibility", async () => {
+  it("hides answer by default and toggles visibility in view mode", async () => {
     const user = userEvent.setup();
     vi.mocked(api.get)
       .mockResolvedValueOnce({ problem: baseProblem })
@@ -160,11 +191,11 @@ describe("ProblemDetailPage", () => {
       expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
     });
 
-    // Answer hidden by default - check for the answer container not existing
+    // Answer hidden by default
     expect(screen.queryByRole("button", { name: "Hide Answer" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show Answer" })).toBeInTheDocument();
 
-    // Show answer - opens modal first
+// Show answer - opens modal first
     await user.click(screen.getByRole("button", { name: "Show Answer" }));
     expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
 

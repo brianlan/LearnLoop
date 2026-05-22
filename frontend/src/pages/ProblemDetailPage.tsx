@@ -64,6 +64,7 @@ export function ProblemDetailPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [showTeacherPasswordModal, setShowTeacherPasswordModal] = useState(false);
+  const [showAnswerEdit, setShowAnswerEdit] = useState(false);
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
   const [error, setError] = useState<string | null>(null);
   const tagSuggestions = useTagSuggestions();
@@ -119,8 +120,8 @@ export function ProblemDetailPage() {
           text: problem.text,
           tags: [...problem.tags],
           graphDsl: problem.graphDsl || "",
-          correctAnswer: problem.correctAnswer?.display || "",
         });
+        setShowAnswerEdit(false);
         setIsEditing(true);
     }
   };
@@ -131,6 +132,7 @@ export function ProblemDetailPage() {
 
   const handleCancel = () => {
     setIsEditing(false);
+    setShowAnswerEdit(false);
     setEditForm({});
     setError(null);
   };
@@ -302,17 +304,36 @@ export function ProblemDetailPage() {
           <div style={{ marginBottom: "1rem" }}>
             <label style={{ fontWeight: "bold" }}>Correct Answer:</label>
             {isEditing ? (
-              <input
-                type="text"
-                value={editForm.correctAnswer || ""}
-                onChange={(e) =>
-                  setEditForm((prev) => ({
-                    ...prev,
-                    correctAnswer: e.target.value,
-                  }))
-                }
-                style={{ width: "100%", marginTop: "0.5rem" }}
-              />
+              showAnswerEdit ? (
+                <input
+                  type="text"
+                  value={editForm.correctAnswer || ""}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      correctAnswer: e.target.value,
+                    }))
+                  }
+                  style={{ width: "100%", marginTop: "0.5rem" }}
+                  data-testid="edit-answer-input"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowTeacherPasswordModal(true)}
+                  style={{
+                    padding: "0.375rem 0.75rem",
+                    backgroundColor: "#e0f2fe",
+                    border: "1px solid #bae6fd",
+                    borderRadius: "0.25rem",
+                    cursor: "pointer",
+                    marginTop: "0.5rem",
+                  }}
+                  data-testid="edit-answer-button"
+                >
+                  Edit Answer
+                </button>
+              )
             ) : (
               <div style={{ marginTop: "0.5rem" }}>
                 <button
@@ -429,7 +450,15 @@ export function ProblemDetailPage() {
         isOpen={showTeacherPasswordModal}
         onClose={() => setShowTeacherPasswordModal(false)}
         onVerified={() => {
-          setShowAnswer(true);
+          if (isEditing) {
+            setShowAnswerEdit(true);
+            setEditForm((prev) => ({
+              ...prev,
+              correctAnswer: problem?.correctAnswer?.display || "",
+            }));
+          } else {
+            setShowAnswer(true);
+          }
           setShowTeacherPasswordModal(false);
         }}
       />
