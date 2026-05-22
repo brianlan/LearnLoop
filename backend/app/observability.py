@@ -75,3 +75,10 @@ def log_auth_event(event: str, **fields: Any) -> None:
         f"auth:{event}",
         extra={"auth_event": event, **fields},
     )
+
+
+def log_teacher_password_event(event: str, **fields: Any) -> None:
+    get_logger("learnloop.teacher_password").info(
+        f"teacher_password:{event}",
+        extra={"teacher_password_event": event, **fields},
+    )
