@@ -195,3 +195,41 @@ async def test_change_teacher_password_mismatched_confirm(authenticated_client: 
         },
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_verify_teacher_password_lazy_migration(app: FastAPI, client: AsyncClient) -> None:
+    """Test that a user without teacherPasswordHash can verify with the default password."""
+    # Create a user WITHOUT teacherPasswordHash (simulating pre-migration user)
+    database = app.state.test_database
+    from datetime import UTC, datetime
+
+    user_doc = {
+        "_id": ObjectId(),
+        "username": "legacy_user",
+        "passwordHash": hash_password("user_password"),
+        "createdAt": datetime.now(UTC),
+        "updatedAt": datetime.now(UTC),
+        "lastLoginAt": None,
+        "status": "active",
+    }
+    await database["users"].insert_one(user_doc)
+
+    # Login as this user
+    await client.post(
+        "/api/v1/auth/login",
+        json={"username": "legacy_user", "password": "user_password"},
+    )
+
+    # Verify default teacher password works (lazy migration assigns it)
+    response = await client.post(
+        "/api/v1/teacher-password/verify",
+        json={"password": "default-teacher-password"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+    # Verify the user now has teacherPasswordHash assigned
+    updated_user = await database["users"].find_one({"username": "legacy_user"})
+    assert "teacherPasswordHash" in updated_user
+    assert updated_user["teacherPasswordHash"] is not None
