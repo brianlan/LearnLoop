@@ -104,25 +104,22 @@ def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
             actual = document.get(key)
 
         if isinstance(value, dict):
-            if "$in" in value:
-                if actual not in value["$in"]:
-                    return False
-                continue
-            if "$ne" in value:
-                if actual == value["$ne"]:
-                    return False
-                continue
-            if "$exists" in value:
-                if value["$exists"]:
-                    if actual is None:
+            for op, op_value in value.items():
+                if op == "$exists":
+                    if op_value and actual is None:
+                        return False
+                    if not op_value and actual is not None:
+                        return False
+                elif op == "$in":
+                    if actual not in op_value:
+                        return False
+                elif op == "$ne":
+                    if actual == op_value:
                         return False
                 else:
-                    if actual is not None:
-                        return False
-                continue
+                    return False
         else:
-            # Simple value comparison
-            if actual != value:
+            if actual is None or actual != value:
                 return False
     return True
 
