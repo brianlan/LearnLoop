@@ -113,6 +113,29 @@ export const api = {
   },
 
   /**
+   * Change teacher password
+   */
+  async changeTeacherPassword(
+    currentPassword: string,
+    newPassword: string,
+    confirmPassword: string
+  ): Promise<{ ok: boolean }> {
+    const response = await fetch(`${API_BASE}/auth/change-teacher-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    });
+    return handleResponse<{ ok: boolean }>(response);
+  },
+
+  /**
    * Generic GET request
    */
   async get<T>(path: string): Promise<T> {
