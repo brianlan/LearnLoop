@@ -82,6 +82,8 @@ async def app() -> FastAPI:
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
+    # Store database on app for tests that need direct access
+    application.state.test_database = database
 
     @application.get("/api/v1/protected")
     async def protected_route(_: dict[str, Any] = Depends(get_current_user)) -> dict[str, bool]:
@@ -219,3 +221,22 @@ async def test_protected_route_rejects_unauthenticated_access(client: AsyncClien
             "message": "Authentication required",
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_register_sets_teacher_password_hash(client: AsyncClient, app: FastAPI) -> None:
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"username": "student1", "password": "secret"},
+    )
+
+    assert response.status_code == 201
+
+    # Get the user from the fake database
+    users = app.state.test_database["users"]._documents
+    assert len(users) == 1
+    user = users[0]
+    assert "teacherPasswordHash" in user
+    assert user["teacherPasswordHash"] is not None
+    # Verify it looks like a bcrypt hash (starts with $2b$ or $2a$)
+    assert user["teacherPasswordHash"].startswith("$2")
