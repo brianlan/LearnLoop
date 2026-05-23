@@ -120,7 +120,7 @@ export const api = {
     newPassword: string,
     confirmPassword: string
   ): Promise<{ ok: boolean }> {
-    const response = await fetch(`${API_BASE}/auth/change-teacher-password`, {
+    const response = await fetch(`${API_BASE}/teacher-password/change`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
