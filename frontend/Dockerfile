@@ -1,12 +1,15 @@
 FROM node:20-alpine AS build
 
+ARG ALPINE_MIRROR=http://dl-cdn.alpinelinux.org
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
 WORKDIR /app
 
-RUN sed -i 's|http://dl-cdn.alpinelinux.org|http://mirrors.bfsu.edu.cn|g' /etc/apk/repositories \
+RUN sed -i "s|http://dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories \
     && apk update
 
 COPY package.json package-lock.json ./
-RUN npm ci --registry=https://registry.npmmirror.com
+RUN npm ci --registry=${NPM_REGISTRY}
 
 COPY . .
 RUN npm run build
