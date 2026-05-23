@@ -139,6 +139,113 @@ describe("TagInput", () => {
     expect(onChange).toHaveBeenNthCalledWith(2, ["math", "geometry"]);
   });
 
+  describe("comma-separated batch input", () => {
+    it("creates multiple tags from comma-separated input", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={["math"]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "algebra, linear algebra, matrices{enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["math", "algebra", "linear algebra", "matrices"]);
+    });
+
+    it("ignores empty segments from trailing commas", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "algebra, {enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["algebra"]);
+    });
+
+    it("ignores empty segments from double commas", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "algebra,,matrices{enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["algebra", "matrices"]);
+    });
+
+    it("skips duplicate tags already in the list", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={["math"]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "math, algebra{enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["math", "algebra"]);
+    });
+
+    it("deduplicates within comma-separated input", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "algebra, algebra, matrices{enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["algebra", "matrices"]);
+    });
+
+    it("selects highlighted suggestion instead of splitting when dropdown is open", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <TagInput tags={[]} onChange={onChange} suggestions={["algebra"]} testId="tags-input" />,
+      );
+
+      await user.type(screen.getByTestId("tags-input-field"), "al");
+      await user.type(screen.getByTestId("tags-input-field"), "{enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["algebra"]);
+    });
+
+    it("splits on commas when no suggestion is highlighted", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "trigonometry, calculus{enter}");
+
+      expect(onChange).toHaveBeenCalledWith(["trigonometry", "calculus"]);
+    });
+
+    it("clicking a suggestion adds only that tag, leaving remaining text in input", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <TagInput tags={[]} onChange={onChange} suggestions={["geometry"]} testId="tags-input" />,
+      );
+
+      await user.type(screen.getByTestId("tags-input-field"), "geo");
+      await user.click(screen.getByTestId("tags-input-suggestion-geometry"));
+
+      expect(onChange).toHaveBeenCalledWith(["geometry"]);
+    });
+
+    it("clears input after adding comma-separated tags", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "a, b, c{enter}");
+
+      expect(screen.getByTestId("tags-input-field")).toHaveValue("");
+    });
+  });
+
   describe("accessibility", () => {
     it("has combobox role on the input", () => {
       render(<TagInput tags={[]} onChange={vi.fn()} testId="tags-input" />);

@@ -72,21 +72,23 @@ export function TagInput({
   };
 
   const addTag = (value: string) => {
-    const trimmedValue = value.trim();
+    const segments = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 
-    if (!trimmedValue) {
+    if (segments.length === 0) {
       setInputValue("");
       closeSuggestions();
       return;
     }
 
-    if (tags.includes(trimmedValue)) {
-      setInputValue("");
-      closeSuggestions();
-      return;
+    const uniqueSegments = segments.filter((s) => !tags.includes(s));
+    const newTags = uniqueSegments.filter(
+      (s, index) => uniqueSegments.indexOf(s) === index,
+    );
+
+    if (newTags.length > 0) {
+      onChange([...tags, ...newTags]);
     }
 
-    onChange([...tags, trimmedValue]);
     setInputValue("");
     closeSuggestions();
   };
