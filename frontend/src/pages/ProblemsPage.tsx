@@ -2,7 +2,10 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import type { TagsResponse } from "@/types/tag";
+import { formatProblemReference } from "@/utils/format";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import Pagination from "@/components/Pagination";
+import { TagList } from "@/components/TagPill";
 
 interface Problem {
   id: string;
@@ -37,10 +40,6 @@ const PROBLEM_TYPE_OPTIONS = [
   { value: "short-answer", label: "Short Answer" },
 ];
 
-function formatProblemReference(problemId: string): string {
-  return problemId.length > 8 ? problemId.slice(0, 8) : problemId;
-}
-
 export function ProblemsPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
@@ -61,13 +60,7 @@ export function ProblemsPage() {
     },
   });
 
-  const { data: tags = [] } = useQuery({
-    queryKey: ["tags"],
-    queryFn: async () => {
-      const response = await api.get<TagsResponse>("/tags");
-      return response.items?.map((item) => item.name) ?? [];
-    },
-  });
+  const tags = useTagSuggestions();
 
   const problems = problemsData?.items || [];
   const total = problemsData?.total || 0;
@@ -190,62 +183,16 @@ export function ProblemsPage() {
                 >
                   {problem.text}
                 </div>
-                {problem.tags.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: "0.5rem",
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: "0.375rem",
-                    }}
-                  >
-                    {problem.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        style={{
-                          padding: "0.125rem 0.375rem",
-                          background: "#f0f0f0",
-                          borderRadius: "4px",
-                          fontSize: "0.75rem",
-                          display: "inline-flex",
-                        }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <TagList tags={problem.tags} />
               </div>
             ))}
           </div>
 
-          {totalPages > 1 && (
-            <div
-              style={{
-                marginTop: "1rem",
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                gap: "0.5rem",
-              }}
-            >
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-              >
-                Previous
-              </button>
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-              >
-                Next
-              </button>
-            </div>
-          )}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
 
           {problems.length === 0 && (
             <div style={{ textAlign: "center", marginTop: "2rem" }}>

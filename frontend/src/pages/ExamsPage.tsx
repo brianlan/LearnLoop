@@ -3,23 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
+import { formatDate, formatScore } from "@/utils/format";
 import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse } from "@/types/exam";
-
-function formatDate(dateString?: string) {
-  if (!dateString) {
-    return "—";
-  }
-
-  return new Date(dateString).toLocaleString();
-}
-
-function formatScore(score: number | null) {
-  if (score === null) {
-    return "Pending";
-  }
-
-  return `${Math.round(score * 100)}%`;
-}
+import Pagination from "@/components/Pagination";
 
 function getStateStyle(state: string) {
   switch (state) {
@@ -259,31 +245,12 @@ export function ExamsPage() {
             ))}
           </div>
 
-          {totalPages > 1 && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                gap: "0.75rem",
-                marginTop: "1.5rem",
-              }}
-            >
-              <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>
-                Previous
-              </button>
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                disabled={page === totalPages}
-              >
-                Next
-              </button>
-            </div>
-          )}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            style={{ gap: "0.75rem", marginTop: "1.5rem" }}
+          />
         </>
       )}
     </main>

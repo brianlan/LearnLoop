@@ -184,7 +184,6 @@ export function GraphSandbox({
   onError,
   onRender,
 }: GraphSandboxProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeKey, setIframeKey] = useState(0);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -318,7 +317,7 @@ export function GraphSandbox({
   };
 
   return (
-    <div ref={containerRef} style={containerStyle} data-testid="graph-sandbox">
+    <div style={containerStyle} data-testid="graph-sandbox">
       {status === "loading" && (
         <div
           style={{

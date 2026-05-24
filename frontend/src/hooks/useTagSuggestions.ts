@@ -4,7 +4,7 @@ import type { TagsResponse } from "@/types/tag";
 
 export function useTagSuggestions() {
   const { data } = useQuery({
-    queryKey: ["tags"],
+    queryKey: ["tagSuggestions"],
     queryFn: async () => {
       const response = await api.get<TagsResponse>("/tags");
       return response.items?.map((item) => item.name) ?? [];

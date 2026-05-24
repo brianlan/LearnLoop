@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { formatProblemReference } from "@/utils/format";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
 import { TagInput } from "@/components/TagInput";
+import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
@@ -49,10 +51,6 @@ interface UpdateProblemInput {
   tags?: string[];
   graphDsl?: string;
   correctAnswer?: string;
-}
-
-function formatProblemReference(problemId: string): string {
-  return problemId.length > 8 ? problemId.slice(0, 8) : problemId;
 }
 
 export function ProblemDetailPage() {
@@ -258,22 +256,7 @@ export function ProblemDetailPage() {
               testId="edit-tags-input"
             />
           ) : problem.tags.length > 0 ? (
-            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.375rem" }}>
-              {problem.tags.map((tag) => (
-                <span
-                  key={tag}
-                  style={{
-                    padding: "0.125rem 0.375rem",
-                    background: "#f0f0f0",
-                    borderRadius: "4px",
-                    fontSize: "0.75rem",
-                    display: "inline-flex",
-                  }}
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
+            <TagList tags={problem.tags} />
           ) : (
             <div style={{ marginTop: "0.5rem", color: "#666" }}>
               No tags

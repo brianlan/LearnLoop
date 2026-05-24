@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { formatDate, formatScore } from "@/utils/format";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
@@ -18,16 +19,6 @@ async function selfReportItem(
   request: SelfReportRequest,
 ): Promise<SelfReportResponse> {
   return api.post<SelfReportResponse>(`/exams/${examId}/items/${itemId}/self-report`, request);
-}
-
-function formatScore(score: number | null): string {
-  if (score === null) return "Pending";
-  return `${Math.round(score * 100)}%`;
-}
-
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleString();
 }
 
 function GradingStatusBadge({ status }: { status: string }) {

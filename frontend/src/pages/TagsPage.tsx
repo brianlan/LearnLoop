@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { TagItem, TagsResponse, TagResponse } from "@/types/tag";
+import { Modal } from "@/components/Modal";
 
 export function TagsPage() {
   const queryClient = useQueryClient();
@@ -12,7 +13,7 @@ export function TagsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const { data: tagsData, isLoading } = useQuery({
-    queryKey: ["tags", "full"],
+    queryKey: ["tags"],
     queryFn: async () => {
       const response = await api.get<TagsResponse>("/tags");
       return response;
@@ -28,6 +29,7 @@ export function TagsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tags"] });
+      queryClient.invalidateQueries({ queryKey: ["tagSuggestions"] });
       setNewTagName("");
       setError(null);
     },
@@ -45,6 +47,7 @@ export function TagsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tags"] });
+      queryClient.invalidateQueries({ queryKey: ["tagSuggestions"] });
       queryClient.invalidateQueries({ queryKey: ["problems"] });
       setEditingTagId(null);
       setEditingName("");
@@ -63,6 +66,7 @@ export function TagsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tags"] });
+      queryClient.invalidateQueries({ queryKey: ["tagSuggestions"] });
       queryClient.invalidateQueries({ queryKey: ["problems"] });
       setDeletingTag(null);
       setError(null);
@@ -314,72 +318,53 @@ export function TagsPage() {
       )}
 
       {deletingTag && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-          }}
-          data-testid="delete-confirm-modal"
+        <Modal
+          isOpen={true}
+          onClose={() => setDeletingTag(null)}
+          zIndex={50}
+          overlayTestId="delete-confirm-modal"
         >
-          <div
-            style={{
-              backgroundColor: "white",
-              padding: "1.5rem",
-              borderRadius: "8px",
-              maxWidth: "400px",
-              width: "100%",
-            }}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: "0.75rem" }}>
-              Delete Tag
-            </h2>
-            <p style={{ marginBottom: "1rem" }}>
-              Are you sure you want to delete "{deletingTag.name}"? This will
-              remove the tag from {deletingTag.problemCount} problem
-              {deletingTag.problemCount !== 1 ? "s" : ""}. This cannot be undone.
-            </p>
-            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={() => setDeletingTag(null)}
-                disabled={deleteMutation.isPending}
-                style={{
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#f3f4f6",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDelete}
-                disabled={deleteMutation.isPending}
-                data-testid="confirm-delete-button"
-                style={{
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#dc2626",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                }}
-              >
-                {deleteMutation.isPending ? "Deleting..." : "Delete"}
-              </button>
-            </div>
+          <h2 style={{ marginTop: 0, marginBottom: "0.75rem" }}>
+            Delete Tag
+          </h2>
+          <p style={{ marginBottom: "1rem" }}>
+            Are you sure you want to delete "{deletingTag.name}"? This will
+            remove the tag from {deletingTag.problemCount} problem
+            {deletingTag.problemCount !== 1 ? "s" : ""}. This cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={() => setDeletingTag(null)}
+              disabled={deleteMutation.isPending}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: "#f3f4f6",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+              data-testid="confirm-delete-button"
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: "#dc2626",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </main>
   );
