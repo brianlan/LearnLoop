@@ -5,6 +5,8 @@ import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
+import { AnswerInput, parseOptions } from "@/components/AnswerInput";
+import { Modal } from "@/components/Modal";
 import type {
   ExamItem,
   CreateExamRequest,
@@ -13,11 +15,6 @@ import type {
   SaveAnswerRequest,
   SaveAnswerResponse,
 } from "@/types/exam";
-
-function extractOptionKey(option: string): string {
-  const match = option.trim().match(/^([A-Za-z]|\d+)\s*[.):\-]?(?:\s|$)/);
-  return (match?.[1] ?? option).trim();
-}
 
 async function fetchActiveExam(): Promise<ExamResponse> {
   return api.get<ExamResponse>("/exams/active");
@@ -41,204 +38,6 @@ async function submitExam(examId: string): Promise<ExamResponse> {
 
 async function discardExam(examId: string): Promise<ExamResponse> {
   return api.post<ExamResponse>(`/exams/${examId}/discard`, {});
-}
-
-function parseOptions(text: string): string[] {
-  const lines = text.split("\n");
-  const options: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^[A-Z][.):\s]/.test(trimmed) || /^\d+[.):\s]/.test(trimmed)) {
-      options.push(trimmed);
-    }
-  }
-  return options.length > 0 ? options : [];
-}
-
-interface SingleChoiceInputProps {
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-  onBlur?: () => void;
-  disabled?: boolean;
-}
-
-function SingleChoiceInput({ value, onChange, options, onBlur, disabled }: SingleChoiceInputProps) {
-  if (options.length === 0) {
-    return (
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        disabled={disabled}
-        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
-      />
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-      {options.map((option) => {
-        const optionValue = extractOptionKey(option);
-        return (
-          <label
-            key={option}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              padding: "0.5rem",
-              cursor: disabled ? "default" : "pointer",
-              borderRadius: "0.25rem",
-            }}
-          >
-            <input
-              type="radio"
-              name="single-choice"
-              value={optionValue}
-              checked={value === optionValue || value === option}
-              onChange={() => onChange(optionValue)}
-              onBlur={onBlur}
-              disabled={disabled}
-            />
-            <span>{option}</span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-interface MultiChoiceInputProps {
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-  onBlur?: () => void;
-  disabled?: boolean;
-}
-
-function MultiChoiceInput({ value, onChange, options, onBlur, disabled }: MultiChoiceInputProps) {
-  const selectedValues = value ? value.split(",").map((v) => v.trim()).filter(Boolean) : [];
-
-  const handleToggle = (optionValue: string) => {
-    const newValues = selectedValues.includes(optionValue)
-      ? selectedValues.filter((v) => v !== optionValue)
-      : [...selectedValues, optionValue];
-    onChange(newValues.join(", "));
-  };
-
-  if (options.length === 0) {
-    return (
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        disabled={disabled}
-        placeholder="Enter options separated by commas"
-        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
-      />
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-      {options.map((option) => {
-        const optionValue = extractOptionKey(option);
-        return (
-          <label
-            key={option}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              padding: "0.5rem",
-              cursor: disabled ? "default" : "pointer",
-              borderRadius: "0.25rem",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={selectedValues.includes(optionValue) || selectedValues.includes(option)}
-              onChange={() => handleToggle(optionValue)}
-              onBlur={onBlur}
-              disabled={disabled}
-            />
-            <span>{option}</span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-interface TextInputProps {
-  value: string;
-  onChange: (value: string) => void;
-  multiline?: boolean;
-  onBlur?: () => void;
-  disabled?: boolean;
-}
-
-function TextInput({ value, onChange, multiline, onBlur, disabled }: TextInputProps) {
-  if (multiline) {
-    return (
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        disabled={disabled}
-        style={{
-          width: "100%",
-          padding: "0.5rem",
-          fontSize: "1rem",
-          border: "1px solid #d1d5db",
-          borderRadius: "0.25rem",
-          minHeight: "120px",
-          resize: "vertical",
-        }}
-      />
-    );
-  }
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={onBlur}
-      disabled={disabled}
-      style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
-    />
-  );
-}
-
-function AnswerInput({
-  problemType,
-  value,
-  onChange,
-  onBlur,
-  options,
-  disabled,
-}: {
-  problemType: string;
-  value: string;
-  onChange: (value: string) => void;
-  onBlur?: () => void;
-  options: string[];
-  disabled?: boolean;
-}) {
-  switch (problemType) {
-    case "single-choice":
-      return <SingleChoiceInput value={value} onChange={onChange} onBlur={onBlur} options={options} disabled={disabled} />;
-    case "multi-choice":
-      return <MultiChoiceInput value={value} onChange={onChange} onBlur={onBlur} options={options} disabled={disabled} />;
-    case "short-answer":
-      return <TextInput value={value} onChange={onChange} onBlur={onBlur} multiline disabled={disabled} />;
-    case "fill-in-the-blank":
-    default:
-      return <TextInput value={value} onChange={onChange} onBlur={onBlur} disabled={disabled} />;
-  }
 }
 
 export function ActiveExamPage() {
@@ -541,72 +340,76 @@ export function ActiveExamPage() {
       </div>
 
       {showSubmitConfirm && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ backgroundColor: "white", padding: "2rem", borderRadius: "0.5rem", maxWidth: "400px" }}>
-            <h2 style={{ marginTop: 0 }}>Submit Exam?</h2>
-            <p>
-              You have answered {exam.summary.answeredProblems} of {exam.summary.totalProblems} questions.
-              Are you sure you want to submit?
-            </p>
-            <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem", justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setShowSubmitConfirm(false)}
-                disabled={submitExamMutation.isPending}
-                style={{ padding: "0.5rem 1rem" }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => void confirmSubmit()}
-                disabled={submitExamMutation.isPending}
-                style={{
-                  padding: "0.5rem 1rem",
-                  backgroundColor: submitExamMutation.isPending ? "#6ee7b7" : "#10b981",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.25rem",
-                  cursor: submitExamMutation.isPending ? "not-allowed" : "pointer",
-                }}
-              >
-                {submitExamMutation.isPending ? "Submitting..." : "Submit"}
-              </button>
-            </div>
+        <Modal
+          isOpen={true}
+          onClose={() => setShowSubmitConfirm(false)}
+          cardStyle={{ padding: "2rem", borderRadius: "0.5rem" }}
+        >
+          <h2 style={{ marginTop: 0 }}>Submit Exam?</h2>
+          <p>
+            You have answered {exam.summary.answeredProblems} of {exam.summary.totalProblems} questions.
+            Are you sure you want to submit?
+          </p>
+          <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem", justifyContent: "flex-end" }}>
+            <button
+              onClick={() => setShowSubmitConfirm(false)}
+              disabled={submitExamMutation.isPending}
+              style={{ padding: "0.5rem 1rem" }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void confirmSubmit()}
+              disabled={submitExamMutation.isPending}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: submitExamMutation.isPending ? "#6ee7b7" : "#10b981",
+                color: "white",
+                border: "none",
+                borderRadius: "0.25rem",
+                cursor: submitExamMutation.isPending ? "not-allowed" : "pointer",
+              }}
+            >
+              {submitExamMutation.isPending ? "Submitting..." : "Submit"}
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {showDiscardConfirm && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ backgroundColor: "white", padding: "2rem", borderRadius: "0.5rem", maxWidth: "400px" }}>
-            <h2 style={{ marginTop: 0 }}>Discard Exam?</h2>
-            <p>
-              This exam will be closed and marked as discarded. It will appear in your exam history but will not affect your statistics.
-            </p>
-            <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem", justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setShowDiscardConfirm(false)}
-                disabled={discardExamMutation.isPending}
-                style={{ padding: "0.5rem 1rem" }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => void confirmDiscard()}
-                disabled={discardExamMutation.isPending}
-                style={{
-                  padding: "0.5rem 1rem",
-                  backgroundColor: discardExamMutation.isPending ? "#fca5a5" : "#dc2626",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.25rem",
-                  cursor: discardExamMutation.isPending ? "not-allowed" : "pointer",
-                }}
-              >
-                {discardExamMutation.isPending ? "Discarding..." : "Discard Exam"}
-              </button>
-            </div>
+        <Modal
+          isOpen={true}
+          onClose={() => setShowDiscardConfirm(false)}
+          cardStyle={{ padding: "2rem", borderRadius: "0.5rem" }}
+        >
+          <h2 style={{ marginTop: 0 }}>Discard Exam?</h2>
+          <p>
+            This exam will be closed and marked as discarded. It will appear in your exam history but will not affect your statistics.
+          </p>
+          <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem", justifyContent: "flex-end" }}>
+            <button
+              onClick={() => setShowDiscardConfirm(false)}
+              disabled={discardExamMutation.isPending}
+              style={{ padding: "0.5rem 1rem" }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void confirmDiscard()}
+              disabled={discardExamMutation.isPending}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: discardExamMutation.isPending ? "#fca5a5" : "#dc2626",
+                color: "white",
+                border: "none",
+                borderRadius: "0.25rem",
+                cursor: discardExamMutation.isPending ? "not-allowed" : "pointer",
+              }}
+            >
+              {discardExamMutation.isPending ? "Discarding..." : "Discard Exam"}
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </main>
   );

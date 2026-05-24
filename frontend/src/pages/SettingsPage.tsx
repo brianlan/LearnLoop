@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
+import { Modal } from "@/components/Modal";
 
 interface SettingsResponse {
   app: {
@@ -109,19 +110,6 @@ function ChangeTeacherPasswordModal({
     }
   }, [isOpen]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -159,128 +147,107 @@ function ChangeTeacherPasswordModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(0, 0, 0, 0.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="change-password-title"
-      data-testid="change-password-modal"
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      zIndex={1000}
+      overlayTestId="change-password-modal"
+      ariaLabelledby="change-password-title"
     >
-      <div
-        style={{
-          backgroundColor: "white",
-          padding: "1.5rem",
-          borderRadius: "8px",
-          maxWidth: "400px",
-          width: "100%",
-        }}
-      >
-        <h2 id="change-password-title" style={{ marginTop: 0 }}>
-          Change Teacher Password
-        </h2>
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: "1rem" }}>
-            <label htmlFor="current-password" style={{ display: "block", marginBottom: "0.25rem" }}>
-              Current Password
-            </label>
-            <input
-              ref={currentRef}
-              id="current-password"
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              disabled={isSubmitting}
-              style={{
-                width: "100%",
-                padding: "0.5rem",
-                border: "1px solid #ccc",
-                borderRadius: "4px",
-              }}
-              data-testid="current-password-input"
-            />
+      <h2 id="change-password-title" style={{ marginTop: 0 }}>
+        Change Teacher Password
+      </h2>
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: "1rem" }}>
+          <label htmlFor="current-password" style={{ display: "block", marginBottom: "0.25rem" }}>
+            Current Password
+          </label>
+          <input
+            ref={currentRef}
+            id="current-password"
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            disabled={isSubmitting}
+            style={{
+              width: "100%",
+              padding: "0.5rem",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+            }}
+            data-testid="current-password-input"
+          />
+        </div>
+        <div style={{ marginBottom: "1rem" }}>
+          <label htmlFor="new-password" style={{ display: "block", marginBottom: "0.25rem" }}>
+            New Password
+          </label>
+          <input
+            id="new-password"
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            disabled={isSubmitting}
+            style={{
+              width: "100%",
+              padding: "0.5rem",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+            }}
+            data-testid="new-password-input"
+          />
+        </div>
+        <div style={{ marginBottom: "1rem" }}>
+          <label htmlFor="confirm-password" style={{ display: "block", marginBottom: "0.25rem" }}>
+            Confirm New Password
+          </label>
+          <input
+            id="confirm-password"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            disabled={isSubmitting}
+            style={{
+              width: "100%",
+              padding: "0.5rem",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+            }}
+            data-testid="confirm-password-input"
+          />
+        </div>
+        {error && (
+          <div
+            style={{
+              color: "red",
+              marginBottom: "1rem",
+              fontSize: "0.875rem",
+            }}
+            role="alert"
+            data-testid="change-password-error"
+          >
+            {error}
           </div>
-          <div style={{ marginBottom: "1rem" }}>
-            <label htmlFor="new-password" style={{ display: "block", marginBottom: "0.25rem" }}>
-              New Password
-            </label>
-            <input
-              id="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              disabled={isSubmitting}
-              style={{
-                width: "100%",
-                padding: "0.5rem",
-                border: "1px solid #ccc",
-                borderRadius: "4px",
-              }}
-              data-testid="new-password-input"
-            />
-          </div>
-          <div style={{ marginBottom: "1rem" }}>
-            <label htmlFor="confirm-password" style={{ display: "block", marginBottom: "0.25rem" }}>
-              Confirm New Password
-            </label>
-            <input
-              id="confirm-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              disabled={isSubmitting}
-              style={{
-                width: "100%",
-                padding: "0.5rem",
-                border: "1px solid #ccc",
-                borderRadius: "4px",
-              }}
-              data-testid="confirm-password-input"
-            />
-          </div>
-          {error && (
-            <div
-              style={{
-                color: "red",
-                marginBottom: "1rem",
-                fontSize: "0.875rem",
-              }}
-              role="alert"
-              data-testid="change-password-error"
-            >
-              {error}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              data-testid="change-password-cancel"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              data-testid="change-password-submit"
-            >
-              {isSubmitting ? "Changing..." : "Change Password"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        )}
+        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            data-testid="change-password-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            data-testid="change-password-submit"
+          >
+            {isSubmitting ? "Changing..." : "Change Password"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

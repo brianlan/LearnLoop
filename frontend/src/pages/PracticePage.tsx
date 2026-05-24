@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
+import { formatDate } from "@/utils/format";
 import { LatexText } from "@/components/LatexText";
 import type { PracticeHistoryItem, PracticeNextResponse } from "@/types/practice";
 
@@ -12,11 +13,6 @@ interface PracticeHistoryResponse {
 
 interface PracticeStatsResponse {
   practiceableCount: number;
-}
-
-function formatDate(dateString?: string) {
-  if (!dateString) return "—";
-  return new Date(dateString).toLocaleString();
 }
 
 function getResultStyle(result: string) {

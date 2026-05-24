@@ -198,16 +198,6 @@ export function AppRoutes() {
     </Routes>
   );
 }
-
-function HomePage() {
-  return (
-    <main>
-      <h1>LearnLoop</h1>
-      <p>Frontend scaffold is ready.</p>
-    </main>
-  );
-}
-
 export default function App() {
   return (
     <BrowserRouter>

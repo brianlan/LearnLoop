@@ -3,7 +3,7 @@ import type { ChangeEvent, ClipboardEvent } from "react";
 import { GraphSandbox } from "./GraphSandbox";
 import { TagInput } from "./TagInput";
 import { LatexText } from "./LatexText";
-import api from "@/api/client";
+import { api } from "@/api/client";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
 interface PreviewSourceImage {
@@ -96,6 +96,14 @@ function mapPreviewToFormData(preview: IngestionPreview) {
 }
 
 export type WizardStep = "paste" | "uploading" | "preview" | "editing" | "confirming";
+
+export interface WizardFormData {
+  text: string;
+  problemType: string;
+  graphDsl: string;
+  correctAnswer: string;
+  tags: string[];
+}
 
 interface IngestionWizardProps {
   onConfirm?: (previewId: string) => void;
@@ -202,6 +210,770 @@ function useDebouncedCallback<T extends (...args: unknown[]) => unknown>(
   );
 }
 
+// ── Step sub-components ──────────────────────────────────────────────
+
+interface PasteStepProps {
+  onPaste: (event: ClipboardEvent) => void;
+  fileInputRef: React.RefObject<HTMLInputElement>;
+  onFileSelection: (event: ChangeEvent<HTMLInputElement>) => void;
+  error: string;
+}
+
+function PasteStep({ onPaste, fileInputRef, onFileSelection, error }: PasteStepProps) {
+  return (
+    <div
+      style={{
+        padding: "48px 32px",
+        textAlign: "center",
+        border: "2px dashed #d1d5db",
+        borderRadius: "8px",
+        backgroundColor: "#f9fafb",
+      }}
+      onPaste={onPaste}
+      tabIndex={0}
+      role="region"
+      aria-label="Paste image area"
+    >
+      <div style={{ marginBottom: "16px", fontSize: "48px" }}>📋</div>
+      <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 600 }}>
+        Paste an Image
+      </h3>
+      <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>
+        Copy an image and paste it here (Ctrl+V or Cmd+V)
+      </p>
+      <div style={{ marginTop: "16px" }}>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            padding: "8px 16px",
+            backgroundColor: "white",
+            color: "#374151",
+            border: "1px solid #d1d5db",
+            borderRadius: "4px",
+            cursor: "pointer",
+          }}
+        >
+          Choose Image File
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => void onFileSelection(e)}
+          style={{ display: "none" }}
+        />
+      </div>
+      {error && (
+        <div
+          style={{
+            marginTop: "16px",
+            padding: "12px 16px",
+            backgroundColor: "#fef2f2",
+            borderRadius: "6px",
+            color: "#dc2626",
+            fontSize: "14px",
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface UploadingStepProps {
+  uploadProgress: number;
+}
+
+function UploadingStep({ uploadProgress }: UploadingStepProps) {
+  return (
+    <div style={{ padding: "48px 32px", textAlign: "center" }}>
+      <div style={{ marginBottom: "16px", fontSize: "48px" }}>⏳</div>
+      <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 600 }}>
+        Uploading...
+      </h3>
+      <div
+        style={{
+          width: "100%",
+          height: "8px",
+          backgroundColor: "#e5e7eb",
+          borderRadius: "4px",
+          overflow: "hidden",
+          marginTop: "16px",
+        }}
+      >
+        <div
+          style={{
+            width: `${uploadProgress}%`,
+            height: "100%",
+            backgroundColor: "#3b82f6",
+            transition: "width 0.3s ease",
+          }}
+        />
+      </div>
+      <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: "14px" }}>
+        {uploadProgress}%
+      </p>
+    </div>
+  );
+}
+
+interface PreviewStepProps {
+  preview: IngestionPreview | null;
+  isLoading: boolean;
+  onRetry: () => void;
+  setFormData: React.Dispatch<React.SetStateAction<WizardFormData>>;
+  setCurrentStep: (step: WizardStep) => void;
+  error: string;
+}
+
+function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep, error }: PreviewStepProps) {
+  return (
+    <div style={{ padding: "32px" }}>
+      <h3 style={{ margin: "0 0 16px", fontSize: "18px", fontWeight: 600 }}>
+        Processing Image
+      </h3>
+      {preview?.status === "extracting" && (
+        <div style={{ textAlign: "center", padding: "32px" }}>
+          <div style={{ fontSize: "32px", marginBottom: "16px" }}>🤖</div>
+          <p style={{ color: "#6b7280" }}>
+            AI is analyzing the image and extracting problem data...
+          </p>
+          <div
+            style={{
+              width: "40px",
+              height: "40px",
+              border: "3px solid #e5e7eb",
+              borderTopColor: "#3b82f6",
+              borderRadius: "50%",
+              margin: "16px auto",
+              animation: "spin 1s linear infinite",
+            }}
+          />
+        </div>
+      )}
+      {preview?.status === "vlm-failed" && (
+        <div
+          style={{
+            padding: "16px",
+            backgroundColor: "#fef2f2",
+            borderRadius: "6px",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ color: "#dc2626", fontWeight: 600, marginBottom: "8px" }}>
+            ⚠️ Extraction Failed
+          </div>
+          <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
+            The AI was unable to extract problem data from the image.
+          </p>
+          {(preview?.extraction?.failureCode || preview?.extraction?.failureMessage) && (
+            <details style={{ marginBottom: "12px" }}>
+              <summary style={{ cursor: "pointer", color: "#7f1d1d", fontSize: "13px" }}>
+                View error details
+              </summary>
+              <div
+                style={{
+                  marginTop: "8px",
+                  padding: "12px",
+                  backgroundColor: "#fee2e2",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                  fontFamily: "monospace",
+                }}
+              >
+                {preview.extraction.failureCode && (
+                  <div style={{ marginBottom: "8px" }}>
+                    <span style={{ fontWeight: 600 }}>Code:</span> {preview.extraction.failureCode}
+                  </div>
+                )}
+                {preview.extraction.failureMessage && (
+                  <div>
+                    <span style={{ fontWeight: 600 }}>Message:</span>{" "}
+                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      {preview.extraction.failureMessage}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <button
+              onClick={onRetry}
+              disabled={isLoading}
+              style={{
+                padding: "8px 16px",
+                backgroundColor: "#dc2626",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: isLoading ? "not-allowed" : "pointer",
+                opacity: isLoading ? 0.7 : 1,
+              }}
+            >
+              {isLoading ? "Retrying..." : "Try Again"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (preview) {
+                  setFormData(mapPreviewToFormData(preview));
+                  setCurrentStep("editing");
+                }
+              }}
+              style={{
+                padding: "8px 16px",
+                backgroundColor: "white",
+                color: "#7f1d1d",
+                border: "1px solid #fca5a5",
+                borderRadius: "4px",
+                cursor: "pointer",
+              }}
+            >
+              Edit Manually
+            </button>
+          </div>
+        </div>
+      )}
+      {preview?.status === "graph-error" && (
+        <div
+          style={{
+            padding: "16px",
+            backgroundColor: "#fef2f2",
+            borderRadius: "6px",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ color: "#dc2626", fontWeight: 600, marginBottom: "8px" }}>
+            ⚠️ Graph Error
+          </div>
+          <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
+            The extracted graph DSL is invalid.
+          </p>
+          <button
+            onClick={() => setCurrentStep("editing")}
+            style={{
+              padding: "8px 16px",
+              backgroundColor: "#dc2626",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+            }}
+          >
+            Edit Manually
+          </button>
+        </div>
+      )}
+      {error && (
+        <div
+          style={{
+            padding: "12px 16px",
+            backgroundColor: "#fef2f2",
+            borderRadius: "6px",
+            color: "#dc2626",
+            fontSize: "14px",
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface EditingStepProps {
+  previewId: string;
+  preview: IngestionPreview | null;
+  formData: WizardFormData;
+  onFieldChange: (field: keyof WizardFormData, value: string | string[]) => void;
+  graphError: string;
+  onClearGraphError: () => void;
+  onGraphError: (errorMsg: string) => void;
+  tagSuggestions: string[];
+  error: string;
+  setCurrentStep: (step: WizardStep) => void;
+  onCancel: (() => void) | undefined;
+}
+
+function EditingStep({
+  previewId,
+  preview,
+  formData,
+  onFieldChange,
+  graphError,
+  onClearGraphError,
+  onGraphError,
+  tagSuggestions,
+  error,
+  setCurrentStep,
+  onCancel,
+}: EditingStepProps) {
+  return (
+    <div style={{ padding: "32px" }}>
+      <h3 style={{ margin: "0 0 24px", fontSize: "18px", fontWeight: 600 }}>
+        Edit Problem Details
+      </h3>
+
+      {previewId && preview?.sourceImage && (
+        <div style={{ marginBottom: "24px" }}>
+          <label
+            style={{
+              display: "block",
+              marginBottom: "6px",
+              fontSize: "14px",
+              fontWeight: 500,
+              color: "#374151",
+            }}
+          >
+            Original Image
+          </label>
+          <img
+            src={`/api/v1/ingestion-previews/${previewId}/image`}
+            alt="Original problem image"
+            style={{
+              maxWidth: "100%",
+              maxHeight: "300px",
+              borderRadius: "6px",
+              border: "1px solid #e5e7eb",
+            }}
+            data-testid="source-image"
+          />
+        </div>
+      )}
+
+      <div style={{ marginBottom: "24px" }}>
+        <label
+          style={{
+            display: "block",
+            marginBottom: "6px",
+            fontSize: "14px",
+            fontWeight: 500,
+            color: "#374151",
+          }}
+        >
+          Problem Text
+        </label>
+        <textarea
+          value={formData.text}
+          onChange={(e) => onFieldChange("text", e.target.value)}
+          rows={4}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            border: "1px solid #d1d5db",
+            borderRadius: "6px",
+            fontSize: "14px",
+            fontFamily: "inherit",
+            resize: "vertical",
+            boxSizing: "border-box",
+          }}
+          placeholder="Enter the problem statement..."
+          data-testid="text-input"
+        />
+      </div>
+
+      <div style={{ marginBottom: "24px" }}>
+        <label
+          style={{
+            display: "block",
+            marginBottom: "6px",
+            fontSize: "14px",
+            fontWeight: 500,
+            color: "#374151",
+          }}
+        >
+          Problem Type
+        </label>
+        <select
+          value={formData.problemType}
+          onChange={(e) => onFieldChange("problemType", e.target.value)}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            border: "1px solid #d1d5db",
+            borderRadius: "6px",
+            fontSize: "14px",
+            fontFamily: "inherit",
+            boxSizing: "border-box",
+            backgroundColor: "white",
+          }}
+          data-testid="problem-type-input"
+        >
+          <option value="">Select a problem type…</option>
+          <option value="single-choice">Single Choice</option>
+          <option value="multi-choice">Multi Choice</option>
+          <option value="fill-in-the-blank">Fill in the Blank</option>
+          <option value="short-answer">Short Answer</option>
+        </select>
+      </div>
+
+      <div style={{ marginBottom: "24px" }}>
+        <label
+          style={{
+            display: "block",
+            marginBottom: "6px",
+            fontSize: "14px",
+            fontWeight: 500,
+            color: "#374151",
+          }}
+        >
+          Graph DSL
+        </label>
+        <textarea
+          value={formData.graphDsl}
+          onChange={(e) => onFieldChange("graphDsl", e.target.value)}
+          rows={6}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            border: "1px solid #d1d5db",
+            borderRadius: "6px",
+            fontSize: "13px",
+            fontFamily: "monospace",
+            resize: "vertical",
+            boxSizing: "border-box",
+          }}
+          placeholder="Enter JSXGraph DSL code..."
+          data-testid="graph-dsl-input"
+        />
+
+        {formData.graphDsl && (
+          <div style={{ marginTop: "16px" }}>
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: 500,
+                color: "#374151",
+                marginBottom: "8px",
+              }}
+            >
+              Graph Preview
+            </div>
+            <GraphSandbox
+              dsl={formData.graphDsl}
+              height={300}
+              onError={onGraphError}
+              onRender={onClearGraphError}
+            />
+            {graphError && (
+              <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
+                {graphError}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginBottom: "24px" }}>
+        <label
+          style={{
+            display: "block",
+            marginBottom: "6px",
+            fontSize: "14px",
+            fontWeight: 500,
+            color: "#374151",
+          }}
+        >
+          Correct Answer
+        </label>
+        <input
+          type="text"
+          value={formData.correctAnswer}
+          onChange={(e) => onFieldChange("correctAnswer", e.target.value)}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            border: "1px solid #d1d5db",
+            borderRadius: "6px",
+            fontSize: "14px",
+            fontFamily: "inherit",
+            boxSizing: "border-box",
+          }}
+          placeholder="Enter the correct answer..."
+          data-testid="correct-answer-input"
+        />
+      </div>
+
+      <div style={{ marginBottom: "24px" }}>
+        <TagInput
+          tags={formData.tags}
+          onChange={(tags) => onFieldChange("tags", tags)}
+          suggestions={tagSuggestions}
+          placeholder="Add a tag..."
+          testId="tags-input"
+        />
+      </div>
+
+      {error && (
+        <div
+          style={{
+            padding: "12px 16px",
+            backgroundColor: "#fef2f2",
+            borderRadius: "6px",
+            color: "#dc2626",
+            fontSize: "14px",
+            marginBottom: "16px",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "12px" }}>
+        <button
+          onClick={() => setCurrentStep("confirming")}
+          style={{
+            padding: "10px 20px",
+            backgroundColor: "#3b82f6",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 500,
+          }}
+          data-testid="review-button"
+        >
+          Review & Confirm
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: "10px 20px",
+            backgroundColor: "white",
+            color: "#374151",
+            border: "1px solid #d1d5db",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 500,
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface ConfirmingStepProps {
+  formData: WizardFormData;
+  graphError: string;
+  onGraphError: (errorMsg: string) => void;
+  error: string;
+  isLoading: boolean;
+  onConfirm: () => void;
+  setCurrentStep: (step: WizardStep) => void;
+}
+
+function ConfirmingStep({
+  formData,
+  graphError,
+  onGraphError,
+  error,
+  isLoading,
+  onConfirm,
+  setCurrentStep,
+}: ConfirmingStepProps) {
+  return (
+    <div style={{ padding: "32px" }}>
+      <h3 style={{ margin: "0 0 24px", fontSize: "18px", fontWeight: 600 }}>
+        Confirm Problem
+      </h3>
+
+      <div
+        style={{
+          backgroundColor: "#f9fafb",
+          borderRadius: "8px",
+          padding: "24px",
+          marginBottom: "24px",
+        }}
+      >
+        <div style={{ marginBottom: "16px" }}>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#6b7280",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}
+          >
+            Problem Text
+          </div>
+          <LatexText
+            text={formData.text || "(empty)"}
+            style={{ fontSize: "14px", color: "#111827" }}
+          />
+        </div>
+
+        <div style={{ marginBottom: "16px" }}>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#6b7280",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}
+          >
+            Type
+          </div>
+          <div style={{ fontSize: "14px", color: "#111827" }}>
+            {formData.problemType || "(empty)"}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: "16px" }}>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#6b7280",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}
+          >
+            Graph DSL
+          </div>
+          <div
+            style={{
+              fontSize: "13px",
+              color: "#111827",
+              fontFamily: "monospace",
+              backgroundColor: "white",
+              padding: "8px",
+              borderRadius: "4px",
+              border: "1px solid #e5e7eb",
+            }}
+          >
+            {formData.graphDsl || "(empty)"}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: "16px" }}>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#6b7280",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}
+          >
+            Correct Answer
+          </div>
+          <div style={{ fontSize: "14px", color: "#111827" }}>
+            {formData.correctAnswer || "(empty)"}
+          </div>
+        </div>
+
+        <div>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#6b7280",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}
+          >
+            Tags
+          </div>
+          <div style={{ fontSize: "14px", color: "#111827" }}>
+            {formData.tags.length > 0 ? formData.tags.join(", ") : "(empty)"}
+          </div>
+        </div>
+      </div>
+
+      {formData.graphDsl && (
+        <div style={{ marginBottom: "24px" }}>
+          <div
+            style={{
+              fontSize: "14px",
+              fontWeight: 500,
+              color: "#374151",
+              marginBottom: "8px",
+            }}
+          >
+            Graph Preview
+          </div>
+          <GraphSandbox
+            dsl={formData.graphDsl}
+            height={300}
+            onError={onGraphError}
+          />
+          {graphError && (
+            <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
+              {graphError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            padding: "12px 16px",
+            backgroundColor: "#fef2f2",
+            borderRadius: "6px",
+            color: "#dc2626",
+            fontSize: "14px",
+            marginBottom: "16px",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "12px" }}>
+        <button
+          onClick={onConfirm}
+          disabled={isLoading}
+          style={{
+            padding: "10px 20px",
+            backgroundColor: "#10b981",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: "14px",
+            fontWeight: 500,
+            opacity: isLoading ? 0.7 : 1,
+          }}
+          data-testid="confirm-button"
+        >
+          {isLoading ? "Creating..." : "Confirm & Save"}
+        </button>
+        <button
+          onClick={() => setCurrentStep("editing")}
+          disabled={isLoading}
+          style={{
+            padding: "10px 20px",
+            backgroundColor: "white",
+            color: "#374151",
+            border: "1px solid #d1d5db",
+            borderRadius: "6px",
+            cursor: isLoading ? "not-allowed" : "pointer",
+            fontSize: "14px",
+            fontWeight: 500,
+          }}
+        >
+          Back to Edit
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
   const [currentStep, setCurrentStep] = useState<WizardStep>("paste");
   const [previewId, setPreviewId] = useState<string>("");
@@ -210,18 +982,12 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
   const [error, setError] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  const [formData, setFormData] = useState<{
-    text: string;
-    problemType: string;
-    graphDsl: string;
-    correctAnswer: string;
-    tags: string[];
-  }>({
+  const [formData, setFormData] = useState<WizardFormData>({
     text: "",
     problemType: "",
     graphDsl: "",
     correctAnswer: "",
-    tags: [] as string[],
+    tags: [],
   });
 
   const [graphError, setGraphError] = useState<string>("");
@@ -441,697 +1207,54 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     switch (currentStep) {
       case "paste":
         return (
-          <div
-            style={{
-              padding: "48px 32px",
-              textAlign: "center",
-              border: "2px dashed #d1d5db",
-              borderRadius: "8px",
-              backgroundColor: "#f9fafb",
-            }}
+          <PasteStep
             onPaste={handlePaste}
-            tabIndex={0}
-            role="region"
-            aria-label="Paste image area"
-          >
-            <div style={{ marginBottom: "16px", fontSize: "48px" }}>📋</div>
-            <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 600 }}>
-              Paste an Image
-            </h3>
-            <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>
-              Copy an image and paste it here (Ctrl+V or Cmd+V)
-            </p>
-            <div style={{ marginTop: "16px" }}>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  padding: "8px 16px",
-                  backgroundColor: "white",
-                  color: "#374151",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                }}
-              >
-                Choose Image File
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={(e) => void handleFileSelection(e)}
-                style={{ display: "none" }}
-              />
-            </div>
-            {error && (
-              <div
-                style={{
-                  marginTop: "16px",
-                  padding: "12px 16px",
-                  backgroundColor: "#fef2f2",
-                  borderRadius: "6px",
-                  color: "#dc2626",
-                  fontSize: "14px",
-                }}
-              >
-                {error}
-              </div>
-            )}
-          </div>
+            fileInputRef={fileInputRef}
+            onFileSelection={handleFileSelection}
+            error={error}
+          />
         );
-
       case "uploading":
-        return (
-          <div style={{ padding: "48px 32px", textAlign: "center" }}>
-            <div style={{ marginBottom: "16px", fontSize: "48px" }}>⏳</div>
-            <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 600 }}>
-              Uploading...
-            </h3>
-            <div
-              style={{
-                width: "100%",
-                height: "8px",
-                backgroundColor: "#e5e7eb",
-                borderRadius: "4px",
-                overflow: "hidden",
-                marginTop: "16px",
-              }}
-            >
-              <div
-                style={{
-                  width: `${uploadProgress}%`,
-                  height: "100%",
-                  backgroundColor: "#3b82f6",
-                  transition: "width 0.3s ease",
-                }}
-              />
-            </div>
-            <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: "14px" }}>
-              {uploadProgress}%
-            </p>
-          </div>
-        );
-
+        return <UploadingStep uploadProgress={uploadProgress} />;
       case "preview":
         return (
-          <div style={{ padding: "32px" }}>
-            <h3 style={{ margin: "0 0 16px", fontSize: "18px", fontWeight: 600 }}>
-              Processing Image
-            </h3>
-            {preview?.status === "extracting" && (
-              <div style={{ textAlign: "center", padding: "32px" }}>
-                <div style={{ fontSize: "32px", marginBottom: "16px" }}>🤖</div>
-                <p style={{ color: "#6b7280" }}>
-                  AI is analyzing the image and extracting problem data...
-                </p>
-                <div
-                  style={{
-                    width: "40px",
-                    height: "40px",
-                    border: "3px solid #e5e7eb",
-                    borderTopColor: "#3b82f6",
-                    borderRadius: "50%",
-                    margin: "16px auto",
-                    animation: "spin 1s linear infinite",
-                  }}
-                />
-              </div>
-            )}
-            {preview?.status === "vlm-failed" && (
-              <div
-                style={{
-                  padding: "16px",
-                  backgroundColor: "#fef2f2",
-                  borderRadius: "6px",
-                  marginBottom: "16px",
-                }}
-              >
-                <div style={{ color: "#dc2626", fontWeight: 600, marginBottom: "8px" }}>
-                  ⚠️ Extraction Failed
-                </div>
-                <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
-                  The AI was unable to extract problem data from the image.
-                </p>
-                {(preview?.extraction?.failureCode || preview?.extraction?.failureMessage) && (
-                  <details style={{ marginBottom: "12px" }}>
-                    <summary style={{ cursor: "pointer", color: "#7f1d1d", fontSize: "13px" }}>
-                      View error details
-                    </summary>
-                    <div
-                      style={{
-                        marginTop: "8px",
-                        padding: "12px",
-                        backgroundColor: "#fee2e2",
-                        borderRadius: "4px",
-                        fontSize: "12px",
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      {preview.extraction.failureCode && (
-                        <div style={{ marginBottom: "8px" }}>
-                          <span style={{ fontWeight: 600 }}>Code:</span> {preview.extraction.failureCode}
-                        </div>
-                      )}
-                      {preview.extraction.failureMessage && (
-                        <div>
-                          <span style={{ fontWeight: 600 }}>Message:</span>{" "}
-                          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                            {preview.extraction.failureMessage}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                )}
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                  <button
-                    onClick={handleRetry}
-                    disabled={isLoading}
-                    style={{
-                      padding: "8px 16px",
-                      backgroundColor: "#dc2626",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: isLoading ? "not-allowed" : "pointer",
-                      opacity: isLoading ? 0.7 : 1,
-                    }}
-                  >
-                    {isLoading ? "Retrying..." : "Try Again"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (preview) {
-                        setFormData(mapPreviewToFormData(preview));
-                        setCurrentStep("editing");
-                      }
-                    }}
-                    style={{
-                      padding: "8px 16px",
-                      backgroundColor: "white",
-                      color: "#7f1d1d",
-                      border: "1px solid #fca5a5",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Edit Manually
-                  </button>
-                </div>
-              </div>
-            )}
-            {preview?.status === "graph-error" && (
-              <div
-                style={{
-                  padding: "16px",
-                  backgroundColor: "#fef2f2",
-                  borderRadius: "6px",
-                  marginBottom: "16px",
-                }}
-              >
-                <div style={{ color: "#dc2626", fontWeight: 600, marginBottom: "8px" }}>
-                  ⚠️ Graph Error
-                </div>
-                <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
-                  The extracted graph DSL is invalid.
-                </p>
-                <button
-                  onClick={() => setCurrentStep("editing")}
-                  style={{
-                    padding: "8px 16px",
-                    backgroundColor: "#dc2626",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: "pointer",
-                  }}
-                >
-                  Edit Manually
-                </button>
-              </div>
-            )}
-            {error && (
-              <div
-                style={{
-                  padding: "12px 16px",
-                  backgroundColor: "#fef2f2",
-                  borderRadius: "6px",
-                  color: "#dc2626",
-                  fontSize: "14px",
-                }}
-              >
-                {error}
-              </div>
-            )}
-          </div>
+          <PreviewStep
+            preview={preview}
+            isLoading={isLoading}
+            onRetry={handleRetry}
+            setFormData={setFormData}
+            setCurrentStep={setCurrentStep}
+            error={error}
+          />
         );
-
       case "editing":
         return (
-          <div style={{ padding: "32px" }}>
-            <h3 style={{ margin: "0 0 24px", fontSize: "18px", fontWeight: 600 }}>
-              Edit Problem Details
-            </h3>
-
-            {previewId && preview?.sourceImage && (
-              <div style={{ marginBottom: "24px" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "6px",
-                    fontSize: "14px",
-                    fontWeight: 500,
-                    color: "#374151",
-                  }}
-                >
-                  Original Image
-                </label>
-                <img
-                  src={`/api/v1/ingestion-previews/${previewId}/image`}
-                  alt="Original problem image"
-                  style={{
-                    maxWidth: "100%",
-                    maxHeight: "300px",
-                    borderRadius: "6px",
-                    border: "1px solid #e5e7eb",
-                  }}
-                  data-testid="source-image"
-                />
-              </div>
-            )}
-
-            <div style={{ marginBottom: "24px" }}>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  color: "#374151",
-                }}
-              >
-                Problem Text
-              </label>
-              <textarea
-                value={formData.text}
-                onChange={(e) => handleFieldChange("text", e.target.value)}
-                rows={4}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  fontSize: "14px",
-                  fontFamily: "inherit",
-                  resize: "vertical",
-                  boxSizing: "border-box",
-                }}
-                placeholder="Enter the problem statement..."
-                data-testid="text-input"
-              />
-            </div>
-
-            <div style={{ marginBottom: "24px" }}>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  color: "#374151",
-                }}
-              >
-                Problem Type
-              </label>
-              <select
-                value={formData.problemType}
-                onChange={(e) => handleFieldChange("problemType", e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  fontSize: "14px",
-                  fontFamily: "inherit",
-                  boxSizing: "border-box",
-                  backgroundColor: "white",
-                }}
-                data-testid="problem-type-input"
-              >
-                <option value="">Select a problem type…</option>
-                <option value="single-choice">Single Choice</option>
-                <option value="multi-choice">Multi Choice</option>
-                <option value="fill-in-the-blank">Fill in the Blank</option>
-                <option value="short-answer">Short Answer</option>
-              </select>
-            </div>
-
-            <div style={{ marginBottom: "24px" }}>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  color: "#374151",
-                }}
-              >
-                Graph DSL
-              </label>
-              <textarea
-                value={formData.graphDsl}
-                onChange={(e) => handleFieldChange("graphDsl", e.target.value)}
-                rows={6}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  fontSize: "13px",
-                  fontFamily: "monospace",
-                  resize: "vertical",
-                  boxSizing: "border-box",
-                }}
-                placeholder="Enter JSXGraph DSL code..."
-                data-testid="graph-dsl-input"
-              />
-
-              {formData.graphDsl && (
-                <div style={{ marginTop: "16px" }}>
-                  <div
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 500,
-                      color: "#374151",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Graph Preview
-                  </div>
-                  <GraphSandbox
-                    dsl={formData.graphDsl}
-                    height={300}
-                    onError={handleGraphError}
-                    onRender={() => setGraphError("")}
-                  />
-                  {graphError && (
-                    <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
-                      {graphError}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginBottom: "24px" }}>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  color: "#374151",
-                }}
-              >
-                Correct Answer
-              </label>
-              <input
-                type="text"
-                value={formData.correctAnswer}
-                onChange={(e) => handleFieldChange("correctAnswer", e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  fontSize: "14px",
-                  fontFamily: "inherit",
-                  boxSizing: "border-box",
-                }}
-                placeholder="Enter the correct answer..."
-                data-testid="correct-answer-input"
-              />
-            </div>
-
-            <div style={{ marginBottom: "24px" }}>
-              <TagInput
-                tags={formData.tags}
-                onChange={(tags) => handleFieldChange("tags", tags)}
-                suggestions={tagSuggestions}
-                placeholder="Add a tag..."
-                testId="tags-input"
-              />
-            </div>
-
-            {error && (
-              <div
-                style={{
-                  padding: "12px 16px",
-                  backgroundColor: "#fef2f2",
-                  borderRadius: "6px",
-                  color: "#dc2626",
-                  fontSize: "14px",
-                  marginBottom: "16px",
-                }}
-              >
-                {error}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: "12px" }}>
-              <button
-                onClick={() => setCurrentStep("confirming")}
-                style={{
-                  padding: "10px 20px",
-                  backgroundColor: "#3b82f6",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                }}
-                data-testid="review-button"
-              >
-                Review & Confirm
-              </button>
-              <button
-                onClick={onCancel}
-                style={{
-                  padding: "10px 20px",
-                  backgroundColor: "white",
-                  color: "#374151",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+          <EditingStep
+            previewId={previewId}
+            preview={preview}
+            formData={formData}
+            onFieldChange={handleFieldChange}
+            graphError={graphError}
+            onClearGraphError={() => setGraphError("")}
+            onGraphError={handleGraphError}
+            tagSuggestions={tagSuggestions}
+            error={error}
+            setCurrentStep={setCurrentStep}
+            onCancel={onCancel}
+          />
         );
-
       case "confirming":
         return (
-          <div style={{ padding: "32px" }}>
-            <h3 style={{ margin: "0 0 24px", fontSize: "18px", fontWeight: 600 }}>
-              Confirm Problem
-            </h3>
-
-            <div
-              style={{
-                backgroundColor: "#f9fafb",
-                borderRadius: "8px",
-                padding: "24px",
-                marginBottom: "24px",
-              }}
-            >
-              <div style={{ marginBottom: "16px" }}>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "4px",
-                  }}
-                >
-                  Problem Text
-                </div>
-                <LatexText
-                  text={formData.text || "(empty)"}
-                  style={{ fontSize: "14px", color: "#111827" }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "16px" }}>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "4px",
-                  }}
-                >
-                  Type
-                </div>
-                <div style={{ fontSize: "14px", color: "#111827" }}>
-                  {formData.problemType || "(empty)"}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "16px" }}>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "4px",
-                  }}
-                >
-                  Graph DSL
-                </div>
-                <div
-                  style={{
-                    fontSize: "13px",
-                    color: "#111827",
-                    fontFamily: "monospace",
-                    backgroundColor: "white",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid #e5e7eb",
-                  }}
-                >
-                  {formData.graphDsl || "(empty)"}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "16px" }}>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "4px",
-                  }}
-                >
-                  Correct Answer
-                </div>
-                <div style={{ fontSize: "14px", color: "#111827" }}>
-                  {formData.correctAnswer || "(empty)"}
-                </div>
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "4px",
-                  }}
-                >
-                  Tags
-                </div>
-                <div style={{ fontSize: "14px", color: "#111827" }}>
-                  {formData.tags.length > 0 ? formData.tags.join(", ") : "(empty)"}
-                </div>
-              </div>
-            </div>
-
-            {formData.graphDsl && (
-              <div style={{ marginBottom: "24px" }}>
-                <div
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 500,
-                    color: "#374151",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Graph Preview
-                </div>
-                <GraphSandbox
-                  dsl={formData.graphDsl}
-                  height={300}
-                  onError={handleGraphError}
-                />
-                {graphError && (
-                  <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
-                    {graphError}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {error && (
-              <div
-                style={{
-                  padding: "12px 16px",
-                  backgroundColor: "#fef2f2",
-                  borderRadius: "6px",
-                  color: "#dc2626",
-                  fontSize: "14px",
-                  marginBottom: "16px",
-                }}
-              >
-                {error}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: "12px" }}>
-              <button
-                onClick={handleConfirm}
-                disabled={isLoading}
-                style={{
-                  padding: "10px 20px",
-                  backgroundColor: "#10b981",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "6px",
-                  cursor: isLoading ? "not-allowed" : "pointer",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  opacity: isLoading ? 0.7 : 1,
-                }}
-                data-testid="confirm-button"
-              >
-                {isLoading ? "Creating..." : "Confirm & Save"}
-              </button>
-              <button
-                onClick={() => setCurrentStep("editing")}
-                disabled={isLoading}
-                style={{
-                  padding: "10px 20px",
-                  backgroundColor: "white",
-                  color: "#374151",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  cursor: isLoading ? "not-allowed" : "pointer",
-                  fontSize: "14px",
-                  fontWeight: 500,
-                }}
-              >
-                Back to Edit
-              </button>
-            </div>
-          </div>
+          <ConfirmingStep
+            formData={formData}
+            graphError={graphError}
+            onGraphError={handleGraphError}
+            error={error}
+            isLoading={isLoading}
+            onConfirm={handleConfirm}
+            setCurrentStep={setCurrentStep}
+          />
         );
-
       default:
         return null;
     }
