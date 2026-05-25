@@ -18,8 +18,8 @@ from app.infrastructure.vlm.client import (
     GradingResult,
     VLMClient,
     VLMError,
-    recover_stale_preview,
 )
+from app.domain.state import recover_stale_preview
 from app.infrastructure.vlm.prompts import (
     EXTRACTION_PROMPT_VERSION,
     EXTRACTION_SCHEMA_VERSION,

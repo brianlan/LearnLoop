@@ -444,9 +444,3 @@ class VLMClient:
         return parsed
 
 
-def __getattr__(name: str) -> object:
-    if name == "recover_stale_preview":
-        from app.domain.state import recover_stale_preview  # noqa: F811
-
-        return recover_stale_preview
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
