@@ -75,6 +75,7 @@ class FakeCollection:
     def __init__(self) -> None:
         self._documents: list[dict[str, Any]] = []
         self._insert_one_error: Exception | None = None
+        self._delete_one_error: Exception | None = None
 
     def seed(self, *documents: dict[str, Any]) -> None:
         self._documents.extend(deepcopy(list(documents)))
@@ -123,6 +124,8 @@ class FakeCollection:
         return None
 
     async def delete_one(self, query: dict[str, Any]) -> FakeDeleteResult:
+        if self._delete_one_error is not None:
+            raise self._delete_one_error
         for index, document in enumerate(self._documents):
             if _matches(document, query):
                 del self._documents[index]
@@ -717,6 +720,43 @@ async def test_confirm_preview_rolls_back_status_when_problem_insert_fails(
 
     stored_problem = await database["problems"].find_one({"userId": owner["_id"]})
     assert stored_problem is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_rolls_back_status_when_cleanup_delete_fails(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    original_status = "ready"
+    preview = make_preview(owner["_id"], status=original_status)
+    preview["editableDraft"] = {
+        "text": "Solve for x",
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": "42",
+        "tags": [],
+    }
+    database["ingestion_previews"].seed(preview)
+
+    database["solution_generation_tasks"]._insert_one_error = RuntimeError("simulated task insert error")
+    database["problems"]._delete_one_error = RuntimeError("simulated cleanup error")
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "PROBLEM_CREATION_FAILED"
+
+    stored_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+    assert stored_preview is not None
+    assert stored_preview["status"] == original_status
+
+    stored_problem = await database["problems"].find_one({"userId": owner["_id"]})
+    assert stored_problem is not None
 
 
 @pytest.mark.asyncio

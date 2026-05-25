@@ -341,7 +341,10 @@ async def confirm_preview(
     except Exception:
         delete_problem = getattr(database["problems"], "delete_one", None)
         if callable(delete_problem):
-            await delete_problem({"_id": problem["_id"]})
+            try:
+                await delete_problem({"_id": problem["_id"]})
+            except Exception:
+                pass
         await previews.update_one(
             {"_id": preview_oid},
             {"$set": {"status": claimed_preview["status"], "updatedAt": now}},
