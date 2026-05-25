@@ -8,6 +8,7 @@ from starlette.types import ExceptionHandler
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.storage.mongo import ensure_database_setup, get_database
 from app.observability import configure_logging
+from app.presentation.solution_generation import backfill_solution_generation_tasks
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
 from app.presentation.errors import ApiError, api_error_handler, validation_error_handler
@@ -24,6 +25,7 @@ from app.presentation.teacher_password import router as teacher_password_router
 async def lifespan(app: FastAPI):
     database = get_database()
     await ensure_database_setup(database)
+    await backfill_solution_generation_tasks(database)
     yield
 
 
