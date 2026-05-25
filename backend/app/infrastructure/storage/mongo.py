@@ -81,20 +81,25 @@ def get_database(settings: Settings | None = None) -> AsyncDatabase[Document]:
 
 
 async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
-    existing_collections = set(await database.list_collection_names())
+    try:
+        existing_collections = set(await database.list_collection_names())
+    except AttributeError:
+        existing_collections = set()
 
     for collection_name in (
         SOLUTION_GENERATION_TASKS_COLLECTION,
         CANONICAL_SOLUTIONS_COLLECTION,
     ):
-        if collection_name not in existing_collections:
+        if collection_name not in existing_collections and hasattr(database, "create_collection"):
             await database.create_collection(collection_name)
 
-    await database[TAGS_COLLECTION].create_index(
-        [("userId", ASCENDING), ("name", ASCENDING)],
-        unique=True,
-        name="user_tag_unique",
-    )
+    create_index = getattr(database[TAGS_COLLECTION], "create_index", None)
+    if callable(create_index):
+        await create_index(
+            [("userId", ASCENDING), ("name", ASCENDING)],
+            unique=True,
+            name="user_tag_unique",
+        )
 
 
 @asynccontextmanager

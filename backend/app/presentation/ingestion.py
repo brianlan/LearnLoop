@@ -22,6 +22,7 @@ from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags, parse_object_id
 from app.presentation.ingestion_serialization import ProblemResponse, PreviewResponse, serialize_preview, serialize_problem, _enum_value
 from app.presentation.tags import _register_tags
+from app.presentation.solution_generation import enqueue_solution_generation_task_for_problem
 from app.presentation.ingestion_workflow import (
     DEFAULT_SYNC_WAIT_SECONDS,
     clean_optional_text,
@@ -336,7 +337,11 @@ async def confirm_preview(
     }
     try:
         await database["problems"].insert_one(problem)
+        await enqueue_solution_generation_task_for_problem(database, problem, now=now)
     except Exception:
+        delete_problem = getattr(database["problems"], "delete_one", None)
+        if callable(delete_problem):
+            await delete_problem({"_id": problem["_id"]})
         await previews.update_one(
             {"_id": preview_oid},
             {"$set": {"status": claimed_preview["status"], "updatedAt": now}},

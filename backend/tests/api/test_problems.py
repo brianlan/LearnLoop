@@ -124,6 +124,8 @@ class FakeDatabase:
             "ingestion_previews": FakeCollection(),
             "users": FakeCollection(),
             "sessions": FakeCollection(),
+            "solution_generation_tasks": FakeCollection(),
+            "canonical_solutions": FakeCollection(),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:

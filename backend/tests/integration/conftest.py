@@ -202,6 +202,8 @@ class FakeDatabase:
             "problems": FakeCollection(),
             "exams": FakeCollection(),
             "tags": FakeCollection(),
+            "solution_generation_tasks": FakeCollection(),
+            "canonical_solutions": FakeCollection(),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:

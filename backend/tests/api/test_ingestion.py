@@ -145,6 +145,8 @@ class FakeDatabase:
             "ingestion_previews": FakeCollection(),
             "problems": FakeCollection(),
             "tags": FakeCollection(),
+            "solution_generation_tasks": FakeCollection(),
+            "canonical_solutions": FakeCollection(),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:
@@ -609,6 +611,13 @@ async def test_confirm_preview_creates_problem_from_confirmed_draft(
     updated_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
     assert updated_preview is not None
     assert updated_preview["status"] == "confirmed"
+    solution_task = await database["solution_generation_tasks"].find_one({"problem_id": body["id"]})
+    assert solution_task is not None
+    assert solution_task["user_id"] == str(owner["_id"])
+    assert solution_task["status"] == "pending"
+    assert solution_task["retry_count"] == 0
+    assert solution_task["failure_reason"] is None
+    assert solution_task["started_at"] is None
 
 
 @pytest.mark.asyncio
@@ -733,6 +742,88 @@ async def test_confirm_preview_rejects_double_confirmation(
 
     assert second_response.status_code == 409
     assert second_response.json()["error"]["code"] == "PREVIEW_ALREADY_CONFIRMED"
+    assert await database["solution_generation_tasks"].count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_solution_generation_tasks_enqueues_only_missing_problems(
+    ingestion_app: FastAPI,
+) -> None:
+    from app.presentation.solution_generation import backfill_solution_generation_tasks
+
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = {
+        "_id": ObjectId(),
+        "username": "student1",
+        "status": "active",
+        "createdAt": datetime.now(UTC),
+        "updatedAt": datetime.now(UTC),
+        "lastLoginAt": None,
+    }
+    database["users"].seed(owner)
+
+    now = datetime.now(UTC)
+    missing_problem = {
+        "_id": ObjectId(),
+        "userId": owner["_id"],
+        "isDeleted": False,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    problem_with_task = {
+        "_id": ObjectId(),
+        "userId": owner["_id"],
+        "isDeleted": False,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    problem_with_solution = {
+        "_id": ObjectId(),
+        "userId": owner["_id"],
+        "isDeleted": False,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    deleted_problem = {
+        "_id": ObjectId(),
+        "userId": owner["_id"],
+        "isDeleted": True,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    database["problems"].seed(missing_problem, problem_with_task, problem_with_solution, deleted_problem)
+    database["solution_generation_tasks"].seed(
+        {
+            "_id": ObjectId(),
+            "problem_id": str(problem_with_task["_id"]),
+            "user_id": str(owner["_id"]),
+            "status": "pending",
+            "retry_count": 0,
+            "failure_reason": None,
+            "created_at": now,
+            "updated_at": now,
+            "started_at": None,
+        }
+    )
+    database["canonical_solutions"].seed(
+        {
+            "_id": ObjectId(),
+            "problem_id": str(problem_with_solution["_id"]),
+            "user_id": str(owner["_id"]),
+            "steps_markdown": "steps",
+            "final_answer": "answer",
+            "math_level_classification": "middle-school",
+            "created_at": now,
+        }
+    )
+
+    inserted = await backfill_solution_generation_tasks(database, now=now)
+
+    assert inserted == 1
+    assert await database["solution_generation_tasks"].count_documents({}) == 2
+    missing_task = await database["solution_generation_tasks"].find_one({"problem_id": str(missing_problem["_id"])})
+    assert missing_task is not None
+    assert await database["solution_generation_tasks"].find_one({"problem_id": str(deleted_problem["_id"])}) is None
 
 
 @pytest.mark.asyncio
