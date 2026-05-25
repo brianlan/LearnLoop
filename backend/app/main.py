@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import cast
 
@@ -8,6 +9,7 @@ from starlette.types import ExceptionHandler
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.storage.mongo import ensure_database_setup, get_database
 from app.observability import configure_logging
+from app.infrastructure.worker.solution_worker import run_solution_worker
 from app.presentation.solution_generation import backfill_solution_generation_tasks
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
@@ -26,7 +28,20 @@ async def lifespan(app: FastAPI):
     database = get_database()
     await ensure_database_setup(database)
     await backfill_solution_generation_tasks(database)
+    
+    # Start worker
+    stop_event = asyncio.Event()
+    worker_task = asyncio.create_task(run_solution_worker(database, stop_event))
+    
     yield
+    
+    # Stop worker
+    stop_event.set()
+    try:
+        # Give it a short time to shut down
+        await asyncio.wait_for(worker_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        worker_task.cancel()
 
 
 def create_app() -> FastAPI:
