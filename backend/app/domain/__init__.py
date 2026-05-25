@@ -5,6 +5,7 @@ from .models import (
     ExamState,
     IngestionPreviewStatus,
     GradingStatus,
+    SolutionGenerationStatus,
     CorrectAnswer,
     SourceImage,
     Extraction,
@@ -24,6 +25,8 @@ from .models import (
     IngestionPreview,
     Problem,
     Exam,
+    SolutionGenerationTask,
+    CanonicalSolution,
 )
 from .normalization import normalize_answer
 from .selection import select_problems
@@ -40,6 +43,7 @@ __all__ = [
     "ExamState",
     "IngestionPreviewStatus",
     "GradingStatus",
+    "SolutionGenerationStatus",
     "CorrectAnswer",
     "SourceImage",
     "Extraction",
@@ -59,6 +63,8 @@ __all__ = [
     "IngestionPreview",
     "Problem",
     "Exam",
+    "SolutionGenerationTask",
+    "CanonicalSolution",
     "normalize_answer",
     "recover_stale_preview",
     "select_problems",
@@ -67,4 +73,3 @@ __all__ = [
     "InvalidStateTransitionError",
     "compute_summary",
 ]
-

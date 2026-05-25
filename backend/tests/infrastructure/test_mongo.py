@@ -9,7 +9,11 @@ import pytest
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import (
     AsyncMongoClientFactory,
+    CANONICAL_SOLUTIONS_COLLECTION,
     MongoClientAdapter,
+    SOLUTION_GENERATION_TASKS_COLLECTION,
+    TAGS_COLLECTION,
+    ensure_database_setup,
     get_client,
     get_database,
 )
@@ -18,6 +22,28 @@ from app.infrastructure.storage.mongo import (
 class FakeDatabase:
     def __init__(self, name: str) -> None:
         self.name = name
+        self.created_collections: list[str] = []
+        self.collection_names: list[str] = []
+        self.collections: dict[str, FakeCollection] = {}
+
+    async def list_collection_names(self) -> list[str]:
+        return list(self.collection_names)
+
+    async def create_collection(self, name: str) -> None:
+        self.created_collections.append(name)
+        self.collection_names.append(name)
+        self.collections.setdefault(name, FakeCollection())
+
+    def __getitem__(self, name: str) -> "FakeCollection":
+        return self.collections.setdefault(name, FakeCollection())
+
+
+class FakeCollection:
+    def __init__(self) -> None:
+        self.index_calls: list[dict[str, Any]] = []
+
+    async def create_index(self, keys, **kwargs) -> None:
+        self.index_calls.append({"keys": list(keys), "kwargs": kwargs})
 
 
 class FakeSession:
@@ -95,3 +121,23 @@ def test_module_helpers_return_client_and_database() -> None:
 
     assert client.options._options["document_class"] is dict
     assert database.name == "helper-db"
+
+
+@pytest.mark.asyncio
+async def test_ensure_database_setup_creates_solution_collections_and_tag_index() -> None:
+    database = FakeDatabase("learnloop-test")
+    database.collection_names = [TAGS_COLLECTION]
+    database.collections[TAGS_COLLECTION] = FakeCollection()
+
+    await ensure_database_setup(database)
+
+    assert database.created_collections == [
+        SOLUTION_GENERATION_TASKS_COLLECTION,
+        CANONICAL_SOLUTIONS_COLLECTION,
+    ]
+    assert database[TAGS_COLLECTION].index_calls == [
+        {
+            "keys": [("userId", 1), ("name", 1)],
+            "kwargs": {"unique": True, "name": "user_tag_unique"},
+        }
+    ]
