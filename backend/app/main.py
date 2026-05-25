@@ -21,6 +21,7 @@ from app.presentation.tags import router as tags_router
 from app.presentation.practice import router as practice_router
 from app.presentation.settings import router as settings_router
 from app.presentation.teacher_password import router as teacher_password_router
+from app.presentation.coaching import router as coaching_router
 
 
 @asynccontextmanager
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(practice_router)
     api_v1_router.include_router(settings_router)
     api_v1_router.include_router(teacher_password_router)
+    api_v1_router.include_router(coaching_router)
     application.include_router(api_v1_router)
 
     return application
