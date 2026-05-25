@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { api } from "@/api/client";
-import { CoachingPage } from "./CoachingPage";
+import { CoachingPage, type PracticeHistoryResponse, type ExamResponse } from "./CoachingPage";
 import type { CoachingConversation, CoachingMessage } from "@/types/coaching";
 
 // Mock GraphSandbox component to easily verify DSL and trigger errors

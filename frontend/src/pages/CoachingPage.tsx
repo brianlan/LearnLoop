@@ -43,7 +43,7 @@ interface PracticeHistoryItem {
   attempts: PracticeAttemptDetail[];
 }
 
-interface PracticeHistoryResponse {
+export interface PracticeHistoryResponse {
   items: PracticeHistoryItem[];
 }
 
@@ -58,7 +58,7 @@ interface ExamItem {
   };
 }
 
-interface ExamResponse {
+export interface ExamResponse {
   exam: {
     id: string;
     items: ExamItem[];
