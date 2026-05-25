@@ -21,6 +21,7 @@ def test_solution_generation_task_validates_required_fields_and_defaults() -> No
     assert task.started_at is None
     assert isinstance(task.created_at, datetime)
     assert isinstance(task.updated_at, datetime)
+    assert isinstance(task.process_after, datetime)
 
 
 def test_solution_generation_task_rejects_invalid_status() -> None:

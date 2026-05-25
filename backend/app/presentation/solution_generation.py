@@ -40,6 +40,7 @@ def _build_solution_task_document(
         status=SolutionGenerationStatus.PENDING,
         created_at=now,
         updated_at=now,
+        process_after=now,
     )
     document = task.model_dump()
     document["_id"] = ObjectId(task.id)

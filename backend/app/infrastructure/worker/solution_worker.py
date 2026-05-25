@@ -19,6 +19,11 @@ from app.presentation.solution_generation import _safe_get_collection
 
 logger = logging.getLogger(__name__)
 
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 async def process_task(
     task: dict[str, Any],
     client: SolutionLLMClient,
@@ -33,10 +38,18 @@ async def process_task(
     
     problem = await problems_col.find_one({"_id": ObjectId(problem_id)})
     if not problem:
+        now = _utc_now()
         logger.warning(f"Problem {problem_id} not found for task {task['_id']}")
         await tasks_col.update_one(
             {"_id": task["_id"]},
-            {"$set": {"status": SolutionGenerationStatus.FAILED.value, "failure_reason": "Problem not found", "updated_at": datetime.now(UTC)}}
+            {
+                "$set": {
+                    "status": SolutionGenerationStatus.FAILED.value,
+                    "failure_reason": "Problem not found",
+                    "updated_at": now,
+                    "process_after": now,
+                }
+            }
         )
         return
         
@@ -68,15 +81,23 @@ async def process_task(
         await solutions_col.insert_one(solution)
         
         # Update task status to ready
+        now = _utc_now()
         await tasks_col.update_one(
             {"_id": task["_id"]},
-            {"$set": {"status": SolutionGenerationStatus.READY.value, "updated_at": datetime.now(UTC)}}
+            {
+                "$set": {
+                    "status": SolutionGenerationStatus.READY.value,
+                    "updated_at": now,
+                    "process_after": now,
+                }
+            }
         )
         
     except LLMClientError as exc:
         retry_count = int(task.get("retry_count", 0)) + 1
         logger.warning(f"LLM error for task {task['_id']}: {exc}")
         if retry_count > max_retries:
+            now = _utc_now()
             await tasks_col.update_one(
                 {"_id": task["_id"]},
                 {
@@ -84,12 +105,14 @@ async def process_task(
                         "status": SolutionGenerationStatus.FAILED.value,
                         "failure_reason": str(exc),
                         "retry_count": retry_count,
-                        "updated_at": datetime.now(UTC)
+                        "updated_at": now,
+                        "process_after": now,
                     }
                 }
             )
         else:
             # Exponential backoff: 30s, 60s, 120s
+            now = _utc_now()
             backoff_seconds = 30 * (2 ** (retry_count - 1))
             await tasks_col.update_one(
                 {"_id": task["_id"]},
@@ -97,11 +120,13 @@ async def process_task(
                     "$set": {
                         "status": SolutionGenerationStatus.PENDING.value,
                         "retry_count": retry_count,
-                        "updated_at": datetime.now(UTC) + timedelta(seconds=backoff_seconds)
+                        "updated_at": now,
+                        "process_after": now + timedelta(seconds=backoff_seconds),
                     }
                 }
             )
     except Exception as exc:
+        now = _utc_now()
         logger.exception(f"Unexpected error processing task {task['_id']}")
         await tasks_col.update_one(
             {"_id": task["_id"]},
@@ -109,7 +134,8 @@ async def process_task(
                 "$set": {
                     "status": SolutionGenerationStatus.FAILED.value,
                     "failure_reason": str(exc),
-                    "updated_at": datetime.now(UTC)
+                    "updated_at": now,
+                    "process_after": now,
                 }
             }
         )
@@ -137,7 +163,7 @@ async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = 
             if stop_event and stop_event.is_set():
                 break
 
-            now = datetime.now(UTC)
+            now = _utc_now()
             
             # 1. Stuck task recovery
             stuck_threshold = now - timedelta(minutes=timeout_minutes)
@@ -149,7 +175,8 @@ async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = 
                 {
                     "$set": {
                         "status": SolutionGenerationStatus.PENDING.value,
-                        "updated_at": now
+                        "updated_at": now,
+                        "process_after": now,
                     }
                 }
             )
@@ -158,13 +185,17 @@ async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = 
             task = await tasks_col.find_one_and_update(
                 {
                     "status": SolutionGenerationStatus.PENDING.value,
-                    "updated_at": {"$lte": now}
+                    "$or": [
+                        {"process_after": {"$lte": now}},
+                        {"process_after": {"$exists": False}, "updated_at": {"$lte": now}},
+                    ],
                 },
                 {
                     "$set": {
                         "status": SolutionGenerationStatus.GENERATING.value,
                         "started_at": now,
-                        "updated_at": now
+                        "updated_at": now,
+                        "process_after": now,
                     }
                 },
                 sort=[("created_at", 1)],
