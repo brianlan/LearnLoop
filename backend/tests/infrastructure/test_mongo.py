@@ -10,6 +10,7 @@ from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import (
     AsyncMongoClientFactory,
     CANONICAL_SOLUTIONS_COLLECTION,
+    COACHING_CONVERSATIONS_COLLECTION,
     MongoClientAdapter,
     SOLUTION_GENERATION_TASKS_COLLECTION,
     TAGS_COLLECTION,
@@ -134,10 +135,17 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
     assert database.created_collections == [
         SOLUTION_GENERATION_TASKS_COLLECTION,
         CANONICAL_SOLUTIONS_COLLECTION,
+        COACHING_CONVERSATIONS_COLLECTION,
     ]
     assert database[TAGS_COLLECTION].index_calls == [
         {
             "keys": [("userId", 1), ("name", 1)],
             "kwargs": {"unique": True, "name": "user_tag_unique"},
+        }
+    ]
+    assert database[COACHING_CONVERSATIONS_COLLECTION].index_calls == [
+        {
+            "keys": [("problem_id", 1), ("user_id", 1)],
+            "kwargs": {"unique": True, "name": "problem_user_conversation_unique"},
         }
     ]
