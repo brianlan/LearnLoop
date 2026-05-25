@@ -4,17 +4,13 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Annotated
 
-from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from pymongo.asynchronous.database import AsyncDatabase
 
 from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
-from app.infrastructure.storage.mongo import Document
 from app.presentation.deps import DatabaseDependency, get_current_user
-from app.presentation.errors import ApiError
-from app.presentation.helpers import build_problem_image_url, normalize_tags, parse_object_id
+from app.presentation.helpers import build_problem_image_url, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
 from app.presentation.tags import _register_tags
 
@@ -151,37 +147,6 @@ def _serialize_problem_detail(problem: dict[str, Any]) -> ProblemDetailPayload:
     )
 
 
-async def _get_owned_problem(
-    database: AsyncDatabase[Document],
-    problem_id: str,
-    user_id: ObjectId,
-    *,
-    allow_deleted: bool,
-) -> dict[str, Any]:
-    object_id = parse_object_id(problem_id, resource_name="Problem")
-    problem = await database["problems"].find_one({"_id": object_id})
-    if problem is None:
-        raise ApiError(404, "NOT_FOUND", "Problem not found")
-    if problem.get("userId") != user_id:
-        raise ApiError(403, "FORBIDDEN", "Forbidden")
-    if not allow_deleted and problem.get("isDeleted", False):
-        raise ApiError(404, "NOT_FOUND", "Problem not found")
-    return problem
-
-
-async def _get_owned_preview(
-    database: AsyncDatabase[Document],
-    preview_id: str,
-    user_id: ObjectId,
-) -> dict[str, Any]:
-    object_id = parse_object_id(preview_id, resource_name="Preview")
-    preview = await database["ingestion_previews"].find_one({"_id": object_id})
-    if preview is None:
-        raise ApiError(404, "NOT_FOUND", "Preview not found")
-    if preview.get("userId") != user_id:
-        raise ApiError(403, "FORBIDDEN", "Forbidden")
-    return preview
-
 
 @router.get("/tags", response_model=ProblemTagsResponse)
 async def list_problem_tags(
@@ -228,7 +193,7 @@ async def get_problem_detail(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
 ) -> ProblemResponse:
-    problem = await _get_owned_problem(
+    problem = await get_owned_problem(
         database,
         problem_id,
         current_user["_id"],
@@ -244,7 +209,7 @@ async def update_problem(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
 ) -> ProblemResponse:
-    problem = await _get_owned_problem(
+    problem = await get_owned_problem(
         database,
         problem_id,
         current_user["_id"],
@@ -286,7 +251,7 @@ async def soft_delete_problem(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
 ) -> ProblemDeleteResponse:
-    problem = await _get_owned_problem(
+    problem = await get_owned_problem(
         database,
         problem_id,
         current_user["_id"],
@@ -306,7 +271,7 @@ async def get_problem_tracking(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
 ) -> ProblemTrackingResponse:
-    problem = await _get_owned_problem(
+    problem = await get_owned_problem(
         database,
         problem_id,
         current_user["_id"],

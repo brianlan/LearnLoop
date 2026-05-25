@@ -21,21 +21,21 @@ from app.presentation.helpers import normalize_tags
 PREVIEW_TTL = timedelta(hours=24)
 DEFAULT_SYNC_WAIT_SECONDS = 25.0
 
-# TODO(production): _preview_tasks is process-local and will not survive restarts
+# TODO(production): preview_tasks is process-local and will not survive restarts
 # or work across multiple workers. Replace with a durable job queue (e.g. Celery,
 # Dramatiq) or store extraction state in Mongo and poll from a background worker.
-_preview_tasks: dict[str, asyncio.Task[None]] = {}
+preview_tasks: dict[str, asyncio.Task[None]] = {}
 
 
-def _utc_now() -> datetime:
+def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _preview_expires_at(now: datetime | None = None) -> datetime:
-    return (now or _utc_now()) + PREVIEW_TTL
+def preview_expires_at(now: datetime | None = None) -> datetime:
+    return (now or utc_now()) + PREVIEW_TTL
 
 
-def _clean_optional_text(value: str | None) -> str | None:
+def clean_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
     cleaned = value.strip()
@@ -51,10 +51,10 @@ def _merge_draft_with_extraction(
 ) -> dict[str, Any]:
     draft = dict(existing_draft or {})
     return {
-        "text": _clean_optional_text(draft.get("text")) or _clean_optional_text(text),
+        "text": clean_optional_text(draft.get("text")) or clean_optional_text(text),
         "problemType": draft.get("problemType") or problem_type,
         "graphDsl": draft.get("graphDsl") if draft.get("graphDsl") is not None else graph_dsl,
-        "correctAnswer": _clean_optional_text(draft.get("correctAnswer")),
+        "correctAnswer": clean_optional_text(draft.get("correctAnswer")),
         "tags": normalize_tags(list(draft.get("tags", []))),
     }
 
@@ -68,19 +68,19 @@ async def _maybe_close_vlm_client(vlm_client: Any) -> None:
 
 
 def _forget_preview_task(preview_id: str, task: asyncio.Task[None]) -> None:
-    if _preview_tasks.get(preview_id) is task:
-        _preview_tasks.pop(preview_id, None)
+    if preview_tasks.get(preview_id) is task:
+        preview_tasks.pop(preview_id, None)
 
 
 def _register_preview_task(preview_id: str, task: asyncio.Task[None]) -> None:
-    existing = _preview_tasks.get(preview_id)
+    existing = preview_tasks.get(preview_id)
     if existing is not None and not existing.done():
         existing.cancel()
-    _preview_tasks[preview_id] = task
+    preview_tasks[preview_id] = task
     task.add_done_callback(lambda finished_task: _forget_preview_task(preview_id, finished_task))
 
 
-async def _wait_for_preview_result(
+async def wait_for_preview_result(
     task: asyncio.Task[None],
     *,
     timeout_seconds: float,
@@ -140,7 +140,7 @@ async def _run_extraction_task(
         if preview is None:
             return
 
-        finished_at = _utc_now()
+        finished_at = utc_now()
         draft = _merge_draft_with_extraction(
             preview.get("editableDraft"),
             text=result.text,
@@ -178,7 +178,7 @@ async def _run_extraction_task(
             return
 
         latest_extraction = dict(latest_preview.get("extraction", {}))
-        finished_at = _utc_now()
+        finished_at = utc_now()
         await database["ingestion_previews"].update_one(
             {"_id": preview_id},
             {
@@ -205,7 +205,7 @@ async def _run_extraction_task(
         await _maybe_close_vlm_client(vlm_client)
 
 
-async def _start_extraction(
+async def start_extraction(
     *,
     database: AsyncDatabase[Document],
     preview: Document,
@@ -213,7 +213,7 @@ async def _start_extraction(
     s3_storage: S3StorageAdapter,
     settings: Settings,
 ) -> tuple[Document, asyncio.Task[None]]:
-    started_at = _utc_now()
+    started_at = utc_now()
     transition_preview_state(
         IngestionPreviewStatus(str(preview["status"])),
         IngestionPreviewStatus.EXTRACTING,
@@ -260,7 +260,7 @@ async def _start_extraction(
     return refreshed, task
 
 
-async def _recover_preview_if_stale(
+async def recover_preview_if_stale(
     database: AsyncDatabase[Document],
     preview: Document,
     settings: Settings,
@@ -272,7 +272,7 @@ async def _recover_preview_if_stale(
     if recovered is None:
         return preview
 
-    task = _preview_tasks.pop(str(preview["_id"]), None)
+    task = preview_tasks.pop(str(preview["_id"]), None)
     if task is not None and not task.done():
         task.cancel()
 

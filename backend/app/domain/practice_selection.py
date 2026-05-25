@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
 from .models import Problem
+from .selection import ensure_utc
 
 
 @dataclass
@@ -36,7 +37,7 @@ def select_practice_problem(
         if not p.correctAnswer or not p.correctAnswer.normalizedText:
             continue
         if p.tracking.lastTestedAt:
-            last_tested = _ensure_utc(p.tracking.lastTestedAt)
+            last_tested = ensure_utc(p.tracking.lastTestedAt)
             cutoff = now - timedelta(days=config.cooldown_days)
             if last_tested > cutoff:
                 continue
@@ -69,12 +70,6 @@ def select_practice_problem(
     return PracticeSelectionResult(selected, "ok")
 
 
-def _ensure_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
 def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, now: datetime) -> float:
     last_wrong_score = 1.0
     if problem.tracking.lastAttemptCorrect is False:
@@ -87,7 +82,7 @@ def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, n
 
     recency_score = 1.0
     if problem.tracking.lastTestedAt:
-        days_since = (now - _ensure_utc(problem.tracking.lastTestedAt)).days
+        days_since = (now - ensure_utc(problem.tracking.lastTestedAt)).days
         recency_score = 1.0 + days_since / 30.0
 
     return (

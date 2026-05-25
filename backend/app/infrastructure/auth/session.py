@@ -4,18 +4,14 @@ from typing import Any
 
 from pymongo.asynchronous.database import AsyncDatabase
 
+from app.domain.selection import ensure_utc
+
 Document = dict[str, Any]
 SESSION_TTL = timedelta(hours=24)
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def ensure_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
 
 
 def generate_session_token() -> str:

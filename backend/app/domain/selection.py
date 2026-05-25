@@ -4,7 +4,7 @@ import random
 from .models import Problem, SelectionPolicyConfig
 
 
-def _ensure_utc(dt: datetime) -> datetime:
+def ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
@@ -30,7 +30,7 @@ def select_problems(
     for problem in eligible:
         recency_score = 1.0
         if problem.tracking.lastTestedAt:
-            days_since = (now - _ensure_utc(problem.tracking.lastTestedAt)).days
+            days_since = (now - ensure_utc(problem.tracking.lastTestedAt)).days
             recency_score = min(1.0 + days_since / 30.0, 3.0)
 
         failure_score = 1.0

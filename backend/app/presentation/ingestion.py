@@ -24,13 +24,13 @@ from app.presentation.ingestion_serialization import ProblemResponse, PreviewRes
 from app.presentation.tags import _register_tags
 from app.presentation.ingestion_workflow import (
     DEFAULT_SYNC_WAIT_SECONDS,
-    _clean_optional_text,
-    _preview_expires_at,
-    _preview_tasks,
-    _recover_preview_if_stale,
-    _start_extraction,
-    _utc_now,
-    _wait_for_preview_result,
+    clean_optional_text,
+    preview_expires_at,
+    preview_tasks,
+    recover_preview_if_stale,
+    start_extraction,
+    utc_now,
+    wait_for_preview_result,
 )
 
 router = APIRouter(prefix="/ingestion-previews", tags=["ingestion"])
@@ -106,7 +106,7 @@ async def create_preview(
     if not image_bytes:
         raise ApiError(400, "INVALID_IMAGE", "Uploaded image is empty")
 
-    now = _utc_now()
+    now = utc_now()
     object_key = s3_storage.build_object_key(str(user["_id"]), _guess_extension(image))
     s3_storage.put_object(settings.s3_bucket, object_key, image_bytes, image.content_type)
 
@@ -143,18 +143,18 @@ async def create_preview(
         },
         "createdAt": now,
         "updatedAt": now,
-        "expiresAt": _preview_expires_at(now),
+        "expiresAt": preview_expires_at(now),
     }
     await database["ingestion_previews"].insert_one(preview)
 
-    extracting_preview, task = await _start_extraction(
+    extracting_preview, task = await start_extraction(
         database=database,
         preview=preview,
         vlm_client=vlm_client,
         s3_storage=s3_storage,
         settings=settings,
     )
-    completed = await _wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
+    completed = await wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
     current_preview = extracting_preview
     if completed:
         refreshed = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
@@ -172,7 +172,7 @@ async def get_preview(
 ) -> PreviewResponse:
     preview = await _get_owned_preview(database, preview_id, user)
     if str(preview["status"]) == IngestionPreviewStatus.EXTRACTING.value:
-        preview = await _recover_preview_if_stale(database, preview, settings)
+        preview = await recover_preview_if_stale(database, preview, settings)
     return PreviewResponse(preview=serialize_preview(preview))
 
 
@@ -192,11 +192,11 @@ async def patch_preview(
         if key == "tags":
             draft[key] = normalize_tags(value)
         elif key in {"text", "correctAnswer"}:
-            draft[key] = _clean_optional_text(value)
+            draft[key] = clean_optional_text(value)
         else:
             draft[key] = value
 
-    now = _utc_now()
+    now = utc_now()
     await database["ingestion_previews"].update_one(
         {"_id": preview["_id"]},
         {
@@ -209,7 +209,7 @@ async def patch_preview(
                     "tags": normalize_tags(list(draft.get("tags", []))),
                 },
                 "updatedAt": now,
-                "expiresAt": _preview_expires_at(now),
+                "expiresAt": preview_expires_at(now),
             }
         },
     )
@@ -231,14 +231,14 @@ async def retry_preview(
 ) -> PreviewResponse:
     preview = await _get_owned_preview(database, preview_id, user)
     _ensure_status(preview, {IngestionPreviewStatus.VLM_FAILED.value})
-    extracting_preview, task = await _start_extraction(
+    extracting_preview, task = await start_extraction(
         database=database,
         preview=preview,
         vlm_client=vlm_client,
         s3_storage=s3_storage,
         settings=settings,
     )
-    completed = await _wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
+    completed = await wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
     current_preview = extracting_preview
     if completed:
         refreshed = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
@@ -253,7 +253,7 @@ async def confirm_preview(
     database: DatabaseDependency,
     user: CurrentUserDependency,
 ) -> ProblemResponse:
-    now = _utc_now()
+    now = utc_now()
     preview_oid = parse_object_id(preview_id, resource_name="Preview")
     previews = database["ingestion_previews"]
     claimed_preview: Document | None
@@ -292,9 +292,9 @@ async def confirm_preview(
         )
 
     draft = dict(claimed_preview.get("editableDraft", {}))
-    text = _clean_optional_text(draft.get("text"))
+    text = clean_optional_text(draft.get("text"))
     problem_type_value = draft.get("problemType")
-    correct_answer = _clean_optional_text(draft.get("correctAnswer"))
+    correct_answer = clean_optional_text(draft.get("correctAnswer"))
     if text is None or problem_type_value is None or correct_answer is None:
         await previews.update_one(
             {"_id": preview_oid},

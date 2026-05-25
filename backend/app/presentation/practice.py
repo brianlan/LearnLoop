@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from base64 import b64encode
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -10,14 +9,14 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.domain.models import GradingStatus, GradingMethod, ProblemType
-from app.domain.normalization import normalize_answer
+from app.domain.normalization import compare_answers, normalize_answer
 from app.domain.practice_selection import (
     PracticeSelectionConfig,
     select_practice_problem,
 )
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document
-from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
+from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient, VLMError
 from app.presentation.deps import (
     DatabaseDependency,
@@ -26,7 +25,7 @@ from app.presentation.deps import (
     get_s3_storage,
     get_vlm_client,
 )
-from app.presentation.helpers import build_problem_image_url, parse_object_id
+from app.presentation.helpers import build_problem_image_url, load_source_image_base64, parse_object_id
 from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.errors import ApiError
 
@@ -165,24 +164,6 @@ async def get_next_practice_problem(
     return PracticeNextResponse(status="ok", problem=problem_response)
 
 
-async def _load_problem_image_base64(
-    problem: dict[str, Any],
-    storage: S3StorageAdapter,
-) -> str | None:
-    source_image = problem.get("sourceImage")
-    if not source_image:
-        return None
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        return None
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-        return b64encode(image_bytes).decode("ascii")
-    except StorageObjectNotFoundError:
-        return None
-
-
 async def _grade_answer(
     problem: dict[str, Any],
     answer: str,
@@ -195,14 +176,11 @@ async def _grade_answer(
 
     if problem_type != ProblemType.SHORT_ANSWER:
         normalized = normalize_answer(answer, problem_type)
-        if problem_type == ProblemType.MULTI_CHOICE:
-            is_correct = normalized.normalizedSet == list(correct_answer.get("normalizedSet", []))
-        else:
-            is_correct = normalized.normalizedText == str(correct_answer.get("normalizedText", ""))
+        is_correct = compare_answers(normalized, correct_answer, problem_type)
         status = GradingStatus.CORRECT if is_correct else GradingStatus.INCORRECT
         return status, GradingMethod.NORMALIZED_MATCH
 
-    image_base64 = await _load_problem_image_base64(problem, storage)
+    image_base64 = load_source_image_base64(problem.get("sourceImage"), storage)
     for _ in range(2):
         try:
             result = await vlm_client.grade_short_answer(

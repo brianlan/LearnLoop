@@ -343,13 +343,13 @@ async def ingestion_app() -> AsyncIterator[FastAPI]:
 
     yield application
 
-    pending_tasks = list(ingestion_presentation._preview_tasks.values())
+    pending_tasks = list(ingestion_presentation.preview_tasks.values())
     for task in pending_tasks:
         if not task.done():
             task.cancel()
     if pending_tasks:
         await asyncio.gather(*pending_tasks, return_exceptions=True)
-    ingestion_presentation._preview_tasks.clear()
+    ingestion_presentation.preview_tasks.clear()
 
 
 @pytest_asyncio.fixture

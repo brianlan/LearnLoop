@@ -3,6 +3,13 @@ import unicodedata
 from .models import CorrectAnswer, ProblemType
 
 
+def compare_answers(normalized: CorrectAnswer, stored_answer: dict, problem_type: ProblemType) -> bool:
+    if problem_type == ProblemType.MULTI_CHOICE:
+        return normalized.normalizedSet == list(stored_answer.get("normalizedSet", []))
+    else:
+        return normalized.normalizedText == str(stored_answer.get("normalizedText", ""))
+
+
 def normalize_answer(raw_text: str, problem_type: ProblemType) -> CorrectAnswer:
     def normalize_token(text: str) -> str:
         # Step 1: Convert fullwidth ASCII to standard ASCII

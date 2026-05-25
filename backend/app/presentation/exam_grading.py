@@ -1,15 +1,42 @@
 from __future__ import annotations
 
-from base64 import b64encode
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
 from app.domain.models import GradingStatus, ProblemType
-from app.domain.normalization import normalize_answer
-from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
+from app.domain.normalization import compare_answers, normalize_answer
+from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient, VLMError
+from app.presentation.helpers import load_source_image_base64
+
+
+def build_grading_result(
+    *,
+    status: GradingStatus,
+    method: str,
+    is_correct: bool | None = None,
+    score: float | None = None,
+    feedback: str | None = None,
+    provider_model: str | None = None,
+    raw_provider_response: Any = None,
+    graded_at: datetime,
+    retry_count: int = 0,
+    self_reported_correct: bool | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": status.value,
+        "method": method,
+        "isCorrect": is_correct,
+        "score": score,
+        "feedback": feedback,
+        "providerModel": provider_model,
+        "rawProviderResponse": raw_provider_response,
+        "gradedAt": graded_at,
+        "retryCount": retry_count,
+        "selfReportedCorrect": self_reported_correct,
+    }
 
 
 def grade_objective_item(item: Mapping[str, Any], *, now: datetime) -> dict[str, Any]:
@@ -22,43 +49,19 @@ def grade_objective_item(item: Mapping[str, Any], *, now: datetime) -> dict[str,
         problem_type = ProblemType(snapshot["problemType"])
         normalized = normalize_answer(str(answer_raw), problem_type)
         correct_answer = dict(snapshot.get("correctAnswer", {}))
-        if problem_type == ProblemType.MULTI_CHOICE:
-            is_correct = normalized.normalizedSet == list(correct_answer.get("normalizedSet", []))
-        else:
-            is_correct = normalized.normalizedText == str(correct_answer.get("normalizedText", ""))
+        is_correct = compare_answers(normalized, correct_answer, problem_type)
 
     grading = dict(item.get("grading", {}))
-    grading.update(
-        {
-            "status": GradingStatus.CORRECT.value if is_correct else GradingStatus.INCORRECT.value,
-            "method": "normalized-match",
-            "isCorrect": is_correct,
-            "score": 1.0 if is_correct else 0.0,
-            "feedback": None,
-            "providerModel": None,
-            "rawProviderResponse": None,
-            "gradedAt": now,
-            "retryCount": 0,
-            "selfReportedCorrect": None,
-        }
-    )
+    grading.update(build_grading_result(
+        status=GradingStatus.CORRECT if is_correct else GradingStatus.INCORRECT,
+        method="normalized-match",
+        is_correct=is_correct,
+        score=1.0 if is_correct else 0.0,
+        graded_at=now,
+    ))
     graded_item = deepcopy(dict(item))
     graded_item["grading"] = grading
     return graded_item
-
-
-async def load_item_image_base64(item: Mapping[str, Any], storage: S3StorageAdapter) -> str | None:
-    snapshot = dict(item.get("problemSnapshot", {}))
-    source_image = dict(snapshot.get("sourceImage") or {})
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        return None
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError:
-        return None
-    return b64encode(image_bytes).decode("ascii")
 
 
 async def grade_short_answer_item(
@@ -72,23 +75,18 @@ async def grade_short_answer_item(
     answer = dict(graded_item.get("answer", {}))
     answer_raw = answer.get("raw")
     if answer_raw is None:
-        graded_item["grading"] = {
-            "status": GradingStatus.INCORRECT.value,
-            "method": "normalized-match",
-            "isCorrect": False,
-            "score": 0.0,
-            "feedback": None,
-            "providerModel": None,
-            "rawProviderResponse": None,
-            "gradedAt": now,
-            "retryCount": 0,
-            "selfReportedCorrect": None,
-        }
+        graded_item["grading"] = build_grading_result(
+            status=GradingStatus.INCORRECT,
+            method="normalized-match",
+            is_correct=False,
+            score=0.0,
+            graded_at=now,
+        )
         return graded_item
 
     snapshot = dict(graded_item.get("problemSnapshot", {}))
     correct_answer = dict(snapshot.get("correctAnswer", {}))
-    image_base64 = await load_item_image_base64(graded_item, storage)
+    image_base64 = load_source_image_base64(snapshot.get("sourceImage"), storage)
 
     retry_count = 0
     while True:
@@ -98,49 +96,39 @@ async def grade_short_answer_item(
                 user_answer=str(answer_raw),
                 correct_answer=str(correct_answer.get("display", "")),
             )
-            graded_item["grading"] = {
-                "status": GradingStatus.CORRECT.value if result.is_correct else GradingStatus.INCORRECT.value,
-                "method": "vlm",
-                "isCorrect": result.is_correct,
-                "score": 1.0 if result.is_correct else 0.0,
-                "feedback": result.feedback,
-                "providerModel": result.model,
-                "rawProviderResponse": result.raw_provider_response,
-                "gradedAt": now,
-                "retryCount": retry_count,
-                "selfReportedCorrect": None,
-            }
+            graded_item["grading"] = build_grading_result(
+                status=GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT,
+                method="vlm",
+                is_correct=result.is_correct,
+                score=1.0 if result.is_correct else 0.0,
+                feedback=result.feedback,
+                provider_model=result.model,
+                raw_provider_response=result.raw_provider_response,
+                graded_at=now,
+                retry_count=retry_count,
+            )
             return graded_item
         except VLMError as exc:
             if exc.retryable and retry_count < 1:
                 retry_count += 1
                 continue
-            graded_item["grading"] = {
-                "status": GradingStatus.PENDING_REVIEW.value,
-                "method": "vlm",
-                "isCorrect": None,
-                "score": None,
-                "feedback": str(exc),
-                "providerModel": None,
-                "rawProviderResponse": exc.raw_provider_response,
-                "gradedAt": now,
-                "retryCount": retry_count,
-                "selfReportedCorrect": None,
-            }
+            graded_item["grading"] = build_grading_result(
+                status=GradingStatus.PENDING_REVIEW,
+                method="vlm",
+                feedback=str(exc),
+                raw_provider_response=exc.raw_provider_response,
+                graded_at=now,
+                retry_count=retry_count,
+            )
             return graded_item
         except Exception as exc:
-            graded_item["grading"] = {
-                "status": GradingStatus.PENDING_REVIEW.value,
-                "method": "vlm",
-                "isCorrect": None,
-                "score": None,
-                "feedback": str(exc),
-                "providerModel": None,
-                "rawProviderResponse": None,
-                "gradedAt": now,
-                "retryCount": retry_count,
-                "selfReportedCorrect": None,
-            }
+            graded_item["grading"] = build_grading_result(
+                status=GradingStatus.PENDING_REVIEW,
+                method="vlm",
+                feedback=str(exc),
+                graded_at=now,
+                retry_count=retry_count,
+            )
             return graded_item
 
 

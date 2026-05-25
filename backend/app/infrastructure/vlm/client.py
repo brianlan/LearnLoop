@@ -206,7 +206,7 @@ class VLMClient:
             },
         )
         raw_provider_response = await self._send_request(request)
-        payload = self._validate_extraction_response(raw_provider_response)
+        payload = self._validate_response(raw_provider_response, _ExtractionProviderPayload)
         return ExtractionResult(
             request_type=request.request_type,
             model=request.model,
@@ -247,7 +247,7 @@ class VLMClient:
             },
         )
         raw_provider_response = await self._send_request(request)
-        payload = self._validate_grading_response(raw_provider_response)
+        payload = self._validate_response(raw_provider_response, _GradingProviderPayload)
         return GradingResult(
             request_type=request.request_type,
             model=request.model,
@@ -334,25 +334,12 @@ class VLMClient:
         return "\n".join(lines[1:-1]).strip()
 
     @staticmethod
-    def _validate_extraction_response(
+    def _validate_response(
         raw_provider_response: dict[str, Any],
-    ) -> _ExtractionProviderPayload:
+        model_class: type[_ExtractionProviderPayload | _GradingProviderPayload],
+    ) -> _ExtractionProviderPayload | _GradingProviderPayload:
         try:
-            return _ExtractionProviderPayload.model_validate(raw_provider_response)
-        except ValidationError as exc:
-            raise VLMError(
-                "VLM provider response failed schema validation",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_provider_response,
-            ) from exc
-
-    @staticmethod
-    def _validate_grading_response(
-        raw_provider_response: dict[str, Any],
-    ) -> _GradingProviderPayload:
-        try:
-            return _GradingProviderPayload.model_validate(raw_provider_response)
+            return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
             raise VLMError(
                 "VLM provider response failed schema validation",
