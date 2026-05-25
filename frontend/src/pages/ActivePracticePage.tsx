@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
@@ -21,6 +21,20 @@ export function ActivePracticePage() {
   const [answer, setAnswer] = useState("");
   const [gradingResult, setGradingResult] = useState<PracticeAttemptResult | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [explainInfoMessage, setExplainInfoMessage] = useState<string | null>(null);
+  const [isExplainHovered, setIsExplainHovered] = useState(false);
+
+  const { data: solutionStatusData } = useQuery({
+    queryKey: ["solution-status", currentProblem?.id],
+    queryFn: () => api.getSolutionStatus(currentProblem!.id),
+    enabled: !!currentProblem?.id && phase === "feedback",
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return (status === "pending" || status === "generating") ? 2000 : false;
+    },
+  });
+
+  const solutionStatus = solutionStatusData?.status;
 
   useEffect(() => {
     if (!currentProblem) {
@@ -46,6 +60,7 @@ export function ActivePracticePage() {
         setGradingResult(null);
         setPhase("showing");
         setStatusMessage(null);
+        setExplainInfoMessage(null);
       } else if (response.status === "no_eligible") {
         setStatusMessage("No problems available for practice right now. Try again later.");
       } else if (response.status === "no_problems") {
@@ -63,6 +78,15 @@ export function ActivePracticePage() {
 
   const handleNext = () => {
     nextMutation.mutate();
+  };
+
+  const handleExplainClick = () => {
+    const status = solutionStatusData?.status;
+    if (status === "ready") {
+      navigate(`/coaching/${currentProblem!.id}`, { state: { from: "/practice" } });
+    } else if (status === "pending" || status === "generating") {
+      setExplainInfoMessage("Solution is being generated, please try again shortly");
+    }
   };
 
   const handleQuit = () => {
@@ -227,8 +251,25 @@ export function ActivePracticePage() {
         </div>
       )}
 
+      {phase === "feedback" && explainInfoMessage && (
+        <div
+          style={{
+            padding: "0.75rem 1rem",
+            backgroundColor: "#fffbeb",
+            border: "1px solid #fcd34d",
+            borderRadius: "0.375rem",
+            color: "#92400e",
+            fontSize: "0.875rem",
+            marginBottom: "1rem",
+          }}
+          data-testid="explain-info-message"
+        >
+          {explainInfoMessage}
+        </div>
+      )}
+
       {phase === "feedback" && (
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
           <button
             type="button"
             onClick={handleNext}
@@ -246,6 +287,55 @@ export function ActivePracticePage() {
           >
             {nextMutation.isPending ? "Loading..." : "Next Problem"}
           </button>
+          {solutionStatus && solutionStatus !== "none" && (
+            <button
+              type="button"
+              onClick={handleExplainClick}
+              disabled={solutionStatus === "failed"}
+              onMouseEnter={() => setIsExplainHovered(true)}
+              onMouseLeave={() => setIsExplainHovered(false)}
+              data-testid="explain-button"
+              style={{
+                padding: "0.75rem 1.5rem",
+                borderRadius: "0.375rem",
+                fontWeight: 600,
+                transition: "all 0.2s ease-in-out",
+                ...(solutionStatus === "failed"
+                  ? {
+                      background: "#f3f4f6",
+                      color: "#9ca3af",
+                      border: "1px solid #e5e7eb",
+                      cursor: "not-allowed",
+                    }
+                  : solutionStatus === "pending" || solutionStatus === "generating"
+                    ? {
+                        background: "#f8fafc",
+                        color: "#6366f1",
+                        border: "2px dashed #6366f1",
+                        cursor: "pointer",
+                        boxShadow: "0 0 8px rgba(99, 102, 241, 0.1)",
+                      }
+                    : {
+                        background: isExplainHovered
+                          ? "linear-gradient(135deg, #4f46e5, #4338ca)"
+                          : "linear-gradient(135deg, #6366f1, #4f46e5)",
+                        color: "white",
+                        border: "none",
+                        cursor: "pointer",
+                        boxShadow: isExplainHovered
+                          ? "0 10px 15px -3px rgba(99, 102, 241, 0.4), 0 4px 6px -4px rgba(99, 102, 241, 0.4)"
+                          : "0 4px 6px -1px rgba(99, 102, 241, 0.2), 0 2px 4px -1px rgba(99, 102, 241, 0.1)",
+                        transform: isExplainHovered ? "translateY(-1px)" : "translateY(0)",
+                      }),
+              }}
+            >
+              {solutionStatus === "pending" || solutionStatus === "generating"
+                ? "AI Explain (Generating...)"
+                : solutionStatus === "failed"
+                  ? "AI Explain (Unavailable)"
+                  : "AI Explain"}
+            </button>
+          )}
           <button
             type="button"
             onClick={handleQuit}

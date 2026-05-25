@@ -11,6 +11,7 @@ vi.mock("@/api/client", () => ({
     get: vi.fn(),
     post: vi.fn(),
     verifyTeacherPassword: vi.fn(),
+    getSolutionStatus: vi.fn(),
   },
 }));
 
@@ -90,6 +91,8 @@ describe("ExamDetailPage", () => {
     vi.mocked(api.get).mockReset();
     vi.mocked(api.post).mockReset();
     vi.mocked(api.verifyTeacherPassword).mockReset();
+    vi.mocked(api.getSolutionStatus).mockReset();
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
     mockNavigate.mockReset();
   });
 
@@ -286,5 +289,74 @@ describe("ExamDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Error loading exam: Failed to load")).toBeInTheDocument();
     });
+  });
+
+  it("renders AI Explain button per item when status is ready and exam is submitted", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: baseExam });
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "ready" });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button-item1")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("explain-button-item1")).toHaveTextContent("AI Explain");
+    expect(screen.getByTestId("explain-button-item1")).not.toBeDisabled();
+    expect(screen.getByTestId("explain-button-item2")).toBeInTheDocument();
+  });
+
+  it("shows warning message when AI Explain is clicked while pending/generating in exam detail", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: baseExam });
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "pending" });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button-item1")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("explain-button-item1")).toHaveTextContent("AI Explain (Generating...)");
+
+    await user.click(screen.getByTestId("explain-button-item1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-info-message-item1")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-info-message-item1")).toHaveTextContent(
+      "Solution is being generated, please try again shortly"
+    );
+  });
+
+  it("disables AI Explain button when status is failed in exam detail", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: baseExam });
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "failed" });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button-item1")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("explain-button-item1")).toHaveTextContent("AI Explain (Unavailable)");
+    expect(screen.getByTestId("explain-button-item1")).toBeDisabled();
+  });
+
+  it("does NOT render AI Explain button when exam is in-progress", async () => {
+    const inProgressExam = {
+      ...baseExam,
+      state: "in-progress",
+    };
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: inProgressExam });
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "ready" });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Results")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("explain-button-item1")).not.toBeInTheDocument();
   });
 });

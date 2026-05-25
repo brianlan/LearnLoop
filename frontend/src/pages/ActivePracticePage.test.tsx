@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { api } from "@/api/client";
 import { ActivePracticePage } from "./ActivePracticePage";
 
 const mockFetch = vi.fn();
@@ -36,6 +37,7 @@ const mockProblem = {
 describe("ActivePracticePage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "none" });
   });
 
   it("renders problem text", async () => {
@@ -228,5 +230,112 @@ describe("ActivePracticePage", () => {
     await waitFor(() => {
       // Component should render nothing (null) when no problem
     });
+  });
+
+  it("renders AI Explain button when status is ready", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ gradingStatus: "correct", gradingMethod: "normalized-match" }),
+    });
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "ready" });
+
+    renderActivePracticePage(mockProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "4");
+    await user.click(screen.getByTestId("submit-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-button")).toHaveTextContent("AI Explain");
+    expect(screen.getByTestId("explain-button")).not.toBeDisabled();
+  });
+
+  it("shows generating message on click when status is pending", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ gradingStatus: "correct", gradingMethod: "normalized-match" }),
+    });
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "pending" });
+
+    renderActivePracticePage(mockProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "4");
+    await user.click(screen.getByTestId("submit-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-button")).toHaveTextContent("AI Explain (Generating...)");
+
+    await user.click(screen.getByTestId("explain-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-info-message")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-info-message")).toHaveTextContent(
+      "Solution is being generated, please try again shortly"
+    );
+  });
+
+  it("disables AI Explain button when status is failed", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ gradingStatus: "correct", gradingMethod: "normalized-match" }),
+    });
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "failed" });
+
+    renderActivePracticePage(mockProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "4");
+    await user.click(screen.getByTestId("submit-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-button")).toHaveTextContent("AI Explain (Unavailable)");
+    expect(screen.getByTestId("explain-button")).toBeDisabled();
+  });
+
+  it("hides AI Explain button when status is none", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ gradingStatus: "correct", gradingMethod: "normalized-match" }),
+    });
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "none" });
+
+    renderActivePracticePage(mockProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "4");
+    await user.click(screen.getByTestId("submit-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("next-button")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("explain-button")).not.toBeInTheDocument();
   });
 });
