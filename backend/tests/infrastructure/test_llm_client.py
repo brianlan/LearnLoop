@@ -62,6 +62,7 @@ async def test_solution_llm_client_builds_policy_prompt_and_uses_solution_config
         prompt = payload["messages"][0]["content"][0]["text"]
         assert "全部使用简体中文" in prompt
         assert "严禁使用高等数学" in prompt
+        assert "参考答案可能只是多种正确表述中的一种" in prompt
         assert "已知 x + 3 = 5" in prompt
         assert "2" in prompt
         assert payload["messages"][0]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"

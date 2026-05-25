@@ -22,7 +22,7 @@ def build_solution_prompt(*, problem_text: str, correct_answer: str, graph_dsl: 
 {graph_section}
 
 要求：
-1. 以标准答案为准，不要编造新的结论。
+1. 把给定答案视为参考答案，要与题目条件和参考答案保持一致，不要编造无依据的新结论。对简答题要注意：参考答案可能只是多种正确表述中的一种。
 2. 优先给出适合学生理解的基础方法。
 3. 只返回 JSON，不要输出解释、前后缀或 Markdown 代码块。"""
 
