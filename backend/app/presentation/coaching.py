@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from typing import Annotated, Any
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.domain.models import CoachingConversation
 from app.domain.coaching.service import CoachingService, CoachingError
 from app.infrastructure.llm.client import CoachingLLMClient
-from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.config.settings import Settings
 from app.presentation.deps import (
     DatabaseDependency,
     get_current_user,
@@ -22,10 +24,14 @@ CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
 
 class CoachingMessageRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=5000)
 
-def get_coaching_client(settings: SettingsDependency) -> CoachingLLMClient:
-    return CoachingLLMClient(settings=settings)
+async def get_coaching_client(settings: SettingsDependency) -> AsyncGenerator[CoachingLLMClient, None]:
+    client = CoachingLLMClient(settings=settings)
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 CoachingLLMDependency = Annotated[CoachingLLMClient, Depends(get_coaching_client)]
 
@@ -44,23 +50,19 @@ async def get_conversation(
     current_user: CurrentUserDependency,
     service: CoachingServiceDependency,
 ) -> CoachingConversation:
-    try:
-        # Check if problem belongs to user
-        problem = await service.db["problems"].find_one({
-            "_id": problem_id if len(problem_id) != 24 else __import__("bson").ObjectId(problem_id),
-            "userId": current_user["_id"],
-            "isDeleted": False
-        })
-        if not problem:
-            raise ApiError(404, "NOT_FOUND", "Problem not found")
+    # Check if problem belongs to user
+    problem = await service.db["problems"].find_one({
+        "_id": problem_id if len(problem_id) != 24 else ObjectId(problem_id),
+        "userId": current_user["_id"],
+        "isDeleted": False
+    })
+    if not problem:
+        raise ApiError(404, "NOT_FOUND", "Problem not found")
 
-        conversation = await service.get_conversation(problem_id, str(current_user["_id"]))
-        if not conversation:
-            from app.domain.models import CoachingConversation as CC
-            return CC(problem_id=problem_id, user_id=str(current_user["_id"]))
-        return conversation
-    except CoachingError as exc:
-        raise ApiError(exc.status_code, exc.code, str(exc))
+    conversation = await service.get_conversation(problem_id, str(current_user["_id"]))
+    if not conversation:
+        return CoachingConversation(problem_id=problem_id, user_id=str(current_user["_id"]))
+    return conversation
 
 
 @router.post("/{problem_id}/messages", response_model=CoachingConversation)

@@ -46,7 +46,7 @@ class CoachingService:
         active_exams = await self.db["exams"].count_documents({
             "userId": ObjectId(user_id) if isinstance(user_id, str) and len(user_id) == 24 else user_id,
             "state": "in_progress",
-            "sections.problemIds": ObjectId(problem_id)
+            "items.problemId": ObjectId(problem_id)
         })
         if active_exams > 0:
             raise CoachingError(

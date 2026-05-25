@@ -65,9 +65,9 @@ class FakeCollection:
 
     def _match(self, doc, query):
         for k, v in query.items():
-            if k == "sections.problemIds":
+            if k == "items.problemId":
                 # mock logic for this specific query
-                if "sections" in doc and any(v in sec.get("problemIds", []) for sec in doc["sections"]):
+                if "items" in doc and any(v == item.get("problemId") for item in doc["items"]):
                     continue
                 return False
             if doc.get(k) != v:
@@ -123,7 +123,7 @@ async def test_send_message_active_exam_blocked():
     db.cols["exams"].seed({
         "userId": user_id,
         "state": "in_progress",
-        "sections": [{"problemIds": [prob_id]}]
+        "items": [{"problemId": prob_id}]
     })
     
     with pytest.raises(CoachingError) as exc:

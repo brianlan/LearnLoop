@@ -28,11 +28,10 @@ class FakeCollection:
     async def find_one(self, query, sort=None):
         docs = []
         for doc in self._documents:
-            if all(doc.get(k) == v for k, v in query.items() if k != "sections.problemIds"):
-                # Handle sections.problemIds specially
-                if "sections.problemIds" in query:
-                    val = query["sections.problemIds"]
-                    if not any(val in sec.get("problemIds", []) for sec in doc.get("sections", [])):
+            if all(doc.get(k) == v for k, v in query.items() if k != "items.problemId"):
+                if "items.problemId" in query:
+                    val = query["items.problemId"]
+                    if not any(val == item.get("problemId") for item in doc.get("items", [])):
                         continue
                 docs.append(deepcopy(doc))
         if not docs:
@@ -76,8 +75,8 @@ class FakeCollection:
         for doc in self._documents:
             match = True
             for k, v in query.items():
-                if k == "sections.problemIds":
-                    if not any(v in sec.get("problemIds", []) for sec in doc.get("sections", [])):
+                if k == "items.problemId":
+                    if not any(v == item.get("problemId") for item in doc.get("items", [])):
                         match = False
                         break
                 elif doc.get(k) != v:
@@ -192,7 +191,7 @@ async def test_send_message_active_exam_blocked(client: AsyncClient, coaching_ap
     db["exams"].seed({
         "userId": user_id,
         "state": "in_progress",
-        "sections": [{"problemIds": [ObjectId(setup_problem)]}]
+        "items": [{"problemId": ObjectId(setup_problem)}]
     })
     
     response = await client.post(
