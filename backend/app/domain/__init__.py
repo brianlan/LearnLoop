@@ -6,6 +6,7 @@ from .models import (
     IngestionPreviewStatus,
     GradingStatus,
     SolutionGenerationStatus,
+    CoachingRole,
     CorrectAnswer,
     SourceImage,
     Extraction,
@@ -27,6 +28,8 @@ from .models import (
     Exam,
     SolutionGenerationTask,
     CanonicalSolution,
+    CoachingMessage,
+    CoachingConversation,
 )
 from .normalization import normalize_answer
 from .selection import select_problems
@@ -44,6 +47,7 @@ __all__ = [
     "IngestionPreviewStatus",
     "GradingStatus",
     "SolutionGenerationStatus",
+    "CoachingRole",
     "CorrectAnswer",
     "SourceImage",
     "Extraction",
@@ -65,6 +69,8 @@ __all__ = [
     "Exam",
     "SolutionGenerationTask",
     "CanonicalSolution",
+    "CoachingMessage",
+    "CoachingConversation",
     "normalize_answer",
     "recover_stale_preview",
     "select_problems",

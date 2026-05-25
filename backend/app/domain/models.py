@@ -46,6 +46,11 @@ class SolutionGenerationStatus(str, Enum):
     FAILED = "failed"
 
 
+class CoachingRole(str, Enum):
+    STUDENT = "student"
+    COACH = "coach"
+
+
 # Nested Models
 class CorrectAnswer(BaseModel):
     display: str
@@ -264,3 +269,31 @@ class CanonicalSolution(BaseModel):
     final_answer: str
     math_level_classification: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CoachingMessage(BaseModel):
+    role: CoachingRole
+    content: str
+    whiteboard_dsl: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CoachingConversation(BaseModel):
+    id: Optional[str] = None
+    problem_id: str
+    user_id: str
+    messages: List[CoachingMessage] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    def add_message(self, message: CoachingMessage) -> None:
+        """Add a message, enforcing the 20-message cap."""
+        if len(self.messages) >= 20:
+            raise ValueError("Conversation cannot have more than 20 messages")
+        self.messages.append(message)
+        self.updated_at = datetime.now(UTC)
+
+    def clear_messages(self) -> None:
+        """Clear all messages from the conversation."""
+        self.messages = []
+        self.updated_at = datetime.now(UTC)

@@ -15,6 +15,7 @@ AsyncMongoClientFactory = Callable[[str], AsyncMongoClient[Document]]
 TAGS_COLLECTION = "tags"
 SOLUTION_GENERATION_TASKS_COLLECTION = "solution_generation_tasks"
 CANONICAL_SOLUTIONS_COLLECTION = "canonical_solutions"
+COACHING_CONVERSATIONS_COLLECTION = "coaching_conversations"
 
 
 class SupportsAsyncClose(Protocol):
@@ -89,6 +90,7 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
     for collection_name in (
         SOLUTION_GENERATION_TASKS_COLLECTION,
         CANONICAL_SOLUTIONS_COLLECTION,
+        COACHING_CONVERSATIONS_COLLECTION,
     ):
         if collection_name not in existing_collections and hasattr(database, "create_collection"):
             await database.create_collection(collection_name)
@@ -99,6 +101,14 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
             [("userId", ASCENDING), ("name", ASCENDING)],
             unique=True,
             name="user_tag_unique",
+        )
+
+    create_coaching_index = getattr(database[COACHING_CONVERSATIONS_COLLECTION], "create_index", None)
+    if callable(create_coaching_index):
+        await create_coaching_index(
+            [("problem_id", ASCENDING), ("user_id", ASCENDING)],
+            unique=True,
+            name="problem_user_conversation_unique",
         )
 
 
