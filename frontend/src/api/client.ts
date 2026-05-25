@@ -125,6 +125,13 @@ export const api = {
   },
 
   /**
+   * Get canonical solution generation status for a problem
+   */
+  async getSolutionStatus(problemId: string): Promise<{ status: string }> {
+    return this.get<{ status: string }>(`/problems/${problemId}/solution-status`);
+  },
+
+  /**
    * Generic GET request
    */
   async get<T>(path: string): Promise<T> {

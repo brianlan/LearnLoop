@@ -45,10 +45,43 @@ interface ExamItemReviewProps {
   isSelfReporting: boolean;
   isAnswerRevealed: boolean;
   onRevealAnswer: (itemId: string) => void;
+  examId: string;
+  examState: string;
 }
 
-function ExamItemReview({ item, onSelfReport, isSelfReporting, isAnswerRevealed, onRevealAnswer }: ExamItemReviewProps) {
+function ExamItemReview({
+  item,
+  onSelfReport,
+  isSelfReporting,
+  isAnswerRevealed,
+  onRevealAnswer,
+  examId,
+  examState,
+}: ExamItemReviewProps) {
+  const navigate = useNavigate();
   const isPendingReview = item.grading.status === "pending-review";
+  const [explainInfoMessage, setExplainInfoMessage] = useState<string | null>(null);
+  const [isExplainHovered, setIsExplainHovered] = useState(false);
+
+  const { data: solutionStatusData } = useQuery({
+    queryKey: ["solution-status", item.problemId],
+    queryFn: () => api.getSolutionStatus(item.problemId),
+    enabled: !!item.problemId && examState !== "in-progress",
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return (status === "pending" || status === "generating") ? 2000 : false;
+    },
+  });
+
+  const solutionStatus = solutionStatusData?.status;
+
+  const handleExplainClick = () => {
+    if (solutionStatus === "ready") {
+      navigate(`/coaching/${item.problemId}`, { state: { from: `/exams/${examId}` } });
+    } else if (solutionStatus === "pending" || solutionStatus === "generating") {
+      setExplainInfoMessage("Solution is being generated, please try again shortly");
+    }
+  };
 
   return (
     <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
@@ -145,6 +178,75 @@ function ExamItemReview({ item, onSelfReport, isSelfReporting, isAnswerRevealed,
               }}
             >
               I was incorrect
+            </button>
+          </div>
+        </div>
+      )}
+
+      {examState !== "in-progress" && solutionStatus && solutionStatus !== "none" && (
+        <div style={{ marginTop: "1.25rem", borderTop: "1px solid #f3f4f6", paddingTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {explainInfoMessage && (
+            <div
+              style={{
+                padding: "0.5rem 0.75rem",
+                backgroundColor: "#fffbeb",
+                border: "1px solid #fcd34d",
+                borderRadius: "0.25rem",
+                color: "#92400e",
+                fontSize: "0.875rem",
+              }}
+              data-testid={`explain-info-message-${item.itemId}`}
+            >
+              {explainInfoMessage}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              onClick={handleExplainClick}
+              disabled={solutionStatus === "failed"}
+              onMouseEnter={() => setIsExplainHovered(true)}
+              onMouseLeave={() => setIsExplainHovered(false)}
+              data-testid={`explain-button-${item.itemId}`}
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: "0.25rem",
+                fontWeight: 600,
+                fontSize: "0.875rem",
+                transition: "all 0.2s ease-in-out",
+                ...(solutionStatus === "failed"
+                  ? {
+                      background: "#f3f4f6",
+                      color: "#9ca3af",
+                      border: "1px solid #e5e7eb",
+                      cursor: "not-allowed",
+                    }
+                  : solutionStatus === "pending" || solutionStatus === "generating"
+                    ? {
+                        background: "#f8fafc",
+                        color: "#6366f1",
+                        border: "2px dashed #6366f1",
+                        cursor: "pointer",
+                        boxShadow: "0 0 8px rgba(99, 102, 241, 0.1)",
+                      }
+                    : {
+                        background: isExplainHovered
+                          ? "linear-gradient(135deg, #4f46e5, #4338ca)"
+                          : "linear-gradient(135deg, #6366f1, #4f46e5)",
+                        color: "white",
+                        border: "none",
+                        cursor: "pointer",
+                        boxShadow: isExplainHovered
+                          ? "0 10px 15px -3px rgba(99, 102, 241, 0.4), 0 4px 6px -4px rgba(99, 102, 241, 0.4)"
+                          : "0 4px 6px -1px rgba(99, 102, 241, 0.2), 0 2px 4px -1px rgba(99, 102, 241, 0.1)",
+                        transform: isExplainHovered ? "translateY(-1px)" : "translateY(0)",
+                      }),
+              }}
+            >
+              {solutionStatus === "pending" || solutionStatus === "generating"
+                ? "AI Explain (Generating...)"
+                : solutionStatus === "failed"
+                  ? "AI Explain (Unavailable)"
+                  : "AI Explain"}
             </button>
           </div>
         </div>
@@ -293,6 +395,8 @@ export function ExamDetailPage() {
               setPendingRevealItemId(itemId);
               setShowPasswordModal(true);
             }}
+            examId={exam.id}
+            examState={exam.state}
           />
         ))}
       </div>
