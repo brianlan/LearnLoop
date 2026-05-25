@@ -185,3 +185,27 @@ async def test_run_worker_stuck_task_recovery():
     # But since problem doesn't exist, it will be marked failed.
     updated = await db.cols["solution_generation_tasks"].find_one({"_id": stuck_task["_id"]})
     assert updated["status"] == "failed" # because it found the task, couldn't find problem
+
+@pytest.mark.asyncio
+async def test_process_task_no_image():
+    client = FakeLLMClient()
+    storage = FakeStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+    
+    problem_id = str(ObjectId())
+    user_id = str(ObjectId())
+    task_id = ObjectId()
+    
+    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob no image", "correctAnswer": {"display": "ans"}})
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
+    tasks_col.seed(task)
+    
+    await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
+    
+    updated_task = await tasks_col.find_one({"_id": task_id})
+    assert updated_task["status"] == "ready"
+    assert len(solutions_col._documents) == 1
+    assert len(client.calls) == 1
+    assert client.calls[0].image_base64 is None

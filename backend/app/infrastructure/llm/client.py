@@ -79,11 +79,6 @@ class SolutionLLMRequest(BaseModel):
     image_url: str | None = None
     image_base64: str | None = None
 
-    @model_validator(mode="after")
-    def validate_image_reference(self) -> SolutionLLMRequest:
-        if not self.image_url and not self.image_base64:
-            raise ValueError("either image_url or image_base64 is required")
-        return self
 
 
 class SolutionLLMResult(BaseModel):

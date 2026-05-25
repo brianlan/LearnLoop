@@ -48,16 +48,10 @@ async def process_task(
             problem_text=problem["text"],
             correct_answer=problem["correctAnswer"]["display"],
             graph_dsl=problem.get("graphDsl"),
-            image_base64=image_base64 or "",
+            image_base64=image_base64,
             image_url=None
         )
-        # However, image_url or image_base64 is required. What if there's no image?
-        # In SolutionLLMRequest:
-        # if not self.image_url and not self.image_base64:
-        #     raise ValueError("either image_url or image_base64 is required")
-        # Wait, if there's no image, I should pass something or maybe I can't?
-        # Actually, in SolutionLLMRequest, one is required. But I can bypass validation or pass empty string?
-        # Let's fix that below if needed.
+
         
         result = await client.generate_solution(request)
         
