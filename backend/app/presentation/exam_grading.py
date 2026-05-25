@@ -25,6 +25,7 @@ def build_grading_result(
     retry_count: int = 0,
     self_reported_correct: bool | None = None,
 ) -> dict[str, Any]:
+    """Build a grading result dict with all standard keys."""
     return {
         "status": status.value,
         "method": method,

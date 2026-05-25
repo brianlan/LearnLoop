@@ -4,6 +4,7 @@ from .models import CorrectAnswer, ProblemType
 
 
 def compare_answers(normalized: CorrectAnswer, stored_answer: dict, problem_type: ProblemType) -> bool:
+    """Compare a normalized answer against the stored correct answer."""
     if problem_type == ProblemType.MULTI_CHOICE:
         return normalized.normalizedSet == list(stored_answer.get("normalizedSet", []))
     else:

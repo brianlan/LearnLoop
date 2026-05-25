@@ -2,9 +2,11 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
+from pymongo.asynchronous.database import AsyncDatabase
 
 from app.infrastructure.auth.password import hash_password, verify_password
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.storage.mongo import Document
 from app.observability import log_teacher_password_event
 from app.presentation.deps import get_app_settings, get_current_user, get_database
 from app.presentation.errors import ApiError
@@ -39,7 +41,7 @@ class ChangeTeacherPasswordResponse(BaseModel):
 
 async def _ensure_teacher_password_hash(
     user: dict,
-    database,
+    database: AsyncDatabase[Document],
     settings: Settings,
 ) -> str:
     """Get existing teacherPasswordHash or auto-migrate user with default password."""
