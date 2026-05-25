@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Protocol, cast
 
+from pymongo import ASCENDING
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
@@ -10,6 +11,10 @@ from app.infrastructure.config.settings import Settings, get_settings
 
 Document = dict[str, Any]
 AsyncMongoClientFactory = Callable[[str], AsyncMongoClient[Document]]
+
+TAGS_COLLECTION = "tags"
+SOLUTION_GENERATION_TASKS_COLLECTION = "solution_generation_tasks"
+CANONICAL_SOLUTIONS_COLLECTION = "canonical_solutions"
 
 
 class SupportsAsyncClose(Protocol):
@@ -73,6 +78,23 @@ def get_client(settings: Settings | None = None) -> AsyncMongoClient[Document]:
 
 def get_database(settings: Settings | None = None) -> AsyncDatabase[Document]:
     return get_mongo_adapter(settings).get_database()
+
+
+async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
+    existing_collections = set(await database.list_collection_names())
+
+    for collection_name in (
+        SOLUTION_GENERATION_TASKS_COLLECTION,
+        CANONICAL_SOLUTIONS_COLLECTION,
+    ):
+        if collection_name not in existing_collections:
+            await database.create_collection(collection_name)
+
+    await database[TAGS_COLLECTION].create_index(
+        [("userId", ASCENDING), ("name", ASCENDING)],
+        unique=True,
+        name="user_tag_unique",
+    )
 
 
 @asynccontextmanager

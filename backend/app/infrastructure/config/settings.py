@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     preview_extracting_window_seconds: float = Field(default=150.0, gt=0)
 
+    solution_llm_endpoint: str = Field(default="https://example-solution-provider.invalid/api")
+    solution_llm_model: str = Field(default="replace-me")
+    solution_llm_api_key: str = Field(default="replace-me")
+
+    coaching_llm_endpoint: str = Field(default="https://example-coaching-provider.invalid/api")
+    coaching_llm_model: str = Field(default="replace-me")
+    coaching_llm_api_key: str = Field(default="replace-me")
+
+    solution_worker_poll_interval_seconds: int = Field(default=5, gt=0)
+    solution_task_timeout_minutes: int = Field(default=10, gt=0)
+    solution_max_retries: int = Field(default=3, ge=0)
+
     session_cookie_name: str = Field(default="ll_session")
     session_secure: bool = Field(default=False)
     session_samesite: Literal["lax", "strict", "none"] = Field(default="lax")

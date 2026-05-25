@@ -3,11 +3,10 @@ from typing import cast
 
 from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
-from pymongo import ASCENDING
 from starlette.types import ExceptionHandler
 
 from app.infrastructure.config.settings import get_settings
-from app.infrastructure.storage.mongo import get_database
+from app.infrastructure.storage.mongo import ensure_database_setup, get_database
 from app.observability import configure_logging
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
@@ -24,11 +23,7 @@ from app.presentation.teacher_password import router as teacher_password_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database = get_database()
-    await database["tags"].create_index(
-        [("userId", ASCENDING), ("name", ASCENDING)],
-        unique=True,
-        name="user_tag_unique",
-    )
+    await ensure_database_setup(database)
     yield
 
 

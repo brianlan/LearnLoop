@@ -39,6 +39,13 @@ class GradingMethod(str, Enum):
     VLM = "vlm"
 
 
+class SolutionGenerationStatus(str, Enum):
+    PENDING = "pending"
+    GENERATING = "generating"
+    READY = "ready"
+    FAILED = "failed"
+
+
 # Nested Models
 class CorrectAnswer(BaseModel):
     display: str
@@ -235,3 +242,25 @@ class PracticeAttempt(BaseModel):
     gradingStatus: GradingStatus = GradingStatus.UNGRADED
     gradingMethod: Optional[GradingMethod] = None
     createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SolutionGenerationTask(BaseModel):
+    id: Optional[str] = None
+    problem_id: str
+    user_id: str
+    status: SolutionGenerationStatus
+    retry_count: int = 0
+    failure_reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: Optional[datetime] = None
+
+
+class CanonicalSolution(BaseModel):
+    id: Optional[str] = None
+    problem_id: str
+    user_id: str
+    steps_markdown: str
+    final_answer: str
+    math_level_classification: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
