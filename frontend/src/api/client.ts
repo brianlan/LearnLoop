@@ -1,6 +1,8 @@
 // API client wrapper for cookie-based authentication
 // Uses fetch with credentials: 'include' to send HttpOnly cookies automatically
 
+import type { CoachingConversation } from "@/types/coaching";
+
 const API_BASE = "/api/v1";
 
 export interface User {
@@ -35,6 +37,27 @@ async function handleResponse<T>(response: Response): Promise<T> {
  * Uses cookie-based auth with credentials: 'include'.
  */
 export const api = {
+  /**
+   * Get the coaching conversation for a problem
+   */
+  async getCoachingConversation(problemId: string): Promise<CoachingConversation> {
+    return this.get<CoachingConversation>(`/coaching/${problemId}/conversation`);
+  },
+
+  /**
+   * Send a coaching message for a problem
+   */
+  async sendCoachingMessage(problemId: string, message: string): Promise<CoachingConversation> {
+    return this.post<CoachingConversation>(`/coaching/${problemId}/messages`, { message });
+  },
+
+  /**
+   * Clear the coaching conversation for a problem
+   */
+  async clearCoachingConversation(problemId: string): Promise<void> {
+    return this.delete<void>(`/coaching/${problemId}/conversation`);
+  },
+
   /**
    * Get the current authenticated user session
    */

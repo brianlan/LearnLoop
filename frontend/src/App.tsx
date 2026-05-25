@@ -16,6 +16,7 @@ import { TagsPage } from "@/pages/TagsPage";
 import { PracticePage } from "@/pages/PracticePage";
 import { ActivePracticePage } from "@/pages/ActivePracticePage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { CoachingPage } from "@/pages/CoachingPage";
 
 function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -190,6 +191,14 @@ export function AppRoutes() {
         element={
           <ProtectedPage>
             <SettingsPage />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/coaching/:problemId"
+        element={
+          <ProtectedPage>
+            <CoachingPage />
           </ProtectedPage>
         }
       />
