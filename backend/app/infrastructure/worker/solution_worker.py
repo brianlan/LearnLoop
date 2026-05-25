@@ -18,6 +18,7 @@ from app.presentation.helpers import load_source_image_base64
 from app.presentation.solution_generation import _safe_get_collection
 
 logger = logging.getLogger(__name__)
+from app.observability import log_solution_generation_event
 
 
 def _utc_now() -> datetime:
@@ -35,6 +36,7 @@ async def process_task(
 ) -> None:
     problem_id = task["problem_id"]
     user_id = task["user_id"]
+    log_solution_generation_event("started", problem_id)
     
     problem = await problems_col.find_one({"_id": ObjectId(problem_id)})
     if not problem:
@@ -51,6 +53,7 @@ async def process_task(
                 }
             }
         )
+        log_solution_generation_event("failed", problem_id, failure_reason="Problem not found")
         return
         
     try:
@@ -92,6 +95,7 @@ async def process_task(
                 }
             }
         )
+        log_solution_generation_event("succeeded", problem_id)
         
     except LLMClientError as exc:
         retry_count = int(task.get("retry_count", 0)) + 1
@@ -110,6 +114,7 @@ async def process_task(
                     }
                 }
             )
+            log_solution_generation_event("failed", problem_id, failure_reason=str(exc))
         else:
             # Exponential backoff: 30s, 60s, 120s
             now = _utc_now()
@@ -125,6 +130,7 @@ async def process_task(
                     }
                 }
             )
+            log_solution_generation_event("retry", problem_id, retry_count=retry_count)
     except Exception as exc:
         now = _utc_now()
         logger.exception(f"Unexpected error processing task {task['_id']}")
@@ -139,6 +145,7 @@ async def process_task(
                 }
             }
         )
+        log_solution_generation_event("failed", problem_id, failure_reason=str(exc))
 
 async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = None) -> None:
     settings = get_settings()

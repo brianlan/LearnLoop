@@ -42,6 +42,7 @@ class CoachingService:
         })
 
     async def send_message(self, problem_id: str, user_id: str, message: str) -> CoachingConversation:
+        start_time = datetime.now(UTC)
         # 1. Enforce exam safety
         active_exams = await self.db["exams"].count_documents({
             "userId": ObjectId(user_id) if isinstance(user_id, str) and len(user_id) == 24 else user_id,
@@ -158,4 +159,16 @@ class CoachingService:
         result = await self.get_conversation(problem_id, user_id)
         if result is None:
             raise CoachingError("Failed to save conversation.", code="INTERNAL_ERROR", status_code=500)
+            
+        end_time = datetime.now(UTC)
+        response_time_ms = (end_time - start_time).total_seconds() * 1000
+        
+        from app.observability import log_coaching_event
+        log_coaching_event(
+            event="request",
+            conversation_id=result.id,
+            message_count=len(result.messages),
+            response_time_ms=response_time_ms
+        )
+        
         return result
