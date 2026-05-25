@@ -84,6 +84,10 @@ class ProblemTagsResponse(BaseModel):
     items: list[str]
 
 
+class SolutionStatusResponse(BaseModel):
+    status: str
+
+
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 
 
@@ -263,6 +267,32 @@ async def soft_delete_problem(
         {"$set": {"isDeleted": True, "deletedAt": now, "updatedAt": now}},
     )
     return ProblemDeleteResponse(ok=True)
+
+
+@router.get("/{problem_id}/solution-status", response_model=SolutionStatusResponse)
+async def get_solution_status(
+    problem_id: str,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> SolutionStatusResponse:
+    problem = await get_owned_problem(
+        database,
+        problem_id,
+        current_user["_id"],
+        allow_deleted=False,
+    )
+    
+    solutions = database.get_collection("canonical_solutions") if hasattr(database, "get_collection") else database["canonical_solutions"]
+    existing_solution = await solutions.find_one({"problem_id": problem_id})
+    if existing_solution is not None:
+        return SolutionStatusResponse(status="ready")
+        
+    tasks = database.get_collection("solution_generation_tasks") if hasattr(database, "get_collection") else database["solution_generation_tasks"]
+    existing_task = await tasks.find_one({"problem_id": problem_id})
+    if existing_task is not None:
+        return SolutionStatusResponse(status=str(existing_task.get("status", "pending")))
+        
+    return SolutionStatusResponse(status="none")
 
 
 @router.get("/{problem_id}/tracking", response_model=ProblemTrackingResponse)

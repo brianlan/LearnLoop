@@ -513,3 +513,66 @@ async def test_problem_routes_require_authentication(problems_app: FastAPI) -> N
     assert response.json() == {
         "error": {"code": "UNAUTHENTICATED", "message": "Authentication required"}
     }
+
+
+@pytest.mark.asyncio
+async def test_solution_status(problems_app: FastAPI, client: AsyncClient) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    problem_id_str = str(problem["_id"])
+    database["problems"].seed(problem)
+
+    # 1. returns 'none' when no task or solution exists
+    response = await client.get(f"/api/v1/problems/{problem_id_str}/solution-status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "none"}
+
+    # 2. returns 'pending' when task is pending
+    task_pending = {
+        "_id": ObjectId(),
+        "problem_id": problem_id_str,
+        "user_id": str(user_id),
+        "status": "pending",
+        "created_at": datetime.now(UTC)
+    }
+    database["solution_generation_tasks"].seed(task_pending)
+    response = await client.get(f"/api/v1/problems/{problem_id_str}/solution-status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "pending"}
+
+    # 3. returns 'generating' when task is generating
+    database["solution_generation_tasks"]._documents.clear()
+    task_generating = {**task_pending, "_id": ObjectId(), "status": "generating"}
+    database["solution_generation_tasks"].seed(task_generating)
+    response = await client.get(f"/api/v1/problems/{problem_id_str}/solution-status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "generating"}
+
+    # 4. returns 'failed' when task is failed
+    database["solution_generation_tasks"]._documents.clear()
+    task_failed = {**task_pending, "_id": ObjectId(), "status": "failed"}
+    database["solution_generation_tasks"].seed(task_failed)
+    response = await client.get(f"/api/v1/problems/{problem_id_str}/solution-status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "failed"}
+
+    # 5. returns 'ready' when solution exists
+    solution = {
+        "_id": ObjectId(),
+        "problem_id": problem_id_str,
+        "user_id": str(user_id),
+        "steps_markdown": "step 1",
+        "final_answer": "4",
+        "math_level_classification": "basic",
+    }
+    database["canonical_solutions"].seed(solution)
+    response = await client.get(f"/api/v1/problems/{problem_id_str}/solution-status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+    # 6. returns 403 for other user problem
+    other_problem = make_problem(problems_app.state.secondary_user["_id"])
+    database["problems"].seed(other_problem)
+    response = await client.get(f"/api/v1/problems/{str(other_problem['_id'])}/solution-status")
+    assert response.status_code == 403
