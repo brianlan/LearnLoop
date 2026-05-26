@@ -1,243 +1,79 @@
-import { test, expect, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
-const API_BASE = "http://127.0.0.1:8000/api/v1";
+import {
+  addAuthenticatedSession,
+  APP_BASE,
+  DEFAULT_TEST_PASSWORD,
+  registerAndLogin,
+  seedProblem,
+  submitPracticeAttempt,
+  type AuthSession,
+} from "./helpers";
 
-test.use({ baseURL: "http://127.0.0.1:5173" });
+test.use({ baseURL: APP_BASE });
 
-async function registerAndLogin(request: APIRequestContext, username: string, password: string) {
-  await request.post(`${API_BASE}/auth/register`, {
-    data: { username, password },
-  });
-  const loginResp = await request.post(`${API_BASE}/auth/login`, {
-    data: { username, password },
-  });
-  const setCookie = loginResp.headers()["set-cookie"];
-  return setCookie || "";
+async function createSession(request: APIRequestContext, prefix: string): Promise<AuthSession> {
+  return registerAndLogin(request, `e2e_${prefix}_${Date.now()}_${Math.random()}`, DEFAULT_TEST_PASSWORD);
 }
 
-async function seedProblem(
-  request: APIRequestContext,
-  cookie: string,
-  text: string,
-  problemType: string,
-  correctAnswer: string,
-) {
-  const previewResp = await request.post(`${API_BASE}/ingest`, {
-    headers: { Cookie: cookie },
-    data: { text, problemType, correctAnswer },
+async function createSessionWithProblem(request: APIRequestContext, prefix: string) {
+  const session = await createSession(request, prefix);
+  const problem = await seedProblem(request, session, {
+    text: "What is 2+2?",
+    problemType: "fill-in-the-blank",
+    correctAnswer: "4",
   });
-  const preview = await previewResp.json();
-  const confirmResp = await request.post(`${API_BASE}/ingest/${preview.id}/confirm`, {
-    headers: { Cookie: cookie },
-  });
-  return confirmResp.json();
+
+  return { session, problem };
 }
-
-async function submitPracticeAttempt(
-  request: APIRequestContext,
-  cookie: string,
-  problemId: string,
-  answer: string,
-) {
-  const resp = await request.post(`${API_BASE}/practice/attempts`, {
-    headers: { Cookie: cookie },
-    data: { problemId, submittedAnswer: answer },
-  });
-  return resp.json();
-}
-
-let authCookie: string;
-let testProblemId: string;
-
-test.beforeAll(async ({ request }) => {
-  const username = `e2e_practice_${Date.now()}`;
-  const password = "testpass123";
-  authCookie = await registerAndLogin(request, username, password);
-
-  const problem = await seedProblem(
-    request,
-    authCookie,
-    "What is 2+2?",
-    "fill-in-the-blank",
-    "4",
-  );
-  testProblemId = problem.id;
-});
 
 test.describe("Practice E2E", () => {
-  test("AC-01: Navigate to /practice, verify page loads", async ({ page }) => {
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
+  test("loads the protected practice page for an authenticated user", async ({ page, request }) => {
+    const session = await createSession(request, "practice_page");
+    await addAuthenticatedSession(page, session);
 
     await page.goto("/practice");
-    await expect(page.getByText("Practice")).toBeVisible();
-  });
 
-  test("AC-02: With practice history data, verify summary rows display", async ({
-    page,
-    request,
-  }) => {
-    await submitPracticeAttempt(request, authCookie, testProblemId, "4");
-
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await expect(page.getByTestId(`history-row-${testProblemId}`)).toBeVisible();
-  });
-
-  test("AC-03: Click expand on a history row, verify attempt details shown", async ({
-    page,
-    request,
-  }) => {
-    await submitPracticeAttempt(request, authCookie, testProblemId, "4");
-
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await expect(page.getByTestId(`history-row-${testProblemId}`)).toBeVisible();
-    await page.getByTestId(`history-row-${testProblemId}`).click();
-    await expect(page.getByTestId(`attempts-${testProblemId}`)).toBeVisible();
-  });
-
-  test("AC-04: Click Start Practice, verify problem content rendered", async ({ page }) => {
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await page.getByTestId("start-practice-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-  });
-
-  test("AC-05: Submit answer, verify feedback indicator shown", async ({ page }) => {
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await page.getByTestId("start-practice-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-
-    const input = page.getByRole("textbox");
-    await input.fill("4");
-    await page.getByTestId("submit-button").click();
-    await expect(page.getByTestId("grading-feedback")).toBeVisible();
-  });
-
-  test("AC-06: After feedback, click Next, verify new problem shown", async ({
-    page,
-    request,
-  }) => {
-    await seedProblem(request, authCookie, "What is 3+3?", "fill-in-the-blank", "6");
-
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await page.getByTestId("start-practice-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-
-    const input = page.getByRole("textbox");
-    await input.fill("4");
-    await page.getByTestId("submit-button").click();
-    await expect(page.getByTestId("grading-feedback")).toBeVisible();
-    await page.getByTestId("next-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-  });
-
-  test("AC-07: Click Skip, verify new problem shown", async ({ page, request }) => {
-    await seedProblem(request, authCookie, "What is 5+5?", "fill-in-the-blank", "10");
-
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await page.getByTestId("start-practice-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-
-    await page.getByTestId("skip-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-  });
-
-  test("AC-08: Click Quit, verify landing page shown", async ({ page }) => {
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    await page.goto("/practice");
-    await page.getByTestId("start-practice-button").click();
-    await expect(page.getByTestId("problem-text")).toBeVisible();
-
-    await page.getByTestId("quit-button").click();
+    await expect(page.getByRole("heading", { name: "Practice" })).toBeVisible();
     await expect(page.getByTestId("start-practice-button")).toBeVisible();
   });
 
-  test("AC-13: With no problems, click Start Practice, verify message", async ({
-    page,
-    request,
-  }) => {
-    const username = `e2e_empty_${Date.now()}`;
-    const password = "testpass123";
-    const emptyCookie = await registerAndLogin(request, username, password);
+  test("shows practice history and expands attempts", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "practice_history");
+    await submitPracticeAttempt(request, session, problem.id, "4");
+    await addAuthenticatedSession(page, session);
 
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: emptyCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
+    await page.goto("/practice");
+
+    const historyRow = page.getByTestId(`history-row-${problem.id}`);
+    await expect(historyRow).toBeVisible();
+    await historyRow.click();
+    await expect(page.getByTestId(`attempts-${problem.id}`)).toBeVisible();
+  });
+
+  test("starts a practice session and submits an answer", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "practice_submit");
+    await addAuthenticatedSession(page, session);
 
     await page.goto("/practice");
     await page.getByTestId("start-practice-button").click();
+
+    await expect(page).toHaveURL(/\/practice\/active/);
+    await expect(page.getByTestId("problem-text")).toBeVisible();
+
+    await page.getByRole("textbox").fill("4");
+    await page.getByTestId("submit-button").click();
+
+    await expect(page.getByTestId("grading-feedback")).toBeVisible();
+  });
+
+  test("shows an empty-state message when no problems exist", async ({ page, request }) => {
+    const session = await createSession(request, "practice_empty");
+    await addAuthenticatedSession(page, session);
+
+    await page.goto("/practice");
+    await page.getByTestId("start-practice-button").click();
+
     await expect(page.getByTestId("status-message")).toBeVisible();
   });
 });

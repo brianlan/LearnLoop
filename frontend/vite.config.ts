@@ -12,7 +12,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8000",
+      "/api": process.env.PLAYWRIGHT_API_ORIGIN ?? "http://localhost:8000",
     },
   },
   test: {
