@@ -185,6 +185,15 @@ The canonical template lives in `.env.example`.
 | `VLM_API_KEY` | External VLM credential | `replace-me` |
 | `VLM_TIMEOUT_SECONDS` | VLM request timeout | `120` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
+| `SOLUTION_LLM_ENDPOINT` | Solution generation LLM endpoint (OpenAI-compatible base URL) | example placeholder |
+| `SOLUTION_LLM_MODEL` | Solution generation LLM model identifier | `replace-me` |
+| `SOLUTION_LLM_API_KEY` | Solution generation LLM credential | `replace-me` |
+| `COACHING_LLM_ENDPOINT` | Coaching LLM endpoint (OpenAI-compatible base URL) | example placeholder |
+| `COACHING_LLM_MODEL` | Coaching LLM model identifier | `replace-me` |
+| `COACHING_LLM_API_KEY` | Coaching LLM credential | `replace-me` |
+| `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
+| `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
+| `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |
 | `SESSION_COOKIE_NAME` | Session cookie name | `ll_session` |
 | `SESSION_SECURE` | HTTPS-only session cookie toggle | `false` |
 | `SESSION_SAMESITE` | Session cookie same-site policy | `lax` |
@@ -192,6 +201,11 @@ The canonical template lives in `.env.example`.
 | `PRACTICE_LAST_WRONG_WEIGHT` | Weight for problems last answered incorrectly | `1.0` |
 | `PRACTICE_FAILURE_RATE_WEIGHT` | Weight for problems with high failure rates | `1.0` |
 | `PRACTICE_RECENCY_WEIGHT` | Weight for recently tested problems | `1.0` |
+
+### AI tutoring LLM notes
+
+- `SOLUTION_LLM_ENDPOINT` and `COACHING_LLM_ENDPOINT` must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
+- Solution generation and coaching use separate provider configuration. This allows using different providers, models, or API keys for each feature.
 
 ## Health checks and parity notes
 
