@@ -190,7 +190,7 @@ async def _run_extraction_task(
                     "updatedAt": finished_at,
                     "extraction": {
                         **latest_extraction,
-                        "requestModel": settings.vlm_model,
+                        "requestModel": settings.ingestion_vlm_model,
                         "requestStartedAt": started_at,
                         "requestFinishedAt": finished_at,
                         "success": False,
@@ -224,7 +224,7 @@ async def start_extraction(
         "updatedAt": started_at,
         "extraction": {
             **dict(preview.get("extraction", {})),
-            "requestModel": settings.vlm_model,
+            "requestModel": settings.ingestion_vlm_model,
             "requestStartedAt": started_at,
             "requestFinishedAt": None,
             "success": None,

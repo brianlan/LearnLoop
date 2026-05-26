@@ -9,7 +9,6 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.vlm.prompts import (
     EXTRACTION_PROMPT_TEMPLATE,
     EXTRACTION_PROMPT_VERSION,
@@ -158,8 +157,19 @@ class GradingResult(BaseModel):
 
 
 class VLMClient:
-    def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
-        self._settings = settings or get_settings()
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        model: str,
+        api_key: str,
+        timeout_seconds: float,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._endpoint = endpoint
+        self._model = model
+        self._api_key = api_key
+        self._timeout_seconds = timeout_seconds
         self._http_client = http_client
         self._owns_client = http_client is None
 
@@ -167,10 +177,10 @@ class VLMClient:
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(
-                base_url=self._settings.vlm_endpoint,
-                timeout=self._settings.vlm_timeout_seconds,
+                base_url=self._endpoint,
+                timeout=self._timeout_seconds,
                 headers={
-                    "Authorization": f"Bearer {self._settings.vlm_api_key}",
+                    "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
                 },
             )
@@ -188,7 +198,7 @@ class VLMClient:
         image_base64: str | None = None,
     ) -> ExtractionResult:
         request = ExtractionRequest(
-            model=self._settings.vlm_model,
+            model=self._model,
             promptVersion=EXTRACTION_PROMPT_VERSION,
             schemaVersion=EXTRACTION_SCHEMA_VERSION,
             prompt=EXTRACTION_PROMPT_TEMPLATE,
@@ -228,7 +238,7 @@ class VLMClient:
         correct_answer: str,
     ) -> GradingResult:
         request = GradingRequest(
-            model=self._settings.vlm_model,
+            model=self._model,
             promptVersion=GRADING_PROMPT_VERSION,
             schemaVersion=GRADING_SCHEMA_VERSION,
             prompt=GRADING_PROMPT_TEMPLATE,
@@ -442,5 +452,4 @@ class VLMClient:
             )
 
         return parsed
-
 

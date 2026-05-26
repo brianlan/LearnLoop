@@ -180,17 +180,23 @@ The canonical template lives in `.env.example`.
 | `S3_BUCKET` | Media bucket name | `learnloop-media` |
 | `S3_REGION` | S3 region | `us-east-1` |
 | `S3_FORCE_PATH_STYLE` | Path-style S3 URLs | `true` |
-| `VLM_ENDPOINT` | External VLM API endpoint | example placeholder |
-| `VLM_MODEL` | External VLM model identifier | `replace-me` |
-| `VLM_API_KEY` | External VLM credential | `replace-me` |
-| `VLM_TIMEOUT_SECONDS` | VLM request timeout | `120` |
+| `INGESTION_VLM_ENDPOINT` | Ingestion VLM endpoint for image extraction and problem structuring | example placeholder |
+| `INGESTION_VLM_MODEL` | Ingestion VLM model identifier | `replace-me` |
+| `INGESTION_VLM_API_KEY` | Ingestion VLM credential | `replace-me` |
+| `INGESTION_VLM_TIMEOUT_SECONDS` | Ingestion VLM request timeout | `120` |
+| `GRADING_VLM_ENDPOINT` | Grading VLM endpoint for short-answer judging in practice and exams | example placeholder |
+| `GRADING_VLM_MODEL` | Grading VLM model identifier | `replace-me` |
+| `GRADING_VLM_API_KEY` | Grading VLM credential | `replace-me` |
+| `GRADING_VLM_TIMEOUT_SECONDS` | Grading VLM request timeout | `60` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
 | `SOLUTION_LLM_ENDPOINT` | Solution generation LLM endpoint (OpenAI-compatible base URL) | example placeholder |
 | `SOLUTION_LLM_MODEL` | Solution generation LLM model identifier | `replace-me` |
 | `SOLUTION_LLM_API_KEY` | Solution generation LLM credential | `replace-me` |
+| `SOLUTION_LLM_TIMEOUT_SECONDS` | Solution generation LLM request timeout | `120` |
 | `COACHING_LLM_ENDPOINT` | Coaching LLM endpoint (OpenAI-compatible base URL) | example placeholder |
 | `COACHING_LLM_MODEL` | Coaching LLM model identifier | `replace-me` |
 | `COACHING_LLM_API_KEY` | Coaching LLM credential | `replace-me` |
+| `COACHING_LLM_TIMEOUT_SECONDS` | Coaching LLM request timeout | `60` |
 | `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
 | `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
 | `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |
@@ -204,8 +210,11 @@ The canonical template lives in `.env.example`.
 
 ### AI tutoring LLM notes
 
-- `SOLUTION_LLM_ENDPOINT` and `COACHING_LLM_ENDPOINT` must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
-- Solution generation and coaching use separate provider configuration. This allows using different providers, models, or API keys for each feature.
+- `INGESTION_VLM_ENDPOINT`, `GRADING_VLM_ENDPOINT`, `SOLUTION_LLM_ENDPOINT`, and `COACHING_LLM_ENDPOINT` must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
+- Ingestion VLM is used for image extraction and problem structuring.
+- Grading VLM is used for short-answer correctness judgement in practice and exams.
+- Solution LLM is used for background canonical solution generation.
+- Coaching LLM is used for live tutoring responses.
 
 ## Health checks and parity notes
 

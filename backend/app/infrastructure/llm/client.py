@@ -295,7 +295,7 @@ class SolutionLLMClient(_BaseLLMClient):
             endpoint=self._settings.solution_llm_endpoint,
             model=self._settings.solution_llm_model,
             api_key=self._settings.solution_llm_api_key,
-            timeout_seconds=self._settings.vlm_timeout_seconds,
+            timeout_seconds=self._settings.solution_llm_timeout_seconds,
             http_client=http_client,
         )
 
@@ -372,7 +372,7 @@ class CoachingLLMClient(_BaseLLMClient):
             endpoint=self._settings.coaching_llm_endpoint,
             model=self._settings.coaching_llm_model,
             api_key=self._settings.coaching_llm_api_key,
-            timeout_seconds=self._settings.vlm_timeout_seconds,
+            timeout_seconds=self._settings.coaching_llm_timeout_seconds,
             http_client=http_client,
         )
 

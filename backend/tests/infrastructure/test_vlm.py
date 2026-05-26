@@ -6,7 +6,6 @@ import json
 import httpx
 import pytest
 
-from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
@@ -36,8 +35,13 @@ def _build_client(handler) -> VLMClient:
         timeout=5,
         headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
     )
-    settings = Settings(vlm_endpoint="https://vlm.example/api", vlm_model="demo", vlm_api_key="demo")
-    return VLMClient(settings=settings, http_client=http_client)
+    return VLMClient(
+        endpoint="https://vlm.example/api",
+        model="demo",
+        api_key="demo",
+        timeout_seconds=5,
+        http_client=http_client,
+    )
 
 
 @pytest.mark.asyncio

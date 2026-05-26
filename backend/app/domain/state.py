@@ -34,7 +34,11 @@ def recover_stale_preview(
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
 
-    window = timedelta(seconds=extracting_window_seconds if extracting_window_seconds is not None else get_settings().vlm_timeout_seconds)
+    window = timedelta(
+        seconds=extracting_window_seconds
+        if extracting_window_seconds is not None
+        else get_settings().preview_extracting_window_seconds
+    )
     if current_time - started_at <= window:
         return None
 

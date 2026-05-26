@@ -20,10 +20,10 @@ from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient, VLMError
 from app.presentation.deps import (
     DatabaseDependency,
-    get_current_user,
     get_app_settings,
+    get_current_user,
+    get_grading_vlm_client,
     get_s3_storage,
-    get_vlm_client,
 )
 from app.presentation.helpers import build_problem_image_url, load_source_image_base64, parse_object_id
 from app.presentation.exam_helpers import problem_document_to_model
@@ -35,7 +35,7 @@ router = APIRouter(prefix="/practice", tags=["practice"])
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
 StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
-VLMDependency = Annotated[VLMClient, Depends(get_vlm_client)]
+VLMDependency = Annotated[VLMClient, Depends(get_grading_vlm_client)]
 
 
 class PracticeNextResponse(BaseModel):

@@ -118,16 +118,26 @@ def get_s3_storage(
     return S3StorageAdapter(settings=settings)
 
 
-def create_vlm_client(
+def create_ingestion_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> VLMClient:
-    return VLMClient(settings=settings)
+    return VLMClient(
+        endpoint=settings.ingestion_vlm_endpoint,
+        model=settings.ingestion_vlm_model,
+        api_key=settings.ingestion_vlm_api_key,
+        timeout_seconds=settings.ingestion_vlm_timeout_seconds,
+    )
 
 
-async def get_vlm_client(
+async def get_grading_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> AsyncIterator[VLMClient]:
-    client = VLMClient(settings=settings)
+    client = VLMClient(
+        endpoint=settings.grading_vlm_endpoint,
+        model=settings.grading_vlm_model,
+        api_key=settings.grading_vlm_api_key,
+        timeout_seconds=settings.grading_vlm_timeout_seconds,
+    )
     try:
         yield client
     finally:
@@ -135,4 +145,4 @@ async def get_vlm_client(
 
 
 StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
-VLMDependency = Annotated[VLMClient, Depends(get_vlm_client)]
+GradingVLMDependency = Annotated[VLMClient, Depends(get_grading_vlm_client)]
