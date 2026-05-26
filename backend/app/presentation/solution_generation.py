@@ -12,6 +12,7 @@ from app.infrastructure.storage.mongo import (
     Document,
     SOLUTION_GENERATION_TASKS_COLLECTION,
 )
+from app.observability import log_solution_generation_event
 
 SOLUTION_BACKFILL_BATCH_SIZE = 100
 
@@ -77,6 +78,7 @@ async def enqueue_solution_generation_task_for_problem(
             now=current_time,
         )
     )
+    log_solution_generation_event("enqueued", problem_id)
     return True
 
 
@@ -114,6 +116,9 @@ async def backfill_solution_generation_tasks(
         )
 
     for start in range(0, len(missing_documents), max(batch_size, 1)):
-        await tasks.insert_many(missing_documents[start : start + max(batch_size, 1)], ordered=False)
+        batch = missing_documents[start : start + max(batch_size, 1)]
+        await tasks.insert_many(batch, ordered=False)
+        for doc in batch:
+            log_solution_generation_event("enqueued", doc["problem_id"])
 
     return len(missing_documents)
