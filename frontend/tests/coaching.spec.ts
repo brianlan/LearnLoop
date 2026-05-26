@@ -60,7 +60,6 @@ async function createExam(
 
 let authCookie: string;
 let testProblemId: string;
-let secondProblemId: string;
 
 test.beforeAll(async ({ request }) => {
   const username = `e2e_coaching_${Date.now()}`;
@@ -75,15 +74,6 @@ test.beforeAll(async ({ request }) => {
     "4",
   );
   testProblemId = problem.id;
-
-  const problem2 = await seedProblem(
-    request,
-    authCookie,
-    "What is 3+3?",
-    "fill-in-the-blank",
-    "6",
-  );
-  secondProblemId = problem2.id;
 });
 
 test.describe("Coaching E2E - Practice Workflow", () => {
@@ -174,8 +164,8 @@ test.describe("Coaching E2E - Practice Workflow", () => {
     // Clear any existing conversation
     const clearButton = page.getByTestId("clear-button");
     if (await clearButton.isEnabled()) {
-      await clearButton.click();
       page.on("dialog", dialog => dialog.accept());
+      await clearButton.click();
       await page.waitForTimeout(500);
     }
 
@@ -185,6 +175,7 @@ test.describe("Coaching E2E - Practice Workflow", () => {
     const explainContent = await page.getByTestId("chat-log").textContent();
 
     // Clear conversation
+    page.on("dialog", dialog => dialog.accept());
     await clearButton.click();
     await page.waitForTimeout(500);
 
@@ -228,8 +219,8 @@ test.describe("Coaching E2E - Whiteboard", () => {
     // Clear existing conversation
     const clearButton = page.getByTestId("clear-button");
     if (await clearButton.isEnabled()) {
-      await clearButton.click();
       page.on("dialog", dialog => dialog.accept());
+      await clearButton.click();
       await page.waitForTimeout(500);
     }
 
@@ -300,8 +291,8 @@ test.describe("Coaching E2E - Conversation Persistence", () => {
     // Clear existing conversation
     const clearButton = page.getByTestId("clear-button");
     if (await clearButton.isEnabled()) {
-      await clearButton.click();
       page.on("dialog", dialog => dialog.accept());
+      await clearButton.click();
       await page.waitForTimeout(500);
     }
 
@@ -361,8 +352,8 @@ test.describe("Coaching E2E - Clear Conversation", () => {
 
     // Clear conversation
     const clearButton = page.getByTestId("clear-button");
-    await clearButton.click();
     page.on("dialog", dialog => dialog.accept());
+    await clearButton.click();
 
     // Verify empty state
     await expect(page.getByTestId("chat-log")).toContainText("No messages yet");
@@ -442,42 +433,19 @@ test.describe("Coaching E2E - Exam Safety", () => {
 });
 
 test.describe("Coaching E2E - Failed Solution Safety", () => {
-  test("AC-14: AI Explain disabled for permanently failed solution", async ({ page, request }) => {
-    // Create a problem and trigger a failed solution status
-    const problem = await seedProblem(
-      request,
-      authCookie,
-      "Test failed problem",
-      "fill-in-the-blank",
-      "answer",
-    );
-
-    // Manually set solution status to failed via API (simulating permanent failure)
-    // Note: This assumes there's a way to set this status. If not, we test the UI behavior
-    // when the status is failed.
-
-    await page.context().addCookies([
-      {
-        name: "session",
-        value: authCookie.match(/session=([^;]+)/)?.[1] || "",
-        domain: "127.0.0.1",
-        path: "/",
-      },
-    ]);
-
-    // Submit practice attempt for the new problem
-    await submitPracticeAttempt(request, authCookie, problem.id, "answer");
-
-    // Navigate to practice
-    await page.goto("/practice");
-    await page.getByTestId("start-practice-button").click();
-
-    // If we could set solution status to failed, the explain button should be disabled
-    // For now, we verify the button exists and can be in different states
-    const explainButton = page.getByTestId("explain-button");
-
-    // The button should either be enabled (ready) or show appropriate state
-    const buttonText = await explainButton.textContent();
-    expect(buttonText).toMatch(/AI Explain|AI Explain \(Unavailable\)|AI Explain \(Generating\.\.\.\)/);
+  // PARTIAL TEST: AC-14 requires a backend API or test utility to force solution status to "failed".
+  // Without this capability, we cannot properly test that the AI Explain button is disabled
+  // for permanently failed solutions. This test is skipped until such an API/utility is available.
+  //
+  // To complete this test:
+  // 1. Create a backend API endpoint or test utility to set solution status to "failed"
+  // 2. Use it here to set the new problem's solution status to "failed"
+  // 3. Assert that the explain button is disabled
+  test.skip("AC-14: AI Explain disabled for permanently failed solution", async ({ page, request }) => {
+    // This test is intentionally skipped - see above comment for details.
+    // Once a backend API exists to force solution status to "failed", implement:
+    // 1. Create problem and set solution status to "failed"
+    // 2. Navigate to practice with that problem
+    // 3. Assert explainButton is disabled
   });
 });
