@@ -21,7 +21,14 @@ from app.presentation.exam_helpers import (
     make_exam_item,
     problem_document_to_model,
 )
-from app.presentation.deps import DatabaseDependency, StorageDependency, VLMDependency, get_current_user, get_s3_storage, get_vlm_client
+from app.presentation.deps import (
+    DatabaseDependency,
+    GradingVLMDependency,
+    StorageDependency,
+    get_current_user,
+    get_grading_vlm_client,
+    get_s3_storage,
+)
 from app.presentation.errors import ApiError
 from app.presentation.exam_serialization import (
     CreateExamRequest,
@@ -50,7 +57,8 @@ def get_exam_mongo_adapter() -> MongoClientAdapter:
 
 AdapterDependency = Annotated[MongoClientAdapter, Depends(get_exam_mongo_adapter)]
 get_exam_storage = get_s3_storage
-get_exam_vlm_client = get_vlm_client
+VLMDependency = GradingVLMDependency
+get_exam_vlm_client = get_grading_vlm_client
 
 
 @router.post("", response_model=CreateExamResponse, status_code=201)

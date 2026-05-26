@@ -386,7 +386,7 @@ async def app() -> AsyncIterator[FastAPI]:
     storage = FakeStorage()
     adapter = FakeMongoAdapter()
     vlm = FakeVLMClient()
-    settings = Settings(vlm_model="gpt-4.1-mini", vlm_timeout_seconds=1.0)
+    settings = Settings(ingestion_vlm_model="gpt-4.1-mini", ingestion_vlm_timeout_seconds=1.0)
 
     application.state.fake_database = database
     application.state.fake_storage = storage
@@ -401,7 +401,7 @@ async def app() -> AsyncIterator[FastAPI]:
     application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
     application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
     application.dependency_overrides[ingestion_presentation.get_s3_storage] = lambda: storage
-    application.dependency_overrides[ingestion_presentation.get_vlm_client] = lambda: vlm
+    application.dependency_overrides[ingestion_presentation.get_ingestion_vlm_client] = lambda: vlm
     application.dependency_overrides[ingestion_presentation.get_preview_sync_wait_seconds] = (
         lambda: application.state.sync_wait_seconds
     )

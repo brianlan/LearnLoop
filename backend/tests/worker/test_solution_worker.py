@@ -166,7 +166,7 @@ async def test_run_worker_stuck_task_recovery():
         solution_llm_endpoint = "http"
         solution_llm_model = "m"
         solution_llm_api_key = "k"
-        vlm_timeout_seconds = 10
+        solution_llm_timeout_seconds = 10
         s3_bucket = "b"
         s3_region = "r"
         s3_endpoint_url = "u"
@@ -214,7 +214,7 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
         solution_llm_endpoint = "http"
         solution_llm_model = "m"
         solution_llm_api_key = "k"
-        vlm_timeout_seconds = 10
+        solution_llm_timeout_seconds = 10
         s3_bucket = "b"
         s3_region = "r"
         s3_endpoint_url = "u"

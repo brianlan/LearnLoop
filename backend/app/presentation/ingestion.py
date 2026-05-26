@@ -17,7 +17,14 @@ from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import VLMClient
-from app.presentation.deps import DatabaseDependency, StorageDependency, create_vlm_client, get_app_settings, get_current_user, get_s3_storage
+from app.presentation.deps import (
+    DatabaseDependency,
+    StorageDependency,
+    create_ingestion_vlm_client,
+    get_app_settings,
+    get_current_user,
+    get_s3_storage,
+)
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags, parse_object_id
 from app.presentation.ingestion_serialization import ProblemResponse, PreviewResponse, serialize_preview, serialize_problem, _enum_value
@@ -52,10 +59,10 @@ def get_preview_sync_wait_seconds() -> float:
     return DEFAULT_SYNC_WAIT_SECONDS
 
 
-get_vlm_client = create_vlm_client
+get_ingestion_vlm_client = create_ingestion_vlm_client
 
 S3Dependency = StorageDependency
-VLMDependency = Annotated[VLMClient, Depends(get_vlm_client)]
+VLMDependency = Annotated[VLMClient, Depends(get_ingestion_vlm_client)]
 SyncWaitDependency = Annotated[float, Depends(get_preview_sync_wait_seconds)]
 
 

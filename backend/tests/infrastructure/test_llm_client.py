@@ -32,6 +32,7 @@ def _build_solution_client(handler) -> SolutionLLMClient:
         solution_llm_endpoint="https://solution.example/api",
         solution_llm_model="solution-model",
         solution_llm_api_key="solution-key",
+        solution_llm_timeout_seconds=7,
     )
     return SolutionLLMClient(settings=settings, http_client=http_client)
 
@@ -48,8 +49,23 @@ def _build_coaching_client(handler) -> CoachingLLMClient:
         coaching_llm_endpoint="https://coaching.example/api",
         coaching_llm_model="coaching-model",
         coaching_llm_api_key="coaching-key",
+        coaching_llm_timeout_seconds=9,
     )
     return CoachingLLMClient(settings=settings, http_client=http_client)
+
+
+def test_llm_clients_use_capability_specific_timeouts() -> None:
+    solution_client = SolutionLLMClient(
+        settings=Settings(solution_llm_timeout_seconds=123),
+        http_client=httpx.AsyncClient(),
+    )
+    coaching_client = CoachingLLMClient(
+        settings=Settings(coaching_llm_timeout_seconds=45),
+        http_client=httpx.AsyncClient(),
+    )
+
+    assert solution_client._timeout_seconds == 123
+    assert coaching_client._timeout_seconds == 45
 
 
 @pytest.mark.asyncio
