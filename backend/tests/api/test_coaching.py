@@ -190,7 +190,7 @@ async def test_send_message_active_exam_blocked(client: AsyncClient, coaching_ap
     
     db["exams"].seed({
         "userId": user_id,
-        "state": "in_progress",
+        "state": "in-progress",
         "items": [{"problemId": ObjectId(setup_problem)}]
     })
     
