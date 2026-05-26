@@ -29,6 +29,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
     (error as Error & { code?: string; status?: number }).status = response.status;
     throw error;
   }
+  if (response.status === 204) {
+    return undefined as unknown as T;
+  }
   return response.json() as Promise<T>;
 }
 
