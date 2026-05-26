@@ -20,11 +20,26 @@ interface SettingsResponse {
     region: string;
     force_path_style: boolean;
   };
-  vlm: {
+  ingestion_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
     preview_extracting_window_seconds: number;
+  };
+  grading_vlm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
+  };
+  solution_llm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
+  };
+  coaching_llm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
   };
   session: {
     cookie_name: string;
@@ -342,16 +357,43 @@ export function SettingsPage() {
         />
       </SettingSection>
 
-      <SettingSection title="Vision Language Model">
-        <SettingRow label="Endpoint" value={data.vlm.endpoint} />
-        <SettingRow label="Model" value={data.vlm.model} />
+      <SettingSection title="Ingestion VLM">
+        <SettingRow label="Endpoint" value={data.ingestion_vlm.endpoint} />
+        <SettingRow label="Model" value={data.ingestion_vlm.model} />
         <SettingRow
           label="Timeout (seconds)"
-          value={data.vlm.timeout_seconds}
+          value={data.ingestion_vlm.timeout_seconds}
         />
         <SettingRow
           label="Preview Window (seconds)"
-          value={data.vlm.preview_extracting_window_seconds}
+          value={data.ingestion_vlm.preview_extracting_window_seconds}
+        />
+      </SettingSection>
+
+      <SettingSection title="Grading VLM">
+        <SettingRow label="Endpoint" value={data.grading_vlm.endpoint} />
+        <SettingRow label="Model" value={data.grading_vlm.model} />
+        <SettingRow
+          label="Timeout (seconds)"
+          value={data.grading_vlm.timeout_seconds}
+        />
+      </SettingSection>
+
+      <SettingSection title="Solution LLM">
+        <SettingRow label="Endpoint" value={data.solution_llm.endpoint} />
+        <SettingRow label="Model" value={data.solution_llm.model} />
+        <SettingRow
+          label="Timeout (seconds)"
+          value={data.solution_llm.timeout_seconds}
+        />
+      </SettingSection>
+
+      <SettingSection title="Coaching LLM">
+        <SettingRow label="Endpoint" value={data.coaching_llm.endpoint} />
+        <SettingRow label="Model" value={data.coaching_llm.model} />
+        <SettingRow
+          label="Timeout (seconds)"
+          value={data.coaching_llm.timeout_seconds}
         />
       </SettingSection>
 
