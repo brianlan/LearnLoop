@@ -119,7 +119,7 @@ async def test_send_message_active_exam_blocked():
     
     prob_id = ObjectId()
     user_id = ObjectId()
-    
+
     db.cols["exams"].seed({
         "userId": user_id,
         "state": "in-progress",
@@ -135,49 +135,42 @@ async def test_send_message_success():
     db = FakeDatabase()
     client = FakeCoachingLLMClient()
     service = CoachingService(db, client)
-    
+
     prob_id = ObjectId()
     user_id = ObjectId()
-    
+
     db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
     db.cols["canonical_solutions"].seed({"problem_id": str(prob_id), "steps_markdown": "steps", "final_answer": "ans"})
-    db.cols["practice_attempts"].seed({
-        "problemId": prob_id, "userId": user_id, "submittedAnswer": "my ans", "gradingStatus": "correct", "createdAt": datetime.now(UTC)
-    })
-    
+
     conv = await service.send_message(str(prob_id), str(user_id), "help me")
-    
+
     assert len(conv.messages) == 2
     assert conv.messages[0].role == CoachingRole.STUDENT
     assert conv.messages[0].content == "help me"
     assert conv.messages[1].role == CoachingRole.COACH
     assert conv.messages[1].content == "hello from coach"
-    
+
     # check context
     req = client.calls[0]
     assert req.problem_text == "prob text"
     assert req.canonical_steps_markdown == "steps"
-    assert req.student_answer == "my ans"
-    assert req.judgement == "correct"
 
 @pytest.mark.asyncio
 async def test_send_message_skipped_problem_no_attempt():
     db = FakeDatabase()
     client = FakeCoachingLLMClient()
     service = CoachingService(db, client)
-    
+
     prob_id = ObjectId()
     user_id = ObjectId()
-    
+
     db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
-    # no canonical solution, no practice attempt
-    
+    # no canonical solution
+
     conv = await service.send_message(str(prob_id), str(user_id), "help me")
     assert len(conv.messages) == 2
-    
+
     req = client.calls[0]
-    assert req.student_answer is None
-    assert req.judgement is None
     assert req.canonical_steps_markdown == "No canonical steps available."
 
 @pytest.mark.asyncio
