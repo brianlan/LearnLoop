@@ -32,7 +32,27 @@ const mockSettings = {
   app: { env: "development", host: "0.0.0.0", port: 8000, log_level: "INFO" },
   database: { name: "learnloop" },
   storage: { endpoint: "http://localhost:9000", bucket: "media", region: "us-east-1", force_path_style: true },
-  vlm: { endpoint: "https://example.com", model: "test", timeout_seconds: 120, preview_extracting_window_seconds: 150 },
+  ingestion_vlm: {
+    endpoint: "https://ingestion.example.com",
+    model: "ingestion-model",
+    timeout_seconds: 120,
+    preview_extracting_window_seconds: 150,
+  },
+  grading_vlm: {
+    endpoint: "https://grading.example.com",
+    model: "grading-model",
+    timeout_seconds: 60,
+  },
+  solution_llm: {
+    endpoint: "https://solution.example.com",
+    model: "solution-model",
+    timeout_seconds: 90,
+  },
+  coaching_llm: {
+    endpoint: "https://coaching.example.com",
+    model: "coaching-model",
+    timeout_seconds: 45,
+  },
   session: { cookie_name: "ll_session", secure: false, samesite: "lax" },
   practice: { cooldown_days: 7, last_wrong_weight: 1.0, failure_rate_weight: 1.0, recency_weight: 1.0 },
 };
@@ -73,10 +93,16 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("http://localhost:9000")).toBeInTheDocument();
   });
 
-  it("renders VLM settings section", async () => {
+  it("renders explicit AI settings sections", async () => {
     renderWithProviders();
-    expect(await screen.findByText("Vision Language Model")).toBeInTheDocument();
-    expect(await screen.findByText("test")).toBeInTheDocument();
+    expect(await screen.findByText("Ingestion VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Grading VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Solution LLM")).toBeInTheDocument();
+    expect(await screen.findByText("Coaching LLM")).toBeInTheDocument();
+    expect(await screen.findByText("ingestion-model")).toBeInTheDocument();
+    expect(await screen.findByText("grading-model")).toBeInTheDocument();
+    expect(await screen.findByText("solution-model")).toBeInTheDocument();
+    expect(await screen.findByText("coaching-model")).toBeInTheDocument();
   });
 
   it("renders session settings section", async () => {
