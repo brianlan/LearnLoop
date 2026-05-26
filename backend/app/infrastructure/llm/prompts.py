@@ -34,13 +34,9 @@ def build_coaching_prompt(
     canonical_steps_markdown: str,
     canonical_final_answer: str,
     math_level_classification: str,
-    student_answer: str | None,
-    judgement: str | None,
     conversation_history: str,
     new_message: str,
 ) -> str:
-    student_answer_section = student_answer or "无"
-    judgement_section = judgement or "无"
     return f"""你是一名中国小学/初中数学辅导老师。
 你必须全部使用简体中文回复。
 你必须遵守以下规则：
@@ -65,12 +61,6 @@ def build_coaching_prompt(
 
 标准解答最终答案：
 {canonical_final_answer}
-
-学生当前答案：
-{student_answer_section}
-
-当前判定结果：
-{judgement_section}
 
 历史对话：
 {conversation_history}

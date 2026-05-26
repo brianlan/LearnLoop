@@ -78,18 +78,7 @@ class CoachingService:
             canonical_final_answer = solution.get("final_answer", "")
             math_level_classification = solution.get("math_level_classification", "unknown")
 
-        # 4. Fetch most recent PracticeAttempt
-        attempt = await self.db["practice_attempts"].find_one(
-            {
-                "problemId": ObjectId(problem_id),
-                "userId": ObjectId(user_id) if isinstance(user_id, str) and len(user_id) == 24 else user_id
-            },
-            sort=[("createdAt", -1)]
-        )
-        student_answer = attempt["submittedAnswer"] if attempt else None
-        judgement = attempt["gradingStatus"] if attempt else None
-
-        # 5. Fetch or create Conversation
+        # 4. Fetch or create Conversation
         conversation = await self.get_conversation(problem_id, user_id)
         if not conversation:
             conversation = CoachingConversation(
@@ -105,13 +94,13 @@ class CoachingService:
                 status_code=400
             )
 
-        # 6. Call LLM
+        # 5. Call LLM
         from app.infrastructure.llm.client import CoachingMessage as LLMCoachingMessage
         history = [
             LLMCoachingMessage(role=msg.role.value, text=msg.content)
             for msg in conversation.messages
         ]
-        
+
         request = CoachingLLMRequest(
             problem_text=problem.get("text", ""),
             correct_answer=problem.get("correctAnswer", {}).get("display", ""),
@@ -119,9 +108,7 @@ class CoachingService:
             canonical_final_answer=canonical_final_answer,
             math_level_classification=math_level_classification,
             conversation_history=history,
-            new_message=message,
-            student_answer=student_answer,
-            judgement=judgement
+            new_message=message
         )
 
         try:
@@ -134,7 +121,7 @@ class CoachingService:
                 status_code=503
             )
 
-        # 7. Add messages
+        # 6. Add messages
         try:
             conversation.add_message(CoachingMessage(role=CoachingRole.STUDENT, content=message))
             conversation.add_message(CoachingMessage(
@@ -145,7 +132,7 @@ class CoachingService:
         except ValueError as exc:
             raise CoachingError(str(exc), code="MESSAGE_CAP_EXCEEDED", status_code=400)
 
-        # 8. Save
+        # 7. Save
         now = datetime.now(UTC)
         conversation.updated_at = now
 

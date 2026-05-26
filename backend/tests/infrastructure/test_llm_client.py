@@ -206,8 +206,6 @@ async def test_coaching_llm_client_builds_context_prompt_and_uses_coaching_confi
             canonical_steps_markdown="1. 两边同时减 3。\n2. 得到 x = 2。",
             canonical_final_answer="x = 2",
             math_level_classification="middle-school",
-            student_answer="x = 1",
-            judgement="incorrect",
             conversation_history=[
                 CoachingMessage(role="student", text="我想先看第一步"),
                 CoachingMessage(role="coach", text="先看已知条件"),

@@ -103,8 +103,6 @@ class CoachingLLMRequest(BaseModel):
     math_level_classification: str
     conversation_history: list[CoachingMessage] = Field(default_factory=list)
     new_message: str
-    student_answer: str | None = None
-    judgement: str | None = None
 
 
 class CoachingLLMResult(BaseModel):
@@ -386,8 +384,6 @@ class CoachingLLMClient(_BaseLLMClient):
             canonical_steps_markdown=request.canonical_steps_markdown,
             canonical_final_answer=request.canonical_final_answer,
             math_level_classification=request.math_level_classification,
-            student_answer=request.student_answer,
-            judgement=request.judgement,
             conversation_history=history,
             new_message=request.new_message,
         )
