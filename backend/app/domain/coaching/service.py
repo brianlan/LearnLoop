@@ -4,7 +4,7 @@ from typing import Any
 
 from bson import ObjectId
 
-from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole
+from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole, ExamState
 from app.infrastructure.llm.client import CoachingLLMClient, CoachingLLMRequest, LLMClientError
 from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
@@ -46,7 +46,7 @@ class CoachingService:
         # 1. Enforce exam safety
         active_exams = await self.db["exams"].count_documents({
             "userId": ObjectId(user_id) if isinstance(user_id, str) and len(user_id) == 24 else user_id,
-            "state": "in_progress",
+            "state": ExamState.IN_PROGRESS.value,
             "items.problemId": ObjectId(problem_id)
         })
         if active_exams > 0:

@@ -122,7 +122,7 @@ async def test_send_message_active_exam_blocked():
     
     db.cols["exams"].seed({
         "userId": user_id,
-        "state": "in_progress",
+        "state": "in-progress",
         "items": [{"problemId": prob_id}]
     })
     
