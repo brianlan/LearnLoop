@@ -35,7 +35,76 @@ function HistoryRow({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
+  const navigate = useNavigate();
+  const [explainInfoMessage, setExplainInfoMessage] = useState<string | null>(null);
   const resultStyle = getResultStyle(item.summary.lastResult || "");
+  const { data: solutionStatusData } = useQuery({
+    queryKey: ["solution-status", item.problemId],
+    queryFn: () => api.getSolutionStatus(item.problemId),
+    enabled: isExpanded,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "pending" || status === "generating" ? 2000 : false;
+    },
+  });
+
+  const solutionStatus = solutionStatusData?.status;
+
+  const handleExplainClick = () => {
+    if (solutionStatus === "ready") {
+      navigate(`/coaching/${item.problemId}`, { state: { from: "/practice" } });
+    } else if (solutionStatus === "pending" || solutionStatus === "generating") {
+      setExplainInfoMessage("Solution is being generated, please try again shortly");
+    }
+  };
+
+  const renderExplainButton = () => {
+    if (!solutionStatus || solutionStatus === "none") {
+      return null;
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={handleExplainClick}
+        disabled={solutionStatus === "failed"}
+        data-testid={`explain-button-${item.problemId}`}
+        style={{
+          padding: "0.375rem 0.625rem",
+          borderRadius: "0.375rem",
+          fontSize: "0.75rem",
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+          ...(solutionStatus === "failed"
+            ? {
+                background: "#f3f4f6",
+                color: "#9ca3af",
+                border: "1px solid #e5e7eb",
+                cursor: "not-allowed",
+              }
+            : solutionStatus === "pending" || solutionStatus === "generating"
+              ? {
+                  background: "#f8fafc",
+                  color: "#6366f1",
+                  border: "2px dashed #6366f1",
+                  cursor: "pointer",
+                }
+              : {
+                  background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                  color: "white",
+                  border: "none",
+                  cursor: "pointer",
+                }),
+        }}
+      >
+        {solutionStatus === "pending" || solutionStatus === "generating"
+          ? "AI Explain (Generating...)"
+          : solutionStatus === "failed"
+            ? "AI Explain (Unavailable)"
+            : "AI Explain"}
+      </button>
+    );
+  };
 
   return (
     <div
@@ -52,6 +121,10 @@ function HistoryRow({
         data-testid={`history-row-${item.problemId}`}
         style={{
           width: "100%",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+          alignItems: "flex-start",
+          gap: "1rem",
           textAlign: "left",
           backgroundColor: isExpanded ? "#f9fafb" : "white",
           border: "none",
@@ -59,69 +132,58 @@ function HistoryRow({
           cursor: "pointer",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: "1rem",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-            <div
-              style={{
-                fontWeight: 600,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <LatexText text={item.problemText} />
-            </div>
-            <div style={{ color: "#6b7280", fontSize: "0.875rem" }}>
-              {item.problemType}
-            </div>
-          </div>
+        <div style={{ minWidth: 0 }}>
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(80px, 1fr))",
-              gap: "0.75rem",
-              flex: "1 1 auto",
-              minWidth: 0,
+              fontWeight: 600,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            <div>
-              <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Total</div>
-              <div>{item.summary.totalAttempts}</div>
-            </div>
-            <div>
-              <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Correct</div>
-              <div style={{ color: "#16a34a" }}>{item.summary.correctCount}</div>
-            </div>
-            <div>
-              <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Wrong</div>
-              <div style={{ color: "#dc2626" }}>{item.summary.wrongCount}</div>
-            </div>
-            <div>
-              <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Last</div>
-              <div>{formatDate(item.summary.lastPracticedAt)}</div>
-            </div>
-            <div>
-              <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Result</div>
-              <span
-                style={{
-                  padding: "0.125rem 0.5rem",
-                  borderRadius: "9999px",
-                  fontSize: "0.75rem",
-                  fontWeight: 600,
-                  ...resultStyle,
-                }}
-              >
-                {item.summary.lastResult || "—"}
-              </span>
-            </div>
+            <LatexText text={item.problemText} />
+          </div>
+          <div style={{ color: "#6b7280", fontSize: "0.875rem" }}>
+            {item.problemType}
+          </div>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(64px, 1fr))",
+            gap: "0.75rem",
+            minWidth: 0,
+          }}
+        >
+          <div>
+            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Total</div>
+            <div>{item.summary.totalAttempts}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Correct</div>
+            <div style={{ color: "#16a34a" }}>{item.summary.correctCount}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Wrong</div>
+            <div style={{ color: "#dc2626" }}>{item.summary.wrongCount}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Last</div>
+            <div>{formatDate(item.summary.lastPracticedAt)}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Result</div>
+            <span
+              style={{
+                padding: "0.125rem 0.5rem",
+                borderRadius: "9999px",
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                ...resultStyle,
+              }}
+            >
+              {item.summary.lastResult || "—"}
+            </span>
           </div>
         </div>
       </button>
@@ -134,6 +196,22 @@ function HistoryRow({
           }}
           data-testid={`attempts-${item.problemId}`}
         >
+          {explainInfoMessage && (
+            <div
+              style={{
+                padding: "0.75rem 1rem",
+                backgroundColor: "#fffbeb",
+                border: "1px solid #fcd34d",
+                borderRadius: "0.375rem",
+                color: "#92400e",
+                fontSize: "0.875rem",
+                marginBottom: "0.75rem",
+              }}
+              data-testid={`explain-info-message-${item.problemId}`}
+            >
+              {explainInfoMessage}
+            </div>
+          )}
           {item.attempts.length === 0 ? (
             <div style={{ color: "#6b7280" }}>No attempts recorded</div>
           ) : (
@@ -152,10 +230,16 @@ function HistoryRow({
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "0.75rem",
                       marginBottom: "0.25rem",
+                      flexWrap: "wrap",
                     }}
                   >
-                    <span style={{ fontWeight: 500 }}>{attempt.gradingStatus}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 500 }}>{attempt.gradingStatus}</span>
+                      {idx === 0 && renderExplainButton()}
+                    </div>
                     <span style={{ color: "#6b7280", fontSize: "0.875rem" }}>
                       {formatDate(attempt.createdAt)}
                     </span>

@@ -84,6 +84,10 @@ describe("PracticePage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ practiceableCount: 5 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "none" }),
       });
 
     renderPracticePage();
@@ -128,6 +132,10 @@ describe("PracticePage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "none" }),
       });
 
     renderPracticePage();
@@ -142,6 +150,231 @@ describe("PracticePage", () => {
       expect(screen.getByTestId("attempts-problem-1")).toBeInTheDocument();
     });
     expect(screen.getByText("Answer: my answer")).toBeInTheDocument();
+  });
+
+  it("renders AI Explain button beside the latest answer judgement when solution is ready", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "Ready problem",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 0,
+                wrongCount: 1,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "incorrect",
+              },
+              attempts: [
+                {
+                  submittedAnswer: "3",
+                  gradingStatus: "incorrect",
+                  gradingMethod: "normalized-match",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ready" }),
+      });
+
+    renderPracticePage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-row-problem-1")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("explain-button-problem-1")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("history-row-problem-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button-problem-1")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-button-problem-1")).toHaveTextContent("AI Explain");
+    expect(screen.getByTestId("explain-button-problem-1")).not.toBeDisabled();
+  });
+
+  it("shows wait message when history AI Explain is clicked while generating", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "Generating problem",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 0,
+                wrongCount: 1,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "incorrect",
+              },
+              attempts: [
+                {
+                  submittedAnswer: "3",
+                  gradingStatus: "incorrect",
+                  gradingMethod: "normalized-match",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "pending" }),
+      });
+
+    renderPracticePage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-row-problem-1")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("history-row-problem-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button-problem-1")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("explain-button-problem-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-info-message-problem-1")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-info-message-problem-1")).toHaveTextContent(
+      "Solution is being generated, please try again shortly",
+    );
+  });
+
+  it("disables history AI Explain button beside the judgement when solution generation failed", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "Failed problem",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 0,
+                wrongCount: 1,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "incorrect",
+              },
+              attempts: [
+                {
+                  submittedAnswer: "3",
+                  gradingStatus: "incorrect",
+                  gradingMethod: "normalized-match",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "failed" }),
+      });
+
+    renderPracticePage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-row-problem-1")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("history-row-problem-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explain-button-problem-1")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("explain-button-problem-1")).toHaveTextContent(
+      "AI Explain (Unavailable)",
+    );
+    expect(screen.getByTestId("explain-button-problem-1")).toBeDisabled();
+  });
+
+  it("hides history AI Explain button when no solution task exists", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "No solution problem",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 0,
+                wrongCount: 1,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "incorrect",
+              },
+              attempts: [
+                {
+                  submittedAnswer: "3",
+                  gradingStatus: "incorrect",
+                  gradingMethod: "normalized-match",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "none" }),
+      });
+
+    renderPracticePage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-row-problem-1")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("history-row-problem-1"));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/problems/problem-1/solution-status",
+        expect.any(Object),
+      );
+    });
+    expect(screen.queryByTestId("explain-button-problem-1")).not.toBeInTheDocument();
   });
 
   it("shows Start Practice button", async () => {
