@@ -1,5 +1,5 @@
 SOLUTION_PROMPT_VERSION = "2026-05-25.solution.v1"
-COACHING_PROMPT_VERSION = "2026-05-25.coaching.v1"
+COACHING_PROMPT_VERSION = "2026-05-27.coaching.v2"
 
 
 def build_solution_prompt(*, problem_text: str, correct_answer: str, graph_dsl: str | None = None) -> str:
@@ -49,6 +49,29 @@ def build_coaching_prompt(
 请返回 JSON，对象字段如下：
 - text: 字符串，给学生的回复
 - whiteboard_dsl: 可选字符串，如需白板图示则提供，否则可省略或设为 null
+
+## whiteboard_dsl JSXGraph DSL 规则
+
+已有 `board` 变量（带坐标轴和网格的 JXG 画板）。你的代码将以
+`new Function('board', dsl)(board)` 方式执行。只使用 `board.create(type, parents, options)` 调用。
+
+可用元素类型及其 parents 格式：
+- point:   board.create('point', [x, y], {{name:'A'}})
+- segment: board.create('segment', [p1, p2])
+- line:    board.create('line', [p1, p2])
+- arrow:   board.create('arrow', [p1, p2])
+- circle:  board.create('circle', [center, radius])
+- angle:   board.create('angle', [p3, vertex, p1], {{radius:1, fillColor:'#ff000050'}})
+- polygon: board.create('polygon', [p1, p2, p3], {{fillColor:'#cccccc'}})
+- text:    board.create('text', [x, y, 'label'])
+- functiongraph: board.create('functiongraph', [f, xMin, xMax])
+
+要求：
+- 如果默认范围 [-5,5,5,-5] 不合适，先调用 board.setBoundingBox([xMin, yMax, xMax, yMin])。
+- 保持构造简洁：只重现题目中可视必需的部分。
+- 禁止调用 JXG.JSXGraph.initBoard —— board 已存在。
+- whiteboard_dsl 只输出 JavaScript 代码，不要用 Markdown 代码块包裹，不要注释，不要解释文字。
+- 如果不需要白板图示，whiteboard_dsl 设为 null。
 
 题目文本：
 {problem_text}
