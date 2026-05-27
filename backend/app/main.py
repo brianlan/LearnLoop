@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import cast
 
@@ -23,6 +24,16 @@ from app.presentation.settings import router as settings_router
 from app.presentation.teacher_password import router as teacher_password_router
 from app.presentation.coaching import router as coaching_router
 
+logger = logging.getLogger(__name__)
+
+
+async def _run_worker_with_logging(database, stop_event):
+    try:
+        await run_solution_worker(database, stop_event)
+    except Exception:
+        logger.exception("Solution worker crashed")
+        raise
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,7 +43,7 @@ async def lifespan(app: FastAPI):
     
     # Start worker
     stop_event = asyncio.Event()
-    worker_task = asyncio.create_task(run_solution_worker(database, stop_event))
+    worker_task = asyncio.create_task(_run_worker_with_logging(database, stop_event))
     
     yield
     
