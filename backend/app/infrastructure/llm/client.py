@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 import httpx
@@ -365,6 +366,30 @@ class SolutionLLMClient(_BaseLLMClient):
             ) from exc
 
 
+def _sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
+    if dsl is None:
+        return None
+
+    stripped = dsl.strip()
+    if not stripped:
+        return None
+
+    # Remove markdown code fences: ```js ... ``` or ``` ... ```
+    fence_match = re.match(r"^```(?:\w*)\n?(.*?)\n?```$", stripped, re.DOTALL)
+    if fence_match:
+        stripped = fence_match.group(1).strip()
+
+    # Strip initBoard calls — board already exists in the sandbox
+    stripped = re.sub(r"var\s+\w+\s*=\s*JXG\.JSXGraph\.initBoard\([^)]*\)\s*;?", "", stripped)
+    stripped = stripped.strip()
+
+    # Basic validation: must contain board.create or be empty
+    if stripped and "board.create" not in stripped:
+        return None
+
+    return stripped if stripped else None
+
+
 class CoachingLLMClient(_BaseLLMClient):
     def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()
@@ -397,7 +422,7 @@ class CoachingLLMClient(_BaseLLMClient):
             prompt_version=COACHING_PROMPT_VERSION,
             model=self._model,
             text=parsed.text,
-            whiteboard_dsl=parsed.whiteboard_dsl,
+            whiteboard_dsl=_sanitize_whiteboard_dsl(parsed.whiteboard_dsl),
             raw_provider_response=raw_provider_response,
         )
 
