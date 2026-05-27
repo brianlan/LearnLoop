@@ -30,7 +30,7 @@ export interface GraphSandboxProps {
 }
 
 /**
- * Validates DSL code against security denylist.
+ * Validates DSL code against security denylist and JavaScript syntax.
  * Returns null if valid, error message if invalid.
  */
 function validateDsl(dsl: string): string | null {
@@ -39,6 +39,15 @@ function validateDsl(dsl: string): string | null {
       return `DSL contains forbidden pattern: ${pattern.source}`;
     }
   }
+
+  try {
+    new Function("board", dsl);
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      return `DSL syntax error: ${e.message}`;
+    }
+  }
+
   return null;
 }
 
