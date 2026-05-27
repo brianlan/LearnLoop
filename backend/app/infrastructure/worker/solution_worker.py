@@ -159,7 +159,7 @@ async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = 
     solutions_col = _safe_get_collection(database, CANONICAL_SOLUTIONS_COLLECTION)
     problems_col = _safe_get_collection(database, "problems")
     
-    if not all([tasks_col, solutions_col, problems_col]):
+    if tasks_col is None or solutions_col is None or problems_col is None:
         logger.error("Database collections missing for solution worker")
         return
 
