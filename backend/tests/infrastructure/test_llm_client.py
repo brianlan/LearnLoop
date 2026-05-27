@@ -76,9 +76,10 @@ async def test_solution_llm_client_builds_policy_prompt_and_uses_solution_config
         payload = json.loads(await request.aread())
         assert payload["model"] == "solution-model"
         prompt = payload["messages"][0]["content"][0]["text"]
-        assert "全部使用简体中文" in prompt
-        assert "严禁使用高等数学" in prompt
-        assert "参考答案可能只是多种正确表述中的一种" in prompt
+        assert "written in Simplified Chinese" in prompt
+        assert "Do not use advanced or out-of-scope methods" in prompt
+        assert "the answer key may be only one valid wording or format" in prompt
+        assert "Return valid JSON only" in prompt
         assert "已知 x + 3 = 5" in prompt
         assert "2" in prompt
         assert payload["messages"][0]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
@@ -192,9 +193,11 @@ async def test_coaching_llm_client_builds_context_prompt_and_uses_coaching_confi
         payload = json.loads(await request.aread())
         assert payload["model"] == "coaching-model"
         prompt = payload["messages"][0]["content"]
-        assert "全部使用简体中文" in prompt
-        assert "语气温和、鼓励、耐心" in prompt
-        assert "标准解答步骤" in prompt
+        assert "Write this student-facing tutoring reply in Simplified Chinese" in prompt
+        assert "Be warm, encouraging, and patient" in prompt
+        assert "Canonical solution steps" in prompt
+        assert "board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})" in prompt
+        assert "Never write `board.create('text', [x, y, 'label', {options}])`" in prompt
         assert "student: 我想先看第一步" in prompt
         assert "coach: 先看已知条件" in prompt
         assert "tracking" not in prompt
