@@ -380,6 +380,48 @@ def make_ready_preview(
 
 
 @pytest_asyncio.fixture
+async def exams_app() -> AsyncIterator[FastAPI]:
+    """Minimal app fixture for exam history tests that don't need auth, ingestion, or VLM."""
+    from app.presentation.deps import get_current_user
+
+    application = create_app()
+    database = FakeDatabase()
+    adapter = FakeMongoAdapter()
+    storage = FakeStorage()
+    vlm = FakeVLMClient()
+    settings = Settings(ingestion_vlm_model="gpt-4.1-mini", ingestion_vlm_timeout_seconds=1.0)
+
+    primary_user = {
+        "_id": ObjectId(),
+        "username": "primary-user",
+        "status": "active",
+    }
+
+    application.state.fake_database = database
+    application.state.fake_storage = storage
+    application.state.fake_adapter = adapter
+    application.state.fake_vlm = vlm
+    application.state.primary_user = primary_user
+    application.state.sync_wait_seconds = 1.0
+
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_app_settings] = lambda: settings
+    application.dependency_overrides[get_current_user] = lambda: primary_user
+    application.dependency_overrides[get_exam_storage] = lambda: storage
+    application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
+
+    yield application
+
+
+@pytest_asyncio.fixture
+async def exams_client(exams_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=exams_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest_asyncio.fixture
 async def app() -> AsyncIterator[FastAPI]:
     application = create_app()
     database = FakeDatabase()

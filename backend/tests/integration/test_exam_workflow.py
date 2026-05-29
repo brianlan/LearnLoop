@@ -277,7 +277,7 @@ async def test_wf_exam_4_pending_review_then_self_report_updates_score(
 @pytest.mark.asyncio
 async def test_list_exam_history_excludes_discarded_by_default(
     exams_app: FastAPI,
-    client: AsyncClient,
+    exams_client: AsyncClient,
 ) -> None:
     database = exams_app.state.fake_database
     user_id = exams_app.state.primary_user["_id"]
@@ -305,7 +305,7 @@ async def test_list_exam_history_excludes_discarded_by_default(
         },
     )
 
-    response = await client.get("/api/v1/exams")
+    response = await exams_client.get("/api/v1/exams")
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 1
@@ -315,7 +315,7 @@ async def test_list_exam_history_excludes_discarded_by_default(
 @pytest.mark.asyncio
 async def test_list_exam_history_includes_discarded_when_requested(
     exams_app: FastAPI,
-    client: AsyncClient,
+    exams_client: AsyncClient,
 ) -> None:
     database = exams_app.state.fake_database
     user_id = exams_app.state.primary_user["_id"]
@@ -343,7 +343,7 @@ async def test_list_exam_history_includes_discarded_when_requested(
         },
     )
 
-    response = await client.get("/api/v1/exams", params={"includeDiscarded": "true"})
+    response = await exams_client.get("/api/v1/exams", params={"includeDiscarded": "true"})
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 2
@@ -355,7 +355,7 @@ async def test_list_exam_history_includes_discarded_when_requested(
 @pytest.mark.asyncio
 async def test_list_exam_history_pagination_matches_filter(
     exams_app: FastAPI,
-    client: AsyncClient,
+    exams_client: AsyncClient,
 ) -> None:
     database = exams_app.state.fake_database
     user_id = exams_app.state.primary_user["_id"]
@@ -387,7 +387,7 @@ async def test_list_exam_history_pagination_matches_filter(
             },
         )
 
-    response = await client.get("/api/v1/exams", params={"page": 1, "pageSize": 3})
+    response = await exams_client.get("/api/v1/exams", params={"page": 1, "pageSize": 3})
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 5
