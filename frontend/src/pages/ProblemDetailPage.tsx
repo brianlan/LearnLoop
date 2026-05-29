@@ -48,6 +48,7 @@ interface TrackingData {
 
 interface UpdateProblemInput {
   text?: string;
+  problemType?: string;
   tags?: string[];
   graphDsl?: string;
   correctAnswer?: string;
@@ -116,6 +117,7 @@ export function ProblemDetailPage() {
     if (problem) {
         setEditForm({
           text: problem.text,
+          problemType: problem.problemType,
           tags: [...problem.tags],
           graphDsl: problem.graphDsl || "",
         });
@@ -198,16 +200,6 @@ export function ProblemDetailPage() {
             </div>
           </div>
           <div>
-            <span
-              style={{
-                padding: "0.25rem 0.5rem",
-                background: "#e0e0e0",
-                borderRadius: "4px",
-                marginRight: "0.5rem",
-              }}
-            >
-              {problem.problemType}
-            </span>
             {problem.isDeleted && (
               <span
                 style={{
@@ -242,6 +234,50 @@ export function ProblemDetailPage() {
             />
           ) : (
             <LatexText text={problem.text} style={{ whiteSpace: "pre-wrap" }} />
+          )}
+        </div>
+
+        <div style={{ marginBottom: "1rem" }}>
+          <label style={{ fontWeight: "bold" }}>Problem Type:</label>
+          {isEditing ? (
+            <div>
+              <select
+                value={editForm.problemType || ""}
+                onChange={(e) =>
+                  setEditForm((prev) => ({ ...prev, problemType: e.target.value }))
+                }
+                style={{
+                  width: "100%",
+                  padding: "0.375rem 0.75rem",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "0.25rem",
+                  fontSize: "0.875rem",
+                  marginTop: "0.5rem",
+                  boxSizing: "border-box",
+                }}
+                data-testid="problem-type-input"
+              >
+                <option value="">Select a problem type…</option>
+                <option value="single-choice">Single Choice</option>
+                <option value="multi-choice">Multi Choice</option>
+                <option value="fill-in-the-blank">Fill in the Blank</option>
+                <option value="short-answer">Short Answer</option>
+              </select>
+              <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#6b7280" }}>
+                The existing correct answer will be interpreted using the selected type.
+              </div>
+            </div>
+          ) : (
+            <span
+              style={{
+                padding: "0.25rem 0.5rem",
+                background: "#e0e0e0",
+                borderRadius: "4px",
+                marginLeft: "0.5rem",
+              }}
+            >
+              {problem.problemType}
+            </span>
           )}
         </div>
 

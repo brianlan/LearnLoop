@@ -416,4 +416,83 @@ describe("ProblemDetailPage", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("edit form shows problem type select prefilled with current type", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, problemType: "short-answer" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("short-answer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const select = screen.getByTestId("problem-type-input");
+    expect(select).toBeInTheDocument();
+    expect(select).toHaveValue("short-answer");
+  });
+
+  it("changing problem type sends it in PATCH", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, problemType: "short-answer" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } })
+      .mockResolvedValueOnce({ problem: { ...baseProblem, problemType: "fill-in-the-blank" } })
+      .mockResolvedValueOnce({ problem: { ...baseProblem, problemType: "fill-in-the-blank" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    vi.mocked(api.patch).mockResolvedValueOnce({ problem: { ...baseProblem, problemType: "fill-in-the-blank" } });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("short-answer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const select = screen.getByTestId("problem-type-input");
+    await user.selectOptions(select, "fill-in-the-blank");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(api.patch).toHaveBeenCalledWith(
+        "/problems/abc123",
+        expect.objectContaining({ problemType: "fill-in-the-blank" }),
+      );
+    });
+  });
+
+  it("changing problem type does not reveal answer input", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, problemType: "short-answer" } })
+      .mockResolvedValueOnce({ problemId: "abc123", tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 } });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("short-answer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    // Answer input should not be visible
+    expect(screen.queryByTestId("edit-answer-input")).not.toBeInTheDocument();
+
+    // Change problem type
+    const select = screen.getByTestId("problem-type-input");
+    await user.selectOptions(select, "fill-in-the-blank");
+
+    // Answer input should still not be visible
+    expect(screen.queryByTestId("edit-answer-input")).not.toBeInTheDocument();
+
+    // Edit Answer button should still be visible (teacher-password gated)
+    expect(screen.getByTestId("edit-answer-button")).toBeInTheDocument();
+  });
 });
