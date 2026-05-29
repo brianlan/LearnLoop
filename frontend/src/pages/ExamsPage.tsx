@@ -105,6 +105,7 @@ export function ExamsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [showActiveExamPrompt, setShowActiveExamPrompt] = useState(false);
+  const [showDiscarded, setShowDiscarded] = useState(false);
   const pageSize = 10;
 
   const { data, isLoading, error } = useQuery<ExamHistoryResponse>({
@@ -132,6 +133,9 @@ export function ExamsPage() {
   };
 
   const exams = data?.items ?? [];
+  const visibleExams = showDiscarded
+    ? exams
+    : exams.filter((exam) => exam.state !== "discarded");
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -233,10 +237,58 @@ export function ExamsPage() {
         >
           No exams yet
         </div>
+      ) : visibleExams.length === 0 ? (
+        <div
+          style={{
+            padding: "2rem",
+            textAlign: "center",
+            backgroundColor: "#f9fafb",
+            border: "1px solid #e5e7eb",
+            borderRadius: "0.5rem",
+          }}
+        >
+          <p style={{ margin: "0 0 0.75rem" }}>No visible exams on this page</p>
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              cursor: "pointer",
+              fontSize: "0.875rem",
+              color: "#2563eb",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showDiscarded}
+              onChange={() => setShowDiscarded((prev) => !prev)}
+            />
+            Show discarded exams
+          </label>
+        </div>
       ) : (
         <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                color: "#6b7280",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={showDiscarded}
+                onChange={() => setShowDiscarded((prev) => !prev)}
+              />
+              Show discarded
+            </label>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            {exams.map((exam) => (
+            {visibleExams.map((exam) => (
               <ExamHistoryCard
                 key={exam.id}
                 exam={exam}
