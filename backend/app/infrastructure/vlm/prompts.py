@@ -1,4 +1,4 @@
-EXTRACTION_PROMPT_VERSION = "2026-05-15.extraction.v2"
+EXTRACTION_PROMPT_VERSION = "2026-05-29.extraction.v3"
 GRADING_PROMPT_VERSION = "2026-05-14.grading.v1"
 
 EXTRACTION_SCHEMA_VERSION = "1.0"
@@ -12,6 +12,12 @@ Fields:
 - problemType: one of single-choice, multi-choice, fill-in-the-blank, short-answer
 - graphDsl: nullable string — if the image contains a geometric figure, graph, or diagram,
   write JavaScript code for the JSXGraph library to reconstruct it. Otherwise return null.
+
+Text formatting:
+- Preserve math notation with LaTeX delimiters when visible in the source image.
+- Use `$...$` for inline math and `$$...$$` for display math.
+- Put whitespace around inline `$...$` when it is adjacent to words, numbers, or other
+  non-punctuation text. For example, write `Find $x$ when $x+1=2$`, not `Find$x$when$x+1=2$`.
 
 ## JSXGraph DSL rules
 

@@ -88,6 +88,42 @@ async def test_vlm_extraction_happy_path() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        prompt = payload["messages"][0]["content"][0]["text"]
+        assert "Use `$...$` for inline math" in prompt
+        assert "Put whitespace around inline `$...$`" in prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Find $x$ when $x+1=2$",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+
+
+@pytest.mark.asyncio
 async def test_vlm_grading_happy_path() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/chat/completions"
