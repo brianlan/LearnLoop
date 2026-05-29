@@ -21,15 +21,11 @@ class PracticeSelectionResult:
     status: str  # "ok", "no_eligible", "no_problems"
 
 
-def select_practice_problem(
+def get_eligible_practice_problems(
     problems: List[Problem],
     config: PracticeSelectionConfig,
     now: datetime,
-    rng: random.Random | None = None
-) -> PracticeSelectionResult:
-    if not problems:
-        return PracticeSelectionResult(None, "no_problems")
-
+) -> list[Problem]:
     eligible = []
     for p in problems:
         if p.isDeleted:
@@ -42,10 +38,26 @@ def select_practice_problem(
             if last_tested > cutoff:
                 continue
         eligible.append(p)
+    return eligible
+
+
+def _has_practiceable_answer(problems: List[Problem]) -> list[Problem]:
+    return [p for p in problems if not p.isDeleted and p.correctAnswer and p.correctAnswer.normalizedText]
+
+
+def select_practice_problem(
+    problems: List[Problem],
+    config: PracticeSelectionConfig,
+    now: datetime,
+    rng: random.Random | None = None
+) -> PracticeSelectionResult:
+    if not problems:
+        return PracticeSelectionResult(None, "no_problems")
+
+    eligible = get_eligible_practice_problems(problems, config, now)
 
     if not eligible:
-        all_eligible = [p for p in problems if not p.isDeleted and p.correctAnswer and p.correctAnswer.normalizedText]
-        if all_eligible:
+        if _has_practiceable_answer(problems):
             return PracticeSelectionResult(None, "no_eligible")
         return PracticeSelectionResult(None, "no_problems")
 
