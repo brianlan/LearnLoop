@@ -105,11 +105,15 @@ export function ExamsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [showActiveExamPrompt, setShowActiveExamPrompt] = useState(false);
+  const [showDiscarded, setShowDiscarded] = useState(false);
   const pageSize = 10;
 
   const { data, isLoading, error } = useQuery<ExamHistoryResponse>({
-    queryKey: ["exams", page, pageSize],
-    queryFn: () => api.get<ExamHistoryResponse>(`/exams?page=${page}&pageSize=${pageSize}`),
+    queryKey: ["exams", page, pageSize, showDiscarded],
+    queryFn: () =>
+      api.get<ExamHistoryResponse>(
+        `/exams?page=${page}&pageSize=${pageSize}&includeDiscarded=${showDiscarded}`,
+      ),
   });
 
   const createExamMutation = useMutation({
@@ -231,10 +235,32 @@ export function ExamsPage() {
             borderRadius: "0.5rem",
           }}
         >
-          No exams yet
+          {showDiscarded ? "No exams yet" : "No submitted exams yet"}
         </div>
       ) : (
         <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                color: "#6b7280",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={showDiscarded}
+                onChange={() => {
+                  setShowDiscarded((prev) => !prev);
+                  setPage(1);
+                }}
+              />
+              Show discarded
+            </label>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             {exams.map((exam) => (
               <ExamHistoryCard

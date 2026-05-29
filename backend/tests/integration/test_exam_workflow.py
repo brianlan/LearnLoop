@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
+from bson import ObjectId
 from httpx import ASGITransport, AsyncClient
 import pytest
 from fastapi import FastAPI
@@ -269,3 +272,124 @@ async def test_wf_exam_4_pending_review_then_self_report_updates_score(
     assert after_resolve_document["tracking"]["exposureCount"] == 1
     assert after_resolve_document["tracking"]["correctCount"] == 1
     assert after_resolve_document["tracking"]["failedCount"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_exam_history_excludes_discarded_by_default(
+    exams_app: FastAPI,
+    exams_client: AsyncClient,
+) -> None:
+    database = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    database["exams"].seed(
+        {
+            "_id": ObjectId(),
+            "userId": user_id,
+            "state": "submitted",
+            "items": [],
+            "summary": {"totalProblems": 1, "answeredProblems": 1, "gradedProblems": 1, "pendingProblems": 0, "correctProblems": 1, "failedProblems": 0, "score": 1.0},
+            "createdAt": datetime.now(UTC) - timedelta(days=2),
+            "submittedAt": datetime.now(UTC) - timedelta(days=2),
+            "updatedAt": datetime.now(UTC) - timedelta(days=2),
+        },
+        {
+            "_id": ObjectId(),
+            "userId": user_id,
+            "state": "discarded",
+            "items": [],
+            "summary": {"totalProblems": 1, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC) - timedelta(days=1),
+            "discardedAt": datetime.now(UTC) - timedelta(days=1),
+            "updatedAt": datetime.now(UTC) - timedelta(days=1),
+        },
+    )
+
+    response = await exams_client.get("/api/v1/exams")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert all(item["state"] != "discarded" for item in body["items"])
+
+
+@pytest.mark.asyncio
+async def test_list_exam_history_includes_discarded_when_requested(
+    exams_app: FastAPI,
+    exams_client: AsyncClient,
+) -> None:
+    database = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    database["exams"].seed(
+        {
+            "_id": ObjectId(),
+            "userId": user_id,
+            "state": "submitted",
+            "items": [],
+            "summary": {"totalProblems": 1, "answeredProblems": 1, "gradedProblems": 1, "pendingProblems": 0, "correctProblems": 1, "failedProblems": 0, "score": 1.0},
+            "createdAt": datetime.now(UTC) - timedelta(days=2),
+            "submittedAt": datetime.now(UTC) - timedelta(days=2),
+            "updatedAt": datetime.now(UTC) - timedelta(days=2),
+        },
+        {
+            "_id": ObjectId(),
+            "userId": user_id,
+            "state": "discarded",
+            "items": [],
+            "summary": {"totalProblems": 1, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC) - timedelta(days=1),
+            "discardedAt": datetime.now(UTC) - timedelta(days=1),
+            "updatedAt": datetime.now(UTC) - timedelta(days=1),
+        },
+    )
+
+    response = await exams_client.get("/api/v1/exams", params={"includeDiscarded": "true"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    states = {item["state"] for item in body["items"]}
+    assert "submitted" in states
+    assert "discarded" in states
+
+
+@pytest.mark.asyncio
+async def test_list_exam_history_pagination_matches_filter(
+    exams_app: FastAPI,
+    exams_client: AsyncClient,
+) -> None:
+    database = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    for i in range(5):
+        database["exams"].seed(
+            {
+                "_id": ObjectId(),
+                "userId": user_id,
+                "state": "submitted",
+                "items": [],
+                "summary": {"totalProblems": 1, "answeredProblems": 1, "gradedProblems": 1, "pendingProblems": 0, "correctProblems": 1, "failedProblems": 0, "score": 1.0},
+                "createdAt": datetime.now(UTC) - timedelta(days=i),
+                "submittedAt": datetime.now(UTC) - timedelta(days=i),
+                "updatedAt": datetime.now(UTC) - timedelta(days=i),
+            },
+        )
+    for i in range(3):
+        database["exams"].seed(
+            {
+                "_id": ObjectId(),
+                "userId": user_id,
+                "state": "discarded",
+                "items": [],
+                "summary": {"totalProblems": 1, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+                "createdAt": datetime.now(UTC) - timedelta(days=i),
+                "discardedAt": datetime.now(UTC) - timedelta(days=i),
+                "updatedAt": datetime.now(UTC) - timedelta(days=i),
+            },
+        )
+
+    response = await exams_client.get("/api/v1/exams", params={"page": 1, "pageSize": 3})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 5
+    assert len(body["items"]) == 3
+    assert all(item["state"] != "discarded" for item in body["items"])
