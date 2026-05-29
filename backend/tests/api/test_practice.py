@@ -10,8 +10,9 @@ from bson import ObjectId
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.infrastructure.config.settings import Settings
 from app.main import create_app
-from app.presentation.deps import get_current_user, get_database
+from app.presentation.deps import get_app_settings, get_current_user, get_database
 from tests.api.conftest import FakeDatabase, make_user, make_problem
 
 
@@ -19,12 +20,14 @@ from tests.api.conftest import FakeDatabase, make_user, make_problem
 def practice_app() -> FastAPI:
     application = create_app()
     database = FakeDatabase()
+    settings = Settings(practice_cooldown_days=7)
     user = make_user(ObjectId(), "student")
 
     application.state.fake_database = database
     application.state.user = user
 
     application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
     return application
 
