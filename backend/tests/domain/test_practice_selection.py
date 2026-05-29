@@ -17,8 +17,10 @@ def _make_problem(
     last_tested_at: datetime | None = None,
     last_attempt_correct: bool | None = None,
     exposure_count: int = 0,
+    correct_count: int | None = None,
     failed_count: int = 0,
 ) -> Problem:
+    cc = correct_count if correct_count is not None else max(0, exposure_count - failed_count)
     return Problem(
         id=pid,
         userId="user1",
@@ -32,7 +34,7 @@ def _make_problem(
         ),
         tracking=Tracking(
             exposureCount=exposure_count,
-            correctCount=exposure_count - failed_count if exposure_count >= failed_count else 0,
+            correctCount=cc,
             failedCount=failed_count,
             lastTestedAt=last_tested_at,
             lastAttemptCorrect=last_attempt_correct,
@@ -221,3 +223,21 @@ def test_empty_problem_list():
 
     assert result.status == "no_problems"
     assert result.selected_problem is None
+
+
+def test_failure_rate_uses_attempts_not_exposures():
+    now = datetime.now(UTC)
+    problems = [
+        _make_problem("many-exposures-no-attempts", exposure_count=100, correct_count=0, failed_count=0),
+        _make_problem("some-failed-attempts", exposure_count=5, correct_count=1, failed_count=4),
+    ]
+    config = PracticeSelectionConfig()
+    rng = random.Random(42)
+
+    failed_count = 0
+    for _ in range(100):
+        result = select_practice_problem(problems, config, now, rng=rng)
+        if result.selected_problem.id == "some-failed-attempts":
+            failed_count += 1
+
+    assert failed_count > 50

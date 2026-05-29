@@ -72,7 +72,7 @@ async def test_exposure_count_incremented(
 
 
 @pytest.mark.asyncio
-async def test_last_tested_at_updated(
+async def test_last_tested_at_not_updated_by_next(
     practice_app: FastAPI,
     client: AsyncClient,
 ) -> None:
@@ -81,14 +81,27 @@ async def test_last_tested_at_updated(
     problem = make_problem(user_id)
     database.seed("problems", [problem])
 
-    before = datetime.now(UTC)
     await client.post("/api/v1/practice/next")
 
     updated_problem = await database["problems"].find_one({"_id": problem["_id"]})
-    last_tested = updated_problem["tracking"]["lastTestedAt"]
-    assert last_tested is not None
-    after = datetime.now(UTC)
-    assert before <= last_tested <= after
+    assert updated_problem["tracking"]["lastTestedAt"] is None
+
+
+@pytest.mark.asyncio
+async def test_skip_does_not_put_in_cooldown(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+
+    response1 = await client.post("/api/v1/practice/next")
+    assert response1.json()["status"] == "ok"
+
+    response2 = await client.post("/api/v1/practice/next")
+    assert response2.json()["status"] == "ok"
 
 
 @pytest.mark.asyncio
