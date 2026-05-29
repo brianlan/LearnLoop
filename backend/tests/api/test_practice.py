@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -186,3 +186,24 @@ async def test_stats_returns_practiceable_count(
     assert response.status_code == 200
     data = response.json()
     assert data["practiceableCount"] == 3
+
+
+@pytest.mark.asyncio
+async def test_stats_excludes_cooldown_problems(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    now = datetime.now(UTC)
+
+    recent = make_problem(user_id, text="Recent", correct_answer_display="1", last_tested_at=now)
+    old = make_problem(user_id, text="Old", correct_answer_display="2", last_tested_at=now - timedelta(days=10))
+    never = make_problem(user_id, text="Never", correct_answer_display="3")
+
+    database.seed("problems", [recent, old, never])
+
+    response = await client.get("/api/v1/practice/stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["practiceableCount"] == 2

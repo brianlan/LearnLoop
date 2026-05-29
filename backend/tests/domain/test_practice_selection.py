@@ -5,6 +5,7 @@ from app.domain.models import CorrectAnswer, Problem, Tracking
 from app.domain.practice_selection import (
     PracticeSelectionConfig,
     PracticeSelectionResult,
+    get_eligible_practice_problems,
     select_practice_problem,
 )
 
@@ -221,3 +222,55 @@ def test_empty_problem_list():
 
     assert result.status == "no_problems"
     assert result.selected_problem is None
+
+
+def test_get_eligible_excludes_cooldown():
+    now = datetime.now(UTC)
+    recent = now - timedelta(days=2)
+    old = now - timedelta(days=10)
+
+    problems = [
+        _make_problem("recent", last_tested_at=recent),
+        _make_problem("old", last_tested_at=old),
+        _make_problem("never", last_tested_at=None),
+    ]
+    config = PracticeSelectionConfig(cooldown_days=7)
+    eligible = get_eligible_practice_problems(problems, config, now)
+
+    ids = [p.id for p in eligible]
+    assert "old" in ids
+    assert "never" in ids
+    assert "recent" not in ids
+
+
+def test_get_eligible_excludes_deleted_and_no_answer():
+    now = datetime.now(UTC)
+    problems = [
+        _make_problem("deleted", is_deleted=True),
+        _make_problem("no-answer", correct_answer=""),
+        _make_problem("valid"),
+    ]
+    config = PracticeSelectionConfig()
+    eligible = get_eligible_practice_problems(problems, config, now)
+
+    assert len(eligible) == 1
+    assert eligible[0].id == "valid"
+
+
+def test_get_eligible_empty():
+    now = datetime.now(UTC)
+    config = PracticeSelectionConfig()
+    eligible = get_eligible_practice_problems([], config, now)
+    assert eligible == []
+
+
+def test_get_eligible_all_in_cooldown():
+    now = datetime.now(UTC)
+    recent = now - timedelta(days=2)
+    problems = [
+        _make_problem("a", last_tested_at=recent),
+        _make_problem("b", last_tested_at=recent),
+    ]
+    config = PracticeSelectionConfig(cooldown_days=7)
+    eligible = get_eligible_practice_problems(problems, config, now)
+    assert eligible == []
