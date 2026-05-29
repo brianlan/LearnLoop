@@ -221,6 +221,31 @@ export function ExamsPage() {
         </div>
       )}
 
+      {!isLoading && !error && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              cursor: "pointer",
+              fontSize: "0.875rem",
+              color: "#6b7280",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showDiscarded}
+              onChange={() => {
+                setShowDiscarded((prev) => !prev);
+                setPage(1);
+              }}
+            />
+            Show discarded
+          </label>
+        </div>
+      )}
+
       {isLoading ? (
         <div>Loading exams...</div>
       ) : error ? (
@@ -239,28 +264,6 @@ export function ExamsPage() {
         </div>
       ) : (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
-            <label
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                cursor: "pointer",
-                fontSize: "0.875rem",
-                color: "#6b7280",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={showDiscarded}
-                onChange={() => {
-                  setShowDiscarded((prev) => !prev);
-                  setPage(1);
-                }}
-              />
-              Show discarded
-            </label>
-          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             {exams.map((exam) => (
               <ExamHistoryCard
