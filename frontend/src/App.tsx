@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "@/contexts/ThemeContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 import { LoginPage } from "@/pages/LoginPage";
@@ -20,6 +21,7 @@ import { CoachingPage } from "@/pages/CoachingPage";
 
 function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -46,8 +48,8 @@ function AppShell({ children }: { children: ReactNode }) {
           alignItems: "center",
           gap: "1rem",
           padding: "0.75rem 1rem",
-          borderBottom: "1px solid #e5e7eb",
-          backgroundColor: "#ffffff",
+          borderBottom: "1px solid var(--color-border)",
+          backgroundColor: "var(--color-surface)",
           position: "sticky",
           top: 0,
           zIndex: 10,
@@ -66,9 +68,9 @@ function AppShell({ children }: { children: ReactNode }) {
                   style={{
                     padding: "0.5rem 0.75rem",
                     borderRadius: "0.375rem",
-                    border: active ? "1px solid #2563eb" : "1px solid #d1d5db",
-                    backgroundColor: active ? "#dbeafe" : "#ffffff",
-                    color: active ? "#1d4ed8" : "#111827",
+                    border: active ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
+                    backgroundColor: active ? "var(--color-primary-bg)" : "var(--color-surface)",
+                    color: active ? "var(--color-primary-text)" : "var(--color-text)",
                     cursor: "pointer",
                     fontWeight: active ? 600 : 500,
                   }}
@@ -80,15 +82,31 @@ function AppShell({ children }: { children: ReactNode }) {
           </nav>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <span style={{ color: "#4b5563", fontSize: "0.875rem" }}>{user?.username}</span>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            style={{
+              padding: "0.5rem 0.75rem",
+              borderRadius: "0.375rem",
+              border: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-surface)",
+              color: "var(--color-text)",
+              cursor: "pointer",
+            }}
+          >
+            {theme === "light" ? "Dark" : "Light"}
+          </button>
+          <span style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>{user?.username}</span>
           <button
             type="button"
             onClick={() => void handleLogout()}
             style={{
               padding: "0.5rem 0.75rem",
               borderRadius: "0.375rem",
-              border: "1px solid #d1d5db",
-              backgroundColor: "#ffffff",
+              border: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-surface)",
+              color: "var(--color-text)",
               cursor: "pointer",
             }}
           >

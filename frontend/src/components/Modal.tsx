@@ -48,7 +48,7 @@ export function Modal({
   };
 
   const defaultCardStyle: React.CSSProperties = {
-    backgroundColor: "white",
+    backgroundColor: "var(--color-surface)",
     padding: "1.5rem",
     borderRadius: "8px",
     maxWidth: "400px",
