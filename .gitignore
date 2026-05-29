@@ -239,4 +239,5 @@ frontend/.vite/
 review_results.md
 scheduled_tasks.lock
 drafts
+.vscode
 volume-backups
