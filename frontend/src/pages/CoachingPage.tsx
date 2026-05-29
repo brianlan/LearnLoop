@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { MarkdownText } from "@/components/MarkdownText";
 import { LatexText } from "@/components/LatexText";
 import type { CoachingConversation } from "@/types/coaching";
 
@@ -402,7 +403,7 @@ export function CoachingPage() {
                           lineHeight: 1.5,
                         }}
                       >
-                        <LatexText text={msg.content} />
+                        <MarkdownText content={msg.content} />
                       </div>
                     </div>
                   );

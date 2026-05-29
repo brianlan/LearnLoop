@@ -382,4 +382,40 @@ describe("CoachingPage", () => {
     expect(screen.getByTestId("chat-input")).toBeDisabled();
     expect(screen.getByTestId("send-button")).toBeDisabled();
   });
+
+  it("renders Markdown formatting in coach messages", async () => {
+    const markdownConversation: CoachingConversation = {
+      problem_id: "prob-123",
+      user_id: "user-456",
+      messages: [
+        {
+          role: "student",
+          content: "Give me the solution as bullet points.",
+          created_at: "2026-05-25T12:31:00Z",
+        },
+        {
+          role: "coach",
+          content: "**Step 1**\n\n- Move constants to the right\n- Then solve $x^2 = 4$",
+          created_at: "2026-05-25T12:32:00Z",
+        },
+      ],
+      created_at: "2026-05-25T12:30:00Z",
+      updated_at: "2026-05-25T12:32:00Z",
+    };
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(markdownConversation);
+
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-log")).toBeInTheDocument();
+    });
+
+    const chatLog = screen.getByTestId("chat-log");
+    // Bold Markdown renders as strong
+    expect(chatLog.querySelector("strong")).toHaveTextContent("Step 1");
+    // List items render
+    const listItems = chatLog.querySelectorAll("li");
+    expect(listItems.length).toBeGreaterThanOrEqual(1);
+    expect(chatLog.textContent).toContain("Move constants to the right");
+  });
 });
