@@ -12,6 +12,7 @@ from app.domain.models import GradingStatus, GradingMethod, ProblemType
 from app.domain.normalization import compare_answers, normalize_answer
 from app.domain.practice_selection import (
     PracticeSelectionConfig,
+    get_eligible_practice_problems,
     select_practice_problem,
 )
 from app.infrastructure.config.settings import Settings, get_settings
@@ -91,14 +92,18 @@ class PracticeStatsResponse(BaseModel):
 async def get_practice_stats(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    settings: SettingsDependency,
 ) -> PracticeStatsResponse:
-    """Return count of problems eligible for practice (has correctAnswer, not deleted)."""
-    count = await database["problems"].count_documents({
-        "userId": current_user["_id"],
-        "isDeleted": False,
-        "correctAnswer.display": {"$exists": True, "$ne": ""},
-    })
-    return PracticeStatsResponse(practiceableCount=count)
+    problem_documents = await database["problems"].find(
+        {"userId": current_user["_id"], "isDeleted": False}
+    ).to_list(length=None)
+
+    problem_models = [problem_document_to_model(p) for p in problem_documents]
+    config = PracticeSelectionConfig(cooldown_days=settings.practice_cooldown_days)
+    now = datetime.now(UTC)
+    eligible = get_eligible_practice_problems(problem_models, config, now)
+
+    return PracticeStatsResponse(practiceableCount=len(eligible))
 
 
 @router.post("/next", response_model=PracticeNextResponse)
