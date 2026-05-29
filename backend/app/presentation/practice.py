@@ -150,7 +150,6 @@ async def get_next_practice_problem(
 
     tracking = selected_document.get("tracking", {})
     tracking["exposureCount"] = tracking.get("exposureCount", 0) + 1
-    tracking["lastTestedAt"] = now
 
     await database["problems"].update_one(
         {"_id": selected_document["_id"]},

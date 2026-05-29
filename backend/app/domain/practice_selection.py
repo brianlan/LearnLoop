@@ -88,8 +88,9 @@ def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, n
         last_wrong_score = 2.0
 
     failure_score = 1.0
-    if problem.tracking.exposureCount > 0:
-        failure_rate = problem.tracking.failedCount / problem.tracking.exposureCount
+    attempt_count = problem.tracking.correctCount + problem.tracking.failedCount
+    if attempt_count > 0:
+        failure_rate = problem.tracking.failedCount / attempt_count
         failure_score = 1.0 + failure_rate
 
     recency_score = 1.0
