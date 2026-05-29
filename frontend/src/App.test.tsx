@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { AppRoutes } from "./App";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 const mockFetch = vi.fn();
@@ -36,9 +37,11 @@ function renderWithRouterAndAuth(
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={initialEntries}>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -90,19 +93,21 @@ describe("Route guards", () => {
     return render(
       <QueryClientProvider client={createQueryClient()}>
         <MemoryRouter initialEntries={initialEntries}>
-          <AuthProvider>
-            <Routes>
-              <Route path="/login" element={<div>Login Page</div>} />
-              <Route
-                path="/protected"
-                element={
-                  <ProtectedRoute>
-                    <div>Protected Content</div>
-                  </ProtectedRoute>
-                }
-              />
-            </Routes>
-          </AuthProvider>
+          <ThemeProvider>
+            <AuthProvider>
+              <Routes>
+                <Route path="/login" element={<div>Login Page</div>} />
+                <Route
+                  path="/protected"
+                  element={
+                    <ProtectedRoute>
+                      <div>Protected Content</div>
+                    </ProtectedRoute>
+                  }
+                />
+              </Routes>
+            </AuthProvider>
+          </ThemeProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );
