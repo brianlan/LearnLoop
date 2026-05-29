@@ -432,10 +432,14 @@ async def list_exam_history(
     current_user: CurrentUserDependency,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    include_discarded: bool = Query(default=False, alias="includeDiscarded"),
 ) -> ExamHistoryResponse:
+    states = [ExamState.SUBMITTED.value]
+    if include_discarded:
+        states.append(ExamState.DISCARDED.value)
     query = {
         "userId": current_user["_id"],
-        "state": {"$in": [ExamState.SUBMITTED.value, ExamState.DISCARDED.value]},
+        "state": {"$in": states},
     }
     total = await database["exams"].count_documents(query)
     cursor = database["exams"].find(query).sort("updatedAt", -1)

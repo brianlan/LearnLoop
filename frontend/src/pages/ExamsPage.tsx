@@ -109,8 +109,11 @@ export function ExamsPage() {
   const pageSize = 10;
 
   const { data, isLoading, error } = useQuery<ExamHistoryResponse>({
-    queryKey: ["exams", page, pageSize],
-    queryFn: () => api.get<ExamHistoryResponse>(`/exams?page=${page}&pageSize=${pageSize}`),
+    queryKey: ["exams", page, pageSize, showDiscarded],
+    queryFn: () =>
+      api.get<ExamHistoryResponse>(
+        `/exams?page=${page}&pageSize=${pageSize}&includeDiscarded=${showDiscarded}`,
+      ),
   });
 
   const createExamMutation = useMutation({
@@ -133,9 +136,6 @@ export function ExamsPage() {
   };
 
   const exams = data?.items ?? [];
-  const visibleExams = showDiscarded
-    ? exams
-    : exams.filter((exam) => exam.state !== "discarded");
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -235,36 +235,7 @@ export function ExamsPage() {
             borderRadius: "0.5rem",
           }}
         >
-          No exams yet
-        </div>
-      ) : visibleExams.length === 0 ? (
-        <div
-          style={{
-            padding: "2rem",
-            textAlign: "center",
-            backgroundColor: "#f9fafb",
-            border: "1px solid #e5e7eb",
-            borderRadius: "0.5rem",
-          }}
-        >
-          <p style={{ margin: "0 0 0.75rem" }}>No visible exams on this page</p>
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              cursor: "pointer",
-              fontSize: "0.875rem",
-              color: "#2563eb",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={showDiscarded}
-              onChange={() => setShowDiscarded((prev) => !prev)}
-            />
-            Show discarded exams
-          </label>
+          {showDiscarded ? "No exams yet" : "No submitted exams yet"}
         </div>
       ) : (
         <>
@@ -282,13 +253,16 @@ export function ExamsPage() {
               <input
                 type="checkbox"
                 checked={showDiscarded}
-                onChange={() => setShowDiscarded((prev) => !prev)}
+                onChange={() => {
+                  setShowDiscarded((prev) => !prev);
+                  setPage(1);
+                }}
               />
               Show discarded
             </label>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            {visibleExams.map((exam) => (
+            {exams.map((exam) => (
               <ExamHistoryCard
                 key={exam.id}
                 exam={exam}
