@@ -154,7 +154,7 @@ export function ProblemDetailPage() {
   if (problemError || !problem) {
     return (
       <main style={{ padding: "1rem" }}>
-        <div style={{ color: "red" }}>
+        <div style={{ color: "var(--color-text-danger)" }}>
           Error loading problem: {problemError?.message || "Problem not found"}
         </div>
         <button onClick={() => navigate("/problems")}>Back to Problems</button>
@@ -169,14 +169,14 @@ export function ProblemDetailPage() {
       </div>
 
       {error && (
-        <div style={{ color: "red", marginBottom: "1rem" }} role="alert">
+        <div style={{ color: "var(--color-text-danger)", marginBottom: "1rem" }} role="alert">
           {error}
         </div>
       )}
 
       <div
         style={{
-          border: "1px solid #ccc",
+          border: "1px solid var(--color-border)",
           borderRadius: "4px",
           padding: "1rem",
           marginBottom: "1rem",
@@ -195,7 +195,7 @@ export function ProblemDetailPage() {
             <h1 style={{ margin: 0 }} title={problem.id}>
               Problem {formatProblemReference(problem.id)}
             </h1>
-            <div style={{ color: "#6b7280", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+            <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
               Reference: {problem.id}
             </div>
           </div>
@@ -204,7 +204,7 @@ export function ProblemDetailPage() {
               <span
                 style={{
                   padding: "0.25rem 0.5rem",
-                  background: "#ffcccc",
+                  background: "var(--color-danger-bg)",
                   borderRadius: "4px",
                 }}
               >
@@ -249,7 +249,7 @@ export function ProblemDetailPage() {
                 style={{
                   width: "100%",
                   padding: "0.375rem 0.75rem",
-                  border: "1px solid #d1d5db",
+                  border: "1px solid var(--color-border)",
                   borderRadius: "0.25rem",
                   fontSize: "0.875rem",
                   marginTop: "0.5rem",
@@ -263,7 +263,7 @@ export function ProblemDetailPage() {
                 <option value="fill-in-the-blank">Fill in the Blank</option>
                 <option value="short-answer">Short Answer</option>
               </select>
-              <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "#6b7280" }}>
+              <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
                 The existing correct answer will be interpreted using the selected type.
               </div>
             </div>
@@ -271,7 +271,7 @@ export function ProblemDetailPage() {
             <span
               style={{
                 padding: "0.25rem 0.5rem",
-                background: "#e0e0e0",
+                background: "var(--color-surface-muted)",
                 borderRadius: "4px",
                 marginLeft: "0.5rem",
               }}
@@ -294,7 +294,7 @@ export function ProblemDetailPage() {
           ) : problem.tags.length > 0 ? (
             <TagList tags={problem.tags} />
           ) : (
-            <div style={{ marginTop: "0.5rem", color: "#666" }}>
+            <div style={{ marginTop: "0.5rem", color: "var(--color-text-muted)" }}>
               No tags
             </div>
           )}
@@ -342,8 +342,8 @@ export function ProblemDetailPage() {
                   onClick={() => setShowTeacherPasswordModal(true)}
                   style={{
                     padding: "0.375rem 0.75rem",
-                    backgroundColor: "#e0f2fe",
-                    border: "1px solid #bae6fd",
+                    backgroundColor: "var(--color-info-bg)",
+                    border: "1px solid var(--color-info-border)",
                     borderRadius: "0.25rem",
                     cursor: "pointer",
                     marginTop: "0.5rem",
@@ -368,9 +368,9 @@ export function ProblemDetailPage() {
                   aria-controls="answer-container"
                   style={{
                     padding: "0.375rem 0.75rem",
-                    backgroundColor: showAnswer ? "#fee2e2" : "#e0f2fe",
+                    backgroundColor: showAnswer ? "var(--color-danger-bg)" : "var(--color-info-bg)",
                     border: "1px solid",
-                    borderColor: showAnswer ? "#fecaca" : "#bae6fd",
+                    borderColor: showAnswer ? "var(--color-danger-border)" : "var(--color-info-border)",
                     borderRadius: "0.25rem",
                     cursor: "pointer",
                     marginBottom: showAnswer ? "0.5rem" : 0,
@@ -385,8 +385,8 @@ export function ProblemDetailPage() {
                     aria-live="polite"
                     style={{
                       padding: "0.5rem",
-                      backgroundColor: "#f9fafb",
-                      border: "1px solid #e5e7eb",
+                      backgroundColor: "var(--color-surface-muted)",
+                      border: "1px solid var(--color-border)",
                       borderRadius: "0.25rem",
                     }}
                   >
@@ -425,7 +425,7 @@ export function ProblemDetailPage() {
 
       <div
         style={{
-          border: "1px solid #ccc",
+          border: "1px solid var(--color-border)",
           borderRadius: "4px",
           padding: "1rem",
         }}
@@ -442,13 +442,13 @@ export function ProblemDetailPage() {
               </div>
               <div>
                 <label style={{ fontWeight: "bold" }}>Correct:</label>
-                <div style={{ fontSize: "1.5rem", color: "green" }}>
+                <div style={{ fontSize: "1.5rem", color: "var(--color-success)" }}>
                   {tracking.correctCount}
                 </div>
               </div>
               <div>
                 <label style={{ fontWeight: "bold" }}>Failed:</label>
-                <div style={{ fontSize: "1.5rem", color: "red" }}>
+                <div style={{ fontSize: "1.5rem", color: "var(--color-text-danger)" }}>
                   {tracking.failedCount}
                 </div>
               </div>
