@@ -61,11 +61,11 @@ function SettingRow({ label, value }: { label: string; value: unknown }) {
         display: "flex",
         justifyContent: "space-between",
         padding: "0.5rem 0",
-        borderBottom: "1px solid #e5e7eb",
+        borderBottom: "1px solid var(--color-border)",
       }}
     >
-      <span style={{ fontWeight: 500, color: "#374151" }}>{label}</span>
-      <span style={{ color: "#6b7280", fontFamily: "monospace" }}>
+      <span style={{ fontWeight: 500, color: "var(--color-text)" }}>{label}</span>
+      <span style={{ color: "var(--color-text-muted)", fontFamily: "monospace" }}>
         {String(value)}
       </span>
     </div>
@@ -86,8 +86,8 @@ function SettingSection({
           fontSize: "1.125rem",
           fontWeight: 600,
           marginBottom: "0.75rem",
-          color: "#111827",
-          borderBottom: "2px solid #3b82f6",
+          color: "var(--color-text)",
+          borderBottom: "2px solid var(--color-primary)",
           paddingBottom: "0.25rem",
         }}
       >
@@ -187,7 +187,7 @@ function ChangeTeacherPasswordModal({
             style={{
               width: "100%",
               padding: "0.5rem",
-              border: "1px solid #ccc",
+              border: "1px solid var(--color-border)",
               borderRadius: "4px",
             }}
             data-testid="current-password-input"
@@ -206,7 +206,7 @@ function ChangeTeacherPasswordModal({
             style={{
               width: "100%",
               padding: "0.5rem",
-              border: "1px solid #ccc",
+              border: "1px solid var(--color-border)",
               borderRadius: "4px",
             }}
             data-testid="new-password-input"
@@ -225,7 +225,7 @@ function ChangeTeacherPasswordModal({
             style={{
               width: "100%",
               padding: "0.5rem",
-              border: "1px solid #ccc",
+              border: "1px solid var(--color-border)",
               borderRadius: "4px",
             }}
             data-testid="confirm-password-input"
@@ -234,7 +234,7 @@ function ChangeTeacherPasswordModal({
         {error && (
           <div
             style={{
-              color: "red",
+              color: "var(--color-text-danger)",
               marginBottom: "1rem",
               fontSize: "0.875rem",
             }}
@@ -279,7 +279,7 @@ export function SettingsPage() {
     return (
       <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
         <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
-        <p style={{ color: "#6b7280" }}>Loading settings...</p>
+        <p style={{ color: "var(--color-text-muted)" }}>Loading settings...</p>
       </main>
     );
   }
@@ -288,7 +288,7 @@ export function SettingsPage() {
     return (
       <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
         <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
-        <p style={{ color: "#dc2626" }}>Failed to load settings.</p>
+        <p style={{ color: "var(--color-text-danger)" }}>Failed to load settings.</p>
       </main>
     );
   }
@@ -298,7 +298,7 @@ export function SettingsPage() {
       <h1 style={{ marginBottom: "1.5rem" }}>Settings</h1>
       <p
         style={{
-          color: "#6b7280",
+          color: "var(--color-text-muted)",
           marginBottom: "1.5rem",
           fontStyle: "italic",
         }}
@@ -309,8 +309,8 @@ export function SettingsPage() {
       {successMessage && (
         <div
           style={{
-            backgroundColor: "#d1fae5",
-            color: "#065f46",
+            backgroundColor: "var(--color-success-bg)",
+            color: "var(--color-success-text)",
             padding: "0.75rem 1rem",
             borderRadius: "4px",
             marginBottom: "1rem",
@@ -324,7 +324,7 @@ export function SettingsPage() {
 
       <SettingSection title="Teacher Password">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ color: "#374151" }}>
+          <span style={{ color: "var(--color-text)" }}>
             Change the password used to access teacher features
           </span>
           <button

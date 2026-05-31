@@ -193,6 +193,162 @@ test.describe("Theme E2E", () => {
   });
 });
 
+test.describe("Problems Page Theme", () => {
+  test("problems page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "problems_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/problems");
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Problems" })).toBeVisible();
+
+    // Verify filter controls are visible
+    await expect(page.getByLabel("Filter by Tag")).toBeVisible();
+    await expect(page.getByLabel("Filter by Type")).toBeVisible();
+  });
+
+  test("problems page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "problems_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/problems");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Problems" })).toBeVisible();
+
+    // Verify filter controls are visible
+    await expect(page.getByLabel("Filter by Tag")).toBeVisible();
+    await expect(page.getByLabel("Filter by Type")).toBeVisible();
+  });
+});
+
+test.describe("Problem Detail Page Theme", () => {
+  test("problem detail page renders in light theme", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "problem_detail_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto(`/problems/${problem.id}`);
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify problem text is visible
+    await expect(page.getByText("What is 2+2?")).toBeVisible();
+
+    // Verify Edit and Delete buttons are visible
+    await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Delete" })).toBeVisible();
+  });
+
+  test("problem detail page renders in dark theme", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "problem_detail_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto(`/problems/${problem.id}`);
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify problem text is visible
+    await expect(page.getByText("What is 2+2?")).toBeVisible();
+
+    // Verify Edit and Delete buttons are visible
+    await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Delete" })).toBeVisible();
+  });
+});
+
+test.describe("Tags Page Theme", () => {
+  test("tags page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "tags_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/tags");
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
+
+    // Verify create tag button is visible
+    await expect(page.getByRole("button", { name: "Create Tag" })).toBeVisible();
+  });
+
+  test("tags page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "tags_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/tags");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
+
+    // Verify create tag button is visible
+    await expect(page.getByRole("button", { name: "Create Tag" })).toBeVisible();
+  });
+});
+
+test.describe("Settings Page Theme", () => {
+  test("settings page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "settings_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/settings");
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+
+    // Verify change password button is visible
+    await expect(page.getByRole("button", { name: "Change Teacher Password" })).toBeVisible();
+  });
+
+  test("settings page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "settings_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/settings");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+
+    // Verify change password button is visible
+    await expect(page.getByRole("button", { name: "Change Teacher Password" })).toBeVisible();
+  });
+});
+
 test.describe("Practice Page Theme", () => {
   test("practice page renders in light theme", async ({ page, request }) => {
     const { session } = await createSessionWithProblem(request, "practice_light");
