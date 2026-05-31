@@ -202,8 +202,8 @@ export function CoachingPage() {
   if (isLoadingProblem || isLoadingConversation) {
     return (
       <main style={{ padding: "2rem", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "80vh" }}>
-        <div style={{ fontSize: "1.25rem", color: "#4f46e5", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <div style={{ width: "24px", height: "24px", borderRadius: "50%", border: "3px solid #e0e7ff", borderTopColor: "#4f46e5", animation: "spin 1s linear infinite" }} />
+        <div style={{ fontSize: "1.25rem", color: "var(--color-link)", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <div style={{ width: "24px", height: "24px", borderRadius: "50%", border: "3px solid var(--color-tag-bg)", borderTopColor: "var(--color-link)", animation: "spin 1s linear infinite" }} />
           Loading coaching page...
           <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
         </div>
@@ -214,10 +214,10 @@ export function CoachingPage() {
   if (!problem) {
     return (
       <main style={{ padding: "2rem", maxWidth: "600px", margin: "2rem auto" }}>
-        <div style={{ padding: "1.5rem", backgroundColor: "#fef2f2", border: "1px solid #fecaca", borderRadius: "0.5rem", textAlign: "center" }}>
-          <div style={{ color: "#dc2626", fontWeight: 600, fontSize: "1.125rem", marginBottom: "0.5rem" }}>Problem Not Found</div>
-          <p style={{ color: "#7f1d1d", margin: "0 0 1.5rem 0" }}>The problem you are trying to access does not exist or has been deleted.</p>
-          <button onClick={() => navigate(fromRoute)} style={{ padding: "0.5rem 1.5rem", backgroundColor: "#dc2626", color: "white", border: "none", borderRadius: "0.25rem", cursor: "pointer", fontWeight: 600 }}>
+        <div style={{ padding: "1.5rem", backgroundColor: "var(--color-danger-bg)", border: "1px solid var(--color-danger-border)", borderRadius: "0.5rem", textAlign: "center" }}>
+          <div style={{ color: "var(--color-text-danger)", fontWeight: 600, fontSize: "1.125rem", marginBottom: "0.5rem" }}>Problem Not Found</div>
+          <p style={{ color: "var(--color-text-danger-secondary)", margin: "0 0 1.5rem 0" }}>The problem you are trying to access does not exist or has been deleted.</p>
+          <button onClick={() => navigate(fromRoute)} style={{ padding: "0.5rem 1.5rem", backgroundColor: "var(--color-danger)", color: "white", border: "none", borderRadius: "0.25rem", cursor: "pointer", fontWeight: 600 }}>
             Go Back
           </button>
         </div>
@@ -229,7 +229,7 @@ export function CoachingPage() {
   const isCapped = messageCount >= 20;
 
   return (
-    <main style={{ padding: "1.5rem", minHeight: "calc(100vh - 60px)", display: "flex", flexDirection: "column", gap: "1rem", backgroundColor: "#f8fafc" }}>
+    <main style={{ padding: "1.5rem", minHeight: "calc(100vh - 60px)", display: "flex", flexDirection: "column", gap: "1rem", backgroundColor: "var(--color-surface-muted)" }}>
       {/* Header controls */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
@@ -239,9 +239,9 @@ export function CoachingPage() {
             style={{
               padding: "0.5rem 1rem",
               borderRadius: "0.375rem",
-              border: "1px solid #e2e8f0",
-              backgroundColor: "white",
-              color: "#334155",
+              border: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-surface)",
+              color: "var(--color-text)",
               cursor: "pointer",
               fontWeight: 600,
               fontSize: "0.875rem",
@@ -253,7 +253,7 @@ export function CoachingPage() {
           >
             ← Back to Review
           </button>
-          <h1 style={{ margin: 0, fontSize: "1.5rem", color: "#0f172a", fontWeight: 700 }}>AI Coach</h1>
+          <h1 style={{ margin: 0, fontSize: "1.5rem", color: "var(--color-text)", fontWeight: 700 }}>AI Coach</h1>
         </div>
 
         <button
@@ -267,9 +267,9 @@ export function CoachingPage() {
           style={{
             padding: "0.5rem 1rem",
             borderRadius: "0.375rem",
-            backgroundColor: "#fff1f2",
-            color: messageCount === 0 ? "#cbd5e1" : "#e11d48",
-            border: "1px solid #ffe4e6",
+            backgroundColor: "var(--color-danger-bg)",
+            color: messageCount === 0 ? "var(--color-text-muted)" : "var(--color-danger)",
+            border: "1px solid var(--color-danger-border)",
             cursor: messageCount === 0 || clearConversationMutation.isPending ? "not-allowed" : "pointer",
             fontWeight: 600,
             fontSize: "0.875rem",
@@ -292,17 +292,17 @@ export function CoachingPage() {
             data-testid="context-bar"
             style={{
               padding: "1rem 1.25rem",
-              backgroundColor: "white",
+              backgroundColor: "var(--color-surface)",
               borderRadius: "0.75rem",
-              border: "1px solid #e2e8f0",
+              border: "1px solid var(--color-border)",
               boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
               display: "flex",
               flexDirection: "column",
               gap: "0.75rem",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.5rem" }}>
-              <strong style={{ fontSize: "0.875rem", color: "#475569" }}>Problem Snapshot</strong>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
+              <strong style={{ fontSize: "0.875rem", color: "var(--color-text-muted)" }}>Problem Snapshot</strong>
               {gradingStatus && (
                 <span
                   style={{
@@ -310,8 +310,8 @@ export function CoachingPage() {
                     fontWeight: 600,
                     padding: "0.25rem 0.5rem",
                     borderRadius: "0.25rem",
-                    backgroundColor: gradingStatus === "correct" ? "#dcfce7" : gradingStatus === "incorrect" ? "#fee2e2" : "#fef3c7",
-                    color: gradingStatus === "correct" ? "#166534" : gradingStatus === "incorrect" ? "#991b1b" : "#854d0e",
+                    backgroundColor: gradingStatus === "correct" ? "var(--color-success-bg)" : gradingStatus === "incorrect" ? "var(--color-danger-bg)" : "var(--color-warning-bg)",
+                    color: gradingStatus === "correct" ? "var(--color-success-text)" : gradingStatus === "incorrect" ? "var(--color-text-danger-secondary)" : "var(--color-warning-text)",
                   }}
                 >
                   {gradingStatus.charAt(0).toUpperCase() + gradingStatus.slice(1)}
@@ -321,9 +321,9 @@ export function CoachingPage() {
 
             <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-start" }}>
               <div style={{ flex: 1, minWidth: "200px" }}>
-                <LatexText text={problem.text} style={{ fontSize: "0.925rem", color: "#1e293b", lineHeight: 1.5, whiteSpace: "pre-wrap" }} />
+                <LatexText text={problem.text} style={{ fontSize: "0.925rem", color: "var(--color-text)", lineHeight: 1.5, whiteSpace: "pre-wrap" }} />
               </div>
-              
+
               {/* Problem figure displayed in context bar only, NOT in whiteboard (FR-32) */}
               {problem.graphDsl && (
                 <div style={{ width: "200px" }} data-testid="context-original-figure">
@@ -338,9 +338,9 @@ export function CoachingPage() {
             </div>
 
             {studentAnswer && (
-              <div style={{ padding: "0.5rem 0.75rem", backgroundColor: "#f8fafc", borderRadius: "0.375rem", borderLeft: "3px solid #cbd5e1", fontSize: "0.875rem" }}>
-                <span style={{ color: "#64748b", fontWeight: 500, marginRight: "0.5rem" }}>Your Answer:</span>
-                <strong data-testid="student-answer" style={{ color: "#334155" }}>{studentAnswer}</strong>
+              <div style={{ padding: "0.5rem 0.75rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "0.375rem", borderLeft: "3px solid var(--color-border-muted)", fontSize: "0.875rem" }}>
+                <span style={{ color: "var(--color-text-muted)", fontWeight: 500, marginRight: "0.5rem" }}>Your Answer:</span>
+                <strong data-testid="student-answer" style={{ color: "var(--color-text)" }}>{studentAnswer}</strong>
               </div>
             )}
           </div>
@@ -349,9 +349,9 @@ export function CoachingPage() {
           <div
             style={{
               flex: 1,
-              backgroundColor: "white",
+              backgroundColor: "var(--color-surface)",
               borderRadius: "0.75rem",
-              border: "1px solid #e2e8f0",
+              border: "1px solid var(--color-border)",
               boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
               display: "flex",
               flexDirection: "column",
@@ -372,7 +372,7 @@ export function CoachingPage() {
               }}
             >
               {conversation?.messages?.length === 0 ? (
-                <div style={{ margin: "auto", textAlign: "center", color: "#94a3b8", padding: "2rem" }}>
+                <div style={{ margin: "auto", textAlign: "center", color: "var(--color-text-muted)", padding: "2rem" }}>
                   <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>💬</div>
                   <strong>No messages yet</strong>
                   <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.875rem" }}>Ask the coach to explain the problem or start with a shortcut below.</p>
@@ -396,9 +396,9 @@ export function CoachingPage() {
                           borderRadius: "0.75rem",
                           borderBottomRightRadius: isStudent ? "0px" : "0.75rem",
                           borderBottomLeftRadius: isStudent ? "0.75rem" : "0px",
-                          backgroundColor: isStudent ? "#e0e7ff" : "#f1f5f9",
-                          color: isStudent ? "#312e81" : "#1e293b",
-                          border: isStudent ? "1px solid #c7d2fe" : "1px solid #e2e8f0",
+                          backgroundColor: isStudent ? "var(--color-student-bubble-bg)" : "var(--color-coach-bubble-bg)",
+                          color: isStudent ? "var(--color-student-bubble-text)" : "var(--color-coach-bubble-text)",
+                          border: isStudent ? "1px solid var(--color-student-bubble-border)" : "1px solid var(--color-coach-bubble-border)",
                           fontSize: "0.925rem",
                           lineHeight: 1.5,
                         }}
@@ -417,9 +417,9 @@ export function CoachingPage() {
                       padding: "0.75rem 1rem",
                       borderRadius: "0.75rem",
                       borderBottomLeftRadius: "0px",
-                      backgroundColor: "#f8fafc",
-                      color: "#64748b",
-                      border: "1px dashed #cbd5e1",
+                      backgroundColor: "var(--color-surface-muted)",
+                      color: "var(--color-text-muted)",
+                      border: "1px dashed var(--color-border-muted)",
                       fontSize: "0.875rem",
                       display: "flex",
                       alignItems: "center",
@@ -427,9 +427,9 @@ export function CoachingPage() {
                     }}
                   >
                     <div style={{ display: "flex", gap: "3px" }}>
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#94a3b8", borderRadius: "50%", animation: "bounce 1.4s infinite ease-in-out both" }} />
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#94a3b8", borderRadius: "50%", animation: "bounce 1.4s infinite ease-in-out both 0.2s" }} />
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#94a3b8", borderRadius: "50%", animation: "bounce 1.4s infinite ease-in-out both 0.4s" }} />
+                      <div style={{ width: "6px", height: "6px", backgroundColor: "var(--color-text-muted)", borderRadius: "50%", animation: "bounce 1.4s infinite ease-in-out both" }} />
+                      <div style={{ width: "6px", height: "6px", backgroundColor: "var(--color-text-muted)", borderRadius: "50%", animation: "bounce 1.4s infinite ease-in-out both 0.2s" }} />
+                      <div style={{ width: "6px", height: "6px", backgroundColor: "var(--color-text-muted)", borderRadius: "50%", animation: "bounce 1.4s infinite ease-in-out both 0.4s" }} />
                     </div>
                     Coach is thinking...
                     <style>{`
@@ -449,9 +449,9 @@ export function CoachingPage() {
                       padding: "0.75rem 1rem",
                       borderRadius: "0.75rem",
                       borderBottomLeftRadius: "0px",
-                      backgroundColor: "#fff1f2",
-                      color: "#b91c1c",
-                      border: "1px solid #fecaca",
+                      backgroundColor: "var(--color-danger-bg)",
+                      color: "var(--color-text-danger)",
+                      border: "1px solid var(--color-danger-border)",
                       fontSize: "0.875rem",
                     }}
                   >
@@ -464,8 +464,8 @@ export function CoachingPage() {
             </div>
 
             {/* Chat bottom control panel */}
-            <div style={{ padding: "1rem", borderTop: "1px solid #e2e8f0", backgroundColor: "#f8fafc", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              
+            <div style={{ padding: "1rem", borderTop: "1px solid var(--color-border)", backgroundColor: "var(--color-surface-muted)", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+
               {/* Shortcut buttons */}
               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }} data-testid="shortcuts-bar">
                 {(["Explain", "Hint", "Steps", "Draw"] as const).map((shortcut) => (
@@ -477,9 +477,9 @@ export function CoachingPage() {
                     style={{
                       padding: "0.375rem 0.75rem",
                       borderRadius: "0.25rem",
-                      border: "1px solid #cbd5e1",
-                      backgroundColor: "white",
-                      color: "#475569",
+                      border: "1px solid var(--color-border-muted)",
+                      backgroundColor: "var(--color-surface)",
+                      color: "var(--color-text-muted)",
                       cursor: isCapped || sendMessageMutation.isPending ? "not-allowed" : "pointer",
                       fontSize: "0.75rem",
                       fontWeight: 600,
@@ -518,11 +518,11 @@ export function CoachingPage() {
                     flex: 1,
                     padding: "0.625rem 0.875rem",
                     borderRadius: "0.375rem",
-                    border: "1px solid #cbd5e1",
+                    border: "1px solid var(--color-border-muted)",
                     fontSize: "0.875rem",
                     outline: "none",
                     boxShadow: "inset 0 1px 2px rgba(0, 0, 0, 0.05)",
-                    backgroundColor: isCapped || sendMessageMutation.isPending ? "#f1f5f9" : "white",
+                    backgroundColor: isCapped || sendMessageMutation.isPending ? "var(--color-disabled-bg)" : "var(--color-surface)",
                     cursor: isCapped || sendMessageMutation.isPending ? "not-allowed" : "text",
                   }}
                 />
@@ -533,7 +533,7 @@ export function CoachingPage() {
                   style={{
                     padding: "0.625rem 1.25rem",
                     borderRadius: "0.375rem",
-                    backgroundColor: isCapped || !messageText.trim() || sendMessageMutation.isPending ? "#a5b4fc" : "#4f46e5",
+                    backgroundColor: isCapped || !messageText.trim() || sendMessageMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-link)",
                     color: "white",
                     border: "none",
                     cursor: isCapped || !messageText.trim() || sendMessageMutation.isPending ? "not-allowed" : "pointer",
@@ -548,7 +548,7 @@ export function CoachingPage() {
 
               {/* Message capacity warning */}
               {isCapped && (
-                <div data-testid="cap-warning" style={{ fontSize: "0.75rem", color: "#e11d48", fontWeight: 500, textAlign: "center", marginTop: "0.25rem" }}>
+                <div data-testid="cap-warning" style={{ fontSize: "0.75rem", color: "var(--color-danger)", fontWeight: 500, textAlign: "center", marginTop: "0.25rem" }}>
                   ⚠️ Message cap of 20 reached. Clear conversation to start over.
                 </div>
               )}
@@ -560,9 +560,9 @@ export function CoachingPage() {
         <div
           data-testid="whiteboard"
           style={{
-            backgroundColor: "white",
+            backgroundColor: "var(--color-surface)",
             borderRadius: "0.75rem",
-            border: "1px solid #e2e8f0",
+            border: "1px solid var(--color-border)",
             boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
             padding: "1.25rem",
             display: "flex",
@@ -571,12 +571,12 @@ export function CoachingPage() {
             alignItems: "stretch",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.75rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <span style={{ fontSize: "1.25rem" }}>🎨</span>
-              <strong style={{ fontSize: "1rem", color: "#0f172a", fontWeight: 700 }}>Interactive Whiteboard</strong>
+              <strong style={{ fontSize: "1rem", color: "var(--color-text)", fontWeight: 700 }}>Interactive Whiteboard</strong>
             </div>
-            
+
             {/* Whiteboard pagination controls */}
             {dslPages.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -590,8 +590,8 @@ export function CoachingPage() {
                   style={{
                     padding: "0.25rem 0.5rem",
                     borderRadius: "0.25rem",
-                    border: "1px solid #e2e8f0",
-                    backgroundColor: "white",
+                    border: "1px solid var(--color-border)",
+                    backgroundColor: "var(--color-surface)",
                     cursor: currentPageIndex === 0 ? "not-allowed" : "pointer",
                     fontSize: "0.875rem",
                     fontWeight: 600,
@@ -599,8 +599,8 @@ export function CoachingPage() {
                 >
                   ◀
                 </button>
-                
-                <span data-testid="whiteboard-page-indicator" style={{ fontSize: "0.875rem", fontWeight: 600, color: "#475569" }}>
+
+                <span data-testid="whiteboard-page-indicator" style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--color-text-muted)" }}>
                   {currentPageIndex + 1} / {dslPages.length}
                 </span>
 
@@ -614,8 +614,8 @@ export function CoachingPage() {
                   style={{
                     padding: "0.25rem 0.5rem",
                     borderRadius: "0.25rem",
-                    border: "1px solid #e2e8f0",
-                    backgroundColor: "white",
+                    border: "1px solid var(--color-border)",
+                    backgroundColor: "var(--color-surface)",
                     cursor: currentPageIndex === dslPages.length - 1 ? "not-allowed" : "pointer",
                     fontSize: "0.875rem",
                     fontWeight: 600,
@@ -629,8 +629,8 @@ export function CoachingPage() {
 
           {/* Canvas area wrapper */}
           <div style={{ flex: 1, position: "relative", minHeight: "400px" }}>
-            {dslPages.length === 0 ? (
-              
+            {dslPages.length === 0 ?
+
               /* Whiteboard empty state (FR-30) */
               <div
                 data-testid="whiteboard-empty"
@@ -644,26 +644,26 @@ export function CoachingPage() {
                   flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: "#f8fafc",
+                  backgroundColor: "var(--color-surface-muted)",
                   borderRadius: "0.5rem",
-                  border: "2px dashed #cbd5e1",
-                  color: "#94a3b8",
+                  border: "2px dashed var(--color-border-muted)",
+                  color: "var(--color-text-muted)",
                   padding: "2rem",
                   textAlign: "center",
                 }}
               >
                 <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>✏️</div>
-                <strong style={{ fontSize: "1.125rem", color: "#64748b" }}>Whiteboard Canvas Empty</strong>
+                <strong style={{ fontSize: "1.125rem", color: "var(--color-text-muted)" }}>Whiteboard Canvas Empty</strong>
                 <p style={{ margin: "0.5rem 0 0 0", fontSize: "0.875rem", maxWidth: "320px", lineHeight: 1.4 }}>
                   No whiteboard drawings have been loaded yet. Ask the coach to generate a drawing or click a shortcut like "Draw"!
                 </p>
               </div>
-            ) : (
-              
+            :
+
               /* Renders DSL pages with JSXGraph GraphSandbox */
               <div style={{ width: "100%", height: "100%" }}>
-                {whiteboardError && (
-                  
+                {whiteboardError &&
+
                   /* Custom error indicator shown when JSXGraph fails (FR-31) */
                   <div
                     data-testid="whiteboard-error"
@@ -674,18 +674,18 @@ export function CoachingPage() {
                       right: 0,
                       zIndex: 20,
                       padding: "1rem",
-                      backgroundColor: "#fef2f2",
-                      border: "1px solid #fecaca",
+                      backgroundColor: "var(--color-danger-bg)",
+                      border: "1px solid var(--color-danger-border)",
                       borderRadius: "0.375rem",
-                      color: "#b91c1c",
+                      color: "var(--color-text-danger)",
                       fontSize: "0.875rem",
                       boxShadow: "0 2px 4px rgba(0, 0, 0, 0.05)",
                     }}
                   >
                     <strong>Whiteboard Rendering Error:</strong> {whiteboardError}
                   </div>
-                )}
-                
+                }
+
                 <GraphSandbox
                   key={`whiteboard-canvas-${currentPageIndex}`}
                   dsl={dslPages[currentPageIndex]}
@@ -694,7 +694,7 @@ export function CoachingPage() {
                   height="100%"
                 />
               </div>
-            )}
+            }
           </div>
         </div>
       </div>
