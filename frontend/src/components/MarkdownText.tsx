@@ -31,7 +31,7 @@ export function MarkdownText({ content, className, style, ...rest }: MarkdownTex
             return isInline ? (
               <code
                 style={{
-                  backgroundColor: "rgba(0, 0, 0, 0.06)",
+                  backgroundColor: "var(--color-code-inline-bg)",
                   padding: "0.1em 0.3em",
                   borderRadius: "0.25em",
                   fontSize: "0.9em",
@@ -49,7 +49,7 @@ export function MarkdownText({ content, className, style, ...rest }: MarkdownTex
           pre: ({ children }) => (
             <pre
               style={{
-                backgroundColor: "#f6f8fa",
+                backgroundColor: "var(--color-code-block-bg)",
                 padding: "0.75em 1em",
                 borderRadius: "0.375em",
                 overflowX: "auto",
@@ -65,7 +65,7 @@ export function MarkdownText({ content, className, style, ...rest }: MarkdownTex
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "#4f46e5", textDecoration: "underline" }}
+              style={{ color: "var(--color-link)", textDecoration: "underline" }}
             >
               {children}
             </a>

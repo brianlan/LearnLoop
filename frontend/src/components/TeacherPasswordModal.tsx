@@ -82,7 +82,7 @@ export function TeacherPasswordModal({
             style={{
               width: "100%",
               padding: "0.5rem",
-              border: "1px solid #ccc",
+              border: "1px solid var(--color-border)",
               borderRadius: "4px",
             }}
             data-testid="teacher-password-input"
@@ -91,7 +91,7 @@ export function TeacherPasswordModal({
         {error && (
           <div
             style={{
-              color: "red",
+              color: "var(--color-danger)",
               marginBottom: "1rem",
               fontSize: "0.875rem",
             }}

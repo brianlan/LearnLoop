@@ -318,11 +318,11 @@ export function GraphSandbox({
   const containerStyle: React.CSSProperties = {
     width: typeof width === "number" ? `${width}px` : width,
     height: typeof height === "number" ? `${height}px` : height,
-    border: "1px solid #e5e7eb",
+    border: "1px solid var(--color-border)",
     borderRadius: "8px",
     overflow: "hidden",
     position: "relative",
-    backgroundColor: "#ffffff",
+    backgroundColor: "var(--color-surface)",
   };
 
   return (
@@ -342,7 +342,7 @@ export function GraphSandbox({
             zIndex: 10,
           }}
         >
-          <div style={{ color: "#6b7280" }}>Rendering graph...</div>
+          <div style={{ color: "var(--color-text-muted)" }}>Rendering graph...</div>
         </div>
       )}
 
@@ -354,15 +354,15 @@ export function GraphSandbox({
             left: 0,
             right: 0,
             padding: "12px 16px",
-            backgroundColor: "#fef2f2",
-            borderBottom: "1px solid #fecaca",
+            backgroundColor: "var(--color-danger-bg)",
+            borderBottom: "1px solid var(--color-danger-border)",
             zIndex: 10,
           }}
         >
-          <div style={{ color: "#dc2626", fontSize: "14px", fontWeight: 500 }}>
+          <div style={{ color: "var(--color-text-danger)", fontSize: "14px", fontWeight: 500 }}>
             Rendering Error
           </div>
-          <div style={{ color: "#991b1b", fontSize: "12px", marginTop: "4px" }}>
+          <div style={{ color: "var(--color-text-danger-secondary)", fontSize: "12px", marginTop: "4px" }}>
             {errorMessage}
           </div>
           <button
@@ -371,7 +371,7 @@ export function GraphSandbox({
               marginTop: "8px",
               padding: "4px 12px",
               fontSize: "12px",
-              backgroundColor: "#dc2626",
+              backgroundColor: "var(--color-danger)",
               color: "#ffffff",
               border: "none",
               borderRadius: "4px",

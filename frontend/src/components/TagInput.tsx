@@ -158,7 +158,7 @@ export function TagInput({
             marginBottom: "6px",
             fontSize: "14px",
             fontWeight: 500,
-            color: "#374151",
+            color: "var(--color-text)",
           }}
         >
           {label}
@@ -168,7 +168,7 @@ export function TagInput({
       <div
         style={{
           width: "100%",
-          border: "1px solid #d1d5db",
+          border: "1px solid var(--color-border)",
           borderRadius: "6px",
           padding: "6px 8px",
           display: "flex",
@@ -176,7 +176,7 @@ export function TagInput({
           alignItems: "center",
           gap: "4px",
           boxSizing: "border-box",
-          backgroundColor: disabled ? "#f9fafb" : "white",
+          backgroundColor: disabled ? "var(--color-surface-muted)" : "var(--color-surface)",
         }}
       >
         {tags.map((tag) => (
@@ -184,7 +184,7 @@ export function TagInput({
             key={tag}
             style={{
               padding: "4px 8px",
-              backgroundColor: "#e0e7ff",
+              backgroundColor: "var(--color-tag-bg)",
               borderRadius: "4px",
               fontSize: "13px",
               display: "inline-flex",
@@ -207,7 +207,7 @@ export function TagInput({
                 border: "none",
                 background: "transparent",
                 cursor: disabled ? "not-allowed" : "pointer",
-                color: hoveredRemoveTag === tag ? "#dc2626" : "#6b7280",
+                color: hoveredRemoveTag === tag ? "var(--color-danger)" : "var(--color-text-muted)",
                 fontSize: "16px",
                 lineHeight: 1,
                 padding: "0 2px",
@@ -268,8 +268,8 @@ export function TagInput({
             left: 0,
             right: 0,
             marginTop: "4px",
-            backgroundColor: "white",
-            border: "1px solid #d1d5db",
+            backgroundColor: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
             borderRadius: "6px",
             boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
             maxHeight: "200px",
@@ -293,7 +293,7 @@ export function TagInput({
                 width: "100%",
                 border: "none",
                 textAlign: "left",
-                backgroundColor: index === highlightedIndex ? "#eff6ff" : "white",
+                backgroundColor: index === highlightedIndex ? "var(--color-primary-bg)" : "var(--color-surface)",
                 padding: "8px 12px",
                 cursor: "pointer",
                 fontSize: "14px",
