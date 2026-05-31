@@ -225,9 +225,9 @@ function PasteStep({ onPaste, fileInputRef, onFileSelection, error }: PasteStepP
       style={{
         padding: "48px 32px",
         textAlign: "center",
-        border: "2px dashed #d1d5db",
+        border: "2px dashed var(--color-border-muted)",
         borderRadius: "8px",
-        backgroundColor: "#f9fafb",
+        backgroundColor: "var(--color-surface-muted)",
       }}
       onPaste={onPaste}
       tabIndex={0}
@@ -238,7 +238,7 @@ function PasteStep({ onPaste, fileInputRef, onFileSelection, error }: PasteStepP
       <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 600 }}>
         Paste an Image
       </h3>
-      <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>
+      <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "14px" }}>
         Copy an image and paste it here (Ctrl+V or Cmd+V)
       </p>
       <div style={{ marginTop: "16px" }}>
@@ -247,9 +247,9 @@ function PasteStep({ onPaste, fileInputRef, onFileSelection, error }: PasteStepP
           onClick={() => fileInputRef.current?.click()}
           style={{
             padding: "8px 16px",
-            backgroundColor: "white",
-            color: "#374151",
-            border: "1px solid #d1d5db",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "4px",
             cursor: "pointer",
           }}
@@ -269,9 +269,9 @@ function PasteStep({ onPaste, fileInputRef, onFileSelection, error }: PasteStepP
           style={{
             marginTop: "16px",
             padding: "12px 16px",
-            backgroundColor: "#fef2f2",
+            backgroundColor: "var(--color-danger-bg)",
             borderRadius: "6px",
-            color: "#dc2626",
+            color: "var(--color-text-danger)",
             fontSize: "14px",
           }}
         >
@@ -297,7 +297,7 @@ function UploadingStep({ uploadProgress }: UploadingStepProps) {
         style={{
           width: "100%",
           height: "8px",
-          backgroundColor: "#e5e7eb",
+          backgroundColor: "var(--color-border)",
           borderRadius: "4px",
           overflow: "hidden",
           marginTop: "16px",
@@ -307,12 +307,12 @@ function UploadingStep({ uploadProgress }: UploadingStepProps) {
           style={{
             width: `${uploadProgress}%`,
             height: "100%",
-            backgroundColor: "#3b82f6",
+            backgroundColor: "var(--color-primary)",
             transition: "width 0.3s ease",
           }}
         />
       </div>
-      <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: "14px" }}>
+      <p style={{ margin: "8px 0 0", color: "var(--color-text-muted)", fontSize: "14px" }}>
         {uploadProgress}%
       </p>
     </div>
@@ -337,15 +337,15 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
       {preview?.status === "extracting" && (
         <div style={{ textAlign: "center", padding: "32px" }}>
           <div style={{ fontSize: "32px", marginBottom: "16px" }}>🤖</div>
-          <p style={{ color: "#6b7280" }}>
+          <p style={{ color: "var(--color-text-muted)" }}>
             AI is analyzing the image and extracting problem data...
           </p>
           <div
             style={{
               width: "40px",
               height: "40px",
-              border: "3px solid #e5e7eb",
-              borderTopColor: "#3b82f6",
+              border: "3px solid var(--color-border)",
+              borderTopColor: "var(--color-primary)",
               borderRadius: "50%",
               margin: "16px auto",
               animation: "spin 1s linear infinite",
@@ -357,27 +357,27 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
         <div
           style={{
             padding: "16px",
-            backgroundColor: "#fef2f2",
+            backgroundColor: "var(--color-danger-bg)",
             borderRadius: "6px",
             marginBottom: "16px",
           }}
         >
-          <div style={{ color: "#dc2626", fontWeight: 600, marginBottom: "8px" }}>
+          <div style={{ color: "var(--color-text-danger)", fontWeight: 600, marginBottom: "8px" }}>
             ⚠️ Extraction Failed
           </div>
-          <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
+          <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "14px", margin: "0 0 12px" }}>
             The AI was unable to extract problem data from the image.
           </p>
           {(preview?.extraction?.failureCode || preview?.extraction?.failureMessage) && (
             <details style={{ marginBottom: "12px" }}>
-              <summary style={{ cursor: "pointer", color: "#7f1d1d", fontSize: "13px" }}>
+              <summary style={{ cursor: "pointer", color: "var(--color-text-danger-secondary)", fontSize: "13px" }}>
                 View error details
               </summary>
               <div
                 style={{
                   marginTop: "8px",
                   padding: "12px",
-                  backgroundColor: "#fee2e2",
+                  backgroundColor: "var(--color-danger-border)",
                   borderRadius: "4px",
                   fontSize: "12px",
                   fontFamily: "monospace",
@@ -405,7 +405,7 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
               disabled={isLoading}
               style={{
                 padding: "8px 16px",
-                backgroundColor: "#dc2626",
+                backgroundColor: "var(--color-danger)",
                 color: "white",
                 border: "none",
                 borderRadius: "4px",
@@ -425,9 +425,9 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
               }}
               style={{
                 padding: "8px 16px",
-                backgroundColor: "white",
-                color: "#7f1d1d",
-                border: "1px solid #fca5a5",
+                backgroundColor: "var(--color-surface)",
+                color: "var(--color-text-danger-secondary)",
+                border: "1px solid var(--color-danger-border)",
                 borderRadius: "4px",
                 cursor: "pointer",
               }}
@@ -441,22 +441,22 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
         <div
           style={{
             padding: "16px",
-            backgroundColor: "#fef2f2",
+            backgroundColor: "var(--color-danger-bg)",
             borderRadius: "6px",
             marginBottom: "16px",
           }}
         >
-          <div style={{ color: "#dc2626", fontWeight: 600, marginBottom: "8px" }}>
+          <div style={{ color: "var(--color-text-danger)", fontWeight: 600, marginBottom: "8px" }}>
             ⚠️ Graph Error
           </div>
-          <p style={{ color: "#7f1d1d", fontSize: "14px", margin: "0 0 12px" }}>
+          <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "14px", margin: "0 0 12px" }}>
             The extracted graph DSL is invalid.
           </p>
           <button
             onClick={() => setCurrentStep("editing")}
             style={{
               padding: "8px 16px",
-              backgroundColor: "#dc2626",
+              backgroundColor: "var(--color-danger)",
               color: "white",
               border: "none",
               borderRadius: "4px",
@@ -471,9 +471,9 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
         <div
           style={{
             padding: "12px 16px",
-            backgroundColor: "#fef2f2",
+            backgroundColor: "var(--color-danger-bg)",
             borderRadius: "6px",
-            color: "#dc2626",
+            color: "var(--color-text-danger)",
             fontSize: "14px",
           }}
         >
@@ -525,7 +525,7 @@ function EditingStep({
               marginBottom: "6px",
               fontSize: "14px",
               fontWeight: 500,
-              color: "#374151",
+              color: "var(--color-text)",
             }}
           >
             Original Image
@@ -537,7 +537,7 @@ function EditingStep({
               maxWidth: "100%",
               maxHeight: "300px",
               borderRadius: "6px",
-              border: "1px solid #e5e7eb",
+              border: "1px solid var(--color-border)",
             }}
             data-testid="source-image"
           />
@@ -551,7 +551,7 @@ function EditingStep({
             marginBottom: "6px",
             fontSize: "14px",
             fontWeight: 500,
-            color: "#374151",
+            color: "var(--color-text)",
           }}
         >
           Problem Text
@@ -563,12 +563,14 @@ function EditingStep({
           style={{
             width: "100%",
             padding: "10px 12px",
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "6px",
             fontSize: "14px",
             fontFamily: "inherit",
             resize: "vertical",
             boxSizing: "border-box",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
           }}
           placeholder="Enter the problem statement..."
           data-testid="text-input"
@@ -582,7 +584,7 @@ function EditingStep({
             marginBottom: "6px",
             fontSize: "14px",
             fontWeight: 500,
-            color: "#374151",
+            color: "var(--color-text)",
           }}
         >
           Problem Type
@@ -593,12 +595,13 @@ function EditingStep({
           style={{
             width: "100%",
             padding: "10px 12px",
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "6px",
             fontSize: "14px",
             fontFamily: "inherit",
             boxSizing: "border-box",
-            backgroundColor: "white",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
           }}
           data-testid="problem-type-input"
         >
@@ -617,7 +620,7 @@ function EditingStep({
             marginBottom: "6px",
             fontSize: "14px",
             fontWeight: 500,
-            color: "#374151",
+            color: "var(--color-text)",
           }}
         >
           Graph DSL
@@ -629,12 +632,14 @@ function EditingStep({
           style={{
             width: "100%",
             padding: "10px 12px",
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "6px",
             fontSize: "13px",
             fontFamily: "monospace",
             resize: "vertical",
             boxSizing: "border-box",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
           }}
           placeholder="Enter JSXGraph DSL code..."
           data-testid="graph-dsl-input"
@@ -646,7 +651,7 @@ function EditingStep({
               style={{
                 fontSize: "14px",
                 fontWeight: 500,
-                color: "#374151",
+                color: "var(--color-text)",
                 marginBottom: "8px",
               }}
             >
@@ -659,7 +664,7 @@ function EditingStep({
               onRender={onClearGraphError}
             />
             {graphError && (
-              <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
+              <div style={{ marginTop: "8px", color: "var(--color-text-danger)", fontSize: "14px" }}>
                 {graphError}
               </div>
             )}
@@ -674,7 +679,7 @@ function EditingStep({
             marginBottom: "6px",
             fontSize: "14px",
             fontWeight: 500,
-            color: "#374151",
+            color: "var(--color-text)",
           }}
         >
           Correct Answer
@@ -686,11 +691,13 @@ function EditingStep({
           style={{
             width: "100%",
             padding: "10px 12px",
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "6px",
             fontSize: "14px",
             fontFamily: "inherit",
             boxSizing: "border-box",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
           }}
           placeholder="Enter the correct answer..."
           data-testid="correct-answer-input"
@@ -711,9 +718,9 @@ function EditingStep({
         <div
           style={{
             padding: "12px 16px",
-            backgroundColor: "#fef2f2",
+            backgroundColor: "var(--color-danger-bg)",
             borderRadius: "6px",
-            color: "#dc2626",
+            color: "var(--color-text-danger)",
             fontSize: "14px",
             marginBottom: "16px",
           }}
@@ -727,7 +734,7 @@ function EditingStep({
           onClick={() => setCurrentStep("confirming")}
           style={{
             padding: "10px 20px",
-            backgroundColor: "#3b82f6",
+            backgroundColor: "var(--color-primary)",
             color: "white",
             border: "none",
             borderRadius: "6px",
@@ -743,9 +750,9 @@ function EditingStep({
           onClick={onCancel}
           style={{
             padding: "10px 20px",
-            backgroundColor: "white",
-            color: "#374151",
-            border: "1px solid #d1d5db",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "6px",
             cursor: "pointer",
             fontSize: "14px",
@@ -786,7 +793,7 @@ function ConfirmingStep({
 
       <div
         style={{
-          backgroundColor: "#f9fafb",
+          backgroundColor: "var(--color-surface-muted)",
           borderRadius: "8px",
           padding: "24px",
           marginBottom: "24px",
@@ -797,7 +804,7 @@ function ConfirmingStep({
             style={{
               fontSize: "12px",
               fontWeight: 600,
-              color: "#6b7280",
+              color: "var(--color-text-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.05em",
               marginBottom: "4px",
@@ -807,7 +814,7 @@ function ConfirmingStep({
           </div>
           <LatexText
             text={formData.text || "(empty)"}
-            style={{ fontSize: "14px", color: "#111827" }}
+            style={{ fontSize: "14px", color: "var(--color-text)" }}
           />
         </div>
 
@@ -816,7 +823,7 @@ function ConfirmingStep({
             style={{
               fontSize: "12px",
               fontWeight: 600,
-              color: "#6b7280",
+              color: "var(--color-text-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.05em",
               marginBottom: "4px",
@@ -824,7 +831,7 @@ function ConfirmingStep({
           >
             Type
           </div>
-          <div style={{ fontSize: "14px", color: "#111827" }}>
+          <div style={{ fontSize: "14px", color: "var(--color-text)" }}>
             {formData.problemType || "(empty)"}
           </div>
         </div>
@@ -834,7 +841,7 @@ function ConfirmingStep({
             style={{
               fontSize: "12px",
               fontWeight: 600,
-              color: "#6b7280",
+              color: "var(--color-text-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.05em",
               marginBottom: "4px",
@@ -845,12 +852,12 @@ function ConfirmingStep({
           <div
             style={{
               fontSize: "13px",
-              color: "#111827",
+              color: "var(--color-text)",
               fontFamily: "monospace",
-              backgroundColor: "white",
+              backgroundColor: "var(--color-surface)",
               padding: "8px",
               borderRadius: "4px",
-              border: "1px solid #e5e7eb",
+              border: "1px solid var(--color-border)",
             }}
           >
             {formData.graphDsl || "(empty)"}
@@ -862,7 +869,7 @@ function ConfirmingStep({
             style={{
               fontSize: "12px",
               fontWeight: 600,
-              color: "#6b7280",
+              color: "var(--color-text-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.05em",
               marginBottom: "4px",
@@ -870,7 +877,7 @@ function ConfirmingStep({
           >
             Correct Answer
           </div>
-          <div style={{ fontSize: "14px", color: "#111827" }}>
+          <div style={{ fontSize: "14px", color: "var(--color-text)" }}>
             {formData.correctAnswer || "(empty)"}
           </div>
         </div>
@@ -880,7 +887,7 @@ function ConfirmingStep({
             style={{
               fontSize: "12px",
               fontWeight: 600,
-              color: "#6b7280",
+              color: "var(--color-text-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.05em",
               marginBottom: "4px",
@@ -888,7 +895,7 @@ function ConfirmingStep({
           >
             Tags
           </div>
-          <div style={{ fontSize: "14px", color: "#111827" }}>
+          <div style={{ fontSize: "14px", color: "var(--color-text)" }}>
             {formData.tags.length > 0 ? formData.tags.join(", ") : "(empty)"}
           </div>
         </div>
@@ -900,7 +907,7 @@ function ConfirmingStep({
             style={{
               fontSize: "14px",
               fontWeight: 500,
-              color: "#374151",
+              color: "var(--color-text)",
               marginBottom: "8px",
             }}
           >
@@ -912,7 +919,7 @@ function ConfirmingStep({
             onError={onGraphError}
           />
           {graphError && (
-            <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "14px" }}>
+            <div style={{ marginTop: "8px", color: "var(--color-text-danger)", fontSize: "14px" }}>
               {graphError}
             </div>
           )}
@@ -923,9 +930,9 @@ function ConfirmingStep({
         <div
           style={{
             padding: "12px 16px",
-            backgroundColor: "#fef2f2",
+            backgroundColor: "var(--color-danger-bg)",
             borderRadius: "6px",
-            color: "#dc2626",
+            color: "var(--color-text-danger)",
             fontSize: "14px",
             marginBottom: "16px",
           }}
@@ -940,7 +947,7 @@ function ConfirmingStep({
           disabled={isLoading}
           style={{
             padding: "10px 20px",
-            backgroundColor: "#10b981",
+            backgroundColor: "var(--color-success)",
             color: "white",
             border: "none",
             borderRadius: "6px",
@@ -958,9 +965,9 @@ function ConfirmingStep({
           disabled={isLoading}
           style={{
             padding: "10px 20px",
-            backgroundColor: "white",
-            color: "#374151",
-            border: "1px solid #d1d5db",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
+            border: "1px solid var(--color-border-muted)",
             borderRadius: "6px",
             cursor: isLoading ? "not-allowed" : "pointer",
             fontSize: "14px",
@@ -1303,8 +1310,8 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                   borderRadius: "20px",
                   fontSize: "13px",
                   fontWeight: 500,
-                  backgroundColor: isActive ? "#3b82f6" : "#e5e7eb",
-                  color: isActive ? "white" : "#6b7280",
+                  backgroundColor: isActive ? "var(--color-primary)" : "var(--color-border)",
+                  color: isActive ? "white" : "var(--color-text-muted)",
                 }}
               >
                 {step.label}
@@ -1314,7 +1321,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
                   style={{
                     width: "24px",
                     height: "2px",
-                    backgroundColor: isActive ? "#3b82f6" : "#e5e7eb",
+                    backgroundColor: isActive ? "var(--color-primary)" : "var(--color-border)",
                     margin: "0 4px",
                   }}
                 />
@@ -1326,10 +1333,10 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
 
       <div
         style={{
-          backgroundColor: "white",
+          backgroundColor: "var(--color-surface)",
           borderRadius: "12px",
           boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
-          border: "1px solid #e5e7eb",
+          border: "1px solid var(--color-border)",
         }}
       >
         {renderStepContent()}

@@ -13,13 +13,13 @@ export function IngestPage() {
   };
 
   return (
-    <main style={{ padding: "24px", minHeight: "100vh", backgroundColor: "#f9fafb" }}>
+    <main style={{ padding: "24px", minHeight: "100vh", backgroundColor: "var(--color-surface-muted)" }}>
       <h1
         style={{
           margin: "0 0 24px",
           fontSize: "24px",
           fontWeight: 700,
-          color: "#111827",
+          color: "var(--color-text)",
           textAlign: "center",
         }}
       >
