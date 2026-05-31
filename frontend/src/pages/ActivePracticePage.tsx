@@ -113,9 +113,9 @@ export function ActivePracticePage() {
             data-testid="skip-button"
             style={{
               padding: "0.5rem 1rem",
-              border: "1px solid #d1d5db",
+              border: "1px solid var(--color-border-muted)",
               borderRadius: "0.25rem",
-              backgroundColor: "#f3f4f6",
+              backgroundColor: "var(--color-disabled-bg)",
               cursor: isMutating ? "not-allowed" : "pointer",
             }}
           >
@@ -127,9 +127,9 @@ export function ActivePracticePage() {
             data-testid="quit-button"
             style={{
               padding: "0.5rem 1rem",
-              backgroundColor: "#fee2e2",
-              color: "#dc2626",
-              border: "1px solid #fecaca",
+              backgroundColor: "var(--color-danger-bg)",
+              color: "var(--color-text-danger)",
+              border: "1px solid var(--color-danger-border)",
               borderRadius: "0.25rem",
               cursor: "pointer",
             }}
@@ -143,8 +143,8 @@ export function ActivePracticePage() {
         <div
           style={{
             padding: "1rem",
-            backgroundColor: "#fef3c7",
-            border: "1px solid #fcd34d",
+            backgroundColor: "var(--color-warning-bg)",
+            border: "1px solid var(--color-warning-border)",
             borderRadius: "0.5rem",
             marginBottom: "1rem",
           }}
@@ -156,8 +156,8 @@ export function ActivePracticePage() {
 
       <div
         style={{
-          backgroundColor: "#f9fafb",
-          border: "1px solid #e5e7eb",
+          backgroundColor: "var(--color-surface-muted)",
+          border: "1px solid var(--color-border)",
           borderRadius: "0.5rem",
           padding: "1.5rem",
           marginBottom: "1rem",
@@ -202,7 +202,7 @@ export function ActivePracticePage() {
                 data-testid="submit-button"
                 style={{
                   padding: "0.75rem 1.5rem",
-                  backgroundColor: phase === "grading" || !answer.trim() ? "#93c5fd" : "#2563eb",
+                  backgroundColor: phase === "grading" || !answer.trim() ? "var(--color-primary-disabled)" : "var(--color-primary)",
                   color: "white",
                   border: "none",
                   borderRadius: "0.375rem",
@@ -225,16 +225,16 @@ export function ActivePracticePage() {
             marginBottom: "1rem",
             backgroundColor:
               gradingResult.gradingStatus === "correct"
-                ? "#dcfce7"
+                ? "var(--color-success-bg)"
                 : gradingResult.gradingStatus === "incorrect"
-                  ? "#fee2e2"
-                  : "#fef3c7",
+                  ? "var(--color-danger-bg)"
+                  : "var(--color-warning-bg)",
             border:
               gradingResult.gradingStatus === "correct"
-                ? "1px solid #86efac"
+                ? "1px solid var(--color-success-border)"
                 : gradingResult.gradingStatus === "incorrect"
-                  ? "1px solid #fca5a5"
-                  : "1px solid #fcd34d",
+                  ? "1px solid var(--color-danger-border)"
+                  : "1px solid var(--color-warning-border)",
           }}
           data-testid="grading-feedback"
         >
@@ -245,7 +245,7 @@ export function ActivePracticePage() {
                 ? "Incorrect"
                 : "Pending Review"}
           </div>
-          <div style={{ color: "#4b5563", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
             Graded via: {gradingResult.gradingMethod}
           </div>
         </div>
@@ -255,10 +255,10 @@ export function ActivePracticePage() {
         <div
           style={{
             padding: "0.75rem 1rem",
-            backgroundColor: "#fffbeb",
-            border: "1px solid #fcd34d",
+            backgroundColor: "var(--color-warning-bg)",
+            border: "1px solid var(--color-warning-border)",
             borderRadius: "0.375rem",
-            color: "#92400e",
+            color: "var(--color-warning-text)",
             fontSize: "0.875rem",
             marginBottom: "1rem",
           }}
@@ -277,7 +277,7 @@ export function ActivePracticePage() {
             data-testid="next-button"
             style={{
               padding: "0.75rem 1.5rem",
-              backgroundColor: nextMutation.isPending ? "#93c5fd" : "#2563eb",
+              backgroundColor: nextMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
               color: "white",
               border: "none",
               borderRadius: "0.375rem",
@@ -302,23 +302,23 @@ export function ActivePracticePage() {
                 transition: "all 0.2s ease-in-out",
                 ...(solutionStatus === "failed"
                   ? {
-                      background: "#f3f4f6",
-                      color: "#9ca3af",
-                      border: "1px solid #e5e7eb",
+                      background: "var(--color-disabled-bg)",
+                      color: "var(--color-disabled-text)",
+                      border: "1px solid var(--color-border)",
                       cursor: "not-allowed",
                     }
                   : solutionStatus === "pending" || solutionStatus === "generating"
                     ? {
-                        background: "#f8fafc",
-                        color: "#6366f1",
-                        border: "2px dashed #6366f1",
+                        background: "var(--color-surface)",
+                        color: "var(--color-link)",
+                        border: "2px dashed var(--color-link)",
                         cursor: "pointer",
                         boxShadow: "0 0 8px rgba(99, 102, 241, 0.1)",
                       }
                     : {
                         background: isExplainHovered
-                          ? "linear-gradient(135deg, #4f46e5, #4338ca)"
-                          : "linear-gradient(135deg, #6366f1, #4f46e5)",
+                          ? "linear-gradient(135deg, var(--color-primary), var(--color-link))"
+                          : "linear-gradient(135deg, var(--color-link), var(--color-primary))",
                         color: "white",
                         border: "none",
                         cursor: "pointer",
@@ -341,9 +341,9 @@ export function ActivePracticePage() {
             onClick={handleQuit}
             style={{
               padding: "0.75rem 1rem",
-              border: "1px solid #d1d5db",
+              border: "1px solid var(--color-border-muted)",
               borderRadius: "0.375rem",
-              backgroundColor: "#ffffff",
+              backgroundColor: "var(--color-surface)",
               cursor: "pointer",
             }}
           >
