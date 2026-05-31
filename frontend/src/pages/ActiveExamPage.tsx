@@ -179,14 +179,14 @@ export function ActiveExamPage() {
     return (
       <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
         <h1>Active Exam</h1>
-        <div style={{ textAlign: "center", padding: "3rem", backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "0.5rem" }}>
+        <div style={{ textAlign: "center", padding: "3rem", backgroundColor: "var(--color-surface-muted)", border: "1px solid var(--color-border)", borderRadius: "0.5rem" }}>
           <p>No active exam found.</p>
           <button
             onClick={handleCreateExam}
             disabled={createExamMutation.isPending}
             style={{
               padding: "0.75rem 1.5rem",
-              backgroundColor: createExamMutation.isPending ? "#93c5fd" : "#3b82f6",
+              backgroundColor: createExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
               color: "white",
               border: "none",
               borderRadius: "0.25rem",
@@ -198,7 +198,7 @@ export function ActiveExamPage() {
             {createExamMutation.isPending ? "Creating..." : "Start New Exam"}
           </button>
           {createExamMutation.error && (
-            <p style={{ color: "#dc2626", marginTop: "1rem" }}>
+            <p style={{ color: "var(--color-text-danger)", marginTop: "1rem" }}>
               {(createExamMutation.error as Error).message}
             </p>
           )}
@@ -210,7 +210,7 @@ export function ActiveExamPage() {
   if (examError) {
     return (
       <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <div style={{ color: "#dc2626", padding: "1rem", backgroundColor: "#fee2e2", borderRadius: "0.25rem" }}>
+        <div style={{ color: "var(--color-text-danger)", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
           Error loading exam: {(examError as Error).message}
         </div>
       </main>
@@ -233,12 +233,12 @@ export function ActiveExamPage() {
     <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
       <div style={{ marginBottom: "1.5rem" }}>
         <h1>Active Exam</h1>
-        <p style={{ color: "#6b7280" }}>
+        <p style={{ color: "var(--color-text-muted)" }}>
           Question {currentItemIndex + 1} of {items.length} | Answered: {exam.summary.answeredProblems} of {exam.summary.totalProblems}
         </p>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", padding: "0.5rem 0", borderBottom: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", padding: "0.5rem 0", borderBottom: "1px solid var(--color-border)" }}>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button
             onClick={handlePrevious}
@@ -269,9 +269,9 @@ export function ActiveExamPage() {
             disabled={isMutating}
             style={{
               padding: "0.5rem 1rem",
-              backgroundColor: "#fee2e2",
-              color: "#dc2626",
-              border: "1px solid #fecaca",
+              backgroundColor: "var(--color-danger-bg)",
+              color: "var(--color-text-danger)",
+              border: "1px solid var(--color-danger-border)",
               borderRadius: "0.25rem",
               cursor: isMutating ? "not-allowed" : "pointer",
             }}
@@ -283,7 +283,7 @@ export function ActiveExamPage() {
             disabled={isMutating}
             style={{
               padding: "0.5rem 1.5rem",
-              backgroundColor: submitExamMutation.isPending ? "#6ee7b7" : "#10b981",
+              backgroundColor: submitExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-success)",
               color: "white",
               border: "none",
               borderRadius: "0.25rem",
@@ -295,7 +295,7 @@ export function ActiveExamPage() {
         </div>
       </div>
 
-      <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
+      <div style={{ backgroundColor: "var(--color-surface-muted)", border: "1px solid var(--color-border)", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
         <LatexText
           text={currentItem.problem.text}
           style={{ fontSize: "1.125rem", lineHeight: "1.75", marginBottom: "1.5rem", whiteSpace: "pre-wrap" }}
@@ -329,9 +329,9 @@ export function ActiveExamPage() {
           />
           <div
             style={{ marginTop: "0.5rem", fontSize: "0.875rem", color:
-              saveStatus === "saving" ? "#f59e0b" :
-              saveStatus === "saved" ? "#10b981" :
-              "#6b7280"
+              saveStatus === "saving" ? "var(--color-warning)" :
+              saveStatus === "saved" ? "var(--color-success)" :
+              "var(--color-text-muted)"
             }}
           >
             {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : ""}
@@ -363,7 +363,7 @@ export function ActiveExamPage() {
               disabled={submitExamMutation.isPending}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: submitExamMutation.isPending ? "#6ee7b7" : "#10b981",
+                backgroundColor: submitExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-success)",
                 color: "white",
                 border: "none",
                 borderRadius: "0.25rem",
@@ -399,7 +399,7 @@ export function ActiveExamPage() {
               disabled={discardExamMutation.isPending}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: discardExamMutation.isPending ? "#fca5a5" : "#dc2626",
+                backgroundColor: discardExamMutation.isPending ? "var(--color-danger-border)" : "var(--color-danger)",
                 color: "white",
                 border: "none",
                 borderRadius: "0.25rem",

@@ -10,11 +10,11 @@ import Pagination from "@/components/Pagination";
 function getStateStyle(state: string) {
   switch (state) {
     case "submitted":
-      return { backgroundColor: "#dcfce7", color: "#166534" };
+      return { backgroundColor: "var(--color-success-bg)", color: "var(--color-success-text)" };
     case "discarded":
-      return { backgroundColor: "#fee2e2", color: "#991b1b" };
+      return { backgroundColor: "var(--color-danger-bg)", color: "var(--color-text-danger-secondary)" };
     default:
-      return { backgroundColor: "#fef3c7", color: "#92400e" };
+      return { backgroundColor: "var(--color-warning-bg)", color: "var(--color-warning-text)" };
   }
 }
 
@@ -30,8 +30,8 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
       style={{
         width: "100%",
         textAlign: "left",
-        backgroundColor: "white",
-        border: "1px solid #e5e7eb",
+        backgroundColor: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
         borderRadius: "0.5rem",
         padding: "1rem",
         cursor: "pointer",
@@ -48,7 +48,7 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
       >
         <div>
           <div style={{ fontWeight: 600 }}>Exam {exam.id}</div>
-          <div style={{ color: "#6b7280", fontSize: "0.875rem" }}>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
             Created {formatDate(exam.createdAt)}
           </div>
         </div>
@@ -76,23 +76,23 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
         }}
       >
         <div>
-          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>{completionLabel}</div>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>{completionLabel}</div>
           <div>{formatDate(completionDate)}</div>
         </div>
         <div>
-          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Score</div>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Score</div>
           <div>{exam.state === "discarded" ? "—" : formatScore(exam.summary.score)}</div>
         </div>
         <div>
-          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Total</div>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Total</div>
           <div>{exam.summary.totalProblems}</div>
         </div>
         <div>
-          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Correct</div>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Correct</div>
           <div>{exam.state === "discarded" ? "—" : exam.summary.correctProblems}</div>
         </div>
         <div>
-          <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Incorrect</div>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Incorrect</div>
           <div>{exam.state === "discarded" ? "—" : exam.summary.failedProblems}</div>
         </div>
       </div>
@@ -153,7 +153,7 @@ export function ExamsPage() {
       >
         <div>
           <h1 style={{ margin: 0 }}>Exam History</h1>
-          <p style={{ color: "#6b7280", margin: "0.5rem 0 0" }}>
+          <p style={{ color: "var(--color-text-muted)", margin: "0.5rem 0 0" }}>
             Review previous exams or start a new session.
           </p>
         </div>
@@ -163,7 +163,7 @@ export function ExamsPage() {
           disabled={createExamMutation.isPending}
           style={{
             padding: "0.75rem 1rem",
-            backgroundColor: createExamMutation.isPending ? "#93c5fd" : "#2563eb",
+            backgroundColor: createExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
             color: "white",
             border: "none",
             borderRadius: "0.375rem",
@@ -179,8 +179,8 @@ export function ExamsPage() {
         <div
           style={{
             padding: "1rem",
-            backgroundColor: "#fef3c7",
-            border: "1px solid #fcd34d",
+            backgroundColor: "var(--color-warning-bg)",
+            border: "1px solid var(--color-warning-border)",
             borderRadius: "0.5rem",
             marginBottom: "1rem",
           }}
@@ -194,7 +194,7 @@ export function ExamsPage() {
               onClick={() => navigate("/exams/active")}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: "#2563eb",
+                backgroundColor: "var(--color-primary)",
                 color: "white",
                 border: "none",
                 borderRadius: "0.375rem",
@@ -209,8 +209,8 @@ export function ExamsPage() {
               onClick={() => setShowActiveExamPrompt(false)}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: "#f3f4f6",
-                border: "1px solid #d1d5db",
+                backgroundColor: "var(--color-disabled-bg)",
+                border: "1px solid var(--color-border-muted)",
                 borderRadius: "0.375rem",
                 cursor: "pointer",
               }}
@@ -230,7 +230,7 @@ export function ExamsPage() {
               gap: "0.5rem",
               cursor: "pointer",
               fontSize: "0.875rem",
-              color: "#6b7280",
+              color: "var(--color-text-muted)",
             }}
           >
             <input
@@ -249,14 +249,14 @@ export function ExamsPage() {
       {isLoading ? (
         <div>Loading exams...</div>
       ) : error ? (
-        <div style={{ color: "#dc2626" }}>Error loading exams: {(error as Error).message}</div>
+        <div style={{ color: "var(--color-text-danger)" }}>Error loading exams: {(error as Error).message}</div>
       ) : exams.length === 0 ? (
         <div
           style={{
             padding: "2rem",
             textAlign: "center",
-            backgroundColor: "#f9fafb",
-            border: "1px solid #e5e7eb",
+            backgroundColor: "var(--color-surface-muted)",
+            border: "1px solid var(--color-border)",
             borderRadius: "0.5rem",
           }}
         >
