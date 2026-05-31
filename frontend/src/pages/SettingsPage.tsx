@@ -234,7 +234,7 @@ function ChangeTeacherPasswordModal({
         {error && (
           <div
             style={{
-              color: "red",
+              color: "var(--color-text-danger)",
               marginBottom: "1rem",
               fontSize: "0.875rem",
             }}
