@@ -468,3 +468,45 @@ test.describe("Exams Page Theme", () => {
     await expect(page.getByRole("button", { name: "Start New Exam" })).toBeVisible();
   });
 });
+
+test.describe("Coaching Page Theme", () => {
+  test("coaching page renders in light theme", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "coaching_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    // Navigate to coaching page
+    await page.goto(`/coaching/${problem.id}`);
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "AI Coach" })).toBeVisible();
+
+    // Verify context bar and whiteboard are visible
+    await expect(page.getByTestId("context-bar")).toBeVisible();
+    await expect(page.getByTestId("whiteboard")).toBeVisible();
+  });
+
+  test("coaching page renders in dark theme", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "coaching_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    // Navigate to coaching page
+    await page.goto(`/coaching/${problem.id}`);
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "AI Coach" })).toBeVisible();
+
+    // Verify context bar and whiteboard are visible
+    await expect(page.getByTestId("context-bar")).toBeVisible();
+    await expect(page.getByTestId("whiteboard")).toBeVisible();
+  });
+});

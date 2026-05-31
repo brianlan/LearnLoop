@@ -36,6 +36,12 @@
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-disabled-bg: #f3f4f6;
   --color-disabled-text: #9ca3af;
+  --color-student-bubble-bg: #e0e7ff;
+  --color-student-bubble-text: #312e81;
+  --color-student-bubble-border: #c7d2fe;
+  --color-coach-bubble-bg: #f1f5f9;
+  --color-coach-bubble-text: #1e293b;
+  --color-coach-bubble-border: #e2e8f0;
 }
 
 :root[data-theme="dark"] {
@@ -76,6 +82,12 @@
   --color-overlay: rgba(0, 0, 0, 0.7);
   --color-disabled-bg: #1e293b;
   --color-disabled-text: #64748b;
+  --color-student-bubble-bg: #1e3a8a;
+  --color-student-bubble-text: #bfdbfe;
+  --color-student-bubble-border: #1e40af;
+  --color-coach-bubble-bg: #1e293b;
+  --color-coach-bubble-text: #e2e8f0;
+  --color-coach-bubble-border: #334155;
 }
 
 body {

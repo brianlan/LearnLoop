@@ -338,7 +338,7 @@ export function GraphSandbox({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "rgba(255, 255, 255, 0.9)",
+            backgroundColor: "var(--color-overlay)",
             zIndex: 10,
           }}
         >
