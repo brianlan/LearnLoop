@@ -136,7 +136,7 @@ export function TagsPage() {
           style={{
             flex: 1,
             padding: "0.5rem 0.75rem",
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--color-border)",
             borderRadius: "6px",
             fontSize: "14px",
           }}
@@ -147,8 +147,8 @@ export function TagsPage() {
           data-testid="add-tag-button"
           style={{
             padding: "0.5rem 1rem",
-            backgroundColor: "#2563eb",
-            color: "white",
+            backgroundColor: "var(--color-primary)",
+            color: "var(--color-bg)",
             border: "none",
             borderRadius: "6px",
             cursor: newTagName.trim() ? "pointer" : "not-allowed",
@@ -163,10 +163,10 @@ export function TagsPage() {
         <div
           style={{
             padding: "0.75rem",
-            backgroundColor: "#fef2f2",
-            border: "1px solid #fecaca",
+            backgroundColor: "var(--color-danger-bg)",
+            border: "1px solid var(--color-danger-border)",
             borderRadius: "6px",
-            color: "#dc2626",
+            color: "var(--color-text-danger)",
             marginBottom: "1rem",
           }}
           data-testid="tag-error"
@@ -182,7 +182,7 @@ export function TagsPage() {
           style={{
             textAlign: "center",
             padding: "2rem",
-            color: "#6b7280",
+            color: "var(--color-text-muted)",
           }}
           data-testid="empty-state"
         >
@@ -201,9 +201,9 @@ export function TagsPage() {
                 alignItems: "center",
                 gap: "0.75rem",
                 padding: "0.75rem 1rem",
-                border: "1px solid #e5e7eb",
+                border: "1px solid var(--color-border)",
                 borderRadius: "6px",
-                backgroundColor: "#ffffff",
+                backgroundColor: "var(--color-surface)",
               }}
               data-testid={`tag-item-${tag.id}`}
             >
@@ -227,7 +227,7 @@ export function TagsPage() {
                     style={{
                       flex: 1,
                       padding: "0.25rem 0.5rem",
-                      border: "1px solid #2563eb",
+                      border: "1px solid var(--color-primary)",
                       borderRadius: "4px",
                       fontSize: "14px",
                     }}
@@ -239,8 +239,8 @@ export function TagsPage() {
                     data-testid={`save-tag-button-${tag.id}`}
                     style={{
                       padding: "0.25rem 0.5rem",
-                      backgroundColor: "#2563eb",
-                      color: "white",
+                      backgroundColor: "var(--color-primary)",
+                      color: "var(--color-bg)",
                       border: "none",
                       borderRadius: "4px",
                       cursor: "pointer",
@@ -255,9 +255,9 @@ export function TagsPage() {
                     data-testid={`cancel-edit-button-${tag.id}`}
                     style={{
                       padding: "0.25rem 0.5rem",
-                      backgroundColor: "#f3f4f6",
-                      color: "#374151",
-                      border: "1px solid #d1d5db",
+                      backgroundColor: "var(--color-surface-muted)",
+                      color: "var(--color-text)",
+                      border: "1px solid var(--color-border)",
                       borderRadius: "4px",
                       cursor: "pointer",
                     }}
@@ -271,10 +271,10 @@ export function TagsPage() {
                   <span
                     style={{
                       padding: "0.125rem 0.5rem",
-                      backgroundColor: "#f3f4f6",
+                      backgroundColor: "var(--color-surface-muted)",
                       borderRadius: "4px",
                       fontSize: "0.75rem",
-                      color: "#6b7280",
+                      color: "var(--color-text-muted)",
                     }}
                   >
                     {tag.problemCount} problem{tag.problemCount !== 1 ? "s" : ""}
@@ -285,8 +285,8 @@ export function TagsPage() {
                     data-testid={`edit-tag-button-${tag.id}`}
                     style={{
                       padding: "0.25rem 0.5rem",
-                      backgroundColor: "#f3f4f6",
-                      border: "1px solid #d1d5db",
+                      backgroundColor: "var(--color-surface-muted)",
+                      border: "1px solid var(--color-border)",
                       borderRadius: "4px",
                       cursor: "pointer",
                       fontSize: "0.875rem",
@@ -300,9 +300,9 @@ export function TagsPage() {
                     data-testid={`delete-tag-button-${tag.id}`}
                     style={{
                       padding: "0.25rem 0.5rem",
-                      backgroundColor: "#fef2f2",
-                      color: "#dc2626",
-                      border: "1px solid #fecaca",
+                      backgroundColor: "var(--color-danger-bg)",
+                      color: "var(--color-text-danger)",
+                      border: "1px solid var(--color-danger-border)",
                       borderRadius: "4px",
                       cursor: "pointer",
                       fontSize: "0.875rem",
@@ -339,8 +339,8 @@ export function TagsPage() {
               disabled={deleteMutation.isPending}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: "#f3f4f6",
-                border: "1px solid #d1d5db",
+                backgroundColor: "var(--color-surface-muted)",
+                border: "1px solid var(--color-border)",
                 borderRadius: "6px",
                 cursor: "pointer",
               }}
@@ -354,8 +354,8 @@ export function TagsPage() {
               data-testid="confirm-delete-button"
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: "#dc2626",
-                color: "white",
+                backgroundColor: "var(--color-danger)",
+                color: "var(--color-bg)",
                 border: "none",
                 borderRadius: "6px",
                 cursor: "pointer",

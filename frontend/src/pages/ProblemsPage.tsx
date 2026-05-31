@@ -117,7 +117,7 @@ export function ProblemsPage() {
             </select>
           </div>
         </div>
-        <div style={{ color: "#4b5563", fontSize: "0.875rem" }}>
+        <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
           {total === 0
             ? "No problems found"
             : `Showing ${problems.length} of ${total} problem${total === 1 ? "" : "s"}`}
@@ -140,7 +140,7 @@ export function ProblemsPage() {
                 key={problem.id}
                 onClick={() => navigate(`/problems/${problem.id}`)}
                 style={{
-                  border: "1px solid #ccc",
+                  border: "1px solid var(--color-border)",
                   borderRadius: "4px",
                   padding: "1rem",
                   cursor: "pointer",
@@ -153,7 +153,7 @@ export function ProblemsPage() {
                     style={{
                       marginLeft: "0.5rem",
                       padding: "0.25rem 0.5rem",
-                      background: "#e0e0e0",
+                      background: "var(--color-surface-muted)",
                       borderRadius: "4px",
                       fontSize: "0.875rem",
                     }}
@@ -165,7 +165,7 @@ export function ProblemsPage() {
                       style={{
                         marginLeft: "0.5rem",
                         padding: "0.25rem 0.5rem",
-                        background: "#ffcccc",
+                        background: "var(--color-danger-bg)",
                         borderRadius: "4px",
                         fontSize: "0.875rem",
                       }}
