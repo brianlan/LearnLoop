@@ -1,10 +1,11 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 import {
   addAuthenticatedSession,
   APP_BASE,
   DEFAULT_TEST_PASSWORD,
   registerAndLogin,
+  seedProblem,
   type AuthSession,
 } from "./helpers";
 
@@ -12,6 +13,22 @@ test.use({ baseURL: APP_BASE });
 
 async function createSession(request: APIRequestContext, prefix: string): Promise<AuthSession> {
   return registerAndLogin(request, `e2e_${prefix}_${Date.now()}_${Math.random()}`, DEFAULT_TEST_PASSWORD);
+}
+
+async function createSessionWithProblem(request: APIRequestContext, prefix: string) {
+  const session = await createSession(request, prefix);
+  const problem = await seedProblem(request, session, {
+    text: "What is 2+2?",
+    problemType: "fill-in-the-blank",
+    correctAnswer: "4",
+  });
+
+  return { session, problem };
+}
+
+// Helper to set theme before navigation
+async function setTheme(page: Page, theme: "light" | "dark") {
+  await page.evaluate((t) => localStorage.setItem("learnloop-theme", t), theme);
 }
 
 test.describe("Theme E2E", () => {
@@ -173,5 +190,87 @@ test.describe("Theme E2E", () => {
     // Verify nav items remain visible
     await expect(page.getByRole("button", { name: "Problems" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+  });
+});
+
+test.describe("Practice Page Theme", () => {
+  test("practice page renders in light theme", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "practice_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/practice");
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Practice" })).toBeVisible();
+
+    // Verify start practice button is visible
+    await expect(page.getByTestId("start-practice-button")).toBeVisible();
+  });
+
+  test("practice page renders in dark theme", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "practice_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/practice");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Practice" })).toBeVisible();
+
+    // Verify start practice button is visible
+    await expect(page.getByTestId("start-practice-button")).toBeVisible();
+  });
+});
+
+test.describe("Active Practice Page Theme", () => {
+  test("active practice page renders in light theme", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "active_practice_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    // Navigate to practice and start
+    await page.goto("/practice");
+    await page.getByTestId("start-practice-button").click();
+
+    // Wait for active practice page
+    await expect(page.getByTestId("problem-text")).toBeVisible();
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify submit and skip buttons are visible
+    await expect(page.getByTestId("submit-button")).toBeVisible();
+    await expect(page.getByTestId("skip-button")).toBeVisible();
+  });
+
+  test("active practice page renders in dark theme", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "active_practice_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    // Navigate to practice and start
+    await page.goto("/practice");
+    await page.getByTestId("start-practice-button").click();
+
+    // Wait for active practice page
+    await expect(page.getByTestId("problem-text")).toBeVisible();
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify submit and skip buttons are visible
+    await expect(page.getByTestId("submit-button")).toBeVisible();
+    await expect(page.getByTestId("skip-button")).toBeVisible();
   });
 });

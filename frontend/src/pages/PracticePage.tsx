@@ -18,11 +18,11 @@ interface PracticeStatsResponse {
 function getResultStyle(result: string) {
   switch (result) {
     case "correct":
-      return { backgroundColor: "#dcfce7", color: "#166534" };
+      return { backgroundColor: "var(--color-success-bg)", color: "var(--color-success-text)" };
     case "incorrect":
-      return { backgroundColor: "#fee2e2", color: "#991b1b" };
+      return { backgroundColor: "var(--color-danger-bg)", color: "var(--color-text-danger-secondary)" };
     default:
-      return { backgroundColor: "#fef3c7", color: "#92400e" };
+      return { backgroundColor: "var(--color-warning-bg)", color: "var(--color-warning-text)" };
   }
 }
 
@@ -77,20 +77,20 @@ function HistoryRow({
           whiteSpace: "nowrap",
           ...(solutionStatus === "failed"
             ? {
-                background: "#f3f4f6",
-                color: "#9ca3af",
-                border: "1px solid #e5e7eb",
+                background: "var(--color-disabled-bg)",
+                color: "var(--color-disabled-text)",
+                border: "1px solid var(--color-border)",
                 cursor: "not-allowed",
               }
             : solutionStatus === "pending" || solutionStatus === "generating"
               ? {
-                  background: "#f8fafc",
-                  color: "#6366f1",
-                  border: "2px dashed #6366f1",
+                  background: "var(--color-surface)",
+                  color: "var(--color-link)",
+                  border: "2px dashed var(--color-link)",
                   cursor: "pointer",
                 }
               : {
-                  background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                  background: "linear-gradient(135deg, var(--color-link), var(--color-primary))",
                   color: "white",
                   border: "none",
                   cursor: "pointer",
@@ -109,7 +109,7 @@ function HistoryRow({
   return (
     <div
       style={{
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--color-border)",
         borderRadius: "0.5rem",
         marginBottom: "0.5rem",
         overflow: "hidden",
@@ -126,7 +126,7 @@ function HistoryRow({
           alignItems: "flex-start",
           gap: "1rem",
           textAlign: "left",
-          backgroundColor: isExpanded ? "#f9fafb" : "white",
+          backgroundColor: isExpanded ? "var(--color-surface-muted)" : "var(--color-surface)",
           border: "none",
           padding: "1rem",
           cursor: "pointer",
@@ -143,7 +143,7 @@ function HistoryRow({
           >
             <LatexText text={item.problemText} />
           </div>
-          <div style={{ color: "#6b7280", fontSize: "0.875rem" }}>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
             {item.problemType}
           </div>
         </div>
@@ -156,23 +156,23 @@ function HistoryRow({
           }}
         >
           <div>
-            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Total</div>
+            <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Total</div>
             <div>{item.summary.totalAttempts}</div>
           </div>
           <div>
-            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Correct</div>
-            <div style={{ color: "#16a34a" }}>{item.summary.correctCount}</div>
+            <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Correct</div>
+            <div style={{ color: "var(--color-success)" }}>{item.summary.correctCount}</div>
           </div>
           <div>
-            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Wrong</div>
-            <div style={{ color: "#dc2626" }}>{item.summary.wrongCount}</div>
+            <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Wrong</div>
+            <div style={{ color: "var(--color-text-danger)" }}>{item.summary.wrongCount}</div>
           </div>
           <div>
-            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Last</div>
+            <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Last</div>
             <div>{formatDate(item.summary.lastPracticedAt)}</div>
           </div>
           <div>
-            <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>Result</div>
+            <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>Result</div>
             <span
               style={{
                 padding: "0.125rem 0.5rem",
@@ -191,8 +191,8 @@ function HistoryRow({
         <div
           style={{
             padding: "1rem",
-            borderTop: "1px solid #e5e7eb",
-            backgroundColor: "#f9fafb",
+            borderTop: "1px solid var(--color-border)",
+            backgroundColor: "var(--color-surface-muted)",
           }}
           data-testid={`attempts-${item.problemId}`}
         >
@@ -200,10 +200,10 @@ function HistoryRow({
             <div
               style={{
                 padding: "0.75rem 1rem",
-                backgroundColor: "#fffbeb",
-                border: "1px solid #fcd34d",
+                backgroundColor: "var(--color-warning-bg)",
+                border: "1px solid var(--color-warning-border)",
                 borderRadius: "0.375rem",
-                color: "#92400e",
+                color: "var(--color-warning-text)",
                 fontSize: "0.875rem",
                 marginBottom: "0.75rem",
               }}
@@ -213,7 +213,7 @@ function HistoryRow({
             </div>
           )}
           {item.attempts.length === 0 ? (
-            <div style={{ color: "#6b7280" }}>No attempts recorded</div>
+            <div style={{ color: "var(--color-text-muted)" }}>No attempts recorded</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
               {item.attempts.map((attempt, idx) => (
@@ -221,8 +221,8 @@ function HistoryRow({
                   key={idx}
                   style={{
                     padding: "0.75rem",
-                    backgroundColor: "white",
-                    border: "1px solid #e5e7eb",
+                    backgroundColor: "var(--color-surface)",
+                    border: "1px solid var(--color-border)",
                     borderRadius: "0.375rem",
                   }}
                 >
@@ -240,11 +240,11 @@ function HistoryRow({
                       <span style={{ fontWeight: 500 }}>{attempt.gradingStatus}</span>
                       {idx === 0 && renderExplainButton()}
                     </div>
-                    <span style={{ color: "#6b7280", fontSize: "0.875rem" }}>
+                    <span style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
                       {formatDate(attempt.createdAt)}
                     </span>
                   </div>
-                  <div style={{ color: "#374151" }}>
+                  <div style={{ color: "var(--color-text)" }}>
                     Answer: {attempt.submittedAnswer}
                   </div>
                 </div>
@@ -306,7 +306,7 @@ export function PracticePage() {
       >
         <div>
           <h1 style={{ margin: 0 }}>Practice</h1>
-          <p style={{ color: "#6b7280", margin: "0.5rem 0 0" }}>
+          <p style={{ color: "var(--color-text-muted)", margin: "0.5rem 0 0" }}>
             {statsData?.practiceableCount !== undefined
               ? `${statsData.practiceableCount} problems available for practice.`
               : "Review your practice history or start a new session."}
@@ -319,7 +319,7 @@ export function PracticePage() {
           data-testid="start-practice-button"
           style={{
             padding: "0.75rem 1rem",
-            backgroundColor: startPracticeMutation.isPending ? "#93c5fd" : "#2563eb",
+            backgroundColor: startPracticeMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
             color: "white",
             border: "none",
             borderRadius: "0.375rem",
@@ -335,8 +335,8 @@ export function PracticePage() {
         <div
           style={{
             padding: "1rem",
-            backgroundColor: "#fef3c7",
-            border: "1px solid #fcd34d",
+            backgroundColor: "var(--color-warning-bg)",
+            border: "1px solid var(--color-warning-border)",
             borderRadius: "0.5rem",
             marginBottom: "1rem",
           }}
@@ -349,7 +349,7 @@ export function PracticePage() {
       {isLoading ? (
         <div data-testid="loading">Loading practice history...</div>
       ) : error ? (
-        <div style={{ color: "#dc2626" }} data-testid="error">
+        <div style={{ color: "var(--color-text-danger)" }} data-testid="error">
           Error loading history: {(error as Error).message}
         </div>
       ) : items.length === 0 ? (
@@ -357,8 +357,8 @@ export function PracticePage() {
           style={{
             padding: "2rem",
             textAlign: "center",
-            backgroundColor: "#f9fafb",
-            border: "1px solid #e5e7eb",
+            backgroundColor: "var(--color-surface-muted)",
+            border: "1px solid var(--color-border)",
             borderRadius: "0.5rem",
           }}
           data-testid="empty-state"
