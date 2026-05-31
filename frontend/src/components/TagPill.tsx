@@ -8,7 +8,7 @@ export function TagPill({ tag }: TagPillProps) {
       key={tag}
       style={{
         padding: "0.125rem 0.375rem",
-        background: "#f0f0f0",
+        background: "var(--color-surface-muted)",
         borderRadius: "4px",
         fontSize: "0.75rem",
         display: "inline-flex",

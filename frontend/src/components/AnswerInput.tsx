@@ -32,7 +32,7 @@ export function SingleChoiceInput({ value, onChange, options, onBlur, disabled }
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
         disabled={disabled}
-        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
+        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid var(--color-border)", borderRadius: "0.25rem" }}
       />
     );
   }
@@ -97,7 +97,7 @@ export function MultiChoiceInput({ value, onChange, options, onBlur, disabled }:
         onBlur={onBlur}
         disabled={disabled}
         placeholder="Enter options separated by commas"
-        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
+        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid var(--color-border)", borderRadius: "0.25rem" }}
       />
     );
   }
@@ -153,7 +153,7 @@ export function TextInput({ value, onChange, multiline, onBlur, disabled }: Text
           width: "100%",
           padding: "0.5rem",
           fontSize: "1rem",
-          border: "1px solid #d1d5db",
+          border: "1px solid var(--color-border)",
           borderRadius: "0.25rem",
           minHeight: "120px",
           resize: "vertical",
@@ -168,7 +168,7 @@ export function TextInput({ value, onChange, multiline, onBlur, disabled }: Text
       onChange={(e) => onChange(e.target.value)}
       onBlur={onBlur}
       disabled={disabled}
-      style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
+      style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", border: "1px solid var(--color-border)", borderRadius: "0.25rem" }}
     />
   );
 }
