@@ -430,3 +430,41 @@ test.describe("Active Practice Page Theme", () => {
     await expect(page.getByTestId("skip-button")).toBeVisible();
   });
 });
+
+test.describe("Exams Page Theme", () => {
+  test("exams page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "exams_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/exams");
+
+    // Verify theme is light
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Exam History" })).toBeVisible();
+
+    // Verify start new exam button is visible
+    await expect(page.getByRole("button", { name: "Start New Exam" })).toBeVisible();
+  });
+
+  test("exams page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "exams_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/exams");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify page content is visible
+    await expect(page.getByRole("heading", { name: "Exam History" })).toBeVisible();
+
+    // Verify start new exam button is visible
+    await expect(page.getByRole("button", { name: "Start New Exam" })).toBeVisible();
+  });
+});

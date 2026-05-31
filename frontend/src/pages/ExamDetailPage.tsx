@@ -23,10 +23,10 @@ async function selfReportItem(
 
 function GradingStatusBadge({ status }: { status: string }) {
   const styles: Record<string, React.CSSProperties> = {
-    correct: { backgroundColor: "#d1fae5", color: "#065f46", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
-    incorrect: { backgroundColor: "#fee2e2", color: "#991b1b", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
-    "pending-review": { backgroundColor: "#fef3c7", color: "#92400e", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
-    ungraded: { backgroundColor: "#f3f4f6", color: "#4b5563", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
+    correct: { backgroundColor: "var(--color-success-bg)", color: "var(--color-success-text)", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
+    incorrect: { backgroundColor: "var(--color-danger-bg)", color: "var(--color-text-danger-secondary)", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
+    "pending-review": { backgroundColor: "var(--color-warning-bg)", color: "var(--color-warning-text)", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
+    ungraded: { backgroundColor: "var(--color-ungraded-bg)", color: "var(--color-ungraded-text)", padding: "0.25rem 0.5rem", borderRadius: "0.25rem", fontSize: "0.875rem", fontWeight: 500 },
   };
 
   const labels: Record<string, string> = {
@@ -84,9 +84,9 @@ function ExamItemReview({
   };
 
   return (
-    <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
+    <div style={{ backgroundColor: "var(--color-surface-muted)", border: "1px solid var(--color-border)", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
-        <span style={{ fontSize: "0.875rem", color: "#6b7280" }}>Question {item.order}</span>
+        <span style={{ fontSize: "0.875rem", color: "var(--color-text-muted)" }}>Question {item.order}</span>
         <GradingStatusBadge status={item.grading.status} />
       </div>
 
@@ -109,15 +109,15 @@ function ExamItemReview({
         />
       )}
 
-      <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "white", borderRadius: "0.25rem" }}>
-        <div style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "0.25rem" }}>Your Answer:</div>
-        <div>{item.answer.raw || <em style={{ color: "#9ca3af" }}>No answer provided</em>}</div>
+      <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "var(--color-surface)", borderRadius: "0.25rem" }}>
+        <div style={{ fontSize: "0.875rem", color: "var(--color-text-muted)", marginBottom: "0.25rem" }}>Your Answer:</div>
+        <div>{item.answer.raw || <em style={{ color: "var(--color-disabled-text)" }}>No answer provided</em>}</div>
       </div>
 
       {item.problem.correctAnswer && (
         isAnswerRevealed ? (
-          <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "#ecfdf5", borderRadius: "0.25rem" }}>
-            <div style={{ fontSize: "0.875rem", color: "#065f46", marginBottom: "0.25rem" }}>Correct Answer:</div>
+          <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "var(--color-success-bg)", borderRadius: "0.25rem" }}>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-success-text)", marginBottom: "0.25rem" }}>Correct Answer:</div>
             <div>{item.problem.correctAnswer.display}</div>
           </div>
         ) : (
@@ -126,8 +126,8 @@ function ExamItemReview({
             style={{
               marginTop: "1rem",
               padding: "0.5rem 1rem",
-              backgroundColor: "#e0f2fe",
-              border: "1px solid #bae6fd",
+              backgroundColor: "var(--color-info-bg)",
+              border: "1px solid var(--color-info-border)",
               borderRadius: "0.25rem",
               cursor: "pointer",
             }}
@@ -139,15 +139,15 @@ function ExamItemReview({
       )}
 
       {item.grading.feedback && (
-        <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "#eff6ff", borderRadius: "0.25rem" }}>
-          <div style={{ fontSize: "0.875rem", color: "#1e40af", marginBottom: "0.25rem" }}>Feedback:</div>
+        <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "var(--color-primary-bg)", borderRadius: "0.25rem" }}>
+          <div style={{ fontSize: "0.875rem", color: "var(--color-primary-text)", marginBottom: "0.25rem" }}>Feedback:</div>
           <div>{item.grading.feedback}</div>
         </div>
       )}
 
       {isPendingReview && (
-        <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#fffbeb", border: "1px dashed #f59e0b", borderRadius: "0.25rem" }}>
-          <p style={{ margin: "0 0 0.75rem 0", fontSize: "0.875rem", color: "#92400e" }}>
+        <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "var(--color-warning-bg)", border: "1px dashed var(--color-warning)", borderRadius: "0.25rem" }}>
+          <p style={{ margin: "0 0 0.75rem 0", fontSize: "0.875rem", color: "var(--color-warning-text)" }}>
             This answer needs your review. Did you answer correctly?
           </p>
           <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -156,7 +156,7 @@ function ExamItemReview({
               disabled={isSelfReporting}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: isSelfReporting ? "#6ee7b7" : "#10b981",
+                backgroundColor: isSelfReporting ? "var(--color-primary-disabled)" : "var(--color-success)",
                 color: "white",
                 border: "none",
                 borderRadius: "0.25rem",
@@ -170,7 +170,7 @@ function ExamItemReview({
               disabled={isSelfReporting}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: isSelfReporting ? "#fca5a5" : "#ef4444",
+                backgroundColor: isSelfReporting ? "var(--color-danger-border)" : "var(--color-danger)",
                 color: "white",
                 border: "none",
                 borderRadius: "0.25rem",
@@ -184,15 +184,15 @@ function ExamItemReview({
       )}
 
       {examState !== "in-progress" && solutionStatus && solutionStatus !== "none" && (
-        <div style={{ marginTop: "1.25rem", borderTop: "1px solid #f3f4f6", paddingTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+        <div style={{ marginTop: "1.25rem", borderTop: "1px solid var(--color-ungraded-bg)", paddingTop: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
           {explainInfoMessage && (
             <div
               style={{
                 padding: "0.5rem 0.75rem",
-                backgroundColor: "#fffbeb",
-                border: "1px solid #fcd34d",
+                backgroundColor: "var(--color-warning-bg)",
+                border: "1px solid var(--color-warning-border)",
                 borderRadius: "0.25rem",
-                color: "#92400e",
+                color: "var(--color-warning-text)",
                 fontSize: "0.875rem",
               }}
               data-testid={`explain-info-message-${item.itemId}`}
@@ -215,23 +215,23 @@ function ExamItemReview({
                 transition: "all 0.2s ease-in-out",
                 ...(solutionStatus === "failed"
                   ? {
-                      background: "#f3f4f6",
-                      color: "#9ca3af",
-                      border: "1px solid #e5e7eb",
+                      background: "var(--color-ungraded-bg)",
+                      color: "var(--color-disabled-text)",
+                      border: "1px solid var(--color-border)",
                       cursor: "not-allowed",
                     }
                   : solutionStatus === "pending" || solutionStatus === "generating"
                     ? {
-                        background: "#f8fafc",
-                        color: "#6366f1",
-                        border: "2px dashed #6366f1",
+                        background: "var(--color-surface)",
+                        color: "var(--color-link)",
+                        border: "2px dashed var(--color-link)",
                         cursor: "pointer",
                         boxShadow: "0 0 8px rgba(99, 102, 241, 0.1)",
                       }
                     : {
                         background: isExplainHovered
-                          ? "linear-gradient(135deg, #4f46e5, #4338ca)"
-                          : "linear-gradient(135deg, #6366f1, #4f46e5)",
+                          ? "linear-gradient(135deg, var(--color-primary), var(--color-link))"
+                          : "linear-gradient(135deg, var(--color-link), var(--color-primary))",
                         color: "white",
                         border: "none",
                         cursor: "pointer",
@@ -296,7 +296,7 @@ export function ExamDetailPage() {
   if (error) {
     return (
       <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <div style={{ color: "#dc2626", padding: "1rem", backgroundColor: "#fee2e2", borderRadius: "0.25rem" }}>
+        <div style={{ color: "var(--color-text-danger)", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
           Error loading exam: {(error as Error).message}
         </div>
         <button
@@ -338,44 +338,44 @@ export function ExamDetailPage() {
             Back to History
           </button>
         </div>
-        <p style={{ color: "#6b7280", margin: 0 }}>
+        <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
           Submitted on {exam.submittedAt ? formatDate(exam.submittedAt) : formatDate(exam.createdAt)}
         </p>
       </div>
 
-      <div style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1.5rem" }}>
+      <div style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "0.5rem", padding: "1.5rem", marginBottom: "1.5rem" }}>
         <h2 style={{ marginTop: 0, marginBottom: "1rem" }}>Summary</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "1rem" }}>
-          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "#f9fafb", borderRadius: "0.25rem" }}>
-            <div style={{ fontSize: "2rem", fontWeight: 700, color: exam.summary.score === null ? "#f59e0b" : "#10b981" }}>
+          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "0.25rem" }}>
+            <div style={{ fontSize: "2rem", fontWeight: 700, color: exam.summary.score === null ? "var(--color-warning)" : "var(--color-success)" }}>
               {formatScore(exam.summary.score)}
             </div>
-            <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>Score</div>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-text-muted)" }}>Score</div>
           </div>
-          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "#f9fafb", borderRadius: "0.25rem" }}>
+          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "0.25rem" }}>
             <div style={{ fontSize: "2rem", fontWeight: 700 }}>{exam.summary.totalProblems}</div>
-            <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>Total</div>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-text-muted)" }}>Total</div>
           </div>
-          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "#ecfdf5", borderRadius: "0.25rem" }}>
-            <div style={{ fontSize: "2rem", fontWeight: 700, color: "#065f46" }}>{exam.summary.correctProblems}</div>
-            <div style={{ fontSize: "0.875rem", color: "#065f46" }}>Correct</div>
+          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "var(--color-success-bg)", borderRadius: "0.25rem" }}>
+            <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--color-success-text)" }}>{exam.summary.correctProblems}</div>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-success-text)" }}>Correct</div>
           </div>
-          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "#fee2e2", borderRadius: "0.25rem" }}>
-            <div style={{ fontSize: "2rem", fontWeight: 700, color: "#991b1b" }}>{exam.summary.failedProblems}</div>
-            <div style={{ fontSize: "0.875rem", color: "#991b1b" }}>Incorrect</div>
+          <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
+            <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--color-text-danger-secondary)" }}>{exam.summary.failedProblems}</div>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-text-danger-secondary)" }}>Incorrect</div>
           </div>
           {exam.summary.pendingProblems > 0 && (
-            <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "#fffbeb", borderRadius: "0.25rem" }}>
-              <div style={{ fontSize: "2rem", fontWeight: 700, color: "#92400e" }}>{exam.summary.pendingProblems}</div>
-              <div style={{ fontSize: "0.875rem", color: "#92400e" }}>Pending Review</div>
+            <div style={{ textAlign: "center", padding: "1rem", backgroundColor: "var(--color-warning-bg)", borderRadius: "0.25rem" }}>
+              <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--color-warning-text)" }}>{exam.summary.pendingProblems}</div>
+              <div style={{ fontSize: "0.875rem", color: "var(--color-warning-text)" }}>Pending Review</div>
             </div>
           )}
         </div>
       </div>
 
       {hasPendingReview && (
-        <div style={{ backgroundColor: "#fffbeb", border: "1px solid #f59e0b", borderRadius: "0.5rem", padding: "1rem", marginBottom: "1.5rem" }}>
-          <p style={{ margin: 0, color: "#92400e" }}>
+        <div style={{ backgroundColor: "var(--color-warning-bg)", border: "1px solid var(--color-warning)", borderRadius: "0.5rem", padding: "1rem", marginBottom: "1.5rem" }}>
+          <p style={{ margin: 0, color: "var(--color-warning-text)" }}>
             <strong>Pending Review:</strong> {exam.summary.pendingProblems} question(s) need your review. 
             Please review the marked items below and self-report whether your answers were correct.
           </p>
