@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
+import { GraphSandbox } from "@/components/GraphSandbox";
 import { LatexText } from "@/components/LatexText";
 import { AnswerInput, parseOptions } from "@/components/AnswerInput";
 import type { PracticeProblem, PracticeNextResponse, PracticeAttemptResult } from "@/types/practice";
@@ -173,6 +174,12 @@ export function ActivePracticePage() {
           }}
           data-testid="problem-text"
         />
+
+        {currentProblem.graphDsl && (
+          <div style={{ marginBottom: "1.5rem" }}>
+            <GraphSandbox dsl={currentProblem.graphDsl} height={250} />
+          </div>
+        )}
 
         {currentProblem.imageUrl && (
           <CollapsibleImage

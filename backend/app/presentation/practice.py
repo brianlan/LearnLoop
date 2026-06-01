@@ -167,6 +167,9 @@ async def get_next_practice_problem(
     if selected_document.get("sourceImage"):
         problem_response["imageUrl"] = build_problem_image_url(selected_document["_id"])
 
+    if selected_document.get("graphDsl"):
+        problem_response["graphDsl"] = selected_document["graphDsl"]
+
     return PracticeNextResponse(status="ok", problem=problem_response)
 
 

@@ -3,6 +3,7 @@ export interface PracticeProblem {
   text: string;
   type: string;
   imageUrl?: string;
+  graphDsl?: string;
 }
 
 export interface PracticeAttemptResult {

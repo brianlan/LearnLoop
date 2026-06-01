@@ -18,7 +18,7 @@ function createQueryClient() {
   });
 }
 
-function renderActivePracticePage(problem?: { id: string; text: string; type: string; imageUrl?: string }) {
+function renderActivePracticePage(problem?: { id: string; text: string; type: string; imageUrl?: string; graphDsl?: string }) {
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={[{ pathname: "/practice/active", state: { problem } }]}>
@@ -337,5 +337,34 @@ describe("ActivePracticePage", () => {
       expect(screen.getByTestId("next-button")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("explain-button")).not.toBeInTheDocument();
+  });
+
+  it("renders GraphSandbox when problem has graphDsl", async () => {
+    const graphProblem = {
+      id: "problem-1",
+      text: "Triangle problem",
+      type: "short-answer",
+      graphDsl: "board.create('point', [0, 0], {name:'A'});",
+    };
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "none" });
+
+    renderActivePracticePage(graphProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Triangle problem")).toBeInTheDocument();
+    expect(screen.getByTestId("jsxgraph-iframe")).toBeInTheDocument();
+  });
+
+  it("does not render GraphSandbox when problem has no graphDsl", async () => {
+    vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "none" });
+
+    renderActivePracticePage(mockProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("jsxgraph-iframe")).not.toBeInTheDocument();
   });
 });
