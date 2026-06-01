@@ -35,15 +35,15 @@ async def get_settings_info() -> dict:
             "model": settings.grading_vlm_model,
             "timeout_seconds": settings.grading_vlm_timeout_seconds,
         },
-        "solution_llm": {
-            "endpoint": settings.solution_llm_endpoint,
-            "model": settings.solution_llm_model,
-            "timeout_seconds": settings.solution_llm_timeout_seconds,
+        "solution_vlm": {
+            "endpoint": settings.solution_vlm_endpoint,
+            "model": settings.solution_vlm_model,
+            "timeout_seconds": settings.solution_vlm_timeout_seconds,
         },
-        "coaching_llm": {
-            "endpoint": settings.coaching_llm_endpoint,
-            "model": settings.coaching_llm_model,
-            "timeout_seconds": settings.coaching_llm_timeout_seconds,
+        "coaching_vlm": {
+            "endpoint": settings.coaching_vlm_endpoint,
+            "model": settings.coaching_vlm_model,
+            "timeout_seconds": settings.coaching_vlm_timeout_seconds,
         },
         "session": {
             "cookie_name": settings.session_cookie_name,

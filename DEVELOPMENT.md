@@ -189,14 +189,14 @@ The canonical template lives in `.env.example`.
 | `GRADING_VLM_API_KEY` | Grading VLM credential | `replace-me` |
 | `GRADING_VLM_TIMEOUT_SECONDS` | Grading VLM request timeout | `60` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
-| `SOLUTION_LLM_ENDPOINT` | Solution generation LLM endpoint (OpenAI-compatible base URL) | example placeholder |
-| `SOLUTION_LLM_MODEL` | Solution generation LLM model identifier | `replace-me` |
-| `SOLUTION_LLM_API_KEY` | Solution generation LLM credential | `replace-me` |
-| `SOLUTION_LLM_TIMEOUT_SECONDS` | Solution generation LLM request timeout | `120` |
-| `COACHING_LLM_ENDPOINT` | Coaching LLM endpoint (OpenAI-compatible base URL) | example placeholder |
-| `COACHING_LLM_MODEL` | Coaching LLM model identifier | `replace-me` |
-| `COACHING_LLM_API_KEY` | Coaching LLM credential | `replace-me` |
-| `COACHING_LLM_TIMEOUT_SECONDS` | Coaching LLM request timeout | `60` |
+| `SOLUTION_VLM_ENDPOINT` | Solution generation VLM endpoint (OpenAI-compatible base URL) | example placeholder |
+| `SOLUTION_VLM_MODEL` | Solution generation VLM model identifier | `replace-me` |
+| `SOLUTION_VLM_API_KEY` | Solution generation VLM credential | `replace-me` |
+| `SOLUTION_VLM_TIMEOUT_SECONDS` | Solution generation VLM request timeout | `120` |
+| `COACHING_VLM_ENDPOINT` | Coaching VLM endpoint (OpenAI-compatible base URL) | example placeholder |
+| `COACHING_VLM_MODEL` | Coaching VLM model identifier | `replace-me` |
+| `COACHING_VLM_API_KEY` | Coaching VLM credential | `replace-me` |
+| `COACHING_VLM_TIMEOUT_SECONDS` | Coaching VLM request timeout | `60` |
 | `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
 | `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
 | `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |
@@ -208,13 +208,13 @@ The canonical template lives in `.env.example`.
 | `PRACTICE_FAILURE_RATE_WEIGHT` | Weight for problems with high failure rates | `1.0` |
 | `PRACTICE_RECENCY_WEIGHT` | Weight for recently tested problems | `1.0` |
 
-### AI tutoring LLM notes
+### AI tutoring VLM notes
 
-- `INGESTION_VLM_ENDPOINT`, `GRADING_VLM_ENDPOINT`, `SOLUTION_LLM_ENDPOINT`, and `COACHING_LLM_ENDPOINT` must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
+- `INGESTION_VLM_ENDPOINT`, `GRADING_VLM_ENDPOINT`, `SOLUTION_VLM_ENDPOINT`, and `COACHING_VLM_ENDPOINT` must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
 - Ingestion VLM is used for image extraction and problem structuring.
 - Grading VLM is used for short-answer correctness judgement in practice and exams.
-- Solution LLM is used for background canonical solution generation.
-- Coaching LLM is used for live tutoring responses.
+- Solution VLM is used for background canonical solution generation.
+- Coaching VLM is used for live tutoring responses.
 
 ## Health checks and parity notes
 

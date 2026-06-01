@@ -6,7 +6,7 @@ from bson import ObjectId
 
 from app.domain.coaching.service import CoachingService, CoachingError
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole
-from app.infrastructure.llm.client import CoachingLLMResult, LLMClientError
+from app.infrastructure.llm.client import CoachingVLMResult, LLMClientError
 
 
 class FakeDatabase:
@@ -75,10 +75,10 @@ class FakeCollection:
         return True
 
 
-class FakeCoachingLLMClient:
+class FakeCoachingVLMClient:
     def __init__(self):
         self.error_to_raise = None
-        self.result = CoachingLLMResult(
+        self.result = CoachingVLMResult(
             prompt_version="1",
             model="test",
             text="hello from coach",
@@ -97,7 +97,7 @@ class FakeCoachingLLMClient:
 @pytest.mark.asyncio
 async def test_get_conversation_not_found():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
     conv = await service.get_conversation("prob1", "user1")
     assert conv is None
@@ -105,7 +105,7 @@ async def test_get_conversation_not_found():
 @pytest.mark.asyncio
 async def test_clear_conversation():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
     db.cols["coaching_conversations"].seed({"problem_id": "prob1", "user_id": "user1"})
     await service.clear_conversation("prob1", "user1")
@@ -114,7 +114,7 @@ async def test_clear_conversation():
 @pytest.mark.asyncio
 async def test_send_message_active_exam_blocked():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
     
     prob_id = ObjectId()
@@ -133,7 +133,7 @@ async def test_send_message_active_exam_blocked():
 @pytest.mark.asyncio
 async def test_send_message_success():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
 
     prob_id = ObjectId()
@@ -158,7 +158,7 @@ async def test_send_message_success():
 @pytest.mark.asyncio
 async def test_send_message_skipped_problem_no_attempt():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
 
     prob_id = ObjectId()
@@ -176,7 +176,7 @@ async def test_send_message_skipped_problem_no_attempt():
 @pytest.mark.asyncio
 async def test_send_message_cap_exceeded():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
     
     prob_id = ObjectId()
@@ -197,7 +197,7 @@ async def test_send_message_cap_exceeded():
 @pytest.mark.asyncio
 async def test_send_message_llm_failure():
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     client.error_to_raise = LLMClientError("error", code="llm-error", retryable=True)
     service = CoachingService(db, client)
     

@@ -7,7 +7,7 @@ from bson import ObjectId
 from unittest.mock import patch, AsyncMock
 
 from app.domain.models import CoachingRole
-from app.infrastructure.llm.client import CoachingLLMResult
+from app.infrastructure.llm.client import CoachingVLMResult
 from app.infrastructure.storage.mongo import COACHING_CONVERSATIONS_COLLECTION
 from app.main import create_app
 from app.presentation.deps import get_current_user, get_database
@@ -142,8 +142,8 @@ async def test_get_conversation_not_found(client: AsyncClient, setup_problem: st
 
 @pytest.mark.asyncio
 async def test_send_message_success(client: AsyncClient, setup_problem: str):
-    with patch("app.infrastructure.llm.client.CoachingLLMClient.send_message", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = CoachingLLMResult(
+    with patch("app.infrastructure.llm.client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = CoachingVLMResult(
             prompt_version="1",
             model="test",
             text="coach response",

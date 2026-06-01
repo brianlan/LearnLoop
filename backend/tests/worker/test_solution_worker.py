@@ -7,7 +7,7 @@ import pytest
 from bson import ObjectId
 
 from app.domain.models import SolutionGenerationStatus
-from app.infrastructure.llm.client import SolutionLLMResult, LLMClientError
+from app.infrastructure.llm.client import SolutionVLMResult, LLMClientError
 from app.infrastructure.worker.solution_worker import run_solution_worker, process_task
 
 class FakeCollection:
@@ -80,7 +80,7 @@ def _matches(document, query):
 class FakeLLMClient:
     def __init__(self):
         self.error_to_raise = None
-        self.result_to_return = SolutionLLMResult(
+        self.result_to_return = SolutionVLMResult(
             prompt_version="1",
             model="test",
             steps_markdown="steps",
@@ -163,10 +163,10 @@ async def test_run_worker_stuck_task_recovery():
         solution_worker_poll_interval_seconds = 0.01
         solution_task_timeout_minutes = 10
         solution_max_retries = 3
-        solution_llm_endpoint = "http"
-        solution_llm_model = "m"
-        solution_llm_api_key = "k"
-        solution_llm_timeout_seconds = 10
+        solution_vlm_endpoint = "http"
+        solution_vlm_model = "m"
+        solution_vlm_api_key = "k"
+        solution_vlm_timeout_seconds = 10
         s3_bucket = "b"
         s3_region = "r"
         s3_endpoint_url = "u"
@@ -211,10 +211,10 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
         solution_worker_poll_interval_seconds = 0.01
         solution_task_timeout_minutes = 10
         solution_max_retries = 3
-        solution_llm_endpoint = "http"
-        solution_llm_model = "m"
-        solution_llm_api_key = "k"
-        solution_llm_timeout_seconds = 10
+        solution_vlm_endpoint = "http"
+        solution_vlm_model = "m"
+        solution_vlm_api_key = "k"
+        solution_vlm_timeout_seconds = 10
         s3_bucket = "b"
         s3_region = "r"
         s3_endpoint_url = "u"

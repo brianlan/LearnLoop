@@ -31,12 +31,12 @@ interface SettingsResponse {
     model: string;
     timeout_seconds: number;
   };
-  solution_llm: {
+  solution_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
   };
-  coaching_llm: {
+  coaching_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
@@ -379,21 +379,21 @@ export function SettingsPage() {
         />
       </SettingSection>
 
-      <SettingSection title="Solution LLM">
-        <SettingRow label="Endpoint" value={data.solution_llm.endpoint} />
-        <SettingRow label="Model" value={data.solution_llm.model} />
+      <SettingSection title="Solution VLM">
+        <SettingRow label="Endpoint" value={data.solution_vlm.endpoint} />
+        <SettingRow label="Model" value={data.solution_vlm.model} />
         <SettingRow
           label="Timeout (seconds)"
-          value={data.solution_llm.timeout_seconds}
+          value={data.solution_vlm.timeout_seconds}
         />
       </SettingSection>
 
-      <SettingSection title="Coaching LLM">
-        <SettingRow label="Endpoint" value={data.coaching_llm.endpoint} />
-        <SettingRow label="Model" value={data.coaching_llm.model} />
+      <SettingSection title="Coaching VLM">
+        <SettingRow label="Endpoint" value={data.coaching_vlm.endpoint} />
+        <SettingRow label="Model" value={data.coaching_vlm.model} />
         <SettingRow
           label="Timeout (seconds)"
-          value={data.coaching_llm.timeout_seconds}
+          value={data.coaching_vlm.timeout_seconds}
         />
       </SettingSection>
 
