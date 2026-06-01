@@ -1,4 +1,4 @@
-EXTRACTION_PROMPT_VERSION = "2026-05-29.extraction.v3"
+EXTRACTION_PROMPT_VERSION = "2026-06-01.extraction.v4"
 GRADING_PROMPT_VERSION = "2026-05-14.grading.v1"
 
 EXTRACTION_SCHEMA_VERSION = "1.0"
@@ -40,6 +40,8 @@ Available element types and their parents:
 - functiongraph: board.create('functiongraph', [f, xMin, xMax])
 
 Guidelines:
+- The board is initialized with keepaspectratio: true, meaning x/y unit scales stay equal.
+  Choose bounding box ranges that preserve the source diagram's visual proportions.
 - Set board.setBoundingBox([xMin, yMax, xMax, yMin]) first if the default [-5,5,5,-5] is unsuitable.
 - Keep the construction simple: only reproduce what is visually present in the image.
 - Do NOT call JXG.JSXGraph.initBoard — the board already exists.
