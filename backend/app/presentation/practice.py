@@ -52,6 +52,7 @@ class PracticeAttemptRequest(BaseModel):
 class PracticeAttemptResult(BaseModel):
     gradingStatus: str
     gradingMethod: str
+    feedback: str | None = None
 
 
 class PracticeAttemptDetail(BaseModel):
@@ -59,6 +60,7 @@ class PracticeAttemptDetail(BaseModel):
     gradingStatus: str
     gradingMethod: str
     createdAt: datetime
+    feedback: str | None = None
 
 
 class PracticeHistorySummary(BaseModel):
@@ -174,7 +176,7 @@ async def _grade_answer(
     vlm_client: VLMClient,
     storage: S3StorageAdapter,
     now: datetime,
-) -> tuple[GradingStatus, GradingMethod]:
+) -> tuple[GradingStatus, GradingMethod, str | None]:
     problem_type = ProblemType(problem["problemType"])
     correct_answer = problem.get("correctAnswer", {})
 
@@ -182,7 +184,7 @@ async def _grade_answer(
         normalized = normalize_answer(answer, problem_type)
         is_correct = compare_answers(normalized, correct_answer, problem_type)
         status = GradingStatus.CORRECT if is_correct else GradingStatus.INCORRECT
-        return status, GradingMethod.NORMALIZED_MATCH
+        return status, GradingMethod.NORMALIZED_MATCH, None
 
     image_base64 = load_source_image_base64(problem.get("sourceImage"), storage)
     for _ in range(2):
@@ -193,14 +195,14 @@ async def _grade_answer(
                 correct_answer=str(correct_answer.get("display", "")),
             )
             status = GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT
-            return status, GradingMethod.VLM
+            return status, GradingMethod.VLM, result.feedback
         except VLMError as exc:
             if not exc.retryable:
-                return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+                return GradingStatus.PENDING_REVIEW, GradingMethod.VLM, None
             continue
         except Exception:
-            return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
-    return GradingStatus.PENDING_REVIEW, GradingMethod.VLM
+            return GradingStatus.PENDING_REVIEW, GradingMethod.VLM, None
+    return GradingStatus.PENDING_REVIEW, GradingMethod.VLM, None
 
 
 @router.post("/attempts", response_model=PracticeAttemptResult, status_code=201)
@@ -219,7 +221,7 @@ async def submit_practice_attempt(
         raise ApiError(404, "NOT_FOUND", "Problem not found")
 
     now = datetime.now(UTC)
-    grading_status, grading_method = await _grade_answer(
+    grading_status, grading_method, feedback = await _grade_answer(
         problem, payload.submittedAnswer, vlm_client, storage, now
     )
 
@@ -232,6 +234,8 @@ async def submit_practice_attempt(
         "gradingMethod": grading_method.value,
         "createdAt": now,
     }
+    if feedback is not None:
+        attempt["feedback"] = feedback
     await database["practice_attempts"].insert_one(attempt)
 
     tracking = problem.get("tracking", {})
@@ -249,6 +253,7 @@ async def submit_practice_attempt(
     return PracticeAttemptResult(
         gradingStatus=grading_status.value,
         gradingMethod=grading_method.value,
+        feedback=feedback,
     )
 
 
@@ -296,6 +301,7 @@ async def get_practice_history(
                 gradingStatus=a["gradingStatus"],
                 gradingMethod=a["gradingMethod"],
                 createdAt=a["createdAt"],
+                feedback=a.get("feedback"),
             )
             for a in problem_attempts
         ]

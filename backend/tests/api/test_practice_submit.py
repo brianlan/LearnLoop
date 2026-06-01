@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.main import create_app
-from app.presentation.deps import get_current_user, get_database
+from app.presentation.deps import get_current_user, get_database, get_grading_vlm_client
 from tests.api.conftest import FakeDatabase, make_user, make_problem
 
 
@@ -237,3 +237,126 @@ async def test_no_correct_answer_in_result(client: AsyncClient, practice_app: Fa
     data = response.json()
     assert "correctAnswer" not in data
     assert "secret" not in str(data)
+
+
+@pytest.mark.asyncio
+async def test_submit_short_answer_vlm_feedback_persisted(client: AsyncClient, practice_app: FastAPI) -> None:
+    from unittest.mock import AsyncMock
+    from app.infrastructure.vlm.client import GradingResult
+
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, problem_type="short-answer", correct_answer_display="4")
+    database.seed("problems", [problem])
+
+    fake_grading = GradingResult(
+        request_type="short-answer-grading",
+        model="test-model",
+        prompt_version="1",
+        schema_version="1",
+        is_correct=True,
+        feedback="The answer is correct because 2+2=4.",
+        provider_metadata={},
+        raw_provider_response={},
+    )
+
+    fake_vlm = AsyncMock()
+    fake_vlm.grade_short_answer = AsyncMock(return_value=fake_grading)
+    fake_vlm.aclose = AsyncMock()
+    practice_app.dependency_overrides[get_grading_vlm_client] = lambda: fake_vlm
+
+    response = await client.post(
+        "/api/v1/practice/attempts",
+        json={"problemId": str(problem["_id"]), "submittedAnswer": "4"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["gradingStatus"] == "correct"
+    assert data["gradingMethod"] == "vlm"
+    assert data["feedback"] == "The answer is correct because 2+2=4."
+
+    attempts = database["practice_attempts"]._documents
+    assert len(attempts) == 1
+    assert attempts[0]["feedback"] == "The answer is correct because 2+2=4."
+
+
+@pytest.mark.asyncio
+async def test_submit_short_answer_vlm_no_feedback_on_pending_review(client: AsyncClient, practice_app: FastAPI) -> None:
+    from unittest.mock import AsyncMock
+    from app.infrastructure.vlm.client import VLMError
+
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, problem_type="short-answer", correct_answer_display="4")
+    database.seed("problems", [problem])
+
+    fake_vlm = AsyncMock()
+    fake_vlm.grade_short_answer = AsyncMock(side_effect=VLMError("fail", code="err", retryable=False))
+    fake_vlm.aclose = AsyncMock()
+    practice_app.dependency_overrides[get_grading_vlm_client] = lambda: fake_vlm
+
+    response = await client.post(
+        "/api/v1/practice/attempts",
+        json={"problemId": str(problem["_id"]), "submittedAnswer": "4"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["gradingStatus"] == "pending-review"
+    assert data["feedback"] is None
+
+    attempts = database["practice_attempts"]._documents
+    assert len(attempts) == 1
+    assert "feedback" not in attempts[0]
+
+
+@pytest.mark.asyncio
+async def test_history_includes_feedback_when_present(client: AsyncClient, practice_app: FastAPI) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, text="Test problem", correct_answer_display="answer")
+    database.seed("problems", [problem])
+
+    now = datetime.now(UTC)
+    attempt = {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "problemId": problem["_id"],
+        "submittedAnswer": "answer",
+        "gradingStatus": "correct",
+        "gradingMethod": "vlm",
+        "feedback": "Great job!",
+        "createdAt": now,
+    }
+    database.seed("practice_attempts", [attempt])
+
+    response = await client.get("/api/v1/practice/history")
+    assert response.status_code == 200
+    data = response.json()
+    item = data["items"][0]
+    assert item["attempts"][0]["feedback"] == "Great job!"
+
+
+@pytest.mark.asyncio
+async def test_history_without_feedback_still_works(client: AsyncClient, practice_app: FastAPI) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, text="Test problem", correct_answer_display="answer")
+    database.seed("problems", [problem])
+
+    now = datetime.now(UTC)
+    attempt = {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "problemId": problem["_id"],
+        "submittedAnswer": "answer",
+        "gradingStatus": "correct",
+        "gradingMethod": "normalized-match",
+        "createdAt": now,
+    }
+    database.seed("practice_attempts", [attempt])
+
+    response = await client.get("/api/v1/practice/history")
+    assert response.status_code == 200
+    data = response.json()
+    item = data["items"][0]
+    assert item["attempts"][0]["feedback"] is None

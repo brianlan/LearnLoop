@@ -502,4 +502,112 @@ describe("PracticePage", () => {
     });
     expect(screen.getByText(/Error loading history/)).toBeInTheDocument();
   });
+
+  it("renders feedback block when attempt has feedback", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "Test problem",
+              problemType: "short-answer",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 1,
+                wrongCount: 0,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "correct",
+              },
+              attempts: [
+                {
+                  submittedAnswer: "4",
+                  gradingStatus: "correct",
+                  gradingMethod: "vlm",
+                  feedback: "The answer is correct because 2+2=4.",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "none" }),
+      });
+
+    renderPracticePage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-row-problem-1")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("history-row-problem-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("attempts-problem-1")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Feedback:")).toBeInTheDocument();
+    expect(screen.getByText("The answer is correct because 2+2=4.")).toBeInTheDocument();
+  });
+
+  it("does not render feedback block when attempt has no feedback", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              problemId: "problem-1",
+              problemText: "Test problem",
+              problemType: "fill-in-the-blank",
+              summary: {
+                totalAttempts: 1,
+                correctCount: 1,
+                wrongCount: 0,
+                lastPracticedAt: "2024-01-01T12:00:00Z",
+                lastResult: "correct",
+              },
+              attempts: [
+                {
+                  submittedAnswer: "4",
+                  gradingStatus: "correct",
+                  gradingMethod: "normalized-match",
+                  createdAt: "2024-01-01T12:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ practiceableCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "none" }),
+      });
+
+    renderPracticePage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-row-problem-1")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("history-row-problem-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("attempts-problem-1")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Feedback:")).not.toBeInTheDocument();
+  });
 });

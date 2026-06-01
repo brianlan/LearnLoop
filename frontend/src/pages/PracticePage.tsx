@@ -247,6 +247,12 @@ function HistoryRow({
                   <div style={{ color: "var(--color-text)" }}>
                     Answer: {attempt.submittedAnswer}
                   </div>
+                  {attempt.feedback && (
+                    <div style={{ marginTop: "0.5rem", padding: "0.75rem", backgroundColor: "var(--color-primary-bg)", borderRadius: "0.25rem" }}>
+                      <div style={{ fontSize: "0.875rem", color: "var(--color-primary-text)", marginBottom: "0.25rem" }}>Feedback:</div>
+                      <div>{attempt.feedback}</div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
