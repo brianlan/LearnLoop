@@ -8,6 +8,7 @@ export interface PracticeProblem {
 export interface PracticeAttemptResult {
   gradingStatus: string;
   gradingMethod: string;
+  feedback?: string;
 }
 
 export interface PracticeAttemptDetail {
@@ -15,6 +16,7 @@ export interface PracticeAttemptDetail {
   gradingStatus: string;
   gradingMethod: string;
   createdAt: string;
+  feedback?: string;
 }
 
 export interface PracticeHistorySummary {
