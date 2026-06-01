@@ -116,10 +116,10 @@ async def test_get_solution_task_counts():
 @pytest.mark.asyncio
 async def test_send_message_logs_observability(caplog):
     from app.domain.coaching.service import CoachingService
-    from tests.domain.test_coaching_service import FakeDatabase, FakeCoachingLLMClient
+    from tests.domain.test_coaching_service import FakeDatabase, FakeCoachingVLMClient
 
     db = FakeDatabase()
-    client = FakeCoachingLLMClient()
+    client = FakeCoachingVLMClient()
     service = CoachingService(db, client)
 
     prob_id = ObjectId()

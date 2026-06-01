@@ -23,12 +23,12 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
             grading_vlm_endpoint="https://grading.example/api",
             grading_vlm_model="grading-model",
             grading_vlm_timeout_seconds=34,
-            solution_llm_endpoint="https://solution.example/api",
-            solution_llm_model="solution-model",
-            solution_llm_timeout_seconds=56,
-            coaching_llm_endpoint="https://coaching.example/api",
-            coaching_llm_model="coaching-model",
-            coaching_llm_timeout_seconds=78,
+            solution_vlm_endpoint="https://solution.example/api",
+            solution_vlm_model="solution-model",
+            solution_vlm_timeout_seconds=56,
+            coaching_vlm_endpoint="https://coaching.example/api",
+            coaching_vlm_model="coaching-model",
+            coaching_vlm_timeout_seconds=78,
             preview_extracting_window_seconds=18,
         ),
     )
@@ -54,12 +54,12 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
         "model": "grading-model",
         "timeout_seconds": 34,
     }
-    assert payload["solution_llm"] == {
+    assert payload["solution_vlm"] == {
         "endpoint": "https://solution.example/api",
         "model": "solution-model",
         "timeout_seconds": 56,
     }
-    assert payload["coaching_llm"] == {
+    assert payload["coaching_vlm"] == {
         "endpoint": "https://coaching.example/api",
         "model": "coaching-model",
         "timeout_seconds": 78,

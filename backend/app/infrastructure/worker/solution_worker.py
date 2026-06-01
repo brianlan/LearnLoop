@@ -8,7 +8,7 @@ from pymongo import ReturnDocument
 
 from app.domain.models import SolutionGenerationStatus
 from app.infrastructure.config.settings import get_settings
-from app.infrastructure.llm.client import SolutionLLMClient, SolutionLLMRequest, LLMClientError
+from app.infrastructure.llm.client import SolutionVLMClient, SolutionVLMRequest, LLMClientError
 from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
     SOLUTION_GENERATION_TASKS_COLLECTION,
@@ -27,7 +27,7 @@ def _utc_now() -> datetime:
 
 async def process_task(
     task: dict[str, Any],
-    client: SolutionLLMClient,
+    client: SolutionVLMClient,
     storage: S3StorageAdapter,
     tasks_col: Any,
     solutions_col: Any,
@@ -60,7 +60,7 @@ async def process_task(
         source_image = problem.get("sourceImage")
         image_base64 = load_source_image_base64(source_image, storage)
         
-        request = SolutionLLMRequest(
+        request = SolutionVLMRequest(
             problem_text=problem["text"],
             correct_answer=problem["correctAnswer"]["display"],
             graph_dsl=problem.get("graphDsl"),
@@ -149,7 +149,7 @@ async def process_task(
 
 async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = None) -> None:
     settings = get_settings()
-    client = SolutionLLMClient(settings)
+    client = SolutionVLMClient(settings)
     storage = S3StorageAdapter(settings)
     poll_interval = settings.solution_worker_poll_interval_seconds
     timeout_minutes = settings.solution_task_timeout_minutes

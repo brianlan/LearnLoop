@@ -73,7 +73,7 @@ class _ChatCompletionResponse(BaseModel):
     choices: list[_ChatCompletionChoice]
 
 
-class SolutionLLMRequest(BaseModel):
+class SolutionVLMRequest(BaseModel):
     problem_text: str
     correct_answer: str
     graph_dsl: str | None = None
@@ -82,7 +82,7 @@ class SolutionLLMRequest(BaseModel):
 
 
 
-class SolutionLLMResult(BaseModel):
+class SolutionVLMResult(BaseModel):
     prompt_version: str
     model: str
     steps_markdown: str
@@ -96,7 +96,7 @@ class CoachingMessage(BaseModel):
     text: str
 
 
-class CoachingLLMRequest(BaseModel):
+class CoachingVLMRequest(BaseModel):
     problem_text: str
     correct_answer: str
     canonical_steps_markdown: str
@@ -106,7 +106,7 @@ class CoachingLLMRequest(BaseModel):
     new_message: str
 
 
-class CoachingLLMResult(BaseModel):
+class CoachingVLMResult(BaseModel):
     prompt_version: str
     model: str
     text: str
@@ -289,18 +289,18 @@ class _BaseLLMClient:
         return cls._load_json_content(content)
 
 
-class SolutionLLMClient(_BaseLLMClient):
+class SolutionVLMClient(_BaseLLMClient):
     def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()
         super().__init__(
-            endpoint=self._settings.solution_llm_endpoint,
-            model=self._settings.solution_llm_model,
-            api_key=self._settings.solution_llm_api_key,
-            timeout_seconds=self._settings.solution_llm_timeout_seconds,
+            endpoint=self._settings.solution_vlm_endpoint,
+            model=self._settings.solution_vlm_model,
+            api_key=self._settings.solution_vlm_api_key,
+            timeout_seconds=self._settings.solution_vlm_timeout_seconds,
             http_client=http_client,
         )
 
-    async def generate_solution(self, request: SolutionLLMRequest) -> SolutionLLMResult:
+    async def generate_solution(self, request: SolutionVLMRequest) -> SolutionVLMResult:
         prompt = build_solution_prompt(
             problem_text=request.problem_text,
             correct_answer=request.correct_answer,
@@ -313,7 +313,7 @@ class SolutionLLMClient(_BaseLLMClient):
         )
         raw_provider_response = await self._send_chat_completion(payload)
         parsed = self._validate_response(raw_provider_response, _SolutionProviderPayload)
-        return SolutionLLMResult(
+        return SolutionVLMResult(
             prompt_version=SOLUTION_PROMPT_VERSION,
             model=self._model,
             steps_markdown=parsed.steps_markdown,
@@ -390,18 +390,18 @@ def _sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
     return stripped if stripped else None
 
 
-class CoachingLLMClient(_BaseLLMClient):
+class CoachingVLMClient(_BaseLLMClient):
     def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()
         super().__init__(
-            endpoint=self._settings.coaching_llm_endpoint,
-            model=self._settings.coaching_llm_model,
-            api_key=self._settings.coaching_llm_api_key,
-            timeout_seconds=self._settings.coaching_llm_timeout_seconds,
+            endpoint=self._settings.coaching_vlm_endpoint,
+            model=self._settings.coaching_vlm_model,
+            api_key=self._settings.coaching_vlm_api_key,
+            timeout_seconds=self._settings.coaching_vlm_timeout_seconds,
             http_client=http_client,
         )
 
-    async def send_message(self, request: CoachingLLMRequest) -> CoachingLLMResult:
+    async def send_message(self, request: CoachingVLMRequest) -> CoachingVLMResult:
         history = self._format_history(request.conversation_history)
         prompt = build_coaching_prompt(
             problem_text=request.problem_text,
@@ -418,7 +418,7 @@ class CoachingLLMClient(_BaseLLMClient):
         ).model_dump(exclude_none=True)
         raw_provider_response = await self._send_chat_completion(payload)
         parsed = self._validate_response(raw_provider_response, _CoachingProviderPayload)
-        return CoachingLLMResult(
+        return CoachingVLMResult(
             prompt_version=COACHING_PROMPT_VERSION,
             model=self._model,
             text=parsed.text,

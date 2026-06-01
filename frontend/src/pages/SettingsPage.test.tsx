@@ -43,12 +43,12 @@ const mockSettings = {
     model: "grading-model",
     timeout_seconds: 60,
   },
-  solution_llm: {
+  solution_vlm: {
     endpoint: "https://solution.example.com",
     model: "solution-model",
     timeout_seconds: 90,
   },
-  coaching_llm: {
+  coaching_vlm: {
     endpoint: "https://coaching.example.com",
     model: "coaching-model",
     timeout_seconds: 45,
@@ -97,8 +97,8 @@ describe("SettingsPage", () => {
     renderWithProviders();
     expect(await screen.findByText("Ingestion VLM")).toBeInTheDocument();
     expect(await screen.findByText("Grading VLM")).toBeInTheDocument();
-    expect(await screen.findByText("Solution LLM")).toBeInTheDocument();
-    expect(await screen.findByText("Coaching LLM")).toBeInTheDocument();
+    expect(await screen.findByText("Solution VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Coaching VLM")).toBeInTheDocument();
     expect(await screen.findByText("ingestion-model")).toBeInTheDocument();
     expect(await screen.findByText("grading-model")).toBeInTheDocument();
     expect(await screen.findByText("solution-model")).toBeInTheDocument();

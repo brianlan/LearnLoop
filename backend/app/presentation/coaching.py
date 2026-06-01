@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.domain.models import CoachingConversation
 from app.domain.coaching.service import CoachingService, CoachingError
-from app.infrastructure.llm.client import CoachingLLMClient
+from app.infrastructure.llm.client import CoachingVLMClient
 from app.infrastructure.config.settings import Settings
 from app.presentation.deps import (
     DatabaseDependency,
@@ -26,18 +26,18 @@ SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
 class CoachingMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
 
-async def get_coaching_client(settings: SettingsDependency) -> AsyncGenerator[CoachingLLMClient, None]:
-    client = CoachingLLMClient(settings=settings)
+async def get_coaching_client(settings: SettingsDependency) -> AsyncGenerator[CoachingVLMClient, None]:
+    client = CoachingVLMClient(settings=settings)
     try:
         yield client
     finally:
         await client.aclose()
 
-CoachingLLMDependency = Annotated[CoachingLLMClient, Depends(get_coaching_client)]
+CoachingVLMDependency = Annotated[CoachingVLMClient, Depends(get_coaching_client)]
 
 def get_coaching_service(
     database: DatabaseDependency,
-    llm_client: CoachingLLMDependency
+    llm_client: CoachingVLMDependency
 ) -> CoachingService:
     return CoachingService(database=database, llm_client=llm_client)
 

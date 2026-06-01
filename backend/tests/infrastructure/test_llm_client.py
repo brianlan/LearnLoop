@@ -10,17 +10,17 @@ from app.infrastructure.llm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
     FAILURE_CODE_PROVIDER,
-    CoachingLLMClient,
-    CoachingLLMRequest,
+    CoachingVLMClient,
+    CoachingVLMRequest,
     CoachingMessage,
     LLMClientError,
-    SolutionLLMClient,
-    SolutionLLMRequest,
+    SolutionVLMClient,
+    SolutionVLMRequest,
 )
 from app.infrastructure.llm.prompts import COACHING_PROMPT_VERSION, SOLUTION_PROMPT_VERSION
 
 
-def _build_solution_client(handler) -> SolutionLLMClient:
+def _build_solution_client(handler) -> SolutionVLMClient:
     transport = httpx.MockTransport(handler)
     http_client = httpx.AsyncClient(
         transport=transport,
@@ -29,15 +29,15 @@ def _build_solution_client(handler) -> SolutionLLMClient:
         headers={"Authorization": "Bearer solution-key", "Content-Type": "application/json"},
     )
     settings = Settings(
-        solution_llm_endpoint="https://solution.example/api",
-        solution_llm_model="solution-model",
-        solution_llm_api_key="solution-key",
-        solution_llm_timeout_seconds=7,
+        solution_vlm_endpoint="https://solution.example/api",
+        solution_vlm_model="solution-model",
+        solution_vlm_api_key="solution-key",
+        solution_vlm_timeout_seconds=7,
     )
-    return SolutionLLMClient(settings=settings, http_client=http_client)
+    return SolutionVLMClient(settings=settings, http_client=http_client)
 
 
-def _build_coaching_client(handler) -> CoachingLLMClient:
+def _build_coaching_client(handler) -> CoachingVLMClient:
     transport = httpx.MockTransport(handler)
     http_client = httpx.AsyncClient(
         transport=transport,
@@ -46,21 +46,21 @@ def _build_coaching_client(handler) -> CoachingLLMClient:
         headers={"Authorization": "Bearer coaching-key", "Content-Type": "application/json"},
     )
     settings = Settings(
-        coaching_llm_endpoint="https://coaching.example/api",
-        coaching_llm_model="coaching-model",
-        coaching_llm_api_key="coaching-key",
-        coaching_llm_timeout_seconds=9,
+        coaching_vlm_endpoint="https://coaching.example/api",
+        coaching_vlm_model="coaching-model",
+        coaching_vlm_api_key="coaching-key",
+        coaching_vlm_timeout_seconds=9,
     )
-    return CoachingLLMClient(settings=settings, http_client=http_client)
+    return CoachingVLMClient(settings=settings, http_client=http_client)
 
 
 def test_llm_clients_use_capability_specific_timeouts() -> None:
-    solution_client = SolutionLLMClient(
-        settings=Settings(solution_llm_timeout_seconds=123),
+    solution_client = SolutionVLMClient(
+        settings=Settings(solution_vlm_timeout_seconds=123),
         http_client=httpx.AsyncClient(),
     )
-    coaching_client = CoachingLLMClient(
-        settings=Settings(coaching_llm_timeout_seconds=45),
+    coaching_client = CoachingVLMClient(
+        settings=Settings(coaching_vlm_timeout_seconds=45),
         http_client=httpx.AsyncClient(),
     )
 
@@ -69,7 +69,7 @@ def test_llm_clients_use_capability_specific_timeouts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_solution_llm_client_builds_policy_prompt_and_uses_solution_config() -> None:
+async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/chat/completions"
         assert request.headers["Authorization"] == "Bearer solution-key"
@@ -106,7 +106,7 @@ async def test_solution_llm_client_builds_policy_prompt_and_uses_solution_config
 
     client = _build_solution_client(handler)
     result = await client.generate_solution(
-        SolutionLLMRequest(
+        SolutionVLMRequest(
             problem_text="已知 x + 3 = 5，求 x。",
             correct_answer="2",
             image_url="https://example.com/problem.png",
@@ -121,7 +121,7 @@ async def test_solution_llm_client_builds_policy_prompt_and_uses_solution_config
 
 
 @pytest.mark.asyncio
-async def test_solution_llm_client_accepts_fenced_json_response() -> None:
+async def test_solution_vlm_client_accepts_fenced_json_response() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -140,7 +140,7 @@ async def test_solution_llm_client_accepts_fenced_json_response() -> None:
 
     client = _build_solution_client(handler)
     result = await client.generate_solution(
-        SolutionLLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+        SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
     )
     await client.aclose()
 
@@ -149,7 +149,7 @@ async def test_solution_llm_client_accepts_fenced_json_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_solution_llm_client_rejects_malformed_response() -> None:
+async def test_solution_vlm_client_rejects_malformed_response() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -160,7 +160,7 @@ async def test_solution_llm_client_rejects_malformed_response() -> None:
 
     with pytest.raises(LLMClientError) as exc_info:
         await client.generate_solution(
-            SolutionLLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
     await client.aclose()
 
@@ -169,7 +169,7 @@ async def test_solution_llm_client_rejects_malformed_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_solution_llm_client_classifies_provider_failure_as_retryable() -> None:
+async def test_solution_vlm_client_classifies_provider_failure_as_retryable() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"detail": "overloaded"})
 
@@ -177,7 +177,7 @@ async def test_solution_llm_client_classifies_provider_failure_as_retryable() ->
 
     with pytest.raises(LLMClientError) as exc_info:
         await client.generate_solution(
-            SolutionLLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
     await client.aclose()
 
@@ -186,7 +186,7 @@ async def test_solution_llm_client_classifies_provider_failure_as_retryable() ->
 
 
 @pytest.mark.asyncio
-async def test_coaching_llm_client_builds_context_prompt_and_uses_coaching_config() -> None:
+async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_config() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/chat/completions"
         assert request.headers["Authorization"] == "Bearer coaching-key"
@@ -219,7 +219,7 @@ async def test_coaching_llm_client_builds_context_prompt_and_uses_coaching_confi
 
     client = _build_coaching_client(handler)
     result = await client.send_message(
-        CoachingLLMRequest(
+        CoachingVLMRequest(
             problem_text="已知 x + 3 = 5，求 x。",
             correct_answer="2",
             canonical_steps_markdown="1. 两边同时减 3。\n2. 得到 x = 2。",
@@ -240,7 +240,7 @@ async def test_coaching_llm_client_builds_context_prompt_and_uses_coaching_confi
 
 
 @pytest.mark.asyncio
-async def test_coaching_llm_client_parses_optional_whiteboard_dsl() -> None:
+async def test_coaching_vlm_client_parses_optional_whiteboard_dsl() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -261,7 +261,7 @@ async def test_coaching_llm_client_parses_optional_whiteboard_dsl() -> None:
 
     client = _build_coaching_client(handler)
     result = await client.send_message(
-        CoachingLLMRequest(
+        CoachingVLMRequest(
             problem_text="题目",
             correct_answer="答案",
             canonical_steps_markdown="步骤",
@@ -276,7 +276,7 @@ async def test_coaching_llm_client_parses_optional_whiteboard_dsl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_coaching_llm_client_extracts_json_from_wrapped_markdown() -> None:
+async def test_coaching_vlm_client_extracts_json_from_wrapped_markdown() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -295,7 +295,7 @@ async def test_coaching_llm_client_extracts_json_from_wrapped_markdown() -> None
 
     client = _build_coaching_client(handler)
     result = await client.send_message(
-        CoachingLLMRequest(
+        CoachingVLMRequest(
             problem_text="题目",
             correct_answer="答案",
             canonical_steps_markdown="步骤",
@@ -311,7 +311,7 @@ async def test_coaching_llm_client_extracts_json_from_wrapped_markdown() -> None
 
 
 @pytest.mark.asyncio
-async def test_coaching_llm_client_network_failure_is_catchable() -> None:
+async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom")
 
@@ -319,7 +319,7 @@ async def test_coaching_llm_client_network_failure_is_catchable() -> None:
 
     with pytest.raises(LLMClientError) as exc_info:
         await client.send_message(
-            CoachingLLMRequest(
+            CoachingVLMRequest(
                 problem_text="题目",
                 correct_answer="答案",
                 canonical_steps_markdown="步骤",

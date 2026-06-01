@@ -5,7 +5,7 @@ from typing import Any
 from bson import ObjectId
 
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole, ExamState
-from app.infrastructure.llm.client import CoachingLLMClient, CoachingLLMRequest, LLMClientError
+from app.infrastructure.llm.client import CoachingVLMClient, CoachingVLMRequest, LLMClientError
 from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
     COACHING_CONVERSATIONS_COLLECTION,
@@ -21,7 +21,7 @@ class CoachingError(Exception):
 
 
 class CoachingService:
-    def __init__(self, database: Any, llm_client: CoachingLLMClient):
+    def __init__(self, database: Any, llm_client: CoachingVLMClient):
         self.db = database
         self.llm_client = llm_client
 
@@ -101,7 +101,7 @@ class CoachingService:
             for msg in conversation.messages
         ]
 
-        request = CoachingLLMRequest(
+        request = CoachingVLMRequest(
             problem_text=problem.get("text", ""),
             correct_answer=problem.get("correctAnswer", {}).get("display", ""),
             canonical_steps_markdown=steps_markdown,
