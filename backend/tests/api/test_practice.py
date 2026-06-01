@@ -223,3 +223,39 @@ async def test_stats_excludes_cooldown_problems(
     assert response.status_code == 200
     data = response.json()
     assert data["practiceableCount"] == 2
+
+
+@pytest.mark.asyncio
+async def test_next_problem_includes_graph_dsl(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, text="Triangle problem", correct_answer_display="4")
+    problem["graphDsl"] = "board.create('point', [0, 0], {name:'A'});"
+    database.seed("problems", [problem])
+
+    response = await client.post("/api/v1/practice/next")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["problem"]["graphDsl"] == "board.create('point', [0, 0], {name:'A'});"
+    assert "correctAnswer" not in data["problem"]
+
+
+@pytest.mark.asyncio
+async def test_next_problem_without_graph_dsl(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, text="Text only", correct_answer_display="4")
+    database.seed("problems", [problem])
+
+    response = await client.post("/api/v1/practice/next")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "graphDsl" not in data["problem"]
