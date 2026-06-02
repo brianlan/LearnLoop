@@ -4,6 +4,7 @@ export interface CoachingMessage {
   role: CoachingRole;
   content: string;
   whiteboard_dsl?: string | null;
+  reasoning_content?: string | null;
   created_at: string;
 }
 
