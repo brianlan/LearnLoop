@@ -16,6 +16,7 @@ TAGS_COLLECTION = "tags"
 SOLUTION_GENERATION_TASKS_COLLECTION = "solution_generation_tasks"
 CANONICAL_SOLUTIONS_COLLECTION = "canonical_solutions"
 COACHING_CONVERSATIONS_COLLECTION = "coaching_conversations"
+FOLDERS_COLLECTION = "folders"
 
 
 class SupportsAsyncClose(Protocol):
@@ -91,6 +92,7 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
         SOLUTION_GENERATION_TASKS_COLLECTION,
         CANONICAL_SOLUTIONS_COLLECTION,
         COACHING_CONVERSATIONS_COLLECTION,
+        FOLDERS_COLLECTION,
     ):
         if collection_name not in existing_collections and hasattr(database, "create_collection"):
             await database.create_collection(collection_name)
@@ -109,6 +111,16 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
             [("problem_id", ASCENDING), ("user_id", ASCENDING)],
             unique=True,
             name="problem_user_conversation_unique",
+        )
+
+    # Folder indexes: user lookup and sibling uniqueness (case-insensitive via collation)
+    create_folder_user_parent_index = getattr(database[FOLDERS_COLLECTION], "create_index", None)
+    if callable(create_folder_user_parent_index):
+        await create_folder_user_parent_index(
+            [("userId", ASCENDING), ("parentId", ASCENDING), ("name", ASCENDING)],
+            unique=True,
+            name="user_parent_folder_unique",
+            collation={"locale": "en", "strength": 2},  # case-insensitive
         )
 
 
