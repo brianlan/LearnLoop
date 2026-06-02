@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+import re
+
 from typing import Any, Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -170,6 +172,7 @@ async def list_problems(
     current_user: CurrentUserDependency,
     tag: str | None = Query(default=None),
     problem_type: ProblemType | None = Query(default=None, alias="type"),
+    q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ProblemListResponse:
@@ -178,6 +181,14 @@ async def list_problems(
         query["tags"] = tag
     if problem_type is not None:
         query["problemType"] = problem_type.value
+    if q is not None:
+        trimmed = q.strip()
+        if trimmed:
+            escaped = re.escape(trimmed)
+            query["$or"] = [
+                {"text": {"$regex": escaped, "$options": "i"}},
+                {"tags": {"$regex": escaped, "$options": "i"}},
+            ]
 
     total = await database["problems"].count_documents(query)
     cursor = database["problems"].find(query).sort("updatedAt", -1)

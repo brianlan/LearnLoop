@@ -45,10 +45,11 @@ export function ProblemsPage() {
   const [page, setPage] = useState(1);
   const [selectedTag, setSelectedTag] = useState<string>("");
   const [selectedProblemType, setSelectedProblemType] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const pageSize = 20;
 
   const { data: problemsData, isLoading: isLoadingProblems } = useQuery({
-    queryKey: ["problems", page, selectedTag, selectedProblemType],
+    queryKey: ["problems", page, selectedTag, selectedProblemType, searchQuery],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: String(page),
@@ -56,6 +57,7 @@ export function ProblemsPage() {
       });
       if (selectedTag) params.append("tag", selectedTag);
       if (selectedProblemType) params.append("type", selectedProblemType);
+      if (searchQuery.trim()) params.append("q", searchQuery.trim());
       return api.get<ProblemsResponse>(`/problems?${params.toString()}`);
     },
   });
@@ -81,6 +83,19 @@ export function ProblemsPage() {
         }}
       >
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+          <div>
+            <label htmlFor="search-input">Search problems: </label>
+            <input
+              id="search-input"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search by text or tag..."
+            />
+          </div>
         <div>
           <label htmlFor="tag-filter">Filter by Tag: </label>
           <select
