@@ -62,6 +62,7 @@ class _ChatCompletionRequest(BaseModel):
 class _ChatCompletionMessage(BaseModel):
     role: str
     content: str | None = None
+    reasoning_content: str | None = None
 
 
 class _ChatCompletionChoice(BaseModel):
@@ -111,6 +112,7 @@ class CoachingVLMResult(BaseModel):
     model: str
     text: str
     whiteboard_dsl: str | None = None
+    reasoning_content: str | None = None
     raw_provider_response: dict[str, Any]
 
 
@@ -127,6 +129,7 @@ class _CoachingProviderPayload(BaseModel):
 
     text: str
     whiteboard_dsl: str | None = None
+    reasoning_content: str | None = None
 
 
 class _BaseLLMClient:
@@ -277,7 +280,8 @@ class _BaseLLMClient:
                 raw_provider_response=raw_body,
             )
 
-        content = completion.choices[0].message.content
+        message = completion.choices[0].message
+        content = message.content
         if not content:
             raise LLMClientError(
                 "LLM provider response content was empty",
@@ -286,7 +290,10 @@ class _BaseLLMClient:
                 raw_provider_response=raw_body,
             )
 
-        return cls._load_json_content(content)
+        parsed = cls._load_json_content(content)
+        if message.reasoning_content is not None:
+            parsed["reasoning_content"] = message.reasoning_content
+        return parsed
 
 
 class SolutionVLMClient(_BaseLLMClient):
@@ -423,6 +430,7 @@ class CoachingVLMClient(_BaseLLMClient):
             model=self._model,
             text=parsed.text,
             whiteboard_dsl=_sanitize_whiteboard_dsl(parsed.whiteboard_dsl),
+            reasoning_content=parsed.reasoning_content,
             raw_provider_response=raw_provider_response,
         )
 

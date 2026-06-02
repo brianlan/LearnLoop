@@ -210,3 +210,53 @@ async def test_send_message_llm_failure():
         await service.send_message(str(prob_id), str(user_id), "hello")
     assert exc.value.code == "LLM_FAILURE"
     assert exc.value.status_code == 503
+
+@pytest.mark.asyncio
+async def test_send_message_persists_reasoning_content():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    client.result = CoachingVLMResult(
+        prompt_version="1",
+        model="test",
+        text="coach reply",
+        whiteboard_dsl=None,
+        reasoning_content="step by step thinking",
+        raw_provider_response={}
+    )
+    service = CoachingService(db, client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+
+    db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
+    db.cols["canonical_solutions"].seed({"problem_id": str(prob_id), "steps_markdown": "steps", "final_answer": "ans"})
+
+    conv = await service.send_message(str(prob_id), str(user_id), "help me")
+
+    assert len(conv.messages) == 2
+    assert conv.messages[1].role == CoachingRole.COACH
+    assert conv.messages[1].content == "coach reply"
+    assert conv.messages[1].reasoning_content == "step by step thinking"
+
+@pytest.mark.asyncio
+async def test_send_message_reasoning_content_none_when_absent():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    client.result = CoachingVLMResult(
+        prompt_version="1",
+        model="test",
+        text="coach reply",
+        whiteboard_dsl=None,
+        raw_provider_response={}
+    )
+    service = CoachingService(db, client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+
+    db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
+    db.cols["canonical_solutions"].seed({"problem_id": str(prob_id), "steps_markdown": "steps", "final_answer": "ans"})
+
+    conv = await service.send_message(str(prob_id), str(user_id), "help me")
+
+    assert conv.messages[1].reasoning_content is None

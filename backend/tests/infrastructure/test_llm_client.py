@@ -332,3 +332,74 @@ async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
 
     assert exc_info.value.code == FAILURE_CODE_NETWORK
     assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_parses_reasoning_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"text": "答案是 x=2。"}),
+                            "reasoning_content": "先分析等式，两边减3得到x=2。",
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_coaching_client(handler)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="x + 3 = 5",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            math_level_classification="primary",
+            new_message="怎么做？",
+        )
+    )
+    await client.aclose()
+
+    assert result.text == "答案是 x=2。"
+    assert result.reasoning_content == "先分析等式，两边减3得到x=2。"
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_reasoning_content_none_when_absent() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"text": "简单回答。"}),
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_coaching_client(handler)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="答案",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="答案",
+            math_level_classification="primary",
+            new_message="你好",
+        )
+    )
+    await client.aclose()
+
+    assert result.text == "简单回答。"
+    assert result.reasoning_content is None
