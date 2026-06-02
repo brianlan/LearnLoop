@@ -11,6 +11,7 @@ from app.infrastructure.storage.mongo import (
     AsyncMongoClientFactory,
     CANONICAL_SOLUTIONS_COLLECTION,
     COACHING_CONVERSATIONS_COLLECTION,
+    FOLDERS_COLLECTION,
     MongoClientAdapter,
     SOLUTION_GENERATION_TASKS_COLLECTION,
     TAGS_COLLECTION,
@@ -136,6 +137,7 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
         SOLUTION_GENERATION_TASKS_COLLECTION,
         CANONICAL_SOLUTIONS_COLLECTION,
         COACHING_CONVERSATIONS_COLLECTION,
+        FOLDERS_COLLECTION,
     ]
     assert database[TAGS_COLLECTION].index_calls == [
         {
@@ -147,5 +149,15 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
         {
             "keys": [("problem_id", 1), ("user_id", 1)],
             "kwargs": {"unique": True, "name": "problem_user_conversation_unique"},
+        }
+    ]
+    assert database[FOLDERS_COLLECTION].index_calls == [
+        {
+            "keys": [("userId", 1), ("parentId", 1), ("name", 1)],
+            "kwargs": {
+                "unique": True,
+                "name": "user_parent_folder_unique",
+                "collation": {"locale": "en", "strength": 2},
+            },
         }
     ]
