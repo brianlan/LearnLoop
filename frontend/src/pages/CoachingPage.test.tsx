@@ -418,4 +418,158 @@ describe("CoachingPage", () => {
     expect(listItems.length).toBeGreaterThanOrEqual(1);
     expect(chatLog.textContent).toContain("Move constants to the right");
   });
+
+  it("renders collapsed reasoning section above coach reply when reasoning_content is present", async () => {
+    const conversationWithReasoning: CoachingConversation = {
+      problem_id: "prob-123",
+      user_id: "user-456",
+      messages: [
+        {
+          role: "student",
+          content: "How do I solve this?",
+          created_at: "2026-05-25T12:31:00Z",
+        },
+        {
+          role: "coach",
+          content: "Take the square root of both sides.",
+          reasoning_content: "The equation is x^2 = 4. Taking sqrt of both sides gives x = ±2.",
+          created_at: "2026-05-25T12:32:00Z",
+        },
+      ],
+      created_at: "2026-05-25T12:30:00Z",
+      updated_at: "2026-05-25T12:32:00Z",
+    };
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(conversationWithReasoning);
+
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-log")).toBeInTheDocument();
+    });
+
+    // Reasoning section exists and is collapsed by default
+    const reasoning = screen.getByTestId("reasoning-1");
+    expect(reasoning).toBeInTheDocument();
+    expect(reasoning.tagName.toLowerCase()).toBe("details");
+    expect(reasoning.hasAttribute("open")).toBe(false);
+
+    // Reasoning summary text is visible
+    expect(within(reasoning).getByText("🧠 Reasoning")).toBeInTheDocument();
+
+    // Coach reply is still rendered
+    const chatLog = screen.getByTestId("chat-log");
+    expect(chatLog.textContent).toContain("Take the square root of both sides.");
+  });
+
+  it("expanding reasoning section reveals the reasoning text", async () => {
+    const conversationWithReasoning: CoachingConversation = {
+      problem_id: "prob-123",
+      user_id: "user-456",
+      messages: [
+        {
+          role: "coach",
+          content: "The answer is 2.",
+          reasoning_content: "Step by step: x^2 = 4, so x = sqrt(4) = 2.",
+          created_at: "2026-05-25T12:32:00Z",
+        },
+      ],
+      created_at: "2026-05-25T12:30:00Z",
+      updated_at: "2026-05-25T12:32:00Z",
+    };
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(conversationWithReasoning);
+
+    const user = userEvent.setup();
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("reasoning-0")).toBeInTheDocument();
+    });
+
+    // Click to expand
+    await user.click(screen.getByText("🧠 Reasoning"));
+
+    // Reasoning text is now visible
+    expect(screen.getByTestId("reasoning-0")).toHaveAttribute("open");
+    expect(screen.getByTestId("reasoning-0").textContent).toContain("Step by step");
+  });
+
+  it("does not render reasoning section for coach messages without reasoning_content", async () => {
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(mockConversationWithMessages);
+
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-log")).toBeInTheDocument();
+    });
+
+    // No reasoning sections should exist
+    expect(screen.queryByTestId(/reasoning-/)).not.toBeInTheDocument();
+  });
+
+  it("does not render reasoning section for student messages", async () => {
+    const conversationWithReasoning: CoachingConversation = {
+      problem_id: "prob-123",
+      user_id: "user-456",
+      messages: [
+        {
+          role: "student",
+          content: "Help me solve this.",
+          reasoning_content: "This should not render for student messages.",
+          created_at: "2026-05-25T12:31:00Z",
+        },
+        {
+          role: "coach",
+          content: "Sure!",
+          created_at: "2026-05-25T12:32:00Z",
+        },
+      ],
+      created_at: "2026-05-25T12:30:00Z",
+      updated_at: "2026-05-25T12:32:00Z",
+    };
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(conversationWithReasoning);
+
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-log")).toBeInTheDocument();
+    });
+
+    // No reasoning sections should exist (student reasoning_content is ignored)
+    expect(screen.queryByTestId(/reasoning-/)).not.toBeInTheDocument();
+  });
+
+  it("reasoning section appears above the coach reply in DOM order", async () => {
+    const conversationWithReasoning: CoachingConversation = {
+      problem_id: "prob-123",
+      user_id: "user-456",
+      messages: [
+        {
+          role: "coach",
+          content: "The answer is x = 2.",
+          reasoning_content: "Analyzing the equation step by step.",
+          created_at: "2026-05-25T12:32:00Z",
+        },
+      ],
+      created_at: "2026-05-25T12:30:00Z",
+      updated_at: "2026-05-25T12:32:00Z",
+    };
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(conversationWithReasoning);
+
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("reasoning-0")).toBeInTheDocument();
+    });
+
+    // The reasoning details element should come before the coach reply text in DOM order
+    const chatLog = screen.getByTestId("chat-log");
+    const reasoning = screen.getByTestId("reasoning-0");
+    const allElements = chatLog.querySelectorAll("[data-testid]");
+    const reasoningIndex = Array.from(allElements).indexOf(reasoning);
+
+    // Find the coach reply bubble (the MarkdownText content)
+    const coachReply = chatLog.querySelector('[data-testid="reasoning-0"]')?.nextElementSibling;
+    expect(coachReply).toBeTruthy();
+    expect(coachReply!.textContent).toContain("The answer is x = 2.");
+  });
 });

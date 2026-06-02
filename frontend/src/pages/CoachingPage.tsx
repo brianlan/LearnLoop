@@ -380,6 +380,7 @@ export function CoachingPage() {
               ) : (
                 conversation?.messages?.map((msg, index) => {
                   const isStudent = msg.role === "student";
+                  const hasReasoning = !isStudent && msg.reasoning_content?.trim();
                   return (
                     <div
                       key={index}
@@ -389,21 +390,43 @@ export function CoachingPage() {
                         width: "100%",
                       }}
                     >
-                      <div
-                        style={{
-                          maxWidth: "85%",
-                          padding: "0.75rem 1rem",
-                          borderRadius: "0.75rem",
-                          borderBottomRightRadius: isStudent ? "0px" : "0.75rem",
-                          borderBottomLeftRadius: isStudent ? "0.75rem" : "0px",
-                          backgroundColor: isStudent ? "var(--color-student-bubble-bg)" : "var(--color-coach-bubble-bg)",
-                          color: isStudent ? "var(--color-student-bubble-text)" : "var(--color-coach-bubble-text)",
-                          border: isStudent ? "1px solid var(--color-student-bubble-border)" : "1px solid var(--color-coach-bubble-border)",
-                          fontSize: "0.925rem",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        <MarkdownText content={msg.content} />
+                      <div style={{ maxWidth: "85%", display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+                        {hasReasoning && (
+                          <details
+                            data-testid={`reasoning-${index}`}
+                            style={{
+                              fontSize: "0.8125rem",
+                              color: "var(--color-text-muted)",
+                              backgroundColor: "var(--color-surface-muted)",
+                              border: "1px solid var(--color-border-muted)",
+                              borderRadius: "0.5rem",
+                              padding: "0.375rem 0.625rem",
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            <summary style={{ cursor: "pointer", fontWeight: 600, userSelect: "none" }}>
+                              🧠 Reasoning
+                            </summary>
+                            <div style={{ marginTop: "0.375rem", whiteSpace: "pre-wrap" }}>
+                              <MarkdownText content={msg.reasoning_content!} />
+                            </div>
+                          </details>
+                        )}
+                        <div
+                          style={{
+                            padding: "0.75rem 1rem",
+                            borderRadius: "0.75rem",
+                            borderBottomRightRadius: isStudent ? "0px" : "0.75rem",
+                            borderBottomLeftRadius: isStudent ? "0.75rem" : "0px",
+                            backgroundColor: isStudent ? "var(--color-student-bubble-bg)" : "var(--color-coach-bubble-bg)",
+                            color: isStudent ? "var(--color-student-bubble-text)" : "var(--color-coach-bubble-text)",
+                            border: isStudent ? "1px solid var(--color-student-bubble-border)" : "1px solid var(--color-coach-bubble-border)",
+                            fontSize: "0.925rem",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          <MarkdownText content={msg.content} />
+                        </div>
                       </div>
                     </div>
                   );
