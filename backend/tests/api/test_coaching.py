@@ -218,3 +218,46 @@ async def test_access_other_user_conversation(client: AsyncClient, coaching_app:
     response = await client.get(f"/api/v1/coaching/{str(other_prob_id)}/conversation")
     assert response.status_code == 404
 
+
+@pytest.mark.asyncio
+async def test_send_message_returns_reasoning_content(client: AsyncClient, setup_problem: str):
+    with patch("app.infrastructure.llm.client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = CoachingVLMResult(
+            prompt_version="1",
+            model="test",
+            text="coach response",
+            whiteboard_dsl=None,
+            reasoning_content="step by step thinking",
+            raw_provider_response={}
+        )
+
+        response = await client.post(
+            f"/api/v1/coaching/{setup_problem}/messages",
+            json={"message": "help me understand"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["messages"][1]["reasoning_content"] == "step by step thinking"
+
+
+@pytest.mark.asyncio
+async def test_send_message_reasoning_content_null_when_absent(client: AsyncClient, setup_problem: str):
+    with patch("app.infrastructure.llm.client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = CoachingVLMResult(
+            prompt_version="1",
+            model="test",
+            text="coach response",
+            whiteboard_dsl=None,
+            raw_provider_response={}
+        )
+
+        response = await client.post(
+            f"/api/v1/coaching/{setup_problem}/messages",
+            json={"message": "help me understand"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["messages"][1].get("reasoning_content") is None
+

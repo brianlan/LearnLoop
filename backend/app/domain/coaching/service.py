@@ -127,7 +127,8 @@ class CoachingService:
             conversation.add_message(CoachingMessage(
                 role=CoachingRole.COACH,
                 content=llm_result.text,
-                whiteboard_dsl=llm_result.whiteboard_dsl
+                whiteboard_dsl=llm_result.whiteboard_dsl,
+                reasoning_content=llm_result.reasoning_content
             ))
         except ValueError as exc:
             raise CoachingError(str(exc), code="MESSAGE_CAP_EXCEEDED", status_code=400)

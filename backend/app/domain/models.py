@@ -276,6 +276,7 @@ class CoachingMessage(BaseModel):
     role: CoachingRole
     content: str
     whiteboard_dsl: Optional[str] = None
+    reasoning_content: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
