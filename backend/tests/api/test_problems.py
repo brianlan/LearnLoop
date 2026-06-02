@@ -148,11 +148,31 @@ class FakeStorage:
 
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, value in query.items():
-        actual = document.get(key)
-        if isinstance(value, dict) and "$in" in value:
-            if actual not in value["$in"]:
+        if key == "$or":
+            if not any(_matches(document, sub) for sub in value):
                 return False
             continue
+        actual = document.get(key)
+        if isinstance(value, dict):
+            if "$in" in value:
+                if actual not in value["$in"]:
+                    return False
+                continue
+            if "$regex" in value:
+                import re
+
+                pattern = value["$regex"]
+                options = value.get("$options", "")
+                flags = 0
+                if "i" in options:
+                    flags |= re.IGNORECASE
+                if isinstance(actual, list):
+                    if not any(re.search(pattern, str(item), flags) for item in actual):
+                        return False
+                else:
+                    if not re.search(pattern, str(actual or ""), flags):
+                        return False
+                continue
         if isinstance(actual, list):
             if value not in actual:
                 return False
@@ -576,3 +596,159 @@ async def test_solution_status(problems_app: FastAPI, client: AsyncClient) -> No
     database["problems"].seed(other_problem)
     response = await client.get(f"/api/v1/problems/{str(other_problem['_id'])}/solution-status")
     assert response.status_code == 403
+
+
+async def test_search_by_text(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem1 = make_problem(user_id, text="Solve for x in equation", tags=["algebra"])
+    problem2 = make_problem(user_id, text="Find the area of triangle", tags=["geometry"])
+    problem3 = make_problem(user_id, text="What is 2+2?", tags=["arithmetic"])
+    database["problems"].seed(problem1, problem2, problem3)
+
+    response = await client.get("/api/v1/problems?q=equation")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["text"] == "Solve for x in equation"
+
+
+async def test_search_by_tag(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem1 = make_problem(user_id, text="Problem A", tags=["algebra"])
+    problem2 = make_problem(user_id, text="Problem B", tags=["geometry"])
+    database["problems"].seed(problem1, problem2)
+
+    response = await client.get("/api/v1/problems?q=alge")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["tags"] == ["algebra"]
+
+
+async def test_search_case_insensitive(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="QUADRATIC equation", tags=["Algebra"])
+    database["problems"].seed(problem)
+
+    response = await client.get("/api/v1/problems?q=quadratic")
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+    response = await client.get("/api/v1/problems?q=ALGEBRA")
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+
+async def test_search_no_match(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Hello world", tags=["greeting"])
+    database["problems"].seed(problem)
+
+    response = await client.get("/api/v1/problems?q=nonexistent")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["items"] == []
+
+
+async def test_search_whitespace_ignored(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Test problem", tags=["test"])
+    database["problems"].seed(problem)
+
+    response = await client.get("/api/v1/problems?q=%20%20%20")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+
+
+async def test_search_regex_special_chars_treated_literally(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Price is $10.00 (USD)", tags=["money"])
+    database["problems"].seed(problem)
+
+    response = await client.get("/api/v1/problems?q=$10.00")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["text"] == "Price is $10.00 (USD)"
+
+
+async def test_search_composes_with_tag_filter(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem1 = make_problem(user_id, text="Solve for x", tags=["algebra"])
+    problem2 = make_problem(user_id, text="Solve for y", tags=["geometry"])
+    problem3 = make_problem(user_id, text="Find area", tags=["algebra"])
+    database["problems"].seed(problem1, problem2, problem3)
+
+    response = await client.get("/api/v1/problems?q=Solve&tag=algebra")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["text"] == "Solve for x"
+
+
+async def test_search_composes_with_type_filter(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem1 = make_problem(user_id, text="Solve equation", tags=["algebra"], problem_type="short-answer")
+    problem2 = make_problem(user_id, text="Solve equation", tags=["algebra"], problem_type="single-choice")
+    database["problems"].seed(problem1, problem2)
+
+    response = await client.get("/api/v1/problems?q=Solve&type=short-answer")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["problemType"] == "short-answer"
+
+
+async def test_search_pagination_total_reflects_filtered(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    for i in range(5):
+        database["problems"].seed(
+            make_problem(user_id, text=f"Problem {i} about algebra", tags=["algebra"])
+        )
+    database["problems"].seed(
+        make_problem(user_id, text="Problem about geometry", tags=["geometry"])
+    )
+
+    response = await client.get("/api/v1/problems?q=algebra&pageSize=2")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 5
+    assert len(data["items"]) == 2

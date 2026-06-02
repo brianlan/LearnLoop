@@ -265,4 +265,128 @@ describe("ProblemsPage", () => {
       expect(screen.getByText("No problems found")).toBeInTheDocument();
     });
   });
+
+  it("sends search query to API", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            { id: "1", problemType: "single-choice", text: "Algebra problem", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            { id: "1", problemType: "single-choice", text: "Algebra problem", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20,
+        }),
+      });
+
+    renderProblemsPage();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Search problems:")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText("Search problems:"), "algebra");
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("q=algebra"),
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("resets page to 1 when search changes", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 20,
+        }),
+      });
+
+    renderProblemsPage();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Search problems:")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText("Search problems:"), "test");
+
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls;
+      const lastCall = calls[calls.length - 1][0];
+      expect(lastCall).toContain("page=1");
+      expect(lastCall).toContain("q=test");
+    });
+  });
+
+  it("does not include q parameter when search is empty", async () => {
+    mockFetch
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 20,
+        }),
+      });
+
+    renderProblemsPage();
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    const firstCall = mockFetch.mock.calls[0][0];
+    expect(firstCall).not.toContain("q=");
+  });
+
+  it("trims whitespace from search query", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 20,
+        }),
+      });
+
+    renderProblemsPage();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Search problems:")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText("Search problems:"), "   ");
+
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls.map((call) => call[0]);
+      expect(calls.some((url) => !url.includes("q="))).toBeTruthy();
+    });
+  });
 });
