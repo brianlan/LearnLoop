@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -107,9 +108,6 @@ async def _check_sibling_name_conflict(
     })
     if existing is not None:
         raise ApiError(409, "DUPLICATE_FOLDER_NAME", "A folder with this name already exists in this location")
-
-
-import re
 
 
 async def _get_all_descendant_ids(
