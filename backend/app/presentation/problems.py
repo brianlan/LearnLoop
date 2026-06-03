@@ -6,12 +6,14 @@ import re
 
 from typing import Any, Annotated
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
 from app.presentation.deps import DatabaseDependency, get_current_user
+from app.presentation.errors import ApiError
 from app.presentation.helpers import build_problem_image_url, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
 from app.presentation.tags import _register_tags
@@ -55,6 +57,7 @@ class ProblemSummaryPayload(BaseModel):
     createdAt: datetime
     updatedAt: datetime
     imageUrl: str | None = None
+    folderId: str | None = None
 
 
 class ProblemDetailPayload(ProblemSummaryPayload):
@@ -88,6 +91,19 @@ class ProblemTagsResponse(BaseModel):
 
 class SolutionStatusResponse(BaseModel):
     status: str
+
+
+class SetProblemFolderRequest(BaseModel):
+    folderId: str | None = None
+
+
+class BulkSetFolderRequest(BaseModel):
+    problemIds: list[str] = Field(min_length=1)
+    folderId: str | None = None
+
+
+class BulkSetFolderResponse(BaseModel):
+    ok: bool
 
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
@@ -127,6 +143,7 @@ def _serialize_correct_answer(problem: dict[str, Any]) -> CorrectAnswerPayload:
 
 
 def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload:
+    folder_id = problem.get("folderId")
     return ProblemSummaryPayload(
         id=str(problem["_id"]),
         text=str(problem["text"]),
@@ -141,6 +158,7 @@ def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload
         imageUrl=build_problem_image_url(str(problem["_id"]))
         if problem.get("sourceImage")
         else None,
+        folderId=folder_id if folder_id else None,
     )
 
 
@@ -151,6 +169,48 @@ def _serialize_problem_detail(problem: dict[str, Any]) -> ProblemDetailPayload:
         correctAnswer=_serialize_correct_answer(problem),
         origin=_serialize_origin(problem),
     )
+
+
+async def _get_owned_folder(
+    database: DatabaseDependency,
+    folder_id: str,
+    user_id: ObjectId,
+) -> dict[str, Any]:
+    """Get a folder by ID, verifying ownership."""
+    object_id = parse_object_id(folder_id, resource_name="Folder")
+    folder = await database["folders"].find_one({"_id": object_id})
+    if folder is None:
+        raise ApiError(404, "NOT_FOUND", "Folder not found")
+    if folder.get("userId") != user_id:
+        raise ApiError(403, "FORBIDDEN", "Forbidden")
+    return folder
+
+
+async def _get_all_descendant_folder_ids(
+    database: DatabaseDependency,
+    folder_id: ObjectId,
+) -> set[ObjectId]:
+    """Get all descendant folder IDs recursively."""
+    descendants: set[ObjectId] = set()
+    to_check = [folder_id]
+
+    while to_check:
+        current_batch = to_check
+        to_check = []
+
+        cursor = database["folders"].find(
+            {"parentId": {"$in": current_batch}},
+            {"_id": 1},
+        )
+        children = await cursor.to_list(length=None)
+
+        for child in children:
+            child_id = child["_id"]
+            if child_id not in descendants:
+                descendants.add(child_id)
+                to_check.append(child_id)
+
+    return descendants
 
 
 
@@ -173,10 +233,12 @@ async def list_problems(
     tag: str | None = Query(default=None),
     problem_type: ProblemType | None = Query(default=None, alias="type"),
     q: str | None = Query(default=None),
+    folder_id: str | None = Query(default=None, alias="folderId"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ProblemListResponse:
-    query: dict[str, Any] = {"userId": current_user["_id"], "isDeleted": False}
+    user_id = current_user["_id"]
+    query: dict[str, Any] = {"userId": user_id, "isDeleted": False}
     if tag is not None:
         query["tags"] = tag
     if problem_type is not None:
@@ -190,6 +252,19 @@ async def list_problems(
                 {"tags": {"$regex": escaped, "$options": "i"}},
             ]
 
+    # Handle folder filtering
+    if folder_id is not None:
+        if folder_id == "unfiled":
+            # Unfiled: problems where folderId is null or absent
+            query["folderId"] = None
+        else:
+            # Real folder: validate ownership and include descendants
+            folder = await _get_owned_folder(database, folder_id, user_id)
+            folder_oid = folder["_id"]
+            descendant_ids = await _get_all_descendant_folder_ids(database, folder_oid)
+            all_folder_ids = {folder_oid} | descendant_ids
+            query["folderId"] = {"$in": [str(fid) for fid in all_folder_ids]}
+
     total = await database["problems"].count_documents(query)
     cursor = database["problems"].find(query).sort("updatedAt", -1)
     cursor = cursor.skip((page - 1) * page_size).limit(page_size)
@@ -200,6 +275,42 @@ async def list_problems(
         pageSize=page_size,
         total=total,
     )
+
+
+@router.patch("/bulk-folder", response_model=BulkSetFolderResponse)
+async def bulk_set_problem_folder(
+    payload: BulkSetFolderRequest,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> BulkSetFolderResponse:
+    """Bulk assign problems to a folder or Unfiled."""
+    user_id = current_user["_id"]
+
+    # Validate target folder if provided
+    target_folder_id: str | None = None
+    if payload.folderId is not None:
+        folder = await _get_owned_folder(database, payload.folderId, user_id)
+        target_folder_id = str(folder["_id"])
+
+    # Validate all problem IDs and ownership
+    problem_object_ids: list[ObjectId] = []
+    for problem_id_str in payload.problemIds:
+        problem_id = parse_object_id(problem_id_str, resource_name="Problem")
+        problem = await database["problems"].find_one({"_id": problem_id})
+        if problem is None or problem.get("isDeleted", False):
+            raise ApiError(404, "NOT_FOUND", f"Problem {problem_id_str} not found")
+        if problem.get("userId") != user_id:
+            raise ApiError(403, "FORBIDDEN", f"Problem {problem_id_str} not owned")
+        problem_object_ids.append(problem_id)
+
+    # Update all problems
+    now = datetime.now(UTC)
+    await database["problems"].update_many(
+        {"_id": {"$in": problem_object_ids}},
+        {"$set": {"folderId": target_folder_id, "updatedAt": now}},
+    )
+
+    return BulkSetFolderResponse(ok=True)
 
 
 @router.get("/{problem_id}", response_model=ProblemResponse)
@@ -257,6 +368,36 @@ async def update_problem(
     await database["problems"].update_one({"_id": problem["_id"]}, {"$set": updates})
     updated_problem = deepcopy(problem)
     updated_problem.update(updates)
+    return ProblemResponse(problem=_serialize_problem_detail(updated_problem))
+
+
+@router.patch("/{problem_id}/folder", response_model=ProblemResponse)
+async def set_problem_folder(
+    problem_id: str,
+    payload: SetProblemFolderRequest,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> ProblemResponse:
+    """Assign a problem to a folder or Unfiled."""
+    user_id = current_user["_id"]
+    problem = await get_owned_problem(database, problem_id, user_id, allow_deleted=False)
+
+    # Validate target folder if provided
+    target_folder_id: str | None = None
+    if payload.folderId is not None:
+        folder = await _get_owned_folder(database, payload.folderId, user_id)
+        target_folder_id = str(folder["_id"])
+
+    # Update the problem
+    now = datetime.now(UTC)
+    await database["problems"].update_one(
+        {"_id": problem["_id"]},
+        {"$set": {"folderId": target_folder_id, "updatedAt": now}},
+    )
+
+    updated_problem = deepcopy(problem)
+    updated_problem["folderId"] = target_folder_id
+    updated_problem["updatedAt"] = now
     return ProblemResponse(problem=_serialize_problem_detail(updated_problem))
 
 
