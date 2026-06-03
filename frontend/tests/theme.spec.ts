@@ -231,6 +231,30 @@ test.describe("Problems Page Theme", () => {
     await expect(page.getByLabel("Filter by Tag")).toBeVisible();
     await expect(page.getByLabel("Filter by Type")).toBeVisible();
   });
+
+  test("problems page dark theme paints a themed background on main content area", async ({ page, request }) => {
+    const session = await createSession(request, "problems_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/problems");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Verify the main content area has a dark/themed background, not white
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    // Verify page heading remains visible
+    await expect(page.getByRole("heading", { name: "Problems" })).toBeVisible();
+  });
 });
 
 test.describe("Problem Detail Page Theme", () => {
