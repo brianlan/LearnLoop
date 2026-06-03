@@ -116,7 +116,8 @@ export function TagsPage() {
   };
 
   return (
-    <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
+    <main style={{ minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-surface-muted)", color: "var(--color-text)", padding: "1rem" }}>
+      <div style={{ maxWidth: "800px", margin: "0 auto" }}>
       <h1>Tags</h1>
 
       <form
@@ -366,6 +367,7 @@ export function TagsPage() {
           </div>
         </Modal>
       )}
+      </div>
     </main>
   );
 }

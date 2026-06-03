@@ -255,6 +255,27 @@ test.describe("Problems Page Theme", () => {
     // Verify page heading remains visible
     await expect(page.getByRole("heading", { name: "Problems" })).toBeVisible();
   });
+
+  test("problems page dark theme background matches Ingest page surface-muted", async ({ page, request }) => {
+    const session = await createSession(request, "problems_dark_surface_muted");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/problems");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByRole("heading", { name: "Problems" })).toBeVisible();
+  });
 });
 
 test.describe("Problem Detail Page Theme", () => {
@@ -333,6 +354,28 @@ test.describe("Tags Page Theme", () => {
     // Verify create tag button is visible
     await expect(page.getByRole("button", { name: "Create Tag" })).toBeVisible();
   });
+
+  test("tags page dark theme paints a full-page themed background", async ({ page, request }) => {
+    const session = await createSession(request, "tags_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/tags");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add Tag" })).toBeVisible();
+  });
 });
 
 test.describe("Settings Page Theme", () => {
@@ -407,6 +450,28 @@ test.describe("Practice Page Theme", () => {
     await expect(page.getByRole("heading", { name: "Practice" })).toBeVisible();
 
     // Verify start practice button is visible
+    await expect(page.getByTestId("start-practice-button")).toBeVisible();
+  });
+
+  test("practice page dark theme paints a full-page themed background", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "practice_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/practice");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByRole("heading", { name: "Practice" })).toBeVisible();
     await expect(page.getByTestId("start-practice-button")).toBeVisible();
   });
 });
@@ -490,6 +555,35 @@ test.describe("Exams Page Theme", () => {
 
     // Verify start new exam button is visible
     await expect(page.getByRole("button", { name: "Start New Exam" })).toBeVisible();
+  });
+
+  test("exams page dark theme paints a full-page themed background", async ({ page, request }) => {
+    const session = await createSession(request, "exams_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/exams");
+
+    // Verify theme is dark
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    // Get --color-surface-muted from the page
+    const surfaceMuted = await page.evaluate(() => {
+      return window.getComputedStyle(document.documentElement).getPropertyValue("--color-surface-muted").trim();
+    });
+
+    // Verify the main element has the themed background
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    // Verify heading is still visible
+    await expect(page.getByRole("heading", { name: "Exam History" })).toBeVisible();
   });
 });
 
