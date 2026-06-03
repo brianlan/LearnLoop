@@ -3,6 +3,7 @@ import type { ChangeEvent, ClipboardEvent } from "react";
 import { GraphSandbox } from "./GraphSandbox";
 import { TagInput } from "./TagInput";
 import { LatexText } from "./LatexText";
+import { parseOptions } from "./AnswerInput";
 import { api } from "@/api/client";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
@@ -704,6 +705,43 @@ function EditingStep({
         />
       </div>
 
+      {(formData.problemType === "single-choice" || formData.problemType === "multi-choice") && (
+        <div style={{ marginBottom: "24px" }}>
+          <label
+            style={{
+              display: "block",
+              marginBottom: "6px",
+              fontSize: "14px",
+              fontWeight: 500,
+              color: "var(--color-text)",
+            }}
+          >
+            Detected Choices
+          </label>
+          {(() => {
+            const choices = parseOptions(formData.text);
+            return choices.length > 0 ? (
+              <div data-testid="detected-choices" style={{ padding: "10px 12px", backgroundColor: "var(--color-surface-muted)", borderRadius: "6px", border: "1px solid var(--color-border)" }}>
+                <div data-testid="detected-choices-count" style={{ fontSize: "12px", color: "var(--color-text-muted)", marginBottom: "8px" }}>
+                  {choices.length} choice{choices.length !== 1 ? "s" : ""} detected
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {choices.map((choice, index) => (
+                    <div key={index} style={{ fontSize: "14px", color: "var(--color-text)", padding: "2px 0" }}>
+                      {choice}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div data-testid="detected-choices" style={{ padding: "10px 12px", backgroundColor: "var(--color-surface-muted)", borderRadius: "6px", border: "1px solid var(--color-border)", fontSize: "14px", color: "var(--color-text-muted)" }}>
+                No choices detected in problem text
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       <div style={{ marginBottom: "24px" }}>
         <TagInput
           tags={formData.tags}
@@ -881,6 +919,40 @@ function ConfirmingStep({
             {formData.correctAnswer || "(empty)"}
           </div>
         </div>
+
+        {(formData.problemType === "single-choice" || formData.problemType === "multi-choice") && (
+          <div style={{ marginBottom: "16px" }}>
+            <div
+              style={{
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "var(--color-text-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: "4px",
+              }}
+            >
+              Detected Choices
+            </div>
+            {(() => {
+              const choices = parseOptions(formData.text);
+              return choices.length > 0 ? (
+                <div data-testid="detected-choices" style={{ fontSize: "14px", color: "var(--color-text)" }}>
+                  <span data-testid="detected-choices-count">{choices.length} choice{choices.length !== 1 ? "s" : ""} detected</span>
+                  <div style={{ marginTop: "4px", display: "flex", flexDirection: "column", gap: "2px" }}>
+                    {choices.map((choice, index) => (
+                      <div key={index}>{choice}</div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div data-testid="detected-choices" style={{ fontSize: "14px", color: "var(--color-text-muted)" }}>
+                  No choices detected
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         <div>
           <div
