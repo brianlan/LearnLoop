@@ -266,4 +266,21 @@ describe("IngestionWizard", () => {
       expect(screen.queryByText("View error details")).not.toBeInTheDocument();
     });
   });
+
+  describe("choice preview", () => {
+    it("renders ingestion wizard with single-choice draft data", () => {
+      const draft = {
+        text: "1. What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6",
+        problemType: "single-choice",
+        graphDsl: "",
+        correctAnswer: "B",
+        tags: [],
+      };
+      localStorage.setItem("ingestion-draft", JSON.stringify(draft));
+
+      render(<IngestionWizard />);
+      // Verify the wizard renders (starts at paste step)
+      expect(screen.getByTestId("ingestion-wizard")).toBeInTheDocument();
+    });
+  });
 });

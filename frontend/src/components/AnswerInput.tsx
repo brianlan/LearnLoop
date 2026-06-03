@@ -5,14 +5,19 @@ export function extractOptionKey(option: string): string {
 
 export function parseOptions(text: string): string[] {
   const lines = text.split("\n");
-  const options: string[] = [];
+  const lettered: string[] = [];
+  const numeric: string[] = [];
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^[A-Z][.):\s]/.test(trimmed) || /^\d+[.):\s]/.test(trimmed)) {
-      options.push(trimmed);
+    if (/^[A-Z][.):\s]/.test(trimmed)) {
+      lettered.push(trimmed);
+    } else if (/^\d+[.):\s]/.test(trimmed)) {
+      numeric.push(trimmed);
     }
   }
-  return options.length > 0 ? options : [];
+  if (lettered.length > 0) return lettered;
+  if (numeric.length > 0) return numeric;
+  return [];
 }
 
 interface SingleChoiceInputProps {
