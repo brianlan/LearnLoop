@@ -439,7 +439,7 @@ export function ProblemsPage() {
   };
 
   return (
-    <main style={{ padding: "1rem" }}>
+    <main style={{ padding: "1rem", minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-bg)", color: "var(--color-text)" }}>
       <h1>Problems</h1>
 
       {feedback && (
@@ -570,6 +570,7 @@ export function ProblemsPage() {
               padding: "0.75rem",
               border: "1px solid var(--color-border)",
               borderRadius: "4px",
+              backgroundColor: "var(--color-surface)",
             }}
           >
             <button type="button" onClick={() => setIsSidebarCollapsed(false)}>Show folders</button>
@@ -583,6 +584,7 @@ export function ProblemsPage() {
               borderRadius: "4px",
               padding: "0.75rem",
               alignSelf: "start",
+              backgroundColor: "var(--color-surface)",
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -675,6 +677,7 @@ export function ProblemsPage() {
                   padding: "1rem",
                   cursor: "pointer",
                   opacity: problem.isDeleted ? 0.5 : 1,
+                  backgroundColor: "var(--color-surface)",
                 }}
               >
                 <label
