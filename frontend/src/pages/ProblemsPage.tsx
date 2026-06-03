@@ -115,6 +115,7 @@ export function ProblemsPage() {
   const [movingParentId, setMovingParentId] = useState<string>("root");
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+  const [openFolderActionsId, setOpenFolderActionsId] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return window.sessionStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
   });
@@ -207,6 +208,7 @@ export function ProblemsPage() {
   });
 
   const updateFolderFilter = (folderId: string) => {
+    setOpenFolderActionsId(null);
     const next = new URLSearchParams(searchParams);
     if (folderId) next.set("folderId", folderId);
     else next.delete("folderId");
@@ -288,6 +290,8 @@ export function ProblemsPage() {
 
   const folderButtonStyle = (active: boolean): React.CSSProperties => ({
     width: "100%",
+    minWidth: 0,
+    flex: "1 1 auto",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -306,7 +310,7 @@ export function ProblemsPage() {
     const hasChildren = folder.children.length > 0;
     return (
       <li key={folder.id}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.25rem", paddingLeft: `${depth * 0.75}rem` }}>
+        <div style={{ position: "relative", display: "flex", alignItems: "center", gap: "0.25rem", paddingLeft: `${depth * 0.75}rem` }}>
           <button
             type="button"
             aria-label={isExpanded ? `Collapse ${folder.name}` : `Expand ${folder.name}`}
@@ -336,15 +340,94 @@ export function ProblemsPage() {
             onClick={() => updateFolderFilter(folder.id)}
             style={folderButtonStyle(selectedFolderId === folder.id)}
           >
-            <span>{folder.name}</span>
-            <span aria-label={`${folder.name} count`}>{folder.problemCount}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{folder.name}</span>
+            <span aria-label={`${folder.name} count`} style={{ flex: "0 0 auto" }}>{folder.problemCount}</span>
           </button>
-        </div>
-        <div style={{ display: "flex", gap: "0.25rem", margin: "0.25rem 0 0.5rem", paddingLeft: `${depth * 0.75 + 1.75}rem` }}>
-          <button type="button" aria-label={`New child folder in ${folder.name}`} onClick={() => createFolder(folder.id)}>New child</button>
-          <button type="button" aria-label={`Rename ${folder.name}`} onClick={() => renameFolder(folder)}>Rename</button>
-          <button type="button" aria-label={`Move ${folder.name}`} onClick={() => openMoveFolder(folder)}>Move</button>
-          <button type="button" aria-label={`Delete ${folder.name}`} onClick={() => deleteFolder(folder)}>Delete</button>
+          <button
+            type="button"
+            aria-label={`Folder actions for ${folder.name}`}
+            aria-haspopup="menu"
+            aria-expanded={openFolderActionsId === folder.id}
+            onClick={() => setOpenFolderActionsId((current) => (current === folder.id ? null : folder.id))}
+            style={{
+              flex: "0 0 auto",
+              width: "1.75rem",
+              height: "1.75rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "4px",
+              background: "var(--color-surface)",
+              color: "var(--color-text)",
+              cursor: "pointer",
+              lineHeight: 1,
+            }}
+          >
+            ...
+          </button>
+          {openFolderActionsId === folder.id && (
+            <div
+              role="menu"
+              aria-label={`Actions for ${folder.name}`}
+              style={{
+                position: "absolute",
+                top: "calc(100% + 0.25rem)",
+                right: 0,
+                zIndex: 2,
+                display: "grid",
+                gap: "0.25rem",
+                minWidth: "8rem",
+                padding: "0.35rem",
+                border: "1px solid var(--color-border)",
+                borderRadius: "4px",
+                background: "var(--color-surface)",
+                boxShadow: "0 8px 24px rgba(0, 0, 0, 0.12)",
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                aria-label={`New child folder in ${folder.name}`}
+                onClick={() => {
+                  setOpenFolderActionsId(null);
+                  createFolder(folder.id);
+                }}
+              >
+                New child
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                aria-label={`Rename ${folder.name}`}
+                onClick={() => {
+                  setOpenFolderActionsId(null);
+                  renameFolder(folder);
+                }}
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                aria-label={`Move ${folder.name}`}
+                onClick={() => {
+                  setOpenFolderActionsId(null);
+                  openMoveFolder(folder);
+                }}
+              >
+                Move
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                aria-label={`Delete ${folder.name}`}
+                onClick={() => {
+                  setOpenFolderActionsId(null);
+                  deleteFolder(folder);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          )}
         </div>
         {hasChildren && isExpanded && (
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>

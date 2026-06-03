@@ -261,7 +261,8 @@ describe("ProblemsPage", () => {
     await screen.findByText("Chapter 1");
 
     await user.click(screen.getByRole("button", { name: "Create folder" }));
-    await user.click(screen.getByRole("button", { name: "New child folder in Chapter 1" }));
+    await user.click(screen.getByRole("button", { name: "Folder actions for Chapter 1" }));
+    await user.click(screen.getByRole("menuitem", { name: "New child folder in Chapter 1" }));
 
     await waitFor(() => {
       const mutationCalls = mockFetch.mock.calls.filter((call) => call[1]?.method === "POST");
@@ -280,11 +281,14 @@ describe("ProblemsPage", () => {
     renderProblemsPage();
     await screen.findByText("Chapter 1");
 
-    await user.click(screen.getByRole("button", { name: "Rename Chapter 1" }));
-    await user.click(screen.getByRole("button", { name: "Move Chapter 1" }));
+    await user.click(screen.getByRole("button", { name: "Folder actions for Chapter 1" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename Chapter 1" }));
+    await user.click(screen.getByRole("button", { name: "Folder actions for Chapter 1" }));
+    await user.click(screen.getByRole("menuitem", { name: "Move Chapter 1" }));
     await user.selectOptions(screen.getByLabelText("Move Chapter 1 to:"), "root");
     await user.click(screen.getByRole("button", { name: "Save move" }));
-    await user.click(screen.getByRole("button", { name: "Delete Chapter 1" }));
+    await user.click(screen.getByRole("button", { name: "Folder actions for Chapter 1" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete Chapter 1" }));
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
