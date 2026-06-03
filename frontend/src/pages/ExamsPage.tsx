@@ -140,7 +140,8 @@ export function ExamsPage() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <main style={{ maxWidth: "960px", margin: "2rem auto", padding: "1rem" }}>
+    <main style={{ minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-surface-muted)", color: "var(--color-text)", padding: "1rem" }}>
+      <div style={{ maxWidth: "960px", margin: "2rem auto" }}>
       <div
         style={{
           display: "flex",
@@ -282,6 +283,7 @@ export function ExamsPage() {
           />
         </>
       )}
+      </div>
     </main>
   );
 }

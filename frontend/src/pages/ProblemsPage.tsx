@@ -439,7 +439,7 @@ export function ProblemsPage() {
   };
 
   return (
-    <main style={{ padding: "1rem", minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-bg)", color: "var(--color-text)" }}>
+    <main style={{ padding: "1rem", minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-surface-muted)", color: "var(--color-text)" }}>
       <h1>Problems</h1>
 
       {feedback && (

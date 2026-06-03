@@ -299,7 +299,8 @@ export function PracticePage() {
   const items = data?.items ?? [];
 
   return (
-    <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
+    <main style={{ minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-surface-muted)", color: "var(--color-text)", padding: "1rem" }}>
+      <div style={{ maxWidth: "800px", margin: "0 auto" }}>
       <div
         style={{
           display: "flex",
@@ -387,6 +388,7 @@ export function PracticePage() {
           ))}
         </div>
       )}
+      </div>
     </main>
   );
 }
