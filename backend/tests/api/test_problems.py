@@ -93,10 +93,19 @@ class FakeCollection:
                 return FakeUpdateResult(1)
         return FakeUpdateResult(0)
 
+    async def update_many(self, query: dict[str, Any], update: dict[str, Any]) -> FakeUpdateResult:
+        count = 0
+        for document in self._documents:
+            if _matches(document, query):
+                for key, value in update.get("$set", {}).items():
+                    document[key] = deepcopy(value)
+                count += 1
+        return FakeUpdateResult(count)
+
     async def count_documents(self, query: dict[str, Any]) -> int:
         return sum(1 for document in self._documents if _matches(document, query))
 
-    def find(self, query: dict[str, Any]) -> FakeCursor:
+    def find(self, query: dict[str, Any], projection: dict[str, Any] | None = None) -> FakeCursor:
         matches = [document for document in self._documents if _matches(document, query)]
         return FakeCursor(matches)
 
@@ -121,6 +130,7 @@ class FakeDatabase:
         self._collections = {
             "problems": FakeCollection(),
             "tags": FakeCollection(),
+            "folders": FakeCollection(),
             "ingestion_previews": FakeCollection(),
             "users": FakeCollection(),
             "sessions": FakeCollection(),
@@ -234,6 +244,7 @@ def make_problem(
     updated_at: datetime | None = None,
     tags: list[str] | None = None,
     is_deleted: bool = False,
+    folder_id: str | None = None,
 ) -> dict[str, Any]:
     now = updated_at or datetime.now(UTC)
     return {
@@ -272,6 +283,7 @@ def make_problem(
         },
         "isDeleted": is_deleted,
         "deletedAt": now if is_deleted else None,
+        "folderId": folder_id,
         "createdAt": now,
         "updatedAt": now,
     }
@@ -752,3 +764,318 @@ async def test_search_pagination_total_reflects_filtered(
     data = response.json()
     assert data["total"] == 5
     assert len(data["items"]) == 2
+
+
+# Folder assignment and filtering tests
+
+
+def make_folder(
+    user_id: ObjectId,
+    name: str,
+    *,
+    parent_id: ObjectId | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    return {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "name": name,
+        "parentId": parent_id,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
+async def test_assign_single_problem_to_folder(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    problem = make_problem(user_id, text="Problem to move")
+    database["folders"].seed(folder)
+    database["problems"].seed(problem)
+
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/folder",
+        json={"folderId": str(folder["_id"])},
+    )
+    assert response.status_code == 200
+    body = response.json()["problem"]
+    assert body["folderId"] == str(folder["_id"])
+
+    # Verify stored
+    stored = database["problems"]._documents[0]
+    assert stored["folderId"] == str(folder["_id"])
+
+
+async def test_assign_problem_to_unfiled(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    problem = make_problem(user_id, text="Problem in folder", folder_id=str(folder["_id"]))
+    database["folders"].seed(folder)
+    database["problems"].seed(problem)
+
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/folder",
+        json={"folderId": None},
+    )
+    assert response.status_code == 200
+    body = response.json()["problem"]
+    assert body["folderId"] is None
+
+
+async def test_bulk_assign_problems_to_folder(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    p1 = make_problem(user_id, text="P1")
+    p2 = make_problem(user_id, text="P2")
+    p3 = make_problem(user_id, text="P3")
+    database["folders"].seed(folder)
+    database["problems"].seed(p1, p2, p3)
+
+    response = await client.patch(
+        "/api/v1/problems/bulk-folder",
+        json={
+            "problemIds": [str(p1["_id"]), str(p2["_id"])],
+            "folderId": str(folder["_id"]),
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+    # Verify only p1 and p2 were updated
+    stored_p1 = next(p for p in database["problems"]._documents if p["_id"] == p1["_id"])
+    stored_p2 = next(p for p in database["problems"]._documents if p["_id"] == p2["_id"])
+    stored_p3 = next(p for p in database["problems"]._documents if p["_id"] == p3["_id"])
+    assert stored_p1["folderId"] == str(folder["_id"])
+    assert stored_p2["folderId"] == str(folder["_id"])
+    assert stored_p3.get("folderId") is None
+
+
+async def test_bulk_assign_to_unfiled(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    p1 = make_problem(user_id, text="P1", folder_id=str(folder["_id"]))
+    p2 = make_problem(user_id, text="P2", folder_id=str(folder["_id"]))
+    database["folders"].seed(folder)
+    database["problems"].seed(p1, p2)
+
+    response = await client.patch(
+        "/api/v1/problems/bulk-folder",
+        json={
+            "problemIds": [str(p1["_id"]), str(p2["_id"])],
+            "folderId": None,
+        },
+    )
+    assert response.status_code == 200
+
+    stored_p1 = next(p for p in database["problems"]._documents if p["_id"] == p1["_id"])
+    stored_p2 = next(p for p in database["problems"]._documents if p["_id"] == p2["_id"])
+    assert stored_p1["folderId"] is None
+    assert stored_p2["folderId"] is None
+
+
+async def test_reject_assign_to_nonexistent_folder(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    problem = make_problem(user_id, text="P1")
+    database["problems"].seed(problem)
+
+    fake_folder_id = str(ObjectId())
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/folder",
+        json={"folderId": fake_folder_id},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_reject_assign_to_other_user_folder(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    other_user_id = problems_app.state.secondary_user["_id"]
+
+    other_folder = make_folder(other_user_id, "Other's folder")
+    problem = make_problem(user_id, text="P1")
+    database["folders"].seed(other_folder)
+    database["problems"].seed(problem)
+
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/folder",
+        json={"folderId": str(other_folder["_id"])},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+async def test_reject_bulk_move_other_user_problems(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    other_user_id = problems_app.state.secondary_user["_id"]
+
+    folder = make_folder(user_id, "My folder")
+    other_problem = make_problem(other_user_id, text="Other's problem")
+    database["folders"].seed(folder)
+    database["problems"].seed(other_problem)
+
+    response = await client.patch(
+        "/api/v1/problems/bulk-folder",
+        json={
+            "problemIds": [str(other_problem["_id"])],
+            "folderId": str(folder["_id"]),
+        },
+    )
+    assert response.status_code == 403
+    assert "FORBIDDEN" in response.json()["error"]["code"]
+
+
+async def test_filter_by_folder_includes_descendants(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    # Create folder hierarchy: Chapter 1 -> Section 1.1
+    chapter = make_folder(user_id, "Chapter 1")
+    section = make_folder(user_id, "Section 1.1", parent_id=chapter["_id"])
+    database["folders"].seed(chapter, section)
+
+    # Problems in different folders
+    p_chapter = make_problem(user_id, text="In Chapter", folder_id=str(chapter["_id"]))
+    p_section = make_problem(user_id, text="In Section", folder_id=str(section["_id"]))
+    p_unfiled = make_problem(user_id, text="Unfiled")
+    database["problems"].seed(p_chapter, p_section, p_unfiled)
+
+    # Filter by Chapter 1 should include both chapter and section problems
+    response = await client.get(f"/api/v1/problems?folderId={chapter['_id']}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    texts = {item["text"] for item in data["items"]}
+    assert texts == {"In Chapter", "In Section"}
+
+
+async def test_filter_by_unfiled(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    p_in_folder = make_problem(user_id, text="In folder", folder_id=str(folder["_id"]))
+    p_unfiled_null = make_problem(user_id, text="Unfiled null", folder_id=None)
+    p_unfiled_missing = make_problem(user_id, text="Unfiled missing")
+    del p_unfiled_missing["folderId"]  # Remove the field entirely
+
+    database["folders"].seed(folder)
+    database["problems"].seed(p_in_folder, p_unfiled_null, p_unfiled_missing)
+
+    response = await client.get("/api/v1/problems?folderId=unfiled")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    texts = {item["text"] for item in data["items"]}
+    assert texts == {"Unfiled null", "Unfiled missing"}
+
+
+async def test_omit_folder_id_returns_all_problems(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    p_in_folder = make_problem(user_id, text="In folder", folder_id=str(folder["_id"]))
+    p_unfiled = make_problem(user_id, text="Unfiled")
+
+    database["folders"].seed(folder)
+    database["problems"].seed(p_in_folder, p_unfiled)
+
+    response = await client.get("/api/v1/problems")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+
+
+async def test_folder_filter_composes_with_tag_and_search(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    p1 = make_problem(user_id, text="Algebra problem", tags=["algebra"], folder_id=str(folder["_id"]))
+    p2 = make_problem(user_id, text="Geometry problem", tags=["geometry"], folder_id=str(folder["_id"]))
+    p3 = make_problem(user_id, text="Another algebra", tags=["algebra"], folder_id=str(folder["_id"]))
+
+    database["folders"].seed(folder)
+    database["problems"].seed(p1, p2, p3)
+
+    # Filter by folder + tag
+    response = await client.get(f"/api/v1/problems?folderId={folder['_id']}&tag=algebra")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+
+    # Filter by folder + search
+    response = await client.get(f"/api/v1/problems?folderId={folder['_id']}&q=Algebra")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+
+
+async def test_problem_payload_includes_folder_id(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    folder = make_folder(user_id, "Chapter 1")
+    problem = make_problem(user_id, text="Problem", folder_id=str(folder["_id"]))
+    database["folders"].seed(folder)
+    database["problems"].seed(problem)
+
+    # List endpoint
+    list_response = await client.get("/api/v1/problems")
+    assert list_response.status_code == 200
+    item = list_response.json()["items"][0]
+    assert item["folderId"] == str(folder["_id"])
+
+    # Detail endpoint
+    detail_response = await client.get(f"/api/v1/problems/{problem['_id']}")
+    assert detail_response.status_code == 200
+    body = detail_response.json()["problem"]
+    assert body["folderId"] == str(folder["_id"])
