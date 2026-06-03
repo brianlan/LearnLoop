@@ -26,367 +26,361 @@ function createQueryClient() {
   });
 }
 
-function renderProblemsPage() {
+function renderProblemsPage(initialEntries = ["/problems"]) {
   return render(
     <QueryClientProvider client={createQueryClient()}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={initialEntries}>
         <ProblemsPage />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
+function okJson(data: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? "OK" : "Error",
+    json: async () => data,
+  };
+}
+
+function problem(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "p1",
+    problemType: "single-choice",
+    text: "What is 2+2?",
+    tags: ["algebra"],
+    isDeleted: false,
+    tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 },
+    createdAt: "",
+    updatedAt: "",
+    ...overrides,
+  };
+}
+
+const folderTree = {
+  allProblemsCount: 4,
+  unfiledCount: 1,
+  items: [
+    {
+      id: "chapter-1",
+      name: "Chapter 1",
+      parentId: null,
+      problemCount: 3,
+      createdAt: "",
+      updatedAt: "",
+      children: [
+        {
+          id: "section-1",
+          name: "Section 1",
+          parentId: "chapter-1",
+          problemCount: 2,
+          createdAt: "",
+          updatedAt: "",
+          children: [],
+        },
+      ],
+    },
+  ],
+};
+
+function installApiMock(options: {
+  problems?: unknown[];
+  total?: number;
+  folderResponse?: unknown;
+  tags?: string[];
+  failMutations?: boolean;
+} = {}) {
+  const tags = options.tags ?? ["algebra", "geometry"];
+  mockFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+
+    if (method === "GET" && url.startsWith("/api/v1/problems?")) {
+      const items = options.problems ?? [problem()];
+      return okJson({
+        items,
+        total: options.total ?? items.length,
+        page: 1,
+        pageSize: 20,
+      });
+    }
+
+    if (method === "GET" && url === "/api/v1/folders") {
+      return okJson(options.folderResponse ?? folderTree);
+    }
+
+    if (method === "GET" && url === "/api/v1/tags") {
+      return okJson({
+        items: tags.map((name, index) => ({
+          id: `tag-${index}`,
+          name,
+          createdAt: "",
+          problemCount: 1,
+        })),
+      });
+    }
+
+    if (options.failMutations && method !== "GET") {
+      return okJson({ error: { message: "Folder request failed" } }, 400);
+    }
+
+    if (method === "POST" && url === "/api/v1/folders") {
+      return okJson({ folder: { id: "new-folder", name: "New Folder", parentId: null, createdAt: "", updatedAt: "" } }, 201);
+    }
+
+    if (method === "PATCH" && url.startsWith("/api/v1/folders/")) {
+      return okJson({ folder: { id: "chapter-1", name: "Chapter 1", parentId: null, createdAt: "", updatedAt: "" } });
+    }
+
+    if (method === "DELETE" && url.startsWith("/api/v1/folders/")) {
+      return okJson({ ok: true });
+    }
+
+    if (method === "PATCH" && url === "/api/v1/problems/bulk-folder") {
+      return okJson({ ok: true });
+    }
+
+    throw new Error(`Unhandled request: ${method} ${url}`);
+  });
+}
+
+function problemRequestUrls() {
+  return mockFetch.mock.calls
+    .map((call) => String(call[0]))
+    .filter((url) => url.startsWith("/api/v1/problems?"));
+}
+
 describe("ProblemsPage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
     mockNavigate.mockReset();
+    window.sessionStorage.clear();
+    vi.restoreAllMocks();
   });
 
-  it("renders problems list", async () => {
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "1", problemType: "single-choice", text: "What is 2+2?", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-            { id: "2", problemType: "multi-choice", text: "If A then B", tags: ["deduction"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 2,
-          page: 1,
-          pageSize: 20,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [
-          { id: "t1", name: "algebra", createdAt: "", problemCount: 1 },
-          { id: "t2", name: "deduction", createdAt: "", problemCount: 1 },
-          { id: "t3", name: "geometry", createdAt: "", problemCount: 0 },
-        ] }),
-      });
+  it("defaults to All Problems without a folderId query param", async () => {
+    installApiMock();
 
     renderProblemsPage();
 
-    await waitFor(() => {
-      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
-    });
+    await screen.findByText("What is 2+2?");
 
-    expect(screen.getByText("If A then B")).toBeInTheDocument();
-    expect(screen.getAllByText("single-choice").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("multi-choice").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Showing 2 of 2 problems")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show All Problems" })).toBeInTheDocument();
+    expect(problemRequestUrls()[0]).not.toContain("folderId=");
   });
 
-  it("navigates to problem detail on click", async () => {
+  it("renders All Problems, Unfiled, and nested folders with count badges", async () => {
+    installApiMock();
+
+    renderProblemsPage();
+
+    await screen.findByText("Chapter 1");
+
+    expect(screen.getByRole("button", { name: "Show All Problems" })).toBeInTheDocument();
+    expect(screen.getByLabelText("All Problems count")).toHaveTextContent("4");
+    expect(screen.getByRole("button", { name: "Show Unfiled" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Unfiled count")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: "Select folder Chapter 1" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Chapter 1 count")).toHaveTextContent("3");
+    expect(screen.getByRole("button", { name: "Select folder Section 1" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Section 1 count")).toHaveTextContent("2");
+  });
+
+  it("filters by Unfiled and resets requests to page 1", async () => {
     const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [{ id: "abc123", problemType: "single-choice", text: "Test problem", tags: [], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" }],
-          total: 1,
-          page: 1,
-          pageSize: 20,
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Show Unfiled" }));
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=unfiled");
+      expect(lastUrl).toContain("page=1");
+    });
+  });
+
+  it("filters by real folder and composes with tag, type, and search params", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
+    await user.selectOptions(screen.getByLabelText("Filter by Type:"), "short-answer");
+    await user.type(screen.getByLabelText("Search problems:"), "proof");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=section-1");
+      expect(lastUrl).toContain("tag=algebra");
+      expect(lastUrl).toContain("type=short-answer");
+      expect(lastUrl).toContain("q=proof");
+      expect(lastUrl).toContain("page=1");
+    });
+  });
+
+  it("persists sidebar collapse state in session storage and shows the active label", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Select folder Chapter 1" }));
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+
+    expect(window.sessionStorage.getItem("problems.folderSidebarCollapsed")).toBe("true");
+    expect(screen.getByText("Folder: Chapter 1")).toBeInTheDocument();
+  });
+
+  it("expands ancestors of the selected folder on load", async () => {
+    installApiMock();
+
+    renderProblemsPage(["/problems?folderId=section-1"]);
+
+    await screen.findByRole("button", { name: "Select folder Section 1" });
+    expect(screen.getByRole("button", { name: "Collapse Chapter 1" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(problemRequestUrls()[0]).toContain("folderId=section-1");
+    });
+  });
+
+  it("creates root and child folders through the folder API", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+    vi.spyOn(window, "prompt").mockReturnValue("New Folder");
+
+    renderProblemsPage();
+    await screen.findByText("Chapter 1");
+
+    await user.click(screen.getByRole("button", { name: "Create folder" }));
+    await user.click(screen.getByRole("button", { name: "New child folder in Chapter 1" }));
+
+    await waitFor(() => {
+      const mutationCalls = mockFetch.mock.calls.filter((call) => call[1]?.method === "POST");
+      expect(mutationCalls).toHaveLength(2);
+      expect(JSON.parse(String(mutationCalls[0][1]?.body))).toEqual({ name: "New Folder", parentId: null });
+      expect(JSON.parse(String(mutationCalls[1][1]?.body))).toEqual({ name: "New Folder", parentId: "chapter-1" });
+    });
+  });
+
+  it("renames, moves, and deletes folders through the folder API", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+    vi.spyOn(window, "prompt").mockReturnValue("Renamed");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderProblemsPage();
+    await screen.findByText("Chapter 1");
+
+    await user.click(screen.getByRole("button", { name: "Rename Chapter 1" }));
+    await user.click(screen.getByRole("button", { name: "Move Chapter 1" }));
+    await user.selectOptions(screen.getByLabelText("Move Chapter 1 to:"), "root");
+    await user.click(screen.getByRole("button", { name: "Save move" }));
+    await user.click(screen.getByRole("button", { name: "Delete Chapter 1" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/folders/chapter-1",
+        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Renamed" }) }),
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/folders/chapter-1",
+        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ parentId: null }) }),
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/folders/chapter-1",
+        expect.objectContaining({ method: "DELETE" }),
+      );
+    });
+  });
+
+  it("bulk moves selected problems to a folder, clears selection, and refetches data", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })], total: 2 });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem p1" }));
+    await user.selectOptions(screen.getByLabelText("Move to:"), "section-1");
+    await user.click(screen.getByRole("button", { name: "Move selected" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/problems/bulk-folder",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ problemIds: ["p1"], folderId: "section-1" }),
         }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [] }),
-      });
+      );
+    });
+    expect(screen.queryByLabelText("Bulk actions")).not.toBeInTheDocument();
+    expect(problemRequestUrls().length).toBeGreaterThan(1);
+  });
+
+  it("bulk move to Unfiled sends folderId null", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem p1" }));
+    await user.click(screen.getByRole("button", { name: "Move selected" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/problems/bulk-folder",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ problemIds: ["p1"], folderId: null }),
+        }),
+      );
+    });
+  });
+
+  it("uses folder-aware empty state copy", async () => {
+    installApiMock({ problems: [], total: 0 });
+
+    renderProblemsPage(["/problems?folderId=unfiled"]);
+
+    await screen.findAllByText("No problems found in Unfiled");
+  });
+
+  it("shows concise error feedback for folder and bulk move failures", async () => {
+    const user = userEvent.setup();
+    installApiMock({ failMutations: true });
+    vi.spyOn(window, "prompt").mockReturnValue("New Folder");
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Create folder" }));
+
+    await screen.findByText("Folder request failed");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem p1" }));
+    await user.click(screen.getByRole("button", { name: "Move selected" }));
+
+    await screen.findByText("Folder request failed");
+  });
+
+  it("navigates to problem detail on card click", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "abc123", text: "Test problem" })] });
 
     renderProblemsPage();
 
-    await waitFor(() => {
-      expect(screen.getByText("Test problem")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText("Test problem"));
+    await user.click(await screen.findByText("Test problem"));
 
     expect(mockNavigate).toHaveBeenCalledWith("/problems/abc123");
-  });
-
-  it("filters by tag", async () => {
-    const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "1", problemType: "single-choice", text: "Test", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [
-          { id: "t1", name: "algebra", createdAt: "", problemCount: 1 },
-          { id: "t2", name: "geometry", createdAt: "", problemCount: 0 },
-        ] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "1", problemType: "single-choice", text: "Algebra problem", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Filter by Tag:")).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      const select = screen.getByLabelText("Filter by Tag:") as HTMLSelectElement;
-      expect(select.options.length).toBeGreaterThan(1);
-    });
-
-    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("tag=algebra"),
-        expect.any(Object),
-      );
-    });
-  });
-
-  it("filters by problem type", async () => {
-    const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "1", problemType: "single-choice", text: "Test", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [
-          { id: "t1", name: "algebra", createdAt: "", problemCount: 1 },
-          { id: "t2", name: "geometry", createdAt: "", problemCount: 0 },
-        ] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "2", problemType: "short-answer", text: "Explain", tags: ["geometry"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Filter by Type:")).toBeInTheDocument();
-    });
-
-    await user.selectOptions(screen.getByLabelText("Filter by Type:"), "short-answer");
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("type=short-answer"),
-        expect.any(Object),
-      );
-    });
-  });
-
-  it("shows pagination controls when there are multiple pages", async () => {
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: Array.from({ length: 20 }, (_, index) => ({
-            id: `problem-${index + 1}`,
-            problemType: "single-choice",
-            text: `Problem ${index + 1}`,
-            tags: [],
-            isDeleted: false,
-            tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 },
-            createdAt: "",
-            updatedAt: "",
-          })),
-          total: 50,
-          page: 1,
-          pageSize: 20,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [] }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
-    });
-
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
-  });
-
-  it("shows no problems message when list is empty", async () => {
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [],
-          total: 0,
-          page: 1,
-          pageSize: 20,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [] }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByText("No problems found")).toBeInTheDocument();
-    });
-  });
-
-  it("sends search query to API", async () => {
-    const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "1", problemType: "single-choice", text: "Algebra problem", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ items: [] }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          items: [
-            { id: "1", problemType: "single-choice", text: "Algebra problem", tags: ["algebra"], isDeleted: false, tracking: { exposureCount: 0, correctCount: 0, failedCount: 0 }, createdAt: "", updatedAt: "" },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Search problems:")).toBeInTheDocument();
-    });
-
-    await user.type(screen.getByLabelText("Search problems:"), "algebra");
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("q=algebra"),
-        expect.any(Object),
-      );
-    });
-  });
-
-  it("resets page to 1 when search changes", async () => {
-    const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          items: [],
-          total: 0,
-          page: 1,
-          pageSize: 20,
-        }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Search problems:")).toBeInTheDocument();
-    });
-
-    await user.type(screen.getByLabelText("Search problems:"), "test");
-
-    await waitFor(() => {
-      const calls = mockFetch.mock.calls;
-      const lastCall = calls[calls.length - 1][0];
-      expect(lastCall).toContain("page=1");
-      expect(lastCall).toContain("q=test");
-    });
-  });
-
-  it("does not include q parameter when search is empty", async () => {
-    mockFetch
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          items: [],
-          total: 0,
-          page: 1,
-          pageSize: 20,
-        }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled();
-    });
-
-    const firstCall = mockFetch.mock.calls[0][0];
-    expect(firstCall).not.toContain("q=");
-  });
-
-  it("trims whitespace from search query", async () => {
-    const user = userEvent.setup();
-    mockFetch
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          items: [],
-          total: 0,
-          page: 1,
-          pageSize: 20,
-        }),
-      });
-
-    renderProblemsPage();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Search problems:")).toBeInTheDocument();
-    });
-
-    await user.type(screen.getByLabelText("Search problems:"), "   ");
-
-    await waitFor(() => {
-      const calls = mockFetch.mock.calls.map((call) => call[0]);
-      expect(calls.some((url) => !url.includes("q="))).toBeTruthy();
-    });
   });
 });
