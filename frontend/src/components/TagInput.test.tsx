@@ -246,6 +246,106 @@ describe("TagInput", () => {
     });
   });
 
+  describe("semicolon-separated input", () => {
+    it("creates a tag when semicolon is pressed", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={["math"]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "geometry;");
+
+      expect(onChange).toHaveBeenCalledWith(["math", "geometry"]);
+    });
+
+    it("does not include semicolon in the tag name", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "Grade4;");
+
+      expect(onChange).toHaveBeenCalledWith(["Grade4"]);
+      expect(screen.getByTestId("tags-input-field")).toHaveValue("");
+    });
+
+    it("clears input after semicolon commit", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "vocabulary;");
+
+      expect(screen.getByTestId("tags-input-field")).toHaveValue("");
+    });
+
+    it("creates multiple tags from semicolon-separated batch input", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "Grade4; grammar; vocabulary{enter}");
+
+      expect(onChange).toHaveBeenCalledTimes(3);
+      expect(onChange).toHaveBeenNthCalledWith(1, ["Grade4"]);
+      expect(onChange).toHaveBeenNthCalledWith(2, ["grammar"]);
+      expect(onChange).toHaveBeenNthCalledWith(3, ["vocabulary"]);
+    });
+
+    it("does not create empty tags from repeated semicolons", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "Grade4;; grammar;{enter}");
+
+      expect(onChange).toHaveBeenCalledTimes(2);
+      expect(onChange).toHaveBeenNthCalledWith(1, ["Grade4"]);
+      expect(onChange).toHaveBeenNthCalledWith(2, ["grammar"]);
+    });
+
+    it("does not create empty tag from semicolon with only whitespace", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "   ;");
+
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.getByTestId("tags-input-field")).toHaveValue("");
+    });
+
+    it("skips duplicate tags when using semicolon", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={["math"]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "math;");
+
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.getByTestId("tags-input-field")).toHaveValue("");
+    });
+
+    it("creates tags from mixed comma and semicolon input", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(<TagInput tags={[]} onChange={onChange} testId="tags-input" />);
+
+      await user.type(screen.getByTestId("tags-input-field"), "algebra; geometry, calculus{enter}");
+
+      expect(onChange).toHaveBeenCalledTimes(2);
+      expect(onChange).toHaveBeenNthCalledWith(1, ["algebra"]);
+      expect(onChange).toHaveBeenNthCalledWith(2, ["geometry", "calculus"]);
+    });
+  });
+
   describe("accessibility", () => {
     it("has combobox role on the input", () => {
       render(<TagInput tags={[]} onChange={vi.fn()} testId="tags-input" />);

@@ -72,7 +72,7 @@ export function TagInput({
   };
 
   const addTag = (value: string) => {
-    const segments = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+    const segments = value.split(/[,;]/).map((s) => s.trim()).filter((s) => s.length > 0);
 
     if (segments.length === 0) {
       setInputValue("");
@@ -130,6 +130,12 @@ export function TagInput({
         return;
       }
 
+      addTag(inputValue);
+      return;
+    }
+
+    if (event.key === ";") {
+      event.preventDefault();
       addTag(inputValue);
       return;
     }
