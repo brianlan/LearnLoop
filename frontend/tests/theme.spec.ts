@@ -28,6 +28,7 @@ async function createSessionWithProblem(request: APIRequestContext, prefix: stri
 
 // Helper to set theme before navigation
 async function setTheme(page: Page, theme: "light" | "dark") {
+  await page.goto("/");
   await page.evaluate((t) => localStorage.setItem("learnloop-theme", t), theme);
 }
 
@@ -75,7 +76,7 @@ test.describe("Theme E2E", () => {
     await addAuthenticatedSession(page, session);
 
     // Pre-set localStorage to dark
-    await page.evaluate(() => localStorage.setItem("learnloop-theme", "dark"));
+    await setTheme(page, "dark");
 
     await page.goto("/problems");
 
@@ -123,7 +124,7 @@ test.describe("Theme E2E", () => {
     await addAuthenticatedSession(page, session);
 
     // Pre-set localStorage to dark, then toggle to light
-    await page.evaluate(() => localStorage.setItem("learnloop-theme", "dark"));
+    await setTheme(page, "dark");
 
     await page.goto("/problems");
     await expect(page.getByRole("button", { name: "Toggle theme" })).toHaveText("Light");
@@ -316,6 +317,27 @@ test.describe("Problem Detail Page Theme", () => {
     await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Delete" })).toBeVisible();
   });
+
+  test("problem detail page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "problem_detail_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto(`/problems/${problem.id}`);
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByText("What is 2+2?")).toBeVisible();
+  });
 });
 
 test.describe("Tags Page Theme", () => {
@@ -413,6 +435,27 @@ test.describe("Settings Page Theme", () => {
 
     // Verify change password button is visible
     await expect(page.getByRole("button", { name: "Change Teacher Password" })).toBeVisible();
+  });
+
+  test("settings page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const session = await createSession(request, "settings_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/settings");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
 });
 
@@ -517,6 +560,134 @@ test.describe("Active Practice Page Theme", () => {
     // Verify submit and skip buttons are visible
     await expect(page.getByTestId("submit-button")).toBeVisible();
     await expect(page.getByTestId("skip-button")).toBeVisible();
+  });
+
+  test("active practice page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const { session } = await createSessionWithProblem(request, "active_practice_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    // Navigate to practice and start
+    await page.goto("/practice");
+    await page.getByTestId("start-practice-button").click();
+
+    // Wait for active practice page
+    await expect(page.getByTestId("problem-text")).toBeVisible();
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByTestId("problem-text")).toBeVisible();
+  });
+});
+
+test.describe("Exam Detail Page Theme", () => {
+  test("exam detail page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "exam_detail_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    // Use a non-existent exam id to reach the not-found/error state
+    await page.goto("/exams/00000000-0000-0000-0000-000000000000");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    // Either error or not-found state should show the Back to Exams button
+    await expect(page.getByRole("button", { name: "Back to Exams" })).toBeVisible({ timeout: 15000 });
+  });
+
+  test("exam detail page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "exam_detail_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/exams/00000000-0000-0000-0000-000000000000");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    await expect(page.getByRole("button", { name: "Back to Exams" })).toBeVisible({ timeout: 15000 });
+  });
+
+  test("exam detail page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const session = await createSession(request, "exam_detail_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/exams/00000000-0000-0000-0000-000000000000");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByRole("button", { name: "Back to Exams" })).toBeVisible({ timeout: 15000 });
+  });
+});
+
+test.describe("Active Exam Page Theme", () => {
+  test("active exam page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "active_exam_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/exams/active");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    await expect(page.getByText("No active exam found.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start New Exam" })).toBeVisible();
+  });
+
+  test("active exam page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "active_exam_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/exams/active");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    await expect(page.getByText("No active exam found.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start New Exam" })).toBeVisible();
+  });
+
+  test("active exam page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const session = await createSession(request, "active_exam_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/exams/active");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByText("No active exam found.")).toBeVisible();
   });
 });
 
@@ -626,5 +797,26 @@ test.describe("Coaching Page Theme", () => {
     // Verify context bar and whiteboard are visible
     await expect(page.getByTestId("context-bar")).toBeVisible();
     await expect(page.getByTestId("whiteboard")).toBeVisible();
+  });
+
+  test("coaching page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const { session, problem } = await createSessionWithProblem(request, "coaching_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto(`/coaching/${problem.id}`);
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await expect(page.getByRole("heading", { name: "AI Coach" })).toBeVisible();
   });
 });

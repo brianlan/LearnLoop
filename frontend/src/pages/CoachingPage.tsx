@@ -199,9 +199,16 @@ export function CoachingPage() {
     handleSendMessage(predefinedMessages[shortcutType]);
   };
 
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-surface-muted)",
+    color: "var(--color-text)",
+    padding: "1.5rem",
+  };
+
   if (isLoadingProblem || isLoadingConversation) {
     return (
-      <main style={{ padding: "2rem", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "80vh" }}>
+      <main style={{ ...pageCanvasStyle, display: "flex", justifyContent: "center", alignItems: "center" }}>
         <div style={{ fontSize: "1.25rem", color: "var(--color-link)", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <div style={{ width: "24px", height: "24px", borderRadius: "50%", border: "3px solid var(--color-tag-bg)", borderTopColor: "var(--color-link)", animation: "spin 1s linear infinite" }} />
           Loading coaching page...
@@ -213,13 +220,15 @@ export function CoachingPage() {
 
   if (!problem) {
     return (
-      <main style={{ padding: "2rem", maxWidth: "600px", margin: "2rem auto" }}>
-        <div style={{ padding: "1.5rem", backgroundColor: "var(--color-danger-bg)", border: "1px solid var(--color-danger-border)", borderRadius: "0.5rem", textAlign: "center" }}>
-          <div style={{ color: "var(--color-text-danger)", fontWeight: 600, fontSize: "1.125rem", marginBottom: "0.5rem" }}>Problem Not Found</div>
-          <p style={{ color: "var(--color-text-danger-secondary)", margin: "0 0 1.5rem 0" }}>The problem you are trying to access does not exist or has been deleted.</p>
-          <button onClick={() => navigate(fromRoute)} style={{ padding: "0.5rem 1.5rem", backgroundColor: "var(--color-danger)", color: "white", border: "none", borderRadius: "0.25rem", cursor: "pointer", fontWeight: 600 }}>
-            Go Back
-          </button>
+      <main style={pageCanvasStyle}>
+        <div style={{ maxWidth: "600px", margin: "0 auto" }}>
+          <div style={{ padding: "1.5rem", backgroundColor: "var(--color-danger-bg)", border: "1px solid var(--color-danger-border)", borderRadius: "0.5rem", textAlign: "center" }}>
+            <div style={{ color: "var(--color-text-danger)", fontWeight: 600, fontSize: "1.125rem", marginBottom: "0.5rem" }}>Problem Not Found</div>
+            <p style={{ color: "var(--color-text-danger-secondary)", margin: "0 0 1.5rem 0" }}>The problem you are trying to access does not exist or has been deleted.</p>
+            <button onClick={() => navigate(fromRoute)} style={{ padding: "0.5rem 1.5rem", backgroundColor: "var(--color-danger)", color: "white", border: "none", borderRadius: "0.25rem", cursor: "pointer", fontWeight: 600 }}>
+              Go Back
+            </button>
+          </div>
         </div>
       </main>
     );

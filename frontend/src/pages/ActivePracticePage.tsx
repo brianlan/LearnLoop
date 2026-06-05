@@ -95,15 +95,34 @@ export function ActivePracticePage() {
     navigate("/practice");
   };
 
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-surface-muted)",
+    color: "var(--color-text)",
+    padding: "1rem",
+  };
+
+  const contentWrapperStyle: React.CSSProperties = {
+    maxWidth: "800px",
+    margin: "0 auto",
+  };
+
   if (!currentProblem) {
-    return null;
+    return (
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <div>No active problem.</div>
+        </div>
+      </main>
+    );
   }
 
   const options = parseOptions(currentProblem.text);
   const isMutating = submitMutation.isPending || nextMutation.isPending;
 
   return (
-    <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
+    <main style={pageCanvasStyle}>
+      <div style={contentWrapperStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap", gap: "1rem" }}>
         <h1 style={{ margin: 0 }}>Practice</h1>
         <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -358,6 +377,7 @@ export function ActivePracticePage() {
           </button>
         </div>
       )}
+      </div>
     </main>
   );
 }

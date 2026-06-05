@@ -285,26 +285,42 @@ export function ExamDetailPage() {
     selfReportMutation.mutate({ itemId, request: { isCorrect } });
   };
 
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-surface-muted)",
+    color: "var(--color-text)",
+    padding: "1rem",
+  };
+
+  const contentWrapperStyle: React.CSSProperties = {
+    maxWidth: "800px",
+    margin: "0 auto",
+  };
+
   if (isLoading) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem", textAlign: "center" }}>
-        <div>Loading exam details...</div>
+      <main style={pageCanvasStyle}>
+        <div style={{ ...contentWrapperStyle, textAlign: "center" }}>
+          <div>Loading exam details...</div>
+        </div>
       </main>
     );
   }
 
   if (error) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <div style={{ color: "var(--color-text-danger)", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
-          Error loading exam: {(error as Error).message}
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <div style={{ color: "var(--color-text-danger)", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
+            Error loading exam: {(error as Error).message}
+          </div>
+          <button
+            onClick={() => navigate("/exams")}
+            style={{ marginTop: "1rem", padding: "0.5rem 1rem" }}
+          >
+            Back to Exams
+          </button>
         </div>
-        <button
-          onClick={() => navigate("/exams")}
-          style={{ marginTop: "1rem", padding: "0.5rem 1rem" }}
-        >
-          Back to Exams
-        </button>
       </main>
     );
   }
@@ -312,14 +328,16 @@ export function ExamDetailPage() {
   const exam = examData?.exam;
   if (!exam) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <div>Exam not found.</div>
-        <button
-          onClick={() => navigate("/exams")}
-          style={{ marginTop: "1rem", padding: "0.5rem 1rem" }}
-        >
-          Back to Exams
-        </button>
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <div>Exam not found.</div>
+          <button
+            onClick={() => navigate("/exams")}
+            style={{ marginTop: "1rem", padding: "0.5rem 1rem" }}
+          >
+            Back to Exams
+          </button>
+        </div>
       </main>
     );
   }
@@ -327,7 +345,8 @@ export function ExamDetailPage() {
   const hasPendingReview = exam.items.some((item) => item.grading.status === "pending-review");
 
   return (
-    <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
+    <main style={pageCanvasStyle}>
+      <div style={contentWrapperStyle}>
       <div style={{ marginBottom: "1.5rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
           <h1 style={{ margin: 0 }}>Exam Results</h1>
@@ -412,6 +431,7 @@ export function ExamDetailPage() {
           setPendingRevealItemId(null);
         }}
       />
+      </div>
     </main>
   );
 }

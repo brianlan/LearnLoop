@@ -143,9 +143,16 @@ export function ProblemDetailPage() {
     }
   };
 
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-surface-muted)",
+    color: "var(--color-text)",
+    padding: "1rem",
+  };
+
   if (isLoadingProblem) {
     return (
-      <main style={{ padding: "1rem" }}>
+      <main style={pageCanvasStyle}>
         <div>Loading...</div>
       </main>
     );
@@ -153,7 +160,7 @@ export function ProblemDetailPage() {
 
   if (problemError || !problem) {
     return (
-      <main style={{ padding: "1rem" }}>
+      <main style={pageCanvasStyle}>
         <div style={{ color: "var(--color-text-danger)" }}>
           Error loading problem: {problemError?.message || "Problem not found"}
         </div>
@@ -163,7 +170,7 @@ export function ProblemDetailPage() {
   }
 
   return (
-    <main style={{ padding: "1rem" }}>
+    <main style={pageCanvasStyle}>
       <div style={{ marginBottom: "1rem" }}>
         <button onClick={() => navigate("/problems")}>Back to Problems</button>
       </div>

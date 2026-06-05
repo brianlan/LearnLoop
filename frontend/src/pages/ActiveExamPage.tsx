@@ -166,10 +166,24 @@ export function ActiveExamPage() {
     createExamMutation.mutate({ maxProblemCount: 10 });
   }, [createExamMutation]);
 
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-surface-muted)",
+    color: "var(--color-text)",
+    padding: "1rem",
+  };
+
+  const contentWrapperStyle: React.CSSProperties = {
+    maxWidth: "800px",
+    margin: "0 auto",
+  };
+
   if (isLoadingExam) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem", textAlign: "center" }}>
-        <div>Loading...</div>
+      <main style={pageCanvasStyle}>
+        <div style={{ ...contentWrapperStyle, textAlign: "center" }}>
+          <div>Loading...</div>
+        </div>
       </main>
     );
   }
@@ -177,31 +191,33 @@ export function ActiveExamPage() {
   const isNotFoundError = examError instanceof Error && examError.message.includes("404");
   if (isNotFoundError || !exam) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <h1>Active Exam</h1>
-        <div style={{ textAlign: "center", padding: "3rem", backgroundColor: "var(--color-surface-muted)", border: "1px solid var(--color-border)", borderRadius: "0.5rem" }}>
-          <p>No active exam found.</p>
-          <button
-            onClick={handleCreateExam}
-            disabled={createExamMutation.isPending}
-            style={{
-              padding: "0.75rem 1.5rem",
-              backgroundColor: createExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
-              color: "white",
-              border: "none",
-              borderRadius: "0.25rem",
-              cursor: createExamMutation.isPending ? "not-allowed" : "pointer",
-              fontSize: "1rem",
-              marginTop: "1rem",
-            }}
-          >
-            {createExamMutation.isPending ? "Creating..." : "Start New Exam"}
-          </button>
-          {createExamMutation.error && (
-            <p style={{ color: "var(--color-text-danger)", marginTop: "1rem" }}>
-              {(createExamMutation.error as Error).message}
-            </p>
-          )}
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <h1>Active Exam</h1>
+          <div style={{ textAlign: "center", padding: "3rem", backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "0.5rem" }}>
+            <p>No active exam found.</p>
+            <button
+              onClick={handleCreateExam}
+              disabled={createExamMutation.isPending}
+              style={{
+                padding: "0.75rem 1.5rem",
+                backgroundColor: createExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
+                color: "white",
+                border: "none",
+                borderRadius: "0.25rem",
+                cursor: createExamMutation.isPending ? "not-allowed" : "pointer",
+                fontSize: "1rem",
+                marginTop: "1rem",
+              }}
+            >
+              {createExamMutation.isPending ? "Creating..." : "Start New Exam"}
+            </button>
+            {createExamMutation.error && (
+              <p style={{ color: "var(--color-text-danger)", marginTop: "1rem" }}>
+                {(createExamMutation.error as Error).message}
+              </p>
+            )}
+          </div>
         </div>
       </main>
     );
@@ -209,9 +225,11 @@ export function ActiveExamPage() {
 
   if (examError) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <div style={{ color: "var(--color-text-danger)", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
-          Error loading exam: {(examError as Error).message}
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <div style={{ color: "var(--color-text-danger)", padding: "1rem", backgroundColor: "var(--color-danger-bg)", borderRadius: "0.25rem" }}>
+            Error loading exam: {(examError as Error).message}
+          </div>
         </div>
       </main>
     );
@@ -219,8 +237,10 @@ export function ActiveExamPage() {
 
   if (!currentItem) {
     return (
-      <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
-        <div>No items in this exam.</div>
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <div>No items in this exam.</div>
+        </div>
       </main>
     );
   }
@@ -230,7 +250,8 @@ export function ActiveExamPage() {
   const isLastItem = currentItemIndex === items.length - 1;
 
   return (
-    <main style={{ maxWidth: "800px", margin: "2rem auto", padding: "1rem" }}>
+    <main style={pageCanvasStyle}>
+      <div style={contentWrapperStyle}>
       <div style={{ marginBottom: "1.5rem" }}>
         <h1>Active Exam</h1>
         <p style={{ color: "var(--color-text-muted)" }}>
@@ -411,6 +432,7 @@ export function ActiveExamPage() {
           </div>
         </Modal>
       )}
+      </div>
     </main>
   );
 }
