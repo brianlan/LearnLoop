@@ -275,26 +275,43 @@ export function SettingsPage() {
     queryFn: async () => api.get<SettingsResponse>("/settings"),
   });
 
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-surface-muted)",
+    color: "var(--color-text)",
+    padding: "1rem",
+  };
+
+  const contentWrapperStyle: React.CSSProperties = {
+    maxWidth: "800px",
+    margin: "0 auto",
+  };
+
   if (isLoading) {
     return (
-      <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
-        <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
-        <p style={{ color: "var(--color-text-muted)" }}>Loading settings...</p>
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
+          <p style={{ color: "var(--color-text-muted)" }}>Loading settings...</p>
+        </div>
       </main>
     );
   }
 
   if (error || !data) {
     return (
-      <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
-        <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
-        <p style={{ color: "var(--color-text-danger)" }}>Failed to load settings.</p>
+      <main style={pageCanvasStyle}>
+        <div style={contentWrapperStyle}>
+          <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
+          <p style={{ color: "var(--color-text-danger)" }}>Failed to load settings.</p>
+        </div>
       </main>
     );
   }
 
   return (
-    <main style={{ padding: "1rem", maxWidth: "800px", margin: "0 auto" }}>
+    <main style={pageCanvasStyle}>
+      <div style={contentWrapperStyle}>
       <h1 style={{ marginBottom: "1.5rem" }}>Settings</h1>
       <p
         style={{
@@ -424,6 +441,7 @@ export function SettingsPage() {
           setTimeout(() => setSuccessMessage(null), 5000);
         }}
       />
+      </div>
     </main>
   );
 }
