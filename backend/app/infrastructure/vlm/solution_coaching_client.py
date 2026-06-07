@@ -8,7 +8,14 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.llm.prompts import (
+from app.infrastructure.vlm.client import (
+    FAILURE_CODE_INVALID_RESPONSE,
+    FAILURE_CODE_NETWORK,
+    FAILURE_CODE_PROVIDER,
+    FAILURE_CODE_PROVIDER_REJECTED,
+    FAILURE_CODE_TIMEOUT,
+)
+from app.infrastructure.vlm.solution_coaching_prompts import (
     COACHING_SYSTEM_PROMPT,
     COACHING_PROMPT_VERSION,
     SOLUTION_SYSTEM_PROMPT,
@@ -17,14 +24,8 @@ from app.infrastructure.llm.prompts import (
     build_solution_user_prompt,
 )
 
-FAILURE_CODE_TIMEOUT = "llm-timeout"
-FAILURE_CODE_NETWORK = "llm-network-error"
-FAILURE_CODE_PROVIDER = "llm-provider-error"
-FAILURE_CODE_PROVIDER_REJECTED = "llm-provider-rejected"
-FAILURE_CODE_INVALID_RESPONSE = "llm-invalid-response"
 
-
-class LLMClientError(Exception):
+class SolutionCoachingVLMError(Exception):
     def __init__(
         self,
         message: str,
@@ -134,7 +135,7 @@ class _CoachingProviderPayload(BaseModel):
     reasoning_content: str | None = None
 
 
-class _BaseLLMClient:
+class _BaseSolutionCoachingVLMClient:
     def __init__(
         self,
         *,
@@ -173,14 +174,14 @@ class _BaseLLMClient:
         try:
             response = await self.http_client.post("/chat/completions", json=payload)
         except httpx.TimeoutException as exc:
-            raise LLMClientError(
-                "LLM request timed out",
+            raise SolutionCoachingVLMError(
+                "VLM request timed out",
                 code=FAILURE_CODE_TIMEOUT,
                 retryable=True,
             ) from exc
         except httpx.NetworkError as exc:
-            raise LLMClientError(
-                "LLM network request failed",
+            raise SolutionCoachingVLMError(
+                "VLM network request failed",
                 code=FAILURE_CODE_NETWORK,
                 retryable=True,
             ) from exc
@@ -188,8 +189,8 @@ class _BaseLLMClient:
         raw_body = self._decode_raw_response(response)
 
         if 500 <= response.status_code:
-            raise LLMClientError(
-                f"LLM provider returned server error {response.status_code}",
+            raise SolutionCoachingVLMError(
+                f"VLM provider returned server error {response.status_code}",
                 code=FAILURE_CODE_PROVIDER,
                 retryable=True,
                 status_code=response.status_code,
@@ -197,8 +198,8 @@ class _BaseLLMClient:
             )
 
         if 400 <= response.status_code:
-            raise LLMClientError(
-                f"LLM provider rejected request with status {response.status_code}",
+            raise SolutionCoachingVLMError(
+                f"VLM provider rejected request with status {response.status_code}",
                 code=FAILURE_CODE_PROVIDER_REJECTED,
                 retryable=False,
                 status_code=response.status_code,
@@ -206,8 +207,8 @@ class _BaseLLMClient:
             )
 
         if not isinstance(raw_body, dict):
-            raise LLMClientError(
-                "LLM provider response must be a JSON object",
+            raise SolutionCoachingVLMError(
+                "VLM provider response must be a JSON object",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 status_code=response.status_code,
@@ -255,8 +256,8 @@ class _BaseLLMClient:
             if isinstance(parsed, dict):
                 return parsed
 
-        raise LLMClientError(
-            "LLM provider response content was not valid JSON",
+        raise SolutionCoachingVLMError(
+            "VLM provider response content was not valid JSON",
             code=FAILURE_CODE_INVALID_RESPONSE,
             retryable=False,
             raw_provider_response=content,
@@ -267,16 +268,16 @@ class _BaseLLMClient:
         try:
             completion = _ChatCompletionResponse.model_validate(raw_body)
         except ValidationError as exc:
-            raise LLMClientError(
-                "LLM provider response failed chat completion validation",
+            raise SolutionCoachingVLMError(
+                "VLM provider response failed chat completion validation",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_body,
             ) from exc
 
         if not completion.choices:
-            raise LLMClientError(
-                "LLM provider returned no choices",
+            raise SolutionCoachingVLMError(
+                "VLM provider returned no choices",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_body,
@@ -285,8 +286,8 @@ class _BaseLLMClient:
         message = completion.choices[0].message
         content = message.content
         if not content:
-            raise LLMClientError(
-                "LLM provider response content was empty",
+            raise SolutionCoachingVLMError(
+                "VLM provider response content was empty",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_body,
@@ -298,7 +299,7 @@ class _BaseLLMClient:
         return parsed
 
 
-class SolutionVLMClient(_BaseLLMClient):
+class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
     def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()
         super().__init__(
@@ -370,8 +371,8 @@ class SolutionVLMClient(_BaseLLMClient):
         try:
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
-            raise LLMClientError(
-                "Solution LLM response failed schema validation",
+            raise SolutionCoachingVLMError(
+                "Solution VLM response failed schema validation",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_provider_response,
@@ -402,7 +403,7 @@ def _sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
     return stripped if stripped else None
 
 
-class CoachingVLMClient(_BaseLLMClient):
+class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
     def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()
         super().__init__(
@@ -456,8 +457,8 @@ class CoachingVLMClient(_BaseLLMClient):
         try:
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
-            raise LLMClientError(
-                "Coaching LLM response failed schema validation",
+            raise SolutionCoachingVLMError(
+                "Coaching VLM response failed schema validation",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_provider_response,

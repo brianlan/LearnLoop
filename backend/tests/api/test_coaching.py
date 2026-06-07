@@ -7,7 +7,7 @@ from bson import ObjectId
 from unittest.mock import patch, AsyncMock
 
 from app.domain.models import CoachingRole
-from app.infrastructure.llm.client import CoachingVLMResult
+from app.infrastructure.vlm.solution_coaching_client import CoachingVLMResult
 from app.infrastructure.storage.mongo import COACHING_CONVERSATIONS_COLLECTION
 from app.main import create_app
 from app.presentation.deps import get_current_user, get_database
@@ -142,7 +142,7 @@ async def test_get_conversation_not_found(client: AsyncClient, setup_problem: st
 
 @pytest.mark.asyncio
 async def test_send_message_success(client: AsyncClient, setup_problem: str):
-    with patch("app.infrastructure.llm.client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
+    with patch("app.infrastructure.vlm.solution_coaching_client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = CoachingVLMResult(
             prompt_version="1",
             model="test",
@@ -221,7 +221,7 @@ async def test_access_other_user_conversation(client: AsyncClient, coaching_app:
 
 @pytest.mark.asyncio
 async def test_send_message_returns_reasoning_content(client: AsyncClient, setup_problem: str):
-    with patch("app.infrastructure.llm.client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
+    with patch("app.infrastructure.vlm.solution_coaching_client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = CoachingVLMResult(
             prompt_version="1",
             model="test",
@@ -243,7 +243,7 @@ async def test_send_message_returns_reasoning_content(client: AsyncClient, setup
 
 @pytest.mark.asyncio
 async def test_send_message_reasoning_content_null_when_absent(client: AsyncClient, setup_problem: str):
-    with patch("app.infrastructure.llm.client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
+    with patch("app.infrastructure.vlm.solution_coaching_client.CoachingVLMClient.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = CoachingVLMResult(
             prompt_version="1",
             model="test",
@@ -260,4 +260,3 @@ async def test_send_message_reasoning_content_null_when_absent(client: AsyncClie
         assert response.status_code == 200
         data = response.json()
         assert data["messages"][1].get("reasoning_content") is None
-

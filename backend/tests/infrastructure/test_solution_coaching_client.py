@@ -6,18 +6,18 @@ import httpx
 import pytest
 
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.llm.client import (
+from app.infrastructure.vlm.solution_coaching_client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
     FAILURE_CODE_PROVIDER,
     CoachingVLMClient,
     CoachingVLMRequest,
     CoachingMessage,
-    LLMClientError,
+    SolutionCoachingVLMError,
     SolutionVLMClient,
     SolutionVLMRequest,
 )
-from app.infrastructure.llm.prompts import COACHING_PROMPT_VERSION, SOLUTION_PROMPT_VERSION
+from app.infrastructure.vlm.solution_coaching_prompts import COACHING_PROMPT_VERSION, SOLUTION_PROMPT_VERSION
 
 
 def _build_solution_client(handler) -> SolutionVLMClient:
@@ -54,7 +54,7 @@ def _build_coaching_client(handler) -> CoachingVLMClient:
     return CoachingVLMClient(settings=settings, http_client=http_client)
 
 
-def test_llm_clients_use_capability_specific_timeouts() -> None:
+def test_solution_coaching_vlm_clients_use_capability_specific_timeouts() -> None:
     solution_client = SolutionVLMClient(
         settings=Settings(solution_vlm_timeout_seconds=123),
         http_client=httpx.AsyncClient(),
@@ -162,7 +162,7 @@ async def test_solution_vlm_client_rejects_malformed_response() -> None:
 
     client = _build_solution_client(handler)
 
-    with pytest.raises(LLMClientError) as exc_info:
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
@@ -179,7 +179,7 @@ async def test_solution_vlm_client_classifies_provider_failure_as_retryable() ->
 
     client = _build_solution_client(handler)
 
-    with pytest.raises(LLMClientError) as exc_info:
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
@@ -326,7 +326,7 @@ async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
 
     client = _build_coaching_client(handler)
 
-    with pytest.raises(LLMClientError) as exc_info:
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.send_message(
             CoachingVLMRequest(
                 problem_text="题目",
