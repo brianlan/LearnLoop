@@ -75,14 +75,18 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
         assert request.headers["Authorization"] == "Bearer solution-key"
         payload = json.loads(await request.aread())
         assert payload["model"] == "solution-model"
-        prompt = payload["messages"][0]["content"][0]["text"]
-        assert "written in Simplified Chinese" in prompt
-        assert "Do not use advanced or out-of-scope methods" in prompt
-        assert "the answer key may be only one valid wording or format" in prompt
-        assert "Return valid JSON only" in prompt
-        assert "已知 x + 3 = 5" in prompt
-        assert "2" in prompt
-        assert payload["messages"][0]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        system_prompt = payload["messages"][0]["content"]
+        user_content = payload["messages"][1]["content"]
+        user_prompt = user_content[0]["text"]
+        assert "written in Simplified Chinese" in system_prompt
+        assert "Do not use advanced or out-of-scope methods" in system_prompt
+        assert "the answer key may be only one valid wording or format" in system_prompt
+        assert "Return valid JSON only" in system_prompt
+        assert "已知 x + 3 = 5" in user_prompt
+        assert '"answerKey": "2"' in user_prompt
+        assert payload["messages"][1]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
         return httpx.Response(
             200,
             json={
@@ -192,16 +196,21 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
         assert request.headers["Authorization"] == "Bearer coaching-key"
         payload = json.loads(await request.aread())
         assert payload["model"] == "coaching-model"
-        prompt = payload["messages"][0]["content"]
-        assert "Write this student-facing tutoring reply in Simplified Chinese" in prompt
-        assert "Be warm, encouraging, and patient" in prompt
-        assert "Canonical solution steps" in prompt
-        assert "board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})" in prompt
-        assert "Never write `board.create('text', [x, y, 'label', {options}])`" in prompt
-        assert "student: 我想先看第一步" in prompt
-        assert "coach: 先看已知条件" in prompt
-        assert "tracking" not in prompt
-        assert "exposureCount" not in prompt
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        system_prompt = payload["messages"][0]["content"]
+        user_prompt = payload["messages"][1]["content"]
+        assert "Write this student-facing tutoring reply in Simplified Chinese" in system_prompt
+        assert "Be warm, encouraging, and patient" in system_prompt
+        assert "canonicalSolutionSteps" in user_prompt
+        assert "board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})" in system_prompt
+        assert "Never write `board.create('text', [x, y, 'label', {options}])`" in system_prompt
+        assert "student: 我想先看第一步" in user_prompt
+        assert "coach: 先看已知条件" in user_prompt
+        assert "可以给我一个提示吗？" in user_prompt
+        assert "可以给我一个提示吗？" not in system_prompt
+        assert "tracking" not in user_prompt
+        assert "exposureCount" not in user_prompt
         return httpx.Response(
             200,
             json={

@@ -10,12 +10,14 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.vlm.prompts import (
-    EXTRACTION_PROMPT_TEMPLATE,
+    EXTRACTION_SYSTEM_PROMPT,
     EXTRACTION_PROMPT_VERSION,
     EXTRACTION_SCHEMA_VERSION,
-    GRADING_PROMPT_TEMPLATE,
+    GRADING_SYSTEM_PROMPT,
     GRADING_PROMPT_VERSION,
     GRADING_SCHEMA_VERSION,
+    build_extraction_user_prompt,
+    build_grading_user_prompt,
 )
 
 ProblemType = Literal["single-choice", "multi-choice", "fill-in-the-blank", "short-answer"]
@@ -202,7 +204,7 @@ class VLMClient:
             model=self._model,
             promptVersion=EXTRACTION_PROMPT_VERSION,
             schemaVersion=EXTRACTION_SCHEMA_VERSION,
-            prompt=EXTRACTION_PROMPT_TEMPLATE,
+            prompt=EXTRACTION_SYSTEM_PROMPT,
             imageUrl=image_url,
             imageBase64=image_base64,
             expectedResponseSchema={
@@ -243,7 +245,7 @@ class VLMClient:
             model=self._model,
             promptVersion=GRADING_PROMPT_VERSION,
             schemaVersion=GRADING_SCHEMA_VERSION,
-            prompt=GRADING_PROMPT_TEMPLATE,
+            prompt=GRADING_SYSTEM_PROMPT,
             imageUrl=image_url,
             imageBase64=image_base64,
             problemText=problem_text,
@@ -363,8 +365,20 @@ class VLMClient:
 
     @staticmethod
     def _build_chat_completion_payload(request: _RequestBase) -> dict[str, Any]:
+        if isinstance(request, GradingRequest):
+            user_prompt = build_grading_user_prompt(
+                problem_text=request.problem_text,
+                user_answer=request.user_answer,
+                correct_answer=request.correct_answer,
+                expected_response_schema=request.expected_response_schema,
+            )
+        else:
+            user_prompt = build_extraction_user_prompt(
+                expected_response_schema=request.expected_response_schema,
+            )
+
         content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] = [
-            _ChatMessageContentText(type="text", text=request.prompt)
+            _ChatMessageContentText(type="text", text=user_prompt)
         ]
 
         if request.image_base64:
@@ -379,35 +393,12 @@ class VLMClient:
                 _ChatMessageContentImageUrl(type="image_url", image_url={"url": request.image_url})
             )
 
-        if isinstance(request, GradingRequest):
-            content.append(
-                _ChatMessageContentText(
-                    type="text",
-                    text=(
-                        "\n\nGrade the user's answer against the stored answer key. "
-                        'Return only JSON with keys "isCorrect", "feedback", and optional "providerMetadata". '
-                        f"Problem text: {request.problem_text}\n"
-                        f"User answer: {request.user_answer}\n"
-                        f"Correct answer: {request.correct_answer}"
-                    ),
-                )
-            )
-        else:
-            content.append(
-                _ChatMessageContentText(
-                    type="text",
-                    text=(
-                        "\n\nReturn only JSON with keys "
-                        '"text", "problemType", "graphDsl", and optional "providerMetadata".\n'
-                        "Expected JSON schema:\n"
-                        f"{json.dumps(request.expected_response_schema, ensure_ascii=False)}"
-                    ),
-                )
-            )
-
         chat_request = _ChatCompletionRequest(
             model=request.model,
-            messages=[_ChatMessage(role="user", content=content)],
+            messages=[
+                _ChatMessage(role="system", content=request.prompt),
+                _ChatMessage(role="user", content=content),
+            ],
         )
         return chat_request.model_dump(exclude_none=True)
 

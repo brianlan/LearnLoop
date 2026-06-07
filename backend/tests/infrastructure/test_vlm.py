@@ -91,7 +91,9 @@ async def test_vlm_extraction_happy_path() -> None:
 async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())
-        prompt = payload["messages"][0]["content"][0]["text"]
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        prompt = payload["messages"][0]["content"]
         assert "Use `$...$` for inline math" in prompt
         assert "Put whitespace around inline `$...$`" in prompt
         return httpx.Response(
@@ -127,7 +129,7 @@ async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
 async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())
-        schema_prompt = payload["messages"][0]["content"][2]["text"]
+        schema_prompt = payload["messages"][1]["content"][0]["text"]
         assert "Expected JSON schema:" in schema_prompt
         assert '"required": ["text", "problemType"]' in schema_prompt
         assert '"graphDsl": {"type": ["string", "null"]}' in schema_prompt
@@ -164,7 +166,7 @@ async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None
 async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())
-        prompt = payload["messages"][0]["content"][0]["text"]
+        prompt = payload["messages"][0]["content"]
         assert "keepaspectratio: true" in prompt
         assert "preserve the source diagram" in prompt
         assert "JXG.JSXGraph.initBoard" in prompt
@@ -202,11 +204,13 @@ async def test_vlm_grading_happy_path() -> None:
         assert request.url.path == "/api/chat/completions"
         payload = json.loads((await request.aread()).decode())
         assert "messages" in payload
-        assert payload["messages"][0]["content"][1]["type"] == "image_url"
-        grading_context = payload["messages"][0]["content"][2]["text"]
-        assert "Problem text: What is 1 + 1?" in grading_context
-        assert "User answer: 1" in grading_context
-        assert "Correct answer: 1" in grading_context
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        assert payload["messages"][1]["content"][1]["type"] == "image_url"
+        grading_context = payload["messages"][1]["content"][0]["text"]
+        assert '"problemText": "What is 1 + 1?"' in grading_context
+        assert '"userAnswer": "1"' in grading_context
+        assert '"correctAnswer": "1"' in grading_context
         return httpx.Response(
             200,
             json={

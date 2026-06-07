@@ -9,10 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.llm.prompts import (
+    COACHING_SYSTEM_PROMPT,
     COACHING_PROMPT_VERSION,
+    SOLUTION_SYSTEM_PROMPT,
     SOLUTION_PROMPT_VERSION,
-    build_coaching_prompt,
-    build_solution_prompt,
+    build_coaching_user_prompt,
+    build_solution_user_prompt,
 )
 
 FAILURE_CODE_TIMEOUT = "llm-timeout"
@@ -308,13 +310,13 @@ class SolutionVLMClient(_BaseLLMClient):
         )
 
     async def generate_solution(self, request: SolutionVLMRequest) -> SolutionVLMResult:
-        prompt = build_solution_prompt(
+        user_prompt = build_solution_user_prompt(
             problem_text=request.problem_text,
             correct_answer=request.correct_answer,
             graph_dsl=request.graph_dsl,
         )
         payload = self._build_payload(
-            prompt=prompt,
+            user_prompt=user_prompt,
             image_url=request.image_url,
             image_base64=request.image_base64,
         )
@@ -332,12 +334,12 @@ class SolutionVLMClient(_BaseLLMClient):
     def _build_payload(
         self,
         *,
-        prompt: str,
+        user_prompt: str,
         image_url: str | None,
         image_base64: str | None,
     ) -> dict[str, Any]:
         content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] = [
-            _ChatMessageContentText(type="text", text=prompt)
+            _ChatMessageContentText(type="text", text=user_prompt)
         ]
         if image_base64:
             content.append(
@@ -353,7 +355,10 @@ class SolutionVLMClient(_BaseLLMClient):
 
         request = _ChatCompletionRequest(
             model=self._model,
-            messages=[_ChatMessage(role="user", content=content)],
+            messages=[
+                _ChatMessage(role="system", content=SOLUTION_SYSTEM_PROMPT),
+                _ChatMessage(role="user", content=content),
+            ],
         )
         return request.model_dump(exclude_none=True)
 
@@ -410,7 +415,7 @@ class CoachingVLMClient(_BaseLLMClient):
 
     async def send_message(self, request: CoachingVLMRequest) -> CoachingVLMResult:
         history = self._format_history(request.conversation_history)
-        prompt = build_coaching_prompt(
+        user_prompt = build_coaching_user_prompt(
             problem_text=request.problem_text,
             correct_answer=request.correct_answer,
             canonical_steps_markdown=request.canonical_steps_markdown,
@@ -421,7 +426,10 @@ class CoachingVLMClient(_BaseLLMClient):
         )
         payload = _ChatCompletionRequest(
             model=self._model,
-            messages=[_ChatMessage(role="user", content=prompt)],
+            messages=[
+                _ChatMessage(role="system", content=COACHING_SYSTEM_PROMPT),
+                _ChatMessage(role="user", content=user_prompt),
+            ],
         ).model_dump(exclude_none=True)
         raw_provider_response = await self._send_chat_completion(payload)
         parsed = self._validate_response(raw_provider_response, _CoachingProviderPayload)
