@@ -124,6 +124,43 @@ async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        schema_prompt = payload["messages"][0]["content"][2]["text"]
+        assert "Expected JSON schema:" in schema_prompt
+        assert '"required": ["text", "problemType"]' in schema_prompt
+        assert '"graphDsl": {"type": ["string", "null"]}' in schema_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Find $x$ when $x+1=2$",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+
+
+@pytest.mark.asyncio
 async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())

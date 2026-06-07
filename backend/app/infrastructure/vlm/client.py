@@ -393,7 +393,9 @@ class VLMClient:
                     type="text",
                     text=(
                         "\n\nReturn only JSON with keys "
-                        '"text", "problemType", "graphDsl", and optional "providerMetadata".'
+                        '"text", "problemType", "graphDsl", and optional "providerMetadata".\n'
+                        "Expected JSON schema:\n"
+                        f"{json.dumps(request.expected_response_schema, ensure_ascii=False)}"
                     ),
                 )
             )
@@ -452,4 +454,3 @@ class VLMClient:
             )
 
         return parsed
-
