@@ -94,6 +94,7 @@ async def grade_short_answer_item(
         try:
             result = await vlm_client.grade_short_answer(
                 image_base64=image_base64,
+                problem_text=str(snapshot.get("text", "")),
                 user_answer=str(answer_raw),
                 correct_answer=str(correct_answer.get("display", "")),
             )

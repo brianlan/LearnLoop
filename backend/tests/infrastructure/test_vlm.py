@@ -200,9 +200,13 @@ async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None
 async def test_vlm_grading_happy_path() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/chat/completions"
-        payload = await request.aread()
-        assert b'"messages"' in payload
-        assert b'"image_url"' in payload
+        payload = json.loads((await request.aread()).decode())
+        assert "messages" in payload
+        assert payload["messages"][0]["content"][1]["type"] == "image_url"
+        grading_context = payload["messages"][0]["content"][2]["text"]
+        assert "Problem text: What is 1 + 1?" in grading_context
+        assert "User answer: 1" in grading_context
+        assert "Correct answer: 1" in grading_context
         return httpx.Response(
             200,
             json={
@@ -228,6 +232,7 @@ async def test_vlm_grading_happy_path() -> None:
 
     result = await client.grade_short_answer(
         image_url="s3://bucket/key",
+        problem_text="What is 1 + 1?",
         user_answer="1",
         correct_answer="1",
     )

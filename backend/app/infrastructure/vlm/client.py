@@ -75,6 +75,7 @@ class GradingRequest(_RequestBase):
     )
     user_answer: str = Field(alias="userAnswer")
     correct_answer: str = Field(alias="correctAnswer")
+    problem_text: str = Field(alias="problemText")
     expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
 
 
@@ -234,6 +235,7 @@ class VLMClient:
         *,
         image_url: str | None = None,
         image_base64: str | None = None,
+        problem_text: str,
         user_answer: str,
         correct_answer: str,
     ) -> GradingResult:
@@ -244,6 +246,7 @@ class VLMClient:
             prompt=GRADING_PROMPT_TEMPLATE,
             imageUrl=image_url,
             imageBase64=image_base64,
+            problemText=problem_text,
             userAnswer=user_answer,
             correctAnswer=correct_answer,
             expectedResponseSchema={
@@ -383,7 +386,9 @@ class VLMClient:
                     text=(
                         "\n\nGrade the user's answer against the stored answer key. "
                         'Return only JSON with keys "isCorrect", "feedback", and optional "providerMetadata". '
-                        f"User answer: {request.user_answer}\nCorrect answer: {request.correct_answer}"
+                        f"Problem text: {request.problem_text}\n"
+                        f"User answer: {request.user_answer}\n"
+                        f"Correct answer: {request.correct_answer}"
                     ),
                 )
             )
