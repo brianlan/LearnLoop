@@ -32,12 +32,23 @@ class PreviewExtractionPayload(BaseModel):
     failureMessage: str | None = None
 
 
+class PreviewHelperDetectionPayload(BaseModel):
+    subject: str | None = None
+    confidence: float | None = None
+    reason: str | None = None
+    model: str | None = None
+    rawProviderResponse: dict[str, Any] | None = None
+    failureCode: str | None = None
+    failureMessage: str | None = None
+
+
 class PreviewPayload(BaseModel):
     id: str
     status: str
     sourceImage: SourceImagePayload
     draft: PreviewDraftPayload
     extraction: PreviewExtractionPayload
+    helperDetection: PreviewHelperDetectionPayload
     createdAt: datetime
     updatedAt: datetime
     expiresAt: datetime
@@ -72,6 +83,7 @@ def serialize_preview(preview: Mapping[str, Any]) -> PreviewPayload:
     extraction = dict(preview.get("extraction", {}))
     draft = dict(preview.get("editableDraft", {}))
     source_image = dict(preview.get("sourceImage", {}))
+    helper_detection = dict(preview.get("helperDetection", {}))
     return PreviewPayload.model_validate(
         {
             "id": str(preview["_id"]),
@@ -97,6 +109,15 @@ def serialize_preview(preview: Mapping[str, Any]) -> PreviewPayload:
                 "rawProviderResponse": extraction.get("rawProviderResponse"),
                 "failureCode": extraction.get("failureCode"),
                 "failureMessage": extraction.get("failureMessage"),
+            },
+            "helperDetection": {
+                "subject": helper_detection.get("subject"),
+                "confidence": helper_detection.get("confidence"),
+                "reason": helper_detection.get("reason"),
+                "model": helper_detection.get("model"),
+                "rawProviderResponse": helper_detection.get("rawProviderResponse"),
+                "failureCode": helper_detection.get("failureCode"),
+                "failureMessage": helper_detection.get("failureMessage"),
             },
             "createdAt": preview["createdAt"],
             "updatedAt": preview["updatedAt"],

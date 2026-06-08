@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-from app.infrastructure.vlm.client import ExtractionResult
+from app.infrastructure.vlm.client import ClassificationResult, ExtractionResult
 from app.main import create_app
 from app.presentation import ingestion as ingestion_presentation
 from app.presentation.deps import get_app_settings, get_database
@@ -256,10 +256,15 @@ class FakeGradingResult:
 
 
 class FakeVLMClient:
-    def __init__(self) -> None:
+    def __init__(self, model: str = "fake-vlm") -> None:
+        self._model = model
         self.responses: list[Any] = []
         self.calls: list[dict[str, Any]] = []
         self.closed = False
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     async def extract(
         self,
@@ -278,6 +283,24 @@ class FakeVLMClient:
         if isinstance(response, Exception):
             raise response
         return cast(ExtractionResult, response)
+
+    async def classify_subject(
+        self,
+        *,
+        image_url: str | None = None,
+        image_base64: str | None = None,
+    ) -> ClassificationResult:
+        self.calls.append(
+            {
+                "method": "classify_subject",
+                "image_url": image_url,
+                "image_base64": image_base64,
+            }
+        )
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return cast(ClassificationResult, response)
 
     async def grade_short_answer(
         self,
@@ -372,6 +395,16 @@ def make_ready_preview(
             "graphDsl": graph_dsl,
             "correctAnswer": correct_answer,
             "tags": tags,
+            "subject": "math",
+        },
+        "helperDetection": {
+            "subject": "math",
+            "confidence": 0.95,
+            "reason": "Contains math notation",
+            "model": "fake-vlm",
+            "rawProviderResponse": None,
+            "failureCode": None,
+            "failureMessage": None,
         },
         "createdAt": now,
         "updatedAt": now,
@@ -389,7 +422,14 @@ async def exams_app() -> AsyncIterator[FastAPI]:
     adapter = FakeMongoAdapter()
     storage = FakeStorage()
     vlm = FakeVLMClient()
-    settings = Settings(ingestion_vlm_model="gpt-4.1-mini", ingestion_vlm_timeout_seconds=1.0)
+    settings = Settings(
+        helper_vlm_model="gpt-4.1-mini",
+        helper_vlm_timeout_seconds=1.0,
+        math_ingestion_vlm_model="math-model",
+        math_ingestion_vlm_timeout_seconds=1.0,
+        english_ingestion_vlm_model="english-model",
+        english_ingestion_vlm_timeout_seconds=1.0,
+    )
 
     primary_user = {
         "_id": ObjectId(),
@@ -400,7 +440,7 @@ async def exams_app() -> AsyncIterator[FastAPI]:
     application.state.fake_database = database
     application.state.fake_storage = storage
     application.state.fake_adapter = adapter
-    application.state.fake_vlm = vlm
+    application.state.fake_grading_vlm = vlm
     application.state.primary_user = primary_user
     application.state.sync_wait_seconds = 1.0
 
@@ -427,13 +467,26 @@ async def app() -> AsyncIterator[FastAPI]:
     database = FakeDatabase()
     storage = FakeStorage()
     adapter = FakeMongoAdapter()
-    vlm = FakeVLMClient()
-    settings = Settings(ingestion_vlm_model="gpt-4.1-mini", ingestion_vlm_timeout_seconds=1.0)
+    helper_vlm = FakeVLMClient(model="gpt-4.1-mini")
+    math_ingestion_vlm = FakeVLMClient(model="math-model")
+    english_ingestion_vlm = FakeVLMClient(model="english-model")
+    grading_vlm = FakeVLMClient()
+    settings = Settings(
+        helper_vlm_model="gpt-4.1-mini",
+        helper_vlm_timeout_seconds=1.0,
+        math_ingestion_vlm_model="math-model",
+        math_ingestion_vlm_timeout_seconds=1.0,
+        english_ingestion_vlm_model="english-model",
+        english_ingestion_vlm_timeout_seconds=1.0,
+    )
 
     application.state.fake_database = database
     application.state.fake_storage = storage
     application.state.fake_adapter = adapter
-    application.state.fake_vlm = vlm
+    application.state.fake_helper_vlm = helper_vlm
+    application.state.fake_math_ingestion_vlm = math_ingestion_vlm
+    application.state.fake_english_ingestion_vlm = english_ingestion_vlm
+    application.state.fake_grading_vlm = grading_vlm
     application.state.sync_wait_seconds = 1.0
 
     application.dependency_overrides[get_database] = lambda: database
@@ -441,9 +494,11 @@ async def app() -> AsyncIterator[FastAPI]:
     application.dependency_overrides[get_problem_storage] = lambda: storage
     application.dependency_overrides[get_exam_storage] = lambda: storage
     application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
-    application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
+    application.dependency_overrides[get_exam_vlm_client] = lambda: grading_vlm
     application.dependency_overrides[ingestion_presentation.get_s3_storage] = lambda: storage
-    application.dependency_overrides[ingestion_presentation.get_ingestion_vlm_client] = lambda: vlm
+    application.dependency_overrides[ingestion_presentation.create_helper_vlm_client] = lambda: helper_vlm
+    application.dependency_overrides[ingestion_presentation.create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm
+    application.dependency_overrides[ingestion_presentation.create_english_ingestion_vlm_client] = lambda: english_ingestion_vlm
     application.dependency_overrides[ingestion_presentation.get_preview_sync_wait_seconds] = (
         lambda: application.state.sync_wait_seconds
     )
@@ -574,8 +629,23 @@ async def storage(app: FastAPI) -> FakeStorage:
 
 
 @pytest_asyncio.fixture
+async def helper_vlm_client(app: FastAPI) -> FakeVLMClient:
+    return app.state.fake_helper_vlm
+
+
+@pytest_asyncio.fixture
+async def math_ingestion_vlm_client(app: FastAPI) -> FakeVLMClient:
+    return app.state.fake_math_ingestion_vlm
+
+
+@pytest_asyncio.fixture
+async def english_ingestion_vlm_client(app: FastAPI) -> FakeVLMClient:
+    return app.state.fake_english_ingestion_vlm
+
+
+@pytest_asyncio.fixture
 async def vlm_client(app: FastAPI) -> FakeVLMClient:
-    return app.state.fake_vlm
+    return app.state.fake_grading_vlm
 
 
 @pytest_asyncio.fixture

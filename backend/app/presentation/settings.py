@@ -24,12 +24,22 @@ async def get_settings_info() -> dict:
             "region": settings.s3_region,
             "force_path_style": settings.s3_force_path_style,
         },
-        "ingestion_vlm": {
-            "endpoint": settings.ingestion_vlm_endpoint,
-            "model": settings.ingestion_vlm_model,
-            "timeout_seconds": settings.ingestion_vlm_timeout_seconds,
-            "preview_extracting_window_seconds": settings.preview_extracting_window_seconds,
+        "helper_vlm": {
+            "endpoint": settings.helper_vlm_endpoint,
+            "model": settings.helper_vlm_model,
+            "timeout_seconds": settings.helper_vlm_timeout_seconds,
         },
+        "math_ingestion_vlm": {
+            "endpoint": settings.math_ingestion_vlm_endpoint,
+            "model": settings.math_ingestion_vlm_model,
+            "timeout_seconds": settings.math_ingestion_vlm_timeout_seconds,
+        },
+        "english_ingestion_vlm": {
+            "endpoint": settings.english_ingestion_vlm_endpoint,
+            "model": settings.english_ingestion_vlm_model,
+            "timeout_seconds": settings.english_ingestion_vlm_timeout_seconds,
+        },
+        "preview_extracting_window_seconds": settings.preview_extracting_window_seconds,
         "grading_vlm": {
             "endpoint": settings.grading_vlm_endpoint,
             "model": settings.grading_vlm_model,

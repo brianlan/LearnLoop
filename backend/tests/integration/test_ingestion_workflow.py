@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
-from app.infrastructure.vlm.client import ExtractionResult, VLMError
+from app.infrastructure.vlm.client import ClassificationResult, ExtractionResult, VLMError
 
 
 async def register_and_login(
@@ -59,12 +59,24 @@ async def test_wf_ing_1_clipboard_ingestion_creates_preview_and_confirms_problem
     client: AsyncClient,
     database: Any,
     storage: Any,
-    vlm_client: Any,
+    helper_vlm_client: Any,
+    math_ingestion_vlm_client: Any,
     png_bytes: bytes,
 ) -> None:
     await register_and_login(client, username="student1")
     app.state.sync_wait_seconds = 1.0
-    vlm_client.responses = [
+    helper_vlm_client.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="math",
+            confidence=0.95,
+            reason="Contains math notation",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    math_ingestion_vlm_client.responses = [
         make_extraction_result(
             text="What is 2 + 2?",
             problem_type="short-answer",
@@ -140,12 +152,24 @@ async def test_wf_ing_2_retry_failed_extraction_transitions_preview_to_ready(
     client: AsyncClient,
     database: Any,
     storage: Any,
-    vlm_client: Any,
+    helper_vlm_client: Any,
+    math_ingestion_vlm_client: Any,
     png_bytes: bytes,
 ) -> None:
     await register_and_login(client, username="student1")
     app.state.sync_wait_seconds = 1.0
-    vlm_client.responses = [
+    helper_vlm_client.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="math",
+            confidence=0.95,
+            reason="Contains math notation",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    math_ingestion_vlm_client.responses = [
         VLMError(
             "VLM request timed out",
             code="vlm-timeout",
@@ -172,7 +196,7 @@ async def test_wf_ing_2_retry_failed_extraction_transitions_preview_to_ready(
         (stored_preview["sourceImage"]["bucket"], stored_preview["sourceImage"]["objectKey"])
     ] == png_bytes
 
-    vlm_client.responses = [make_extraction_result(text="Retry succeeded", problem_type="short-answer")]
+    math_ingestion_vlm_client.responses = [make_extraction_result(text="Retry succeeded", problem_type="short-answer")]
 
     retry_response = await client.post(f"/api/v1/ingestion-previews/{preview_id}/retry")
 

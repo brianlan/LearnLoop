@@ -17,9 +17,15 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
         settings_presentation,
         "get_settings",
         lambda: Settings(
-            ingestion_vlm_endpoint="https://ingestion.example/api",
-            ingestion_vlm_model="ingestion-model",
-            ingestion_vlm_timeout_seconds=12,
+            helper_vlm_endpoint="https://helper.example/api",
+            helper_vlm_model="helper-model",
+            helper_vlm_timeout_seconds=12,
+            math_ingestion_vlm_endpoint="https://math-ingestion.example/api",
+            math_ingestion_vlm_model="math-ingestion-model",
+            math_ingestion_vlm_timeout_seconds=22,
+            english_ingestion_vlm_endpoint="https://english-ingestion.example/api",
+            english_ingestion_vlm_model="english-ingestion-model",
+            english_ingestion_vlm_timeout_seconds=32,
             grading_vlm_endpoint="https://grading.example/api",
             grading_vlm_model="grading-model",
             grading_vlm_timeout_seconds=34,
@@ -43,12 +49,22 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["ingestion_vlm"] == {
-        "endpoint": "https://ingestion.example/api",
-        "model": "ingestion-model",
+    assert payload["helper_vlm"] == {
+        "endpoint": "https://helper.example/api",
+        "model": "helper-model",
         "timeout_seconds": 12,
-        "preview_extracting_window_seconds": 18,
     }
+    assert payload["math_ingestion_vlm"] == {
+        "endpoint": "https://math-ingestion.example/api",
+        "model": "math-ingestion-model",
+        "timeout_seconds": 22,
+    }
+    assert payload["english_ingestion_vlm"] == {
+        "endpoint": "https://english-ingestion.example/api",
+        "model": "english-ingestion-model",
+        "timeout_seconds": 32,
+    }
+    assert payload["preview_extracting_window_seconds"] == 18
     assert payload["grading_vlm"] == {
         "endpoint": "https://grading.example/api",
         "model": "grading-model",

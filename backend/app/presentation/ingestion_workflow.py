@@ -190,7 +190,7 @@ async def _run_extraction_task(
                     "updatedAt": finished_at,
                     "extraction": {
                         **latest_extraction,
-                        "requestModel": settings.ingestion_vlm_model,
+                        "requestModel": vlm_client.model,
                         "requestStartedAt": started_at,
                         "requestFinishedAt": finished_at,
                         "success": False,
@@ -222,15 +222,15 @@ async def start_extraction(
         **preview,
         "status": IngestionPreviewStatus.EXTRACTING.value,
         "updatedAt": started_at,
-        "extraction": {
-            **dict(preview.get("extraction", {})),
-            "requestModel": settings.ingestion_vlm_model,
-            "requestStartedAt": started_at,
-            "requestFinishedAt": None,
-            "success": None,
-            "failureCode": None,
-            "failureMessage": None,
-        },
+            "extraction": {
+                **dict(preview.get("extraction", {})),
+                "requestModel": vlm_client.model,
+                "requestStartedAt": started_at,
+                "requestFinishedAt": None,
+                "success": None,
+                "failureCode": None,
+                "failureMessage": None,
+            },
     }
     await database["ingestion_previews"].update_one(
         {"_id": preview["_id"]},

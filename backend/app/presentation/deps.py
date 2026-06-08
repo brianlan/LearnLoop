@@ -118,14 +118,36 @@ def get_s3_storage(
     return S3StorageAdapter(settings=settings)
 
 
-def create_ingestion_vlm_client(
+def create_helper_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> VLMClient:
     return VLMClient(
-        endpoint=settings.ingestion_vlm_endpoint,
-        model=settings.ingestion_vlm_model,
-        api_key=settings.ingestion_vlm_api_key,
-        timeout_seconds=settings.ingestion_vlm_timeout_seconds,
+        endpoint=settings.helper_vlm_endpoint,
+        model=settings.helper_vlm_model,
+        api_key=settings.helper_vlm_api_key,
+        timeout_seconds=settings.helper_vlm_timeout_seconds,
+    )
+
+
+def create_math_ingestion_vlm_client(
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> VLMClient:
+    return VLMClient(
+        endpoint=settings.math_ingestion_vlm_endpoint,
+        model=settings.math_ingestion_vlm_model,
+        api_key=settings.math_ingestion_vlm_api_key,
+        timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
+    )
+
+
+def create_english_ingestion_vlm_client(
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> VLMClient:
+    return VLMClient(
+        endpoint=settings.english_ingestion_vlm_endpoint,
+        model=settings.english_ingestion_vlm_model,
+        api_key=settings.english_ingestion_vlm_api_key,
+        timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
     )
 
 

@@ -32,10 +32,21 @@ class Settings(BaseSettings):
     s3_region: str = Field(default="us-east-1")
     s3_force_path_style: bool = Field(default=True)
 
-    ingestion_vlm_endpoint: str = Field(default="https://example-ingestion-vlm-provider.invalid/api")
-    ingestion_vlm_model: str = Field(default="replace-me")
-    ingestion_vlm_api_key: str = Field(default="replace-me")
-    ingestion_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+    helper_vlm_endpoint: str = Field(default="https://example-helper-vlm-provider.invalid/api")
+    helper_vlm_model: str = Field(default="replace-me")
+    helper_vlm_api_key: str = Field(default="replace-me")
+    helper_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    math_ingestion_vlm_endpoint: str = Field(default="https://example-math-ingestion-vlm-provider.invalid/api")
+    math_ingestion_vlm_model: str = Field(default="replace-me")
+    math_ingestion_vlm_api_key: str = Field(default="replace-me")
+    math_ingestion_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+
+    english_ingestion_vlm_endpoint: str = Field(default="https://example-english-ingestion-vlm-provider.invalid/api")
+    english_ingestion_vlm_model: str = Field(default="replace-me")
+    english_ingestion_vlm_api_key: str = Field(default="replace-me")
+    english_ingestion_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+
     grading_vlm_endpoint: str = Field(default="https://example-grading-vlm-provider.invalid/api")
     grading_vlm_model: str = Field(default="replace-me")
     grading_vlm_api_key: str = Field(default="replace-me")

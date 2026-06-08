@@ -126,7 +126,7 @@ async def test_wf_exam_3_submit_and_grade_updates_score_and_tracking(
     find_exam_item,
 ) -> None:
     user = await register_and_login(client, username="wf-exam-3")
-    app.state.fake_vlm.responses = [FakeGradingResult(is_correct=True, feedback="good explanation")]
+    app.state.fake_grading_vlm.responses = [FakeGradingResult(is_correct=True, feedback="good explanation")]
 
     objective_problem = await create_problem_via_api(
         client,
@@ -206,7 +206,7 @@ async def test_wf_exam_4_pending_review_then_self_report_updates_score(
     find_exam_item,
 ) -> None:
     user = await register_and_login(client, username="wf-exam-4")
-    app.state.fake_vlm.responses = [
+    app.state.fake_grading_vlm.responses = [
         VLMError("temporary", code="vlm-timeout", retryable=True),
         VLMError("still broken", code="vlm-network-error", retryable=True),
     ]

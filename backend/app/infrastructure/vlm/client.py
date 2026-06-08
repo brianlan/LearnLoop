@@ -12,8 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.infrastructure.vlm.prompts import (
     EXTRACTION_SYSTEM_PROMPT,
     GRADING_SYSTEM_PROMPT,
+    HELPER_SUBJECT_CLASSIFICATION_SYSTEM_PROMPT,
     build_extraction_user_prompt,
     build_grading_user_prompt,
+    build_subject_classification_user_prompt,
 )
 
 ProblemType = Literal["single-choice", "multi-choice", "fill-in-the-blank", "short-answer"]
@@ -75,6 +77,14 @@ class GradingRequest(_RequestBase):
     expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
 
 
+class ClassificationRequest(_RequestBase):
+    request_type: Literal["subject-classification"] = Field(
+        default="subject-classification",
+        alias="requestType",
+    )
+    expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
+
+
 class _ProviderMetadataModel(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -85,6 +95,15 @@ class _ExtractionProviderPayload(BaseModel):
     text: str
     problem_type: ProblemType = Field(alias="problemType")
     graph_dsl: str | None = Field(default=None, alias="graphDsl")
+    provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
+
+
+class _ClassificationProviderPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    subject: str
+    confidence: float
+    reason: str
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
 
 
@@ -140,6 +159,16 @@ class ExtractionResult(BaseModel):
     raw_provider_response: dict[str, Any]
 
 
+class ClassificationResult(BaseModel):
+    request_type: Literal["subject-classification"]
+    model: str
+    subject: str
+    confidence: float
+    reason: str
+    provider_metadata: dict[str, Any]
+    raw_provider_response: dict[str, Any]
+
+
 class GradingResult(BaseModel):
     request_type: Literal["short-answer-grading"]
     model: str
@@ -165,6 +194,10 @@ class VLMClient:
         self._timeout_seconds = timeout_seconds
         self._http_client = http_client
         self._owns_client = http_client is None
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -214,6 +247,40 @@ class VLMClient:
             text=payload.text,
             problem_type=payload.problem_type,
             graph_dsl=payload.graph_dsl,
+            provider_metadata=payload.provider_metadata,
+            raw_provider_response=raw_provider_response,
+        )
+
+    async def classify_subject(
+        self,
+        *,
+        image_url: str | None = None,
+        image_base64: str | None = None,
+    ) -> ClassificationResult:
+        request = ClassificationRequest(
+            model=self._model,
+            prompt=HELPER_SUBJECT_CLASSIFICATION_SYSTEM_PROMPT,
+            imageUrl=image_url,
+            imageBase64=image_base64,
+            expectedResponseSchema={
+                "type": "object",
+                "required": ["subject", "confidence", "reason"],
+                "properties": {
+                    "subject": {"type": "string", "enum": ["math", "english"]},
+                    "confidence": {"type": "number"},
+                    "reason": {"type": "string"},
+                    "providerMetadata": {"type": "object"},
+                },
+            },
+        )
+        raw_provider_response = await self._send_request(request)
+        payload = self._validate_response(raw_provider_response, _ClassificationProviderPayload)
+        return ClassificationResult(
+            request_type=request.request_type,
+            model=request.model,
+            subject=payload.subject,
+            confidence=payload.confidence,
+            reason=payload.reason,
             provider_metadata=payload.provider_metadata,
             raw_provider_response=raw_provider_response,
         )
@@ -352,6 +419,10 @@ class VLMClient:
                 problem_text=request.problem_text,
                 user_answer=request.user_answer,
                 correct_answer=request.correct_answer,
+                expected_response_schema=request.expected_response_schema,
+            )
+        elif isinstance(request, ClassificationRequest):
+            user_prompt = build_subject_classification_user_prompt(
                 expected_response_schema=request.expected_response_schema,
             )
         else:

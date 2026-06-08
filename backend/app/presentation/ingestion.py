@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import mimetypes
 from collections.abc import Mapping
@@ -16,11 +17,13 @@ from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType, norm
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-from app.infrastructure.vlm.client import VLMClient
+from app.infrastructure.vlm.client import VLMClient, VLMError
 from app.presentation.deps import (
     DatabaseDependency,
     StorageDependency,
-    create_ingestion_vlm_client,
+    create_english_ingestion_vlm_client,
+    create_helper_vlm_client,
+    create_math_ingestion_vlm_client,
     get_app_settings,
     get_current_user,
     get_s3_storage,
@@ -39,6 +42,7 @@ from app.presentation.ingestion_workflow import (
     start_extraction,
     utc_now,
     wait_for_preview_result,
+    _maybe_close_vlm_client,
 )
 
 router = APIRouter(prefix="/ingestion-previews", tags=["ingestion"])
@@ -60,11 +64,11 @@ def get_preview_sync_wait_seconds() -> float:
     return DEFAULT_SYNC_WAIT_SECONDS
 
 
-get_ingestion_vlm_client = create_ingestion_vlm_client
-
 S3Dependency = StorageDependency
-VLMDependency = Annotated[VLMClient, Depends(get_ingestion_vlm_client)]
 SyncWaitDependency = Annotated[float, Depends(get_preview_sync_wait_seconds)]
+HelperVLMDependency = Annotated[VLMClient, Depends(create_helper_vlm_client)]
+MathIngestionVLMDependency = Annotated[VLMClient, Depends(create_math_ingestion_vlm_client)]
+EnglishIngestionVLMDependency = Annotated[VLMClient, Depends(create_english_ingestion_vlm_client)]
 
 
 async def _get_owned_preview(
@@ -105,7 +109,9 @@ async def create_preview(
     user: CurrentUserDependency,
     settings: SettingsDependency,
     s3_storage: S3Dependency,
-    vlm_client: VLMDependency,
+    helper_vlm_client: HelperVLMDependency,
+    math_ingestion_vlm_client: MathIngestionVLMDependency,
+    english_ingestion_vlm_client: EnglishIngestionVLMDependency,
     sync_wait_seconds: SyncWaitDependency,
 ) -> PreviewResponse:
     if not image.content_type or not image.content_type.startswith("image/"):
@@ -151,26 +157,83 @@ async def create_preview(
             "tags": [],
             "subject": ProblemSubject.MATH.value,
         },
+        "helperDetection": {
+            "subject": None,
+            "confidence": None,
+            "reason": None,
+            "model": None,
+            "rawProviderResponse": None,
+            "failureCode": None,
+            "failureMessage": None,
+        },
         "createdAt": now,
         "updatedAt": now,
         "expiresAt": preview_expires_at(now),
     }
     await database["ingestion_previews"].insert_one(preview)
 
-    extracting_preview, task = await start_extraction(
-        database=database,
-        preview=preview,
-        vlm_client=vlm_client,
-        s3_storage=s3_storage,
-        settings=settings,
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    detected_subject = ProblemSubject.MATH.value
+    try:
+        classification = await helper_vlm_client.classify_subject(image_base64=image_b64)
+        detected_subject = classification.subject
+        preview["helperDetection"] = {
+            "subject": classification.subject,
+            "confidence": classification.confidence,
+            "reason": classification.reason,
+            "model": classification.model,
+            "rawProviderResponse": classification.raw_provider_response,
+            "failureCode": None,
+            "failureMessage": None,
+        }
+    except VLMError as exc:
+        preview["helperDetection"] = {
+            "subject": None,
+            "confidence": None,
+            "reason": None,
+            "model": settings.helper_vlm_model,
+            "rawProviderResponse": exc.raw_provider_response,
+            "failureCode": exc.code,
+            "failureMessage": str(exc),
+        }
+    finally:
+        await _maybe_close_vlm_client(helper_vlm_client)
+
+    preview["editableDraft"]["subject"] = detected_subject
+    await database["ingestion_previews"].update_one(
+        {"_id": preview["_id"]},
+        {
+            "$set": {
+                "editableDraft.subject": detected_subject,
+                "helperDetection": preview["helperDetection"],
+                "updatedAt": utc_now(),
+            }
+        },
     )
-    completed = await wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
-    current_preview = extracting_preview
-    if completed:
-        refreshed = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
-        if refreshed is not None:
-            current_preview = refreshed
-    return PreviewResponse(preview=serialize_preview(current_preview))
+
+    ingestion_vlm_client = (
+        english_ingestion_vlm_client
+        if detected_subject == ProblemSubject.ENGLISH.value
+        else math_ingestion_vlm_client
+    )
+    try:
+        extracting_preview, task = await start_extraction(
+            database=database,
+            preview=preview,
+            vlm_client=ingestion_vlm_client,
+            s3_storage=s3_storage,
+            settings=settings,
+        )
+        completed = await wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
+        current_preview = extracting_preview
+        if completed:
+            refreshed = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+            if refreshed is not None:
+                current_preview = refreshed
+        return PreviewResponse(preview=serialize_preview(current_preview))
+    except Exception:
+        await _maybe_close_vlm_client(ingestion_vlm_client)
+        raise
 
 
 @router.get("/{preview_id}", response_model=PreviewResponse)
@@ -239,25 +302,37 @@ async def retry_preview(
     user: CurrentUserDependency,
     settings: SettingsDependency,
     s3_storage: S3Dependency,
-    vlm_client: VLMDependency,
+    math_ingestion_vlm_client: MathIngestionVLMDependency,
+    english_ingestion_vlm_client: EnglishIngestionVLMDependency,
     sync_wait_seconds: SyncWaitDependency,
 ) -> PreviewResponse:
     preview = await _get_owned_preview(database, preview_id, user)
     _ensure_status(preview, {IngestionPreviewStatus.VLM_FAILED.value})
-    extracting_preview, task = await start_extraction(
-        database=database,
-        preview=preview,
-        vlm_client=vlm_client,
-        s3_storage=s3_storage,
-        settings=settings,
+    draft = dict(preview.get("editableDraft", {}))
+    subject = str(draft.get("subject", ProblemSubject.MATH.value))
+    ingestion_vlm_client = (
+        english_ingestion_vlm_client
+        if subject == ProblemSubject.ENGLISH.value
+        else math_ingestion_vlm_client
     )
-    completed = await wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
-    current_preview = extracting_preview
-    if completed:
-        refreshed = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
-        if refreshed is not None:
-            current_preview = refreshed
-    return PreviewResponse(preview=serialize_preview(current_preview))
+    try:
+        extracting_preview, task = await start_extraction(
+            database=database,
+            preview=preview,
+            vlm_client=ingestion_vlm_client,
+            s3_storage=s3_storage,
+            settings=settings,
+        )
+        completed = await wait_for_preview_result(task, timeout_seconds=sync_wait_seconds)
+        current_preview = extracting_preview
+        if completed:
+            refreshed = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+            if refreshed is not None:
+                current_preview = refreshed
+        return PreviewResponse(preview=serialize_preview(current_preview))
+    except Exception:
+        await _maybe_close_vlm_client(ingestion_vlm_client)
+        raise
 
 
 @router.post("/{preview_id}/confirm", response_model=ProblemResponse, status_code=201)

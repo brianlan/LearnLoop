@@ -16,9 +16,15 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.vlm.client import ExtractionResult, VLMError
+from app.infrastructure.vlm.client import ClassificationResult, ExtractionResult, VLMError
 from app.main import create_app
-from app.presentation.deps import get_app_settings, get_database
+from app.presentation.deps import (
+    create_english_ingestion_vlm_client,
+    create_helper_vlm_client,
+    create_math_ingestion_vlm_client,
+    get_app_settings,
+    get_database,
+)
 from app.presentation import ingestion as ingestion_presentation
 
 
@@ -186,10 +192,15 @@ class DelayedResult:
 
 
 class FakeVLMClient:
-    def __init__(self) -> None:
-        self.responses: list[ExtractionResult | DelayedResult | Exception] = []
+    def __init__(self, model: str = "fake-vlm") -> None:
+        self._model = model
+        self.responses: list[Any] = []
         self.calls: list[dict[str, Any]] = []
         self.closed = False
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     async def extract(
         self,
@@ -197,11 +208,23 @@ class FakeVLMClient:
         image_url: str | None = None,
         image_base64: str | None = None,
     ) -> ExtractionResult:
-        self.calls.append({"image_url": image_url, "image_base64": image_base64})
+        self.calls.append({"image_url": image_url, "image_base64": image_base64, "method": "extract"})
         response = self.responses.pop(0)
         if isinstance(response, DelayedResult):
             await asyncio.sleep(response.delay_seconds)
             return response.result
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def classify_subject(
+        self,
+        *,
+        image_url: str | None = None,
+        image_base64: str | None = None,
+    ) -> ClassificationResult:
+        self.calls.append({"image_url": image_url, "image_base64": image_base64, "method": "classify_subject"})
+        response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return response
@@ -289,6 +312,15 @@ def make_preview(
             "tags": ["draft"],
             "subject": "math",
         },
+        "helperDetection": {
+            "subject": None,
+            "confidence": None,
+            "reason": None,
+            "model": None,
+            "rawProviderResponse": None,
+            "failureCode": None,
+            "failureMessage": None,
+        },
         "createdAt": now,
         "updatedAt": refreshed_at,
         "expiresAt": expires_at or (now + timedelta(hours=24)),
@@ -325,22 +357,32 @@ async def ingestion_app() -> AsyncIterator[FastAPI]:
     application = create_app()
     database = FakeDatabase()
     storage = FakeStorage()
-    vlm_client = FakeVLMClient()
+    helper_vlm_client = FakeVLMClient(model="gpt-4.1-mini")
+    math_ingestion_vlm_client = FakeVLMClient(model="math-model")
+    english_ingestion_vlm_client = FakeVLMClient(model="english-model")
     settings = Settings(
-        ingestion_vlm_model="gpt-4.1-mini",
-        ingestion_vlm_timeout_seconds=1.0,
+        helper_vlm_model="gpt-4.1-mini",
+        helper_vlm_timeout_seconds=1.0,
+        math_ingestion_vlm_model="math-model",
+        math_ingestion_vlm_timeout_seconds=1.0,
+        english_ingestion_vlm_model="english-model",
+        english_ingestion_vlm_timeout_seconds=1.0,
         preview_extracting_window_seconds=1.0,
     )
 
     application.state.fake_database = database
     application.state.fake_storage = storage
-    application.state.fake_vlm_client = vlm_client
+    application.state.fake_helper_vlm_client = helper_vlm_client
+    application.state.fake_math_ingestion_vlm_client = math_ingestion_vlm_client
+    application.state.fake_english_ingestion_vlm_client = english_ingestion_vlm_client
     application.state.sync_wait_seconds = 1.0
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[ingestion_presentation.get_s3_storage] = lambda: storage
-    application.dependency_overrides[ingestion_presentation.get_ingestion_vlm_client] = lambda: vlm_client
+    application.dependency_overrides[ingestion_presentation.create_helper_vlm_client] = lambda: helper_vlm_client
+    application.dependency_overrides[ingestion_presentation.create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm_client
+    application.dependency_overrides[ingestion_presentation.create_english_ingestion_vlm_client] = lambda: english_ingestion_vlm_client
     application.dependency_overrides[ingestion_presentation.get_preview_sync_wait_seconds] = (
         lambda: application.state.sync_wait_seconds
     )
@@ -394,7 +436,20 @@ async def test_create_preview_with_valid_image_returns_expected_status(
     sync_wait_seconds: float,
     expected_status: str,
 ) -> None:
-    ingestion_app.state.fake_vlm_client.responses = [response]
+    helper_vlm: FakeVLMClient = ingestion_app.state.fake_helper_vlm_client
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
+    helper_vlm.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="math",
+            confidence=0.95,
+            reason="Contains math notation",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    math_vlm.responses = [response]
     ingestion_app.state.sync_wait_seconds = sync_wait_seconds
 
     image_bytes = make_png_bytes()
@@ -417,6 +472,8 @@ async def test_create_preview_with_valid_image_returns_expected_status(
         assert preview["draft"]["text"] == "What is 2 + 2?"
         assert preview["draft"]["problemType"] == "short-answer"
         assert preview["extraction"]["success"] is True
+        assert preview["helperDetection"]["subject"] == "math"
+        assert preview["helperDetection"]["confidence"] == 0.95
     elif expected_status == "extracting":
         assert preview["draft"]["text"] is None
         assert preview["extraction"]["success"] is None
@@ -563,7 +620,7 @@ async def test_retry_preview_reuses_stored_image_and_reextracts(
 ) -> None:
     database: FakeDatabase = ingestion_app.state.fake_database
     storage: FakeStorage = ingestion_app.state.fake_storage
-    vlm_client: FakeVLMClient = ingestion_app.state.fake_vlm_client
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
     owner = await database["users"].find_one({"username": "student1"})
     assert owner is not None
 
@@ -571,7 +628,7 @@ async def test_retry_preview_reuses_stored_image_and_reextracts(
     database["ingestion_previews"].seed(preview)
     image_bytes = make_png_bytes()
     storage.seed(preview["sourceImage"]["bucket"], preview["sourceImage"]["objectKey"], image_bytes)
-    vlm_client.responses = [make_extraction_result(text="Retry succeeded")]
+    math_vlm.responses = [make_extraction_result(text="Retry succeeded")]
 
     response = await authenticated_client.post(
         f"/api/v1/ingestion-previews/{preview['_id']}/retry"
@@ -585,8 +642,8 @@ async def test_retry_preview_reuses_stored_image_and_reextracts(
         (preview["sourceImage"]["bucket"], preview["sourceImage"]["objectKey"])
     ]
     assert storage.put_calls == []
-    assert len(vlm_client.calls) == 1
-    assert isinstance(vlm_client.calls[0]["image_base64"], str)
+    assert len(math_vlm.calls) == 1
+    assert isinstance(math_vlm.calls[0]["image_base64"], str)
 
 
 @pytest.mark.asyncio
