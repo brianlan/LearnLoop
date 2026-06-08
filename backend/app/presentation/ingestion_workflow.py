@@ -56,6 +56,7 @@ def _merge_draft_with_extraction(
         "graphDsl": draft.get("graphDsl") if draft.get("graphDsl") is not None else graph_dsl,
         "correctAnswer": clean_optional_text(draft.get("correctAnswer")),
         "tags": normalize_tags(list(draft.get("tags", []))),
+        "subject": draft.get("subject", "math"),
     }
 
 

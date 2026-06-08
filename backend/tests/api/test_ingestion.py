@@ -77,6 +77,16 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     return True
 
 
+def _set_nested(document: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.split(".")
+    target = document
+    for part in parts[:-1]:
+        if part not in target:
+            target[part] = {}
+        target = target[part]
+    target[parts[-1]] = value
+
+
 class FakeCollection:
     def __init__(self) -> None:
         self._documents: list[dict[str, Any]] = []
@@ -112,7 +122,7 @@ class FakeCollection:
         for document in self._documents:
             if _matches(document, query):
                 for key, value in update.get("$set", {}).items():
-                    document[key] = deepcopy(value)
+                    _set_nested(document, key, deepcopy(value))
                 return FakeUpdateResult(1)
         return FakeUpdateResult(0)
 
@@ -125,7 +135,7 @@ class FakeCollection:
             if _matches(document, query):
                 original_document = deepcopy(document)
                 for key, value in update.get("$set", {}).items():
-                    document[key] = deepcopy(value)
+                    _set_nested(document, key, deepcopy(value))
                 return original_document
         return None
 
@@ -1094,6 +1104,119 @@ async def test_stream_preview_image_returns_404_for_missing_source_image(
     assert response.json() == {
         "error": {"code": "NOT_FOUND", "message": "Preview image not found"}
     }
+
+
+@pytest.mark.asyncio
+async def test_upload_classifies_as_english_and_routes_to_english_ingestion(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    helper_vlm: FakeVLMClient = ingestion_app.state.fake_helper_vlm_client
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
+    english_vlm: FakeVLMClient = ingestion_app.state.fake_english_ingestion_vlm_client
+
+    helper_vlm.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="english",
+            confidence=0.92,
+            reason="Contains reading passage",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    english_vlm.responses = [make_extraction_result(text="Read the passage")]
+
+    image_bytes = make_png_bytes()
+    create_response = await authenticated_client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("test.png", image_bytes, "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    preview = create_response.json()["preview"]
+    assert preview["status"] == "ready"
+    assert preview["draft"]["text"] == "Read the passage"
+    assert preview["draft"]["subject"] == "english"
+    assert preview["helperDetection"]["subject"] == "english"
+    assert preview["helperDetection"]["confidence"] == 0.92
+
+    assert len(math_vlm.calls) == 0
+    assert len(english_vlm.calls) == 1
+    assert isinstance(english_vlm.calls[0]["image_base64"], str)
+
+
+@pytest.mark.asyncio
+async def test_retry_uses_edited_subject_for_routing(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    storage: FakeStorage = ingestion_app.state.fake_storage
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
+    english_vlm: FakeVLMClient = ingestion_app.state.fake_english_ingestion_vlm_client
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+
+    preview = make_preview(owner["_id"], status="vlm-failed")
+    preview["editableDraft"]["subject"] = "english"
+    database["ingestion_previews"].seed(preview)
+    image_bytes = make_png_bytes()
+    storage.seed(preview["sourceImage"]["bucket"], preview["sourceImage"]["objectKey"], image_bytes)
+    english_vlm.responses = [make_extraction_result(text="Retry english")]
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/retry"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["preview"]
+    assert body["status"] == "ready"
+    assert body["draft"]["text"] == "draft text"
+    assert body["draft"]["subject"] == "english"
+
+    assert len(math_vlm.calls) == 0
+    assert len(english_vlm.calls) == 1
+    assert isinstance(english_vlm.calls[0]["image_base64"], str)
+
+
+@pytest.mark.asyncio
+async def test_helper_failure_records_failure_metadata_and_falls_back_to_math(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    helper_vlm: FakeVLMClient = ingestion_app.state.fake_helper_vlm_client
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
+    english_vlm: FakeVLMClient = ingestion_app.state.fake_english_ingestion_vlm_client
+
+    helper_vlm.responses = [
+        VLMError(
+            "Helper VLM failed",
+            code="helper-error",
+            retryable=False,
+            raw_provider_response={"detail": "bad request"},
+        )
+    ]
+    math_vlm.responses = [make_extraction_result(text="Fallback math result")]
+
+    image_bytes = make_png_bytes()
+    create_response = await authenticated_client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("test.png", image_bytes, "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    preview = create_response.json()["preview"]
+    assert preview["status"] == "ready"
+    assert preview["draft"]["text"] == "Fallback math result"
+    assert preview["draft"]["subject"] == "math"
+    assert preview["helperDetection"]["subject"] is None
+    assert preview["helperDetection"]["failureCode"] == "helper-error"
+    assert preview["helperDetection"]["failureMessage"] == "Helper VLM failed"
+
+    assert len(math_vlm.calls) == 1
+    assert len(english_vlm.calls) == 0
 
 
 @pytest.mark.asyncio
