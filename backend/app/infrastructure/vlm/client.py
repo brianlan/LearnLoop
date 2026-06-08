@@ -72,6 +72,7 @@ class GradingRequest(_RequestBase):
     user_answer: str = Field(alias="userAnswer")
     correct_answer: str = Field(alias="correctAnswer")
     problem_text: str = Field(alias="problemText")
+    subject: str = "math"
     expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
 
 
@@ -226,6 +227,7 @@ class VLMClient:
         problem_text: str,
         user_answer: str,
         correct_answer: str,
+        subject: str = "math",
     ) -> GradingResult:
         request = GradingRequest(
             model=self._model,
@@ -235,6 +237,7 @@ class VLMClient:
             problemText=problem_text,
             userAnswer=user_answer,
             correctAnswer=correct_answer,
+            subject=subject,
             expectedResponseSchema={
                 "type": "object",
                 "required": ["isCorrect", "feedback"],
@@ -352,6 +355,7 @@ class VLMClient:
                 problem_text=request.problem_text,
                 user_answer=request.user_answer,
                 correct_answer=request.correct_answer,
+                subject=request.subject,
                 expected_response_schema=request.expected_response_schema,
             )
         else:

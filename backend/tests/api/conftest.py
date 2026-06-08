@@ -142,6 +142,7 @@ def make_problem(
     text: str = "What is 2+2?",
     problem_type: str = "short-answer",
     correct_answer_display: str = "4",
+    subject: str = "math",
     is_deleted: bool = False,
     last_tested_at: datetime | None = None,
     exposure_count: int = 0,
@@ -152,6 +153,7 @@ def make_problem(
         "userId": user_id,
         "text": text,
         "problemType": problem_type,
+        "subject": subject,
         "graphDsl": None,
         "correctAnswer": {
             "display": correct_answer_display,

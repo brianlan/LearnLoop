@@ -150,6 +150,7 @@ class FakeVLMClient:
     def __init__(self) -> None:
         self.responses: list[Any] = []
         self.calls = 0
+        self.last_call_kwargs: dict[str, Any] = {}
 
     async def grade_short_answer(
         self,
@@ -159,8 +160,17 @@ class FakeVLMClient:
         problem_text: str,
         user_answer: str,
         correct_answer: str,
+        subject: str = "math",
     ) -> FakeGradingResult:
         self.calls += 1
+        self.last_call_kwargs = {
+            "image_url": image_url,
+            "image_base64": image_base64,
+            "problem_text": problem_text,
+            "user_answer": user_answer,
+            "correct_answer": correct_answer,
+            "subject": subject,
+        }
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -194,6 +204,7 @@ def make_problem(
     text: str,
     problem_type: str,
     correct_answer: str,
+    subject: str = "math",
     normalized_text: str | None = None,
     normalized_set: list[str] | None = None,
     is_deleted: bool = False,
@@ -208,7 +219,7 @@ def make_problem(
         "userId": user_id,
         "text": text,
         "problemType": problem_type,
-        "subject": "math",
+        "subject": subject,
         "graphDsl": None,
         "correctAnswer": {
             "display": correct_answer,
@@ -456,6 +467,36 @@ async def test_submit_exam_grades_items_updates_tracking_and_history(exams_app: 
 
 
 @pytest.mark.asyncio
+async def test_submit_exam_passes_snapshot_subject_to_vlm(exams_app: FastAPI, client: AsyncClient) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    vlm: FakeVLMClient = exams_app.state.fake_vlm
+    user_id = exams_app.state.primary_user["_id"]
+
+    english = make_problem(
+        user_id,
+        text="What is the capital of France?",
+        problem_type="short-answer",
+        correct_answer="Paris",
+        subject="english",
+    )
+    database["problems"].seed(english)
+    storage.seed(english["sourceImage"]["bucket"], english["sourceImage"]["objectKey"], b"image")
+    vlm.responses = [FakeGradingResult(is_correct=True, feedback="good")]
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item = exam["items"][0]
+
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item['itemId']}/answer", json={"answer": "Paris"})
+    submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+
+    assert submit_response.status_code == 200
+    assert vlm.calls == 1
+    assert vlm.last_call_kwargs["subject"] == "english"
+
+
+@pytest.mark.asyncio
 async def test_submit_exam_rejects_when_answers_modified_during_grading(
     exams_app: FastAPI,
     client: AsyncClient,
@@ -491,6 +532,7 @@ async def test_submit_exam_rejects_when_answers_modified_during_grading(
         problem_text: str,
         user_answer: str,
         correct_answer: str,
+        subject: str = "math",
     ) -> FakeGradingResult:
         vlm.calls += 1
         stored_exam = await database["exams"].find_one({"_id": ObjectId(exam["id"])})
