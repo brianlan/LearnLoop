@@ -19,13 +19,6 @@ from app.infrastructure.vlm.client import (
     VLMError,
 )
 from app.domain.state import recover_stale_preview
-from app.infrastructure.vlm.prompts import (
-    EXTRACTION_PROMPT_VERSION,
-    EXTRACTION_SCHEMA_VERSION,
-    GRADING_PROMPT_VERSION,
-    GRADING_SCHEMA_VERSION,
-)
-
 
 def _build_client(handler) -> VLMClient:
     transport = httpx.MockTransport(handler)
@@ -80,8 +73,6 @@ async def test_vlm_extraction_happy_path() -> None:
 
     assert isinstance(result, ExtractionResult)
     assert result.request_type == "ingestion"
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
-    assert result.schema_version == EXTRACTION_SCHEMA_VERSION
     assert result.text == "Solve x + 1 = 2"
     assert result.problem_type == "short-answer"
     assert result.raw_provider_response["providerMetadata"]["provider"] == "demo"
@@ -91,7 +82,9 @@ async def test_vlm_extraction_happy_path() -> None:
 async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())
-        prompt = payload["messages"][0]["content"][0]["text"]
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        prompt = payload["messages"][0]["content"]
         assert "Use `$...$` for inline math" in prompt
         assert "Put whitespace around inline `$...$`" in prompt
         return httpx.Response(
@@ -120,14 +113,51 @@ async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
     result = await client.extract(image_url="s3://bucket/key")
     await client.aclose()
 
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+    assert result.text == "Find $x$ when $x+1=2$"
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        schema_prompt = payload["messages"][1]["content"][0]["text"]
+        assert "Expected JSON schema:" in schema_prompt
+        assert '"required": ["text", "problemType"]' in schema_prompt
+        assert '"graphDsl": {"type": ["string", "null"]}' in schema_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Find $x$ when $x+1=2$",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.text == "Find $x$ when $x+1=2$"
 
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())
-        prompt = payload["messages"][0]["content"][0]["text"]
+        prompt = payload["messages"][0]["content"]
         assert "keepaspectratio: true" in prompt
         assert "preserve the source diagram" in prompt
         assert "JXG.JSXGraph.initBoard" in prompt
@@ -156,16 +186,22 @@ async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None
     result = await client.extract(image_url="s3://bucket/key")
     await client.aclose()
 
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+    assert result.text == "Triangle problem"
 
 
 @pytest.mark.asyncio
 async def test_vlm_grading_happy_path() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/chat/completions"
-        payload = await request.aread()
-        assert b'"messages"' in payload
-        assert b'"image_url"' in payload
+        payload = json.loads((await request.aread()).decode())
+        assert "messages" in payload
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        assert payload["messages"][1]["content"][1]["type"] == "image_url"
+        grading_context = payload["messages"][1]["content"][0]["text"]
+        assert '"problemText": "What is 1 + 1?"' in grading_context
+        assert '"userAnswer": "1"' in grading_context
+        assert '"correctAnswer": "1"' in grading_context
         return httpx.Response(
             200,
             json={
@@ -191,6 +227,7 @@ async def test_vlm_grading_happy_path() -> None:
 
     result = await client.grade_short_answer(
         image_url="s3://bucket/key",
+        problem_text="What is 1 + 1?",
         user_answer="1",
         correct_answer="1",
     )
@@ -198,8 +235,6 @@ async def test_vlm_grading_happy_path() -> None:
 
     assert isinstance(result, GradingResult)
     assert result.request_type == "short-answer-grading"
-    assert result.prompt_version == GRADING_PROMPT_VERSION
-    assert result.schema_version == GRADING_SCHEMA_VERSION
     assert result.is_correct is True
     assert result.feedback == "Correct."
 

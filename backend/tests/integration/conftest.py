@@ -284,6 +284,7 @@ class FakeVLMClient:
         *,
         image_url: str | None = None,
         image_base64: str | None = None,
+        problem_text: str,
         user_answer: str,
         correct_answer: str,
     ) -> FakeGradingResult:
@@ -291,6 +292,7 @@ class FakeVLMClient:
             {
                 "image_url": image_url,
                 "image_base64": image_base64,
+                "problem_text": problem_text,
                 "user_answer": user_answer,
                 "correct_answer": correct_answer,
                 "method": "grade_short_answer",
@@ -323,8 +325,6 @@ def make_extraction_result(
     return ExtractionResult(
         request_type="ingestion",
         model=model,
-        prompt_version="test-prompt-v1",
-        schema_version="test-schema-v1",
         text=text,
         problem_type=problem_type,
         graph_dsl=graph_dsl,

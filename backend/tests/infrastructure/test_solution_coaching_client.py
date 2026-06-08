@@ -6,18 +6,17 @@ import httpx
 import pytest
 
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.llm.client import (
+from app.infrastructure.vlm.solution_coaching_client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
     FAILURE_CODE_PROVIDER,
     CoachingVLMClient,
     CoachingVLMRequest,
     CoachingMessage,
-    LLMClientError,
+    SolutionCoachingVLMError,
     SolutionVLMClient,
     SolutionVLMRequest,
 )
-from app.infrastructure.llm.prompts import COACHING_PROMPT_VERSION, SOLUTION_PROMPT_VERSION
 
 
 def _build_solution_client(handler) -> SolutionVLMClient:
@@ -54,7 +53,7 @@ def _build_coaching_client(handler) -> CoachingVLMClient:
     return CoachingVLMClient(settings=settings, http_client=http_client)
 
 
-def test_llm_clients_use_capability_specific_timeouts() -> None:
+def test_solution_coaching_vlm_clients_use_capability_specific_timeouts() -> None:
     solution_client = SolutionVLMClient(
         settings=Settings(solution_vlm_timeout_seconds=123),
         http_client=httpx.AsyncClient(),
@@ -75,14 +74,18 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
         assert request.headers["Authorization"] == "Bearer solution-key"
         payload = json.loads(await request.aread())
         assert payload["model"] == "solution-model"
-        prompt = payload["messages"][0]["content"][0]["text"]
-        assert "written in Simplified Chinese" in prompt
-        assert "Do not use advanced or out-of-scope methods" in prompt
-        assert "the answer key may be only one valid wording or format" in prompt
-        assert "Return valid JSON only" in prompt
-        assert "已知 x + 3 = 5" in prompt
-        assert "2" in prompt
-        assert payload["messages"][0]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        system_prompt = payload["messages"][0]["content"]
+        user_content = payload["messages"][1]["content"]
+        user_prompt = user_content[0]["text"]
+        assert "written in Simplified Chinese" in system_prompt
+        assert "Do not use advanced or out-of-scope methods" in system_prompt
+        assert "the answer key may be only one valid wording or format" in system_prompt
+        assert "Return valid JSON only" in system_prompt
+        assert "已知 x + 3 = 5" in user_prompt
+        assert '"answerKey": "2"' in user_prompt
+        assert payload["messages"][1]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
         return httpx.Response(
             200,
             json={
@@ -114,7 +117,6 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
     )
     await client.aclose()
 
-    assert result.prompt_version == SOLUTION_PROMPT_VERSION
     assert result.model == "solution-model"
     assert result.final_answer == "x = 2"
     assert result.math_level_classification == "middle-school"
@@ -158,7 +160,7 @@ async def test_solution_vlm_client_rejects_malformed_response() -> None:
 
     client = _build_solution_client(handler)
 
-    with pytest.raises(LLMClientError) as exc_info:
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
@@ -175,7 +177,7 @@ async def test_solution_vlm_client_classifies_provider_failure_as_retryable() ->
 
     client = _build_solution_client(handler)
 
-    with pytest.raises(LLMClientError) as exc_info:
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
@@ -192,16 +194,21 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
         assert request.headers["Authorization"] == "Bearer coaching-key"
         payload = json.loads(await request.aread())
         assert payload["model"] == "coaching-model"
-        prompt = payload["messages"][0]["content"]
-        assert "Write this student-facing tutoring reply in Simplified Chinese" in prompt
-        assert "Be warm, encouraging, and patient" in prompt
-        assert "Canonical solution steps" in prompt
-        assert "board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})" in prompt
-        assert "Never write `board.create('text', [x, y, 'label', {options}])`" in prompt
-        assert "student: 我想先看第一步" in prompt
-        assert "coach: 先看已知条件" in prompt
-        assert "tracking" not in prompt
-        assert "exposureCount" not in prompt
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][1]["role"] == "user"
+        system_prompt = payload["messages"][0]["content"]
+        user_prompt = payload["messages"][1]["content"]
+        assert "Write this student-facing tutoring reply in Simplified Chinese" in system_prompt
+        assert "Be warm, encouraging, and patient" in system_prompt
+        assert "canonicalSolutionSteps" in user_prompt
+        assert "board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})" in system_prompt
+        assert "Never write `board.create('text', [x, y, 'label', {options}])`" in system_prompt
+        assert "student: 我想先看第一步" in user_prompt
+        assert "coach: 先看已知条件" in user_prompt
+        assert "可以给我一个提示吗？" in user_prompt
+        assert "可以给我一个提示吗？" not in system_prompt
+        assert "tracking" not in user_prompt
+        assert "exposureCount" not in user_prompt
         return httpx.Response(
             200,
             json={
@@ -234,7 +241,6 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
     )
     await client.aclose()
 
-    assert result.prompt_version == COACHING_PROMPT_VERSION
     assert result.model == "coaching-model"
     assert result.text == "先看等式两边同时减 3。"
 
@@ -317,7 +323,7 @@ async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
 
     client = _build_coaching_client(handler)
 
-    with pytest.raises(LLMClientError) as exc_info:
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.send_message(
             CoachingVLMRequest(
                 problem_text="题目",

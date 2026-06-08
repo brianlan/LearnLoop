@@ -6,7 +6,7 @@ from bson import ObjectId
 
 from app.domain.coaching.service import CoachingService, CoachingError
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole
-from app.infrastructure.llm.client import CoachingVLMResult, LLMClientError
+from app.infrastructure.vlm.solution_coaching_client import CoachingVLMResult, SolutionCoachingVLMError
 
 
 class FakeDatabase:
@@ -79,7 +79,6 @@ class FakeCoachingVLMClient:
     def __init__(self):
         self.error_to_raise = None
         self.result = CoachingVLMResult(
-            prompt_version="1",
             model="test",
             text="hello from coach",
             whiteboard_dsl="dsl",
@@ -195,10 +194,10 @@ async def test_send_message_cap_exceeded():
     assert exc.value.code == "MESSAGE_CAP_EXCEEDED"
 
 @pytest.mark.asyncio
-async def test_send_message_llm_failure():
+async def test_send_message_vlm_failure():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    client.error_to_raise = LLMClientError("error", code="llm-error", retryable=True)
+    client.error_to_raise = SolutionCoachingVLMError("error", code="vlm-error", retryable=True)
     service = CoachingService(db, client)
     
     prob_id = ObjectId()
@@ -208,7 +207,7 @@ async def test_send_message_llm_failure():
     
     with pytest.raises(CoachingError) as exc:
         await service.send_message(str(prob_id), str(user_id), "hello")
-    assert exc.value.code == "LLM_FAILURE"
+    assert exc.value.code == "VLM_FAILURE"
     assert exc.value.status_code == 503
 
 @pytest.mark.asyncio
@@ -216,7 +215,6 @@ async def test_send_message_persists_reasoning_content():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
     client.result = CoachingVLMResult(
-        prompt_version="1",
         model="test",
         text="coach reply",
         whiteboard_dsl=None,
@@ -243,7 +241,6 @@ async def test_send_message_reasoning_content_none_when_absent():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
     client.result = CoachingVLMResult(
-        prompt_version="1",
         model="test",
         text="coach reply",
         whiteboard_dsl=None,

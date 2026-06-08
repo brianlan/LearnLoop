@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.domain.models import CoachingConversation
 from app.domain.coaching.service import CoachingService, CoachingError
-from app.infrastructure.llm.client import CoachingVLMClient
+from app.infrastructure.vlm.solution_coaching_client import CoachingVLMClient
 from app.infrastructure.config.settings import Settings
 from app.presentation.deps import (
     DatabaseDependency,
@@ -37,9 +37,9 @@ CoachingVLMDependency = Annotated[CoachingVLMClient, Depends(get_coaching_client
 
 def get_coaching_service(
     database: DatabaseDependency,
-    llm_client: CoachingVLMDependency
+    vlm_client: CoachingVLMDependency
 ) -> CoachingService:
-    return CoachingService(database=database, llm_client=llm_client)
+    return CoachingService(database=database, vlm_client=vlm_client)
 
 CoachingServiceDependency = Annotated[CoachingService, Depends(get_coaching_service)]
 

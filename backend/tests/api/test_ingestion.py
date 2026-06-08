@@ -233,8 +233,6 @@ def make_extraction_result(
     return ExtractionResult(
         request_type="ingestion",
         model=model,
-        prompt_version="test-prompt-v1",
-        schema_version="test-schema-v1",
         text=text,
         problem_type=problem_type,
         graph_dsl=graph_dsl,

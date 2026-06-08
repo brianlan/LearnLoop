@@ -7,7 +7,7 @@ import pytest
 from bson import ObjectId
 
 from app.domain.models import SolutionGenerationStatus
-from app.infrastructure.llm.client import SolutionVLMResult, LLMClientError
+from app.infrastructure.vlm.solution_coaching_client import SolutionCoachingVLMError, SolutionVLMResult
 from app.infrastructure.worker.solution_worker import run_solution_worker, process_task
 
 class FakeCollection:
@@ -77,11 +77,10 @@ def _matches(document, query):
             return False
     return True
 
-class FakeLLMClient:
+class FakeSolutionVLMClient:
     def __init__(self):
         self.error_to_raise = None
         self.result_to_return = SolutionVLMResult(
-            prompt_version="1",
             model="test",
             steps_markdown="steps",
             final_answer="answer",
@@ -105,7 +104,7 @@ class FakeStorage:
 
 @pytest.mark.asyncio
 async def test_process_task_success():
-    client = FakeLLMClient()
+    client = FakeSolutionVLMClient()
     storage = FakeStorage()
     tasks_col = FakeCollection()
     solutions_col = FakeCollection()
@@ -128,8 +127,8 @@ async def test_process_task_success():
 
 @pytest.mark.asyncio
 async def test_process_task_retry_and_fail():
-    client = FakeLLMClient()
-    client.error_to_raise = LLMClientError("err", code="err", retryable=True)
+    client = FakeSolutionVLMClient()
+    client.error_to_raise = SolutionCoachingVLMError("err", code="err", retryable=True)
     storage = FakeStorage()
     tasks_col = FakeCollection()
     solutions_col = FakeCollection()
@@ -257,7 +256,7 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
 
 @pytest.mark.asyncio
 async def test_process_task_no_image():
-    client = FakeLLMClient()
+    client = FakeSolutionVLMClient()
     storage = FakeStorage()
     tasks_col = FakeCollection()
     solutions_col = FakeCollection()

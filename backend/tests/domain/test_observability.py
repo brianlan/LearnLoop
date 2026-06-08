@@ -201,15 +201,15 @@ async def test_worker_process_task_logs_observability(caplog):
         async def find_one(self, query):
             return self.prob
 
-    class FakeLLMResult:
+    class FakeSolutionVLMResult:
         def __init__(self):
             self.steps_markdown = "steps"
             self.final_answer = "ans"
             self.math_level_classification = "level"
 
-    class FakeLLMClient:
+    class FakeSolutionVLMClient:
         async def generate_solution(self, req):
-            return FakeLLMResult()
+            return FakeSolutionVLMResult()
 
     class FakeStorage:
         pass
@@ -222,7 +222,7 @@ async def test_worker_process_task_logs_observability(caplog):
     tasks_col = FakeTasksCol()
     solutions_col = FakeSolutionsCol()
     problems_col = FakeProblemsCol(prob)
-    client = FakeLLMClient()
+    client = FakeSolutionVLMClient()
     storage = FakeStorage()
 
     import app.infrastructure.worker.solution_worker as sw

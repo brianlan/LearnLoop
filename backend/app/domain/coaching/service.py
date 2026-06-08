@@ -5,7 +5,12 @@ from typing import Any
 from bson import ObjectId
 
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole, ExamState
-from app.infrastructure.llm.client import CoachingVLMClient, CoachingVLMRequest, LLMClientError
+from app.infrastructure.vlm.solution_coaching_client import (
+    CoachingMessage as VLMCoachingMessage,
+    CoachingVLMClient,
+    CoachingVLMRequest,
+    SolutionCoachingVLMError,
+)
 from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
     COACHING_CONVERSATIONS_COLLECTION,
@@ -21,9 +26,9 @@ class CoachingError(Exception):
 
 
 class CoachingService:
-    def __init__(self, database: Any, llm_client: CoachingVLMClient):
+    def __init__(self, database: Any, vlm_client: CoachingVLMClient):
         self.db = database
-        self.llm_client = llm_client
+        self.vlm_client = vlm_client
 
     async def get_conversation(self, problem_id: str, user_id: str) -> CoachingConversation | None:
         doc = await self.db[COACHING_CONVERSATIONS_COLLECTION].find_one({
@@ -94,10 +99,9 @@ class CoachingService:
                 status_code=400
             )
 
-        # 5. Call LLM
-        from app.infrastructure.llm.client import CoachingMessage as LLMCoachingMessage
+        # 5. Call VLM
         history = [
-            LLMCoachingMessage(role=msg.role.value, text=msg.content)
+            VLMCoachingMessage(role=msg.role.value, text=msg.content)
             for msg in conversation.messages
         ]
 
@@ -112,12 +116,12 @@ class CoachingService:
         )
 
         try:
-            llm_result = await self.llm_client.send_message(request)
-        except LLMClientError as exc:
-            logger.error(f"Coaching LLM error: {exc}")
+            vlm_result = await self.vlm_client.send_message(request)
+        except SolutionCoachingVLMError as exc:
+            logger.error(f"Coaching VLM error: {exc}")
             raise CoachingError(
                 "Coaching service is currently unavailable. Please try again later.",
-                code="LLM_FAILURE",
+                code="VLM_FAILURE",
                 status_code=503
             )
 
@@ -126,9 +130,9 @@ class CoachingService:
             conversation.add_message(CoachingMessage(role=CoachingRole.STUDENT, content=message))
             conversation.add_message(CoachingMessage(
                 role=CoachingRole.COACH,
-                content=llm_result.text,
-                whiteboard_dsl=llm_result.whiteboard_dsl,
-                reasoning_content=llm_result.reasoning_content
+                content=vlm_result.text,
+                whiteboard_dsl=vlm_result.whiteboard_dsl,
+                reasoning_content=vlm_result.reasoning_content
             ))
         except ValueError as exc:
             raise CoachingError(str(exc), code="MESSAGE_CAP_EXCEEDED", status_code=400)

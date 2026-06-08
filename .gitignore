@@ -241,3 +241,4 @@ scheduled_tasks.lock
 drafts
 .vscode
 volume-backups
+.claude/scheduled_tasks.json

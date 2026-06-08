@@ -156,6 +156,7 @@ class FakeVLMClient:
         *,
         image_url: str | None = None,
         image_base64: str | None = None,
+        problem_text: str,
         user_answer: str,
         correct_answer: str,
     ) -> FakeGradingResult:
@@ -486,6 +487,7 @@ async def test_submit_exam_rejects_when_answers_modified_during_grading(
         *,
         image_url: str | None = None,
         image_base64: str | None = None,
+        problem_text: str,
         user_answer: str,
         correct_answer: str,
     ) -> FakeGradingResult:

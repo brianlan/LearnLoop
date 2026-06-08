@@ -8,7 +8,11 @@ from pymongo import ReturnDocument
 
 from app.domain.models import SolutionGenerationStatus
 from app.infrastructure.config.settings import get_settings
-from app.infrastructure.llm.client import SolutionVLMClient, SolutionVLMRequest, LLMClientError
+from app.infrastructure.vlm.solution_coaching_client import (
+    SolutionCoachingVLMError,
+    SolutionVLMClient,
+    SolutionVLMRequest,
+)
 from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
     SOLUTION_GENERATION_TASKS_COLLECTION,
@@ -97,9 +101,9 @@ async def process_task(
         )
         log_solution_generation_event("succeeded", problem_id)
         
-    except LLMClientError as exc:
+    except SolutionCoachingVLMError as exc:
         retry_count = int(task.get("retry_count", 0)) + 1
-        logger.warning(f"LLM error for task {task['_id']}: {exc}")
+        logger.warning(f"VLM error for task {task['_id']}: {exc}")
         if retry_count > max_retries:
             now = _utc_now()
             await tasks_col.update_one(
