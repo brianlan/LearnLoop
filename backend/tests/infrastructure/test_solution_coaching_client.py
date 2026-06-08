@@ -67,6 +67,77 @@ def test_solution_coaching_vlm_clients_use_capability_specific_timeouts() -> Non
     assert coaching_client._timeout_seconds == 45
 
 
+def test_solution_vlm_client_selects_english_settings_and_prompt() -> None:
+    settings = Settings(
+        english_solution_vlm_endpoint="https://english-solution.example/api",
+        english_solution_vlm_model="english-model",
+        english_solution_vlm_api_key="english-key",
+        english_solution_vlm_timeout_seconds=99,
+    )
+    client = SolutionVLMClient(settings=settings, subject="english", http_client=httpx.AsyncClient())
+
+    assert client._endpoint == "https://english-solution.example/api"
+    assert client._model == "english-model"
+    assert client._api_key == "english-key"
+    assert client._timeout_seconds == 99
+    assert client._subject == "english"
+
+    payload = client._build_payload(
+        user_prompt="test",
+        image_url=None,
+        image_base64=None,
+    )
+    messages = payload["messages"]
+    assert messages[0]["role"] == "system"
+    assert "English" in messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_selects_english_settings_and_prompt() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(await request.aread())
+        assert payload["model"] == "english-model"
+        assert payload["messages"][0]["role"] == "system"
+        assert "English" in payload["messages"][0]["content"]
+        return httpx.Response(
+            200,
+            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps({"text": "hi"})}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        transport=transport,
+        base_url="https://english-coaching.example/api",
+        timeout=5,
+    )
+    settings = Settings(
+        english_coaching_vlm_endpoint="https://english-coaching.example/api",
+        english_coaching_vlm_model="english-model",
+        english_coaching_vlm_api_key="english-key",
+        english_coaching_vlm_timeout_seconds=88,
+    )
+    client = CoachingVLMClient(settings=settings, subject="english", http_client=http_client)
+
+    assert client._endpoint == "https://english-coaching.example/api"
+    assert client._model == "english-model"
+    assert client._api_key == "english-key"
+    assert client._timeout_seconds == 88
+    assert client._subject == "english"
+
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="text",
+            correct_answer="ans",
+            canonical_steps_markdown="steps",
+            canonical_final_answer="ans",
+            level_classification="basic",
+            new_message="hello",
+        )
+    )
+    assert result.text == "hi"
+    await client.aclose()
+
+
 @pytest.mark.asyncio
 async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
