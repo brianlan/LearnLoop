@@ -15,6 +15,7 @@ class PreviewDraftPayload(BaseModel):
     graphDsl: str | None = None
     correctAnswer: str | None = None
     tags: list[str] = Field(default_factory=list)
+    subject: str = "math"
 
 
 class PreviewExtractionPayload(BaseModel):
@@ -25,6 +26,7 @@ class PreviewExtractionPayload(BaseModel):
     rawText: str | None = None
     rawProblemType: str | None = None
     rawGraphDsl: str | None = None
+    rawSubject: str | None = None
     rawProviderResponse: dict[str, Any] | None = None
     failureCode: str | None = None
     failureMessage: str | None = None
@@ -49,6 +51,7 @@ class ProblemPayload(BaseModel):
     id: str
     text: str
     problemType: str
+    subject: str = "math"
     graphDsl: str | None = None
     correctAnswer: CorrectAnswerPayload
     tags: list[str] = Field(default_factory=list)
@@ -80,6 +83,7 @@ def serialize_preview(preview: Mapping[str, Any]) -> PreviewPayload:
                 "graphDsl": draft.get("graphDsl"),
                 "correctAnswer": draft.get("correctAnswer"),
                 "tags": list(draft.get("tags", [])),
+                "subject": str(draft.get("subject", "math")),
             },
             "extraction": {
                 "requestModel": extraction.get("requestModel"),
@@ -89,6 +93,7 @@ def serialize_preview(preview: Mapping[str, Any]) -> PreviewPayload:
                 "rawText": extraction.get("rawText"),
                 "rawProblemType": _enum_value(extraction.get("rawProblemType")),
                 "rawGraphDsl": extraction.get("rawGraphDsl"),
+                "rawSubject": _enum_value(extraction.get("rawSubject")),
                 "rawProviderResponse": extraction.get("rawProviderResponse"),
                 "failureCode": extraction.get("failureCode"),
                 "failureMessage": extraction.get("failureMessage"),
@@ -106,6 +111,7 @@ def serialize_problem(problem: Mapping[str, Any]) -> ProblemPayload:
             "id": str(problem["_id"]),
             "text": problem["text"],
             "problemType": _enum_value(problem["problemType"]),
+            "subject": str(problem.get("subject", "math")),
             "graphDsl": problem.get("graphDsl"),
             "correctAnswer": problem["correctAnswer"],
             "tags": list(problem.get("tags", [])),

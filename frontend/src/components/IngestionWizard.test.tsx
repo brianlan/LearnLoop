@@ -283,4 +283,52 @@ describe("IngestionWizard", () => {
       expect(screen.getByTestId("ingestion-wizard")).toBeInTheDocument();
     });
   });
+
+  describe("subject selector", () => {
+    it("renders subject selector with default math", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            preview: {
+              id: "test-preview-id",
+              status: "ready",
+              sourceImage: { bucket: "test", objectKey: "test-key" },
+              draft: {
+                text: "What is 2+2?",
+                problemType: "short-answer",
+                graphDsl: null,
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+              extraction: {
+                rawText: "What is 2+2?",
+                rawProblemType: "short-answer",
+              },
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              expiresAt: new Date().toISOString(),
+            },
+          }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      render(<IngestionWizard />);
+
+      const file = new File(["test"], "test.png", { type: "image/png" });
+      const fileInput = screen.getByRole("button", {
+        name: "Choose Image File",
+      }).parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("subject-input")).toBeInTheDocument();
+      });
+
+      const subjectSelect = screen.getByTestId("subject-input") as HTMLSelectElement;
+      expect(subjectSelect.value).toBe("math");
+    });
+  });
 });

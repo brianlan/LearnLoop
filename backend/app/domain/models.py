@@ -12,6 +12,11 @@ class ProblemType(str, Enum):
     SHORT_ANSWER = "short-answer"
 
 
+class ProblemSubject(str, Enum):
+    MATH = "math"
+    ENGLISH = "english"
+
+
 class ExamState(str, Enum):
     IN_PROGRESS = "in-progress"
     SUBMITTED = "submitted"
@@ -76,6 +81,7 @@ class Extraction(BaseModel):
     rawText: Optional[str] = None
     rawProblemType: Optional[ProblemType] = None
     rawGraphDsl: Optional[str] = None
+    rawSubject: Optional[ProblemSubject] = None
     rawProviderResponse: Optional[Dict[str, Any]] = None
     failureCode: Optional[str] = None
     failureMessage: Optional[str] = None
@@ -87,6 +93,7 @@ class EditableDraft(BaseModel):
     graphDsl: Optional[str] = None
     correctAnswer: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
+    subject: ProblemSubject = ProblemSubject.MATH
 
 
 class Origin(BaseModel):
@@ -127,6 +134,7 @@ class ProblemSnapshot(BaseModel):
     graphDsl: Optional[str] = None
     correctAnswer: CorrectAnswer
     sourceImage: Optional[SourceImage] = None
+    subject: ProblemSubject = ProblemSubject.MATH
 
 
 class ExamItemAnswer(BaseModel):
@@ -213,6 +221,7 @@ class Problem(BaseModel):
     userId: str
     text: str
     problemType: ProblemType
+    subject: ProblemSubject = ProblemSubject.MATH
     graphDsl: Optional[str] = None
     correctAnswer: CorrectAnswer
     tags: List[str] = Field(default_factory=list)

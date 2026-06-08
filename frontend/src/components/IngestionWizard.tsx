@@ -22,6 +22,7 @@ interface PreviewDraft {
   graphDsl: string | null;
   correctAnswer: string | null;
   tags: string[];
+  subject: string;
 }
 
 interface PreviewExtraction {
@@ -93,6 +94,7 @@ function mapPreviewToFormData(preview: IngestionPreview) {
     graphDsl: preview.draft.graphDsl || "",
     correctAnswer: preview.draft.correctAnswer || "",
     tags: preview.draft.tags,
+    subject: preview.draft.subject || "math",
   };
 }
 
@@ -104,6 +106,7 @@ export interface WizardFormData {
   graphDsl: string;
   correctAnswer: string;
   tags: string[];
+  subject: string;
 }
 
 interface IngestionWizardProps {
@@ -141,6 +144,7 @@ interface PreviewUpdateData {
   graphDsl?: string;
   correctAnswer?: string;
   tags?: string[];
+  subject?: string;
 }
 
 async function updatePreview(id: string, data: PreviewUpdateData): Promise<IngestionPreview> {
@@ -588,6 +592,39 @@ function EditingStep({
             color: "var(--color-text)",
           }}
         >
+          Subject
+        </label>
+        <select
+          value={formData.subject}
+          onChange={(e) => onFieldChange("subject", e.target.value)}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            border: "1px solid var(--color-border-muted)",
+            borderRadius: "6px",
+            fontSize: "14px",
+            fontFamily: "inherit",
+            boxSizing: "border-box",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
+          }}
+          data-testid="subject-input"
+        >
+          <option value="math">Math</option>
+          <option value="english">English</option>
+        </select>
+      </div>
+
+      <div style={{ marginBottom: "24px" }}>
+        <label
+          style={{
+            display: "block",
+            marginBottom: "6px",
+            fontSize: "14px",
+            fontWeight: 500,
+            color: "var(--color-text)",
+          }}
+        >
           Problem Type
         </label>
         <select
@@ -885,6 +922,24 @@ function ConfirmingStep({
               marginBottom: "4px",
             }}
           >
+            Subject
+          </div>
+          <div style={{ fontSize: "14px", color: "var(--color-text)" }}>
+            {formData.subject || "(empty)"}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: "16px" }}>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "var(--color-text-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "4px",
+            }}
+          >
             Graph DSL
           </div>
           <div
@@ -1067,6 +1122,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     graphDsl: "",
     correctAnswer: "",
     tags: [],
+    subject: "math",
   });
 
   const [graphError, setGraphError] = useState<string>("");
@@ -1084,6 +1140,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
           graphDsl: draft.graphDsl || "",
           correctAnswer: draft.correctAnswer || "",
           tags: Array.isArray(draft.tags) ? draft.tags : [],
+          subject: draft.subject || "math",
         });
       } catch {
       }
@@ -1264,6 +1321,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
         graphDsl: formData.graphDsl,
         correctAnswer: formData.correctAnswer,
         tags: formData.tags,
+        subject: formData.subject,
       });
 
       const result = await confirmPreview(previewId);

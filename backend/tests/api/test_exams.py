@@ -208,6 +208,7 @@ def make_problem(
         "userId": user_id,
         "text": text,
         "problemType": problem_type,
+        "subject": "math",
         "graphDsl": None,
         "correctAnswer": {
             "display": correct_answer,
