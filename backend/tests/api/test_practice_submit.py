@@ -10,6 +10,7 @@ from bson import ObjectId
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.infrastructure.vlm.client import GradingResult
 from app.main import create_app
 from app.presentation.deps import get_current_user, get_database, get_grading_vlm_client
 from tests.api.conftest import FakeDatabase, make_user, make_problem
@@ -276,6 +277,40 @@ async def test_submit_short_answer_vlm_feedback_persisted(client: AsyncClient, p
     attempts = database["practice_attempts"]._documents
     assert len(attempts) == 1
     assert attempts[0]["feedback"] == "The answer is correct because 2+2=4."
+
+
+@pytest.mark.asyncio
+async def test_submit_short_answer_vlm_passes_problem_subject(client: AsyncClient, practice_app: FastAPI) -> None:
+    from unittest.mock import AsyncMock
+
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(user_id, problem_type="short-answer", correct_answer_display="Paris", subject="english")
+    database.seed("problems", [problem])
+
+    fake_grading = GradingResult(
+        request_type="short-answer-grading",
+        model="test-model",
+        is_correct=True,
+        feedback="Correct.",
+        provider_metadata={},
+        raw_provider_response={},
+    )
+
+    fake_vlm = AsyncMock()
+    fake_vlm.grade_short_answer = AsyncMock(return_value=fake_grading)
+    fake_vlm.aclose = AsyncMock()
+    practice_app.dependency_overrides[get_grading_vlm_client] = lambda: fake_vlm
+
+    response = await client.post(
+        "/api/v1/practice/attempts",
+        json={"problemId": str(problem["_id"]), "submittedAnswer": "Paris"},
+    )
+    assert response.status_code == 201
+
+    fake_vlm.grade_short_answer.assert_awaited_once()
+    call_kwargs = fake_vlm.grade_short_answer.call_args.kwargs
+    assert call_kwargs["subject"] == "english"
 
 
 @pytest.mark.asyncio

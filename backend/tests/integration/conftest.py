@@ -310,6 +310,7 @@ class FakeVLMClient:
         problem_text: str,
         user_answer: str,
         correct_answer: str,
+        subject: str = "math",
     ) -> FakeGradingResult:
         self.calls.append(
             {
@@ -318,6 +319,7 @@ class FakeVLMClient:
                 "problem_text": problem_text,
                 "user_answer": user_answer,
                 "correct_answer": correct_answer,
+                "subject": subject,
                 "method": "grade_short_answer",
             }
         )
