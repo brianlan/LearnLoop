@@ -202,6 +202,7 @@ async def test_vlm_grading_happy_path() -> None:
         assert '"problemText": "What is 1 + 1?"' in grading_context
         assert '"userAnswer": "1"' in grading_context
         assert '"correctAnswer": "1"' in grading_context
+        assert '"subject": "math"' in grading_context
         return httpx.Response(
             200,
             json={
@@ -237,6 +238,47 @@ async def test_vlm_grading_happy_path() -> None:
     assert result.request_type == "short-answer-grading"
     assert result.is_correct is True
     assert result.feedback == "Correct."
+
+
+@pytest.mark.asyncio
+async def test_vlm_grading_includes_subject_in_task_data() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        grading_context = payload["messages"][1]["content"][0]["text"]
+        assert '"subject": "english"' in grading_context
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "isCorrect": False,
+                                    "feedback": "Incorrect.",
+                                    "providerMetadata": {"provider": "demo"},
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+
+    result = await client.grade_short_answer(
+        image_url="s3://bucket/key",
+        problem_text="What is the capital of France?",
+        user_answer="London",
+        correct_answer="Paris",
+        subject="english",
+    )
+    await client.aclose()
+
+    assert result.is_correct is False
 
 
 @pytest.mark.asyncio
