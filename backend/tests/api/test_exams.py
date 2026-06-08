@@ -267,6 +267,7 @@ async def exams_app() -> FastAPI:
     application.state.fake_adapter = adapter
     application.state.fake_storage = storage
     application.state.fake_grading_vlm = vlm
+    application.state.fake_vlm = vlm
     application.state.primary_user = user
 
     application.dependency_overrides[get_database] = lambda: database
