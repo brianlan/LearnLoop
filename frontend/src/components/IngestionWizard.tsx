@@ -79,6 +79,7 @@ function normalizePreviewResponse(data: unknown): IngestionPreview {
       graphDsl: candidate.graphDsl ?? null,
       correctAnswer: candidate.correctAnswer ?? null,
       tags: candidate.tags ?? [],
+      subject: "math",
     },
     extraction: candidate.extraction ?? {},
     createdAt: candidate.createdAt ?? "",
