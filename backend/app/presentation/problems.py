@@ -49,6 +49,7 @@ class ProblemSummaryPayload(BaseModel):
     id: str
     text: str
     problemType: ProblemType
+    subject: str = "math"
     graphDsl: str | None = None
     tags: list[str]
     tracking: TrackingPayload
@@ -148,6 +149,7 @@ def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload
         id=str(problem["_id"]),
         text=str(problem["text"]),
         problemType=ProblemType(problem["problemType"]),
+        subject=str(problem.get("subject", "math")),
         graphDsl=problem.get("graphDsl"),
         tags=[str(tag) for tag in problem.get("tags", [])],
         tracking=_serialize_tracking(problem),

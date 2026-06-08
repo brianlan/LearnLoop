@@ -229,6 +229,7 @@ def make_preview(user_id: ObjectId, *, status: str = "ready") -> dict[str, Any]:
             "graphDsl": None,
             "correctAnswer": "draft",
             "tags": ["draft"],
+            "subject": "math",
         },
         "createdAt": now,
         "updatedAt": now,
@@ -252,6 +253,7 @@ def make_problem(
         "userId": user_id,
         "text": text,
         "problemType": problem_type,
+        "subject": "math",
         "graphDsl": None,
         "correctAnswer": {
             "display": "4",
@@ -346,6 +348,27 @@ async def test_confirm_preview_creates_problem_and_canonicalizes_answer(
     assert stored_problem["origin"]["previewId"] == str(preview["_id"])
     assert stored_problem["correctAnswer"]["normalizedSet"] == ["a", "c"]
     assert database["ingestion_previews"]._documents[0]["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_problem_detail_defaults_missing_subject_to_math(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    old_problem = make_problem(
+        user_id,
+        text="Legacy problem without subject",
+        problem_type="short-answer",
+    )
+    del old_problem["subject"]
+    database["problems"].seed(old_problem)
+
+    response = await client.get(f"/api/v1/problems/{old_problem['_id']}")
+    assert response.status_code == 200
+    body = response.json()["problem"]
+    assert body["subject"] == "math"
 
 
 @pytest.mark.asyncio

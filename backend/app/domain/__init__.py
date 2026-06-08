@@ -1,6 +1,7 @@
 """Domain layer packages."""
 
 from .models import (
+    ProblemSubject,
     ProblemType,
     ExamState,
     IngestionPreviewStatus,
@@ -42,6 +43,7 @@ from .state import (
 from .scoring import compute_summary
 
 __all__ = [
+    "ProblemSubject",
     "ProblemType",
     "ExamState",
     "IngestionPreviewStatus",

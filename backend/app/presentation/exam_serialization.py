@@ -26,6 +26,7 @@ class SelfReportRequest(BaseModel):
 class ExamProblemPayload(BaseModel):
     text: str
     problemType: ProblemType
+    subject: str = "math"
     graphDsl: str | None = None
     correctAnswer: CorrectAnswerPayload | None = None
     sourceImage: SourceImagePayload | None = None
@@ -154,6 +155,7 @@ def serialize_exam_item(
         problem=ExamProblemPayload(
             text=str(snapshot.get("text", "")),
             problemType=ProblemType(snapshot["problemType"]),
+            subject=str(snapshot.get("subject", "math")),
             graphDsl=snapshot.get("graphDsl"),
             correctAnswer=(
                 CorrectAnswerPayload.model_validate(snapshot.get("correctAnswer", {}))

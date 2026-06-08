@@ -25,6 +25,7 @@ def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
                 "userId": str(problem["userId"]),
                 "text": problem["text"],
                 "problemType": problem["problemType"],
+                "subject": problem.get("subject", "math"),
                 "graphDsl": problem.get("graphDsl"),
                 "correctAnswer": problem["correctAnswer"],
                 "tags": list(problem.get("tags", [])),
@@ -70,6 +71,7 @@ def make_exam_item(problem: Mapping[str, Any], *, order: int) -> dict[str, Any]:
         "problemSnapshot": {
             "text": problem["text"],
             "problemType": problem["problemType"],
+            "subject": problem.get("subject", "math"),
             "graphDsl": problem.get("graphDsl"),
             "correctAnswer": deepcopy(problem["correctAnswer"]),
             "sourceImage": deepcopy(problem.get("sourceImage")),

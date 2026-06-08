@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.domain import IngestionPreviewStatus, ProblemType, normalize_answer
+from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType, normalize_answer
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
@@ -49,6 +49,7 @@ class PreviewDraftPatchRequest(BaseModel):
     graphDsl: str | None = None
     correctAnswer: str | None = None
     tags: list[str] | None = None
+    subject: ProblemSubject | None = None
 
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
@@ -148,6 +149,7 @@ async def create_preview(
             "graphDsl": None,
             "correctAnswer": None,
             "tags": [],
+            "subject": ProblemSubject.MATH.value,
         },
         "createdAt": now,
         "updatedAt": now,
@@ -201,6 +203,8 @@ async def patch_preview(
             draft[key] = normalize_tags(value)
         elif key in {"text", "correctAnswer"}:
             draft[key] = clean_optional_text(value)
+        elif key == "subject":
+            draft[key] = value.value if hasattr(value, "value") else value
         else:
             draft[key] = value
 
@@ -215,6 +219,7 @@ async def patch_preview(
                     "graphDsl": draft.get("graphDsl"),
                     "correctAnswer": draft.get("correctAnswer"),
                     "tags": normalize_tags(list(draft.get("tags", []))),
+                    "subject": str(draft.get("subject", ProblemSubject.MATH.value)),
                 },
                 "updatedAt": now,
                 "expiresAt": preview_expires_at(now),
@@ -311,12 +316,14 @@ async def confirm_preview(
         raise ApiError(400, "INVALID_PREVIEW", "Preview draft is missing required fields")
 
     problem_type = ProblemType(problem_type_value)
+    subject_value = draft.get("subject", ProblemSubject.MATH.value)
     normalized_answer = normalize_answer(correct_answer, problem_type)
     problem: Document = {
         "_id": ObjectId(),
         "userId": user["_id"],
         "text": text,
         "problemType": problem_type.value,
+        "subject": str(subject_value),
         "graphDsl": draft.get("graphDsl"),
         "correctAnswer": normalized_answer.model_dump(),
         "tags": normalize_tags(list(draft.get("tags", []))),

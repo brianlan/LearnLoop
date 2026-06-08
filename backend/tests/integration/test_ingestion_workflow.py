@@ -106,6 +106,7 @@ async def test_wf_ing_1_clipboard_ingestion_creates_preview_and_confirms_problem
         "graphDsl": None,
         "correctAnswer": "4",
         "tags": ["math", "chapter-1"],
+        "subject": "math",
     }
 
     confirm_response = await client.post(f"/api/v1/ingestion-previews/{preview_id}/confirm")

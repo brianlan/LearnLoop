@@ -287,6 +287,7 @@ def make_preview(
             "graphDsl": None,
             "correctAnswer": "4",
             "tags": ["draft"],
+            "subject": "math",
         },
         "createdAt": now,
         "updatedAt": refreshed_at,
@@ -513,6 +514,7 @@ async def test_patch_preview_persists_draft_and_extends_ttl(
         "graphDsl": "graph TD; A-->B",
         "correctAnswer": "B, A ,B",
         "tags": ["logic", "sets"],
+        "subject": "math",
     }
     assert parse_datetime(body["expiresAt"]) > old_expires_at
 
@@ -524,8 +526,34 @@ async def test_patch_preview_persists_draft_and_extends_ttl(
         "graphDsl": "graph TD; A-->B",
         "correctAnswer": "B, A ,B",
         "tags": ["logic", "sets"],
+        "subject": "math",
     }
     assert stored_preview["expiresAt"] > old_expires_at
+
+
+@pytest.mark.asyncio
+async def test_patch_preview_accepts_subject_change_to_english(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.patch(
+        f"/api/v1/ingestion-previews/{preview['_id']}",
+        json={"subject": "english"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()["preview"]
+    assert body["draft"]["subject"] == "english"
+
+    stored_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+    assert stored_preview is not None
+    assert stored_preview["editableDraft"]["subject"] == "english"
 
 
 @pytest.mark.asyncio
@@ -619,6 +647,38 @@ async def test_confirm_preview_creates_problem_from_confirmed_draft(
     assert solution_task["retry_count"] == 0
     assert solution_task["failure_reason"] is None
     assert solution_task["started_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_persists_english_subject_from_draft(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    preview["editableDraft"] = {
+        "text": "Read the passage and answer",
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": "Paris",
+        "tags": ["english"],
+        "subject": "english",
+    }
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 201
+    body = response.json()["problem"]
+    assert body["subject"] == "english"
+
+    stored_problem = await database["problems"].find_one({"_id": ObjectId(body["id"])})
+    assert stored_problem is not None
+    assert stored_problem["subject"] == "english"
 
 
 @pytest.mark.asyncio
