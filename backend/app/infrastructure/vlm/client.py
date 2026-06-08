@@ -11,11 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.infrastructure.vlm.prompts import (
     EXTRACTION_SYSTEM_PROMPT,
-    EXTRACTION_PROMPT_VERSION,
-    EXTRACTION_SCHEMA_VERSION,
     GRADING_SYSTEM_PROMPT,
-    GRADING_PROMPT_VERSION,
-    GRADING_SCHEMA_VERSION,
     build_extraction_user_prompt,
     build_grading_user_prompt,
 )
@@ -52,8 +48,6 @@ class _RequestBase(BaseModel):
 
     request_type: str = Field(alias="requestType")
     model: str
-    prompt_version: str = Field(alias="promptVersion")
-    schema_version: str = Field(alias="schemaVersion")
     prompt: str
     image_url: str | None = Field(default=None, alias="imageUrl")
     image_base64: str | None = Field(default=None, alias="imageBase64")
@@ -139,8 +133,6 @@ class _ChatCompletionResponse(BaseModel):
 class ExtractionResult(BaseModel):
     request_type: Literal["ingestion"]
     model: str
-    prompt_version: str
-    schema_version: str
     text: str
     problem_type: ProblemType | None
     graph_dsl: str | None
@@ -151,8 +143,6 @@ class ExtractionResult(BaseModel):
 class GradingResult(BaseModel):
     request_type: Literal["short-answer-grading"]
     model: str
-    prompt_version: str
-    schema_version: str
     is_correct: bool
     feedback: str
     provider_metadata: dict[str, Any]
@@ -202,8 +192,6 @@ class VLMClient:
     ) -> ExtractionResult:
         request = ExtractionRequest(
             model=self._model,
-            promptVersion=EXTRACTION_PROMPT_VERSION,
-            schemaVersion=EXTRACTION_SCHEMA_VERSION,
             prompt=EXTRACTION_SYSTEM_PROMPT,
             imageUrl=image_url,
             imageBase64=image_base64,
@@ -223,8 +211,6 @@ class VLMClient:
         return ExtractionResult(
             request_type=request.request_type,
             model=request.model,
-            prompt_version=request.prompt_version,
-            schema_version=request.schema_version,
             text=payload.text,
             problem_type=payload.problem_type,
             graph_dsl=payload.graph_dsl,
@@ -243,8 +229,6 @@ class VLMClient:
     ) -> GradingResult:
         request = GradingRequest(
             model=self._model,
-            promptVersion=GRADING_PROMPT_VERSION,
-            schemaVersion=GRADING_SCHEMA_VERSION,
             prompt=GRADING_SYSTEM_PROMPT,
             imageUrl=image_url,
             imageBase64=image_base64,
@@ -266,8 +250,6 @@ class VLMClient:
         return GradingResult(
             request_type=request.request_type,
             model=request.model,
-            prompt_version=request.prompt_version,
-            schema_version=request.schema_version,
             is_correct=payload.is_correct,
             feedback=payload.feedback,
             provider_metadata=payload.provider_metadata,

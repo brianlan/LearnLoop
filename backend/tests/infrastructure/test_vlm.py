@@ -19,13 +19,6 @@ from app.infrastructure.vlm.client import (
     VLMError,
 )
 from app.domain.state import recover_stale_preview
-from app.infrastructure.vlm.prompts import (
-    EXTRACTION_PROMPT_VERSION,
-    EXTRACTION_SCHEMA_VERSION,
-    GRADING_PROMPT_VERSION,
-    GRADING_SCHEMA_VERSION,
-)
-
 
 def _build_client(handler) -> VLMClient:
     transport = httpx.MockTransport(handler)
@@ -80,8 +73,6 @@ async def test_vlm_extraction_happy_path() -> None:
 
     assert isinstance(result, ExtractionResult)
     assert result.request_type == "ingestion"
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
-    assert result.schema_version == EXTRACTION_SCHEMA_VERSION
     assert result.text == "Solve x + 1 = 2"
     assert result.problem_type == "short-answer"
     assert result.raw_provider_response["providerMetadata"]["provider"] == "demo"
@@ -122,7 +113,7 @@ async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
     result = await client.extract(image_url="s3://bucket/key")
     await client.aclose()
 
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+    assert result.text == "Find $x$ when $x+1=2$"
 
 
 @pytest.mark.asyncio
@@ -159,7 +150,7 @@ async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None
     result = await client.extract(image_url="s3://bucket/key")
     await client.aclose()
 
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+    assert result.text == "Find $x$ when $x+1=2$"
 
 
 @pytest.mark.asyncio
@@ -195,7 +186,7 @@ async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None
     result = await client.extract(image_url="s3://bucket/key")
     await client.aclose()
 
-    assert result.prompt_version == EXTRACTION_PROMPT_VERSION
+    assert result.text == "Triangle problem"
 
 
 @pytest.mark.asyncio
@@ -244,8 +235,6 @@ async def test_vlm_grading_happy_path() -> None:
 
     assert isinstance(result, GradingResult)
     assert result.request_type == "short-answer-grading"
-    assert result.prompt_version == GRADING_PROMPT_VERSION
-    assert result.schema_version == GRADING_SCHEMA_VERSION
     assert result.is_correct is True
     assert result.feedback == "Correct."
 

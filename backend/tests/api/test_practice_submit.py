@@ -252,8 +252,6 @@ async def test_submit_short_answer_vlm_feedback_persisted(client: AsyncClient, p
     fake_grading = GradingResult(
         request_type="short-answer-grading",
         model="test-model",
-        prompt_version="1",
-        schema_version="1",
         is_correct=True,
         feedback="The answer is correct because 2+2=4.",
         provider_metadata={},

@@ -79,7 +79,6 @@ class FakeCoachingVLMClient:
     def __init__(self):
         self.error_to_raise = None
         self.result = CoachingVLMResult(
-            prompt_version="1",
             model="test",
             text="hello from coach",
             whiteboard_dsl="dsl",
@@ -216,7 +215,6 @@ async def test_send_message_persists_reasoning_content():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
     client.result = CoachingVLMResult(
-        prompt_version="1",
         model="test",
         text="coach reply",
         whiteboard_dsl=None,
@@ -243,7 +241,6 @@ async def test_send_message_reasoning_content_none_when_absent():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
     client.result = CoachingVLMResult(
-        prompt_version="1",
         model="test",
         text="coach reply",
         whiteboard_dsl=None,

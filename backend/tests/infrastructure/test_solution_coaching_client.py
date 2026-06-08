@@ -17,7 +17,6 @@ from app.infrastructure.vlm.solution_coaching_client import (
     SolutionVLMClient,
     SolutionVLMRequest,
 )
-from app.infrastructure.vlm.solution_coaching_prompts import COACHING_PROMPT_VERSION, SOLUTION_PROMPT_VERSION
 
 
 def _build_solution_client(handler) -> SolutionVLMClient:
@@ -118,7 +117,6 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
     )
     await client.aclose()
 
-    assert result.prompt_version == SOLUTION_PROMPT_VERSION
     assert result.model == "solution-model"
     assert result.final_answer == "x = 2"
     assert result.math_level_classification == "middle-school"
@@ -243,7 +241,6 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
     )
     await client.aclose()
 
-    assert result.prompt_version == COACHING_PROMPT_VERSION
     assert result.model == "coaching-model"
     assert result.text == "先看等式两边同时减 3。"
 

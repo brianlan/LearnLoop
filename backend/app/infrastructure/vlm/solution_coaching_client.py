@@ -17,9 +17,7 @@ from app.infrastructure.vlm.client import (
 )
 from app.infrastructure.vlm.solution_coaching_prompts import (
     COACHING_SYSTEM_PROMPT,
-    COACHING_PROMPT_VERSION,
     SOLUTION_SYSTEM_PROMPT,
-    SOLUTION_PROMPT_VERSION,
     build_coaching_user_prompt,
     build_solution_user_prompt,
 )
@@ -87,7 +85,6 @@ class SolutionVLMRequest(BaseModel):
 
 
 class SolutionVLMResult(BaseModel):
-    prompt_version: str
     model: str
     steps_markdown: str
     final_answer: str
@@ -111,7 +108,6 @@ class CoachingVLMRequest(BaseModel):
 
 
 class CoachingVLMResult(BaseModel):
-    prompt_version: str
     model: str
     text: str
     whiteboard_dsl: str | None = None
@@ -324,7 +320,6 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
         raw_provider_response = await self._send_chat_completion(payload)
         parsed = self._validate_response(raw_provider_response, _SolutionProviderPayload)
         return SolutionVLMResult(
-            prompt_version=SOLUTION_PROMPT_VERSION,
             model=self._model,
             steps_markdown=parsed.steps_markdown,
             final_answer=parsed.final_answer,
@@ -435,7 +430,6 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
         raw_provider_response = await self._send_chat_completion(payload)
         parsed = self._validate_response(raw_provider_response, _CoachingProviderPayload)
         return CoachingVLMResult(
-            prompt_version=COACHING_PROMPT_VERSION,
             model=self._model,
             text=parsed.text,
             whiteboard_dsl=_sanitize_whiteboard_dsl(parsed.whiteboard_dsl),

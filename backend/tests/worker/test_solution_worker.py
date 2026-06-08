@@ -81,7 +81,6 @@ class FakeSolutionVLMClient:
     def __init__(self):
         self.error_to_raise = None
         self.result_to_return = SolutionVLMResult(
-            prompt_version="1",
             model="test",
             steps_markdown="steps",
             final_answer="answer",
