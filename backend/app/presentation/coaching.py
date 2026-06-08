@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from app.domain.models import CoachingConversation
 from app.domain.coaching.service import CoachingService, CoachingError
-from app.infrastructure.vlm.solution_coaching_client import CoachingVLMClient
 from app.infrastructure.config.settings import Settings
 from app.presentation.deps import (
     DatabaseDependency,
@@ -26,20 +25,11 @@ SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
 class CoachingMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
 
-async def get_coaching_client(settings: SettingsDependency) -> AsyncGenerator[CoachingVLMClient, None]:
-    client = CoachingVLMClient(settings=settings)
-    try:
-        yield client
-    finally:
-        await client.aclose()
-
-CoachingVLMDependency = Annotated[CoachingVLMClient, Depends(get_coaching_client)]
-
 def get_coaching_service(
     database: DatabaseDependency,
-    vlm_client: CoachingVLMDependency
+    settings: SettingsDependency
 ) -> CoachingService:
-    return CoachingService(database=database, vlm_client=vlm_client)
+    return CoachingService(database=database, settings=settings, vlm_client=None)
 
 CoachingServiceDependency = Annotated[CoachingService, Depends(get_coaching_service)]
 

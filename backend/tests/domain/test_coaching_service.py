@@ -97,7 +97,7 @@ class FakeCoachingVLMClient:
 async def test_get_conversation_not_found():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
     conv = await service.get_conversation("prob1", "user1")
     assert conv is None
 
@@ -105,7 +105,7 @@ async def test_get_conversation_not_found():
 async def test_clear_conversation():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
     db.cols["coaching_conversations"].seed({"problem_id": "prob1", "user_id": "user1"})
     await service.clear_conversation("prob1", "user1")
     assert await service.get_conversation("prob1", "user1") is None
@@ -114,8 +114,8 @@ async def test_clear_conversation():
 async def test_send_message_active_exam_blocked():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
-    
+    service = CoachingService(db, vlm_client=client)
+
     prob_id = ObjectId()
     user_id = ObjectId()
 
@@ -124,7 +124,7 @@ async def test_send_message_active_exam_blocked():
         "state": "in-progress",
         "items": [{"problemId": prob_id}]
     })
-    
+
     with pytest.raises(CoachingError) as exc:
         await service.send_message(str(prob_id), str(user_id), "hello")
     assert exc.value.code == "ACTIVE_EXAM_RESTRICTION"
@@ -133,7 +133,7 @@ async def test_send_message_active_exam_blocked():
 async def test_send_message_success():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
 
     prob_id = ObjectId()
     user_id = ObjectId()
@@ -158,7 +158,7 @@ async def test_send_message_success():
 async def test_send_message_skipped_problem_no_attempt():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
 
     prob_id = ObjectId()
     user_id = ObjectId()
@@ -176,19 +176,19 @@ async def test_send_message_skipped_problem_no_attempt():
 async def test_send_message_cap_exceeded():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
-    
+    service = CoachingService(db, vlm_client=client)
+
     prob_id = ObjectId()
     user_id = ObjectId()
-    
+
     db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False})
-    
+
     # create a conversation with 20 messages
     messages = [{"role": "student", "content": "hello"}] * 20
     db.cols["coaching_conversations"].seed({
         "problem_id": str(prob_id), "user_id": str(user_id), "messages": messages
     })
-    
+
     with pytest.raises(CoachingError) as exc:
         await service.send_message(str(prob_id), str(user_id), "hello")
     assert exc.value.code == "MESSAGE_CAP_EXCEEDED"
@@ -198,13 +198,13 @@ async def test_send_message_vlm_failure():
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
     client.error_to_raise = SolutionCoachingVLMError("error", code="vlm-error", retryable=True)
-    service = CoachingService(db, client)
-    
+    service = CoachingService(db, vlm_client=client)
+
     prob_id = ObjectId()
     user_id = ObjectId()
-    
+
     db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False})
-    
+
     with pytest.raises(CoachingError) as exc:
         await service.send_message(str(prob_id), str(user_id), "hello")
     assert exc.value.code == "VLM_FAILURE"
@@ -221,7 +221,7 @@ async def test_send_message_persists_reasoning_content():
         reasoning_content="step by step thinking",
         raw_provider_response={}
     )
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
 
     prob_id = ObjectId()
     user_id = ObjectId()
@@ -246,7 +246,7 @@ async def test_send_message_reasoning_content_none_when_absent():
         whiteboard_dsl=None,
         raw_provider_response={}
     )
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
 
     prob_id = ObjectId()
     user_id = ObjectId()

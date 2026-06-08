@@ -120,7 +120,7 @@ async def test_send_message_logs_observability(caplog):
 
     db = FakeDatabase()
     client = FakeCoachingVLMClient()
-    service = CoachingService(db, client)
+    service = CoachingService(db, vlm_client=client)
 
     prob_id = ObjectId()
     user_id = ObjectId()
@@ -205,7 +205,7 @@ async def test_worker_process_task_logs_observability(caplog):
         def __init__(self):
             self.steps_markdown = "steps"
             self.final_answer = "ans"
-            self.math_level_classification = "level"
+            self.level_classification = "level"
 
     class FakeSolutionVLMClient:
         async def generate_solution(self, req):

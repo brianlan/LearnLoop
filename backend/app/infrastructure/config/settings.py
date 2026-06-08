@@ -42,15 +42,25 @@ class Settings(BaseSettings):
     grading_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
     preview_extracting_window_seconds: float = Field(default=150.0, gt=0)
 
-    solution_vlm_endpoint: str = Field(default="https://example-solution-provider.invalid/api")
-    solution_vlm_model: str = Field(default="replace-me")
-    solution_vlm_api_key: str = Field(default="replace-me")
-    solution_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+    math_solution_vlm_endpoint: str = Field(default="https://example-math-solution-provider.invalid/api")
+    math_solution_vlm_model: str = Field(default="replace-me")
+    math_solution_vlm_api_key: str = Field(default="replace-me")
+    math_solution_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
 
-    coaching_vlm_endpoint: str = Field(default="https://example-coaching-provider.invalid/api")
-    coaching_vlm_model: str = Field(default="replace-me")
-    coaching_vlm_api_key: str = Field(default="replace-me")
-    coaching_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
+    english_solution_vlm_endpoint: str = Field(default="https://example-english-solution-provider.invalid/api")
+    english_solution_vlm_model: str = Field(default="replace-me")
+    english_solution_vlm_api_key: str = Field(default="replace-me")
+    english_solution_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+
+    math_coaching_vlm_endpoint: str = Field(default="https://example-math-coaching-provider.invalid/api")
+    math_coaching_vlm_model: str = Field(default="replace-me")
+    math_coaching_vlm_api_key: str = Field(default="replace-me")
+    math_coaching_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    english_coaching_vlm_endpoint: str = Field(default="https://example-english-coaching-provider.invalid/api")
+    english_coaching_vlm_model: str = Field(default="replace-me")
+    english_coaching_vlm_api_key: str = Field(default="replace-me")
+    english_coaching_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
 
     solution_worker_poll_interval_seconds: int = Field(default=5, gt=0)
     solution_task_timeout_minutes: int = Field(default=10, gt=0)

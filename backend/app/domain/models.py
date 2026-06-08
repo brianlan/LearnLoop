@@ -277,7 +277,7 @@ class CanonicalSolution(BaseModel):
     user_id: str
     steps_markdown: str
     final_answer: str
-    math_level_classification: str
+    level_classification: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

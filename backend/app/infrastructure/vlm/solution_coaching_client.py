@@ -16,8 +16,10 @@ from app.infrastructure.vlm.client import (
     FAILURE_CODE_TIMEOUT,
 )
 from app.infrastructure.vlm.solution_coaching_prompts import (
-    COACHING_SYSTEM_PROMPT,
-    SOLUTION_SYSTEM_PROMPT,
+    ENGLISH_COACHING_SYSTEM_PROMPT,
+    ENGLISH_SOLUTION_SYSTEM_PROMPT,
+    MATH_COACHING_SYSTEM_PROMPT,
+    MATH_SOLUTION_SYSTEM_PROMPT,
     build_coaching_user_prompt,
     build_solution_user_prompt,
 )
@@ -88,7 +90,7 @@ class SolutionVLMResult(BaseModel):
     model: str
     steps_markdown: str
     final_answer: str
-    math_level_classification: str
+    level_classification: str
     raw_provider_response: dict[str, Any]
 
 
@@ -102,7 +104,7 @@ class CoachingVLMRequest(BaseModel):
     correct_answer: str
     canonical_steps_markdown: str
     canonical_final_answer: str
-    math_level_classification: str
+    level_classification: str
     conversation_history: list[CoachingMessage] = Field(default_factory=list)
     new_message: str
 
@@ -120,7 +122,15 @@ class _SolutionProviderPayload(BaseModel):
 
     steps_markdown: str
     final_answer: str
-    math_level_classification: str
+    level_classification: str = Field(alias="level_classification")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_math_level_classification(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "math_level_classification" in data and "level_classification" not in data:
+            data = dict(data)
+            data["level_classification"] = data.pop("math_level_classification")
+        return data
 
 
 class _CoachingProviderPayload(BaseModel):
@@ -296,13 +306,29 @@ class _BaseSolutionCoachingVLMClient:
 
 
 class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
-    def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        subject: str = "math",
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._settings = settings or get_settings()
+        self._subject = subject
+        if subject == "english":
+            endpoint = self._settings.english_solution_vlm_endpoint
+            model = self._settings.english_solution_vlm_model
+            api_key = self._settings.english_solution_vlm_api_key
+            timeout_seconds = self._settings.english_solution_vlm_timeout_seconds
+        else:
+            endpoint = self._settings.math_solution_vlm_endpoint
+            model = self._settings.math_solution_vlm_model
+            api_key = self._settings.math_solution_vlm_api_key
+            timeout_seconds = self._settings.math_solution_vlm_timeout_seconds
         super().__init__(
-            endpoint=self._settings.solution_vlm_endpoint,
-            model=self._settings.solution_vlm_model,
-            api_key=self._settings.solution_vlm_api_key,
-            timeout_seconds=self._settings.solution_vlm_timeout_seconds,
+            endpoint=endpoint,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
             http_client=http_client,
         )
 
@@ -323,7 +349,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             model=self._model,
             steps_markdown=parsed.steps_markdown,
             final_answer=parsed.final_answer,
-            math_level_classification=parsed.math_level_classification,
+            level_classification=parsed.level_classification,
             raw_provider_response=raw_provider_response,
         )
 
@@ -349,10 +375,15 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
                 _ChatMessageContentImageUrl(type="image_url", image_url={"url": image_url})
             )
 
+        system_prompt = (
+            ENGLISH_SOLUTION_SYSTEM_PROMPT
+            if self._subject == "english"
+            else MATH_SOLUTION_SYSTEM_PROMPT
+        )
         request = _ChatCompletionRequest(
             model=self._model,
             messages=[
-                _ChatMessage(role="system", content=SOLUTION_SYSTEM_PROMPT),
+                _ChatMessage(role="system", content=system_prompt),
                 _ChatMessage(role="user", content=content),
             ],
         )
@@ -399,13 +430,29 @@ def _sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
 
 
 class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
-    def __init__(self, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        subject: str = "math",
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._settings = settings or get_settings()
+        self._subject = subject
+        if subject == "english":
+            endpoint = self._settings.english_coaching_vlm_endpoint
+            model = self._settings.english_coaching_vlm_model
+            api_key = self._settings.english_coaching_vlm_api_key
+            timeout_seconds = self._settings.english_coaching_vlm_timeout_seconds
+        else:
+            endpoint = self._settings.math_coaching_vlm_endpoint
+            model = self._settings.math_coaching_vlm_model
+            api_key = self._settings.math_coaching_vlm_api_key
+            timeout_seconds = self._settings.math_coaching_vlm_timeout_seconds
         super().__init__(
-            endpoint=self._settings.coaching_vlm_endpoint,
-            model=self._settings.coaching_vlm_model,
-            api_key=self._settings.coaching_vlm_api_key,
-            timeout_seconds=self._settings.coaching_vlm_timeout_seconds,
+            endpoint=endpoint,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
             http_client=http_client,
         )
 
@@ -416,14 +463,19 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             correct_answer=request.correct_answer,
             canonical_steps_markdown=request.canonical_steps_markdown,
             canonical_final_answer=request.canonical_final_answer,
-            math_level_classification=request.math_level_classification,
+            level_classification=request.level_classification,
             conversation_history=history,
             new_message=request.new_message,
+        )
+        system_prompt = (
+            ENGLISH_COACHING_SYSTEM_PROMPT
+            if self._subject == "english"
+            else MATH_COACHING_SYSTEM_PROMPT
         )
         payload = _ChatCompletionRequest(
             model=self._model,
             messages=[
-                _ChatMessage(role="system", content=COACHING_SYSTEM_PROMPT),
+                _ChatMessage(role="system", content=system_prompt),
                 _ChatMessage(role="user", content=user_prompt),
             ],
         ).model_dump(exclude_none=True)

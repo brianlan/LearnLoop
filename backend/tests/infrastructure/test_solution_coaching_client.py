@@ -28,10 +28,10 @@ def _build_solution_client(handler) -> SolutionVLMClient:
         headers={"Authorization": "Bearer solution-key", "Content-Type": "application/json"},
     )
     settings = Settings(
-        solution_vlm_endpoint="https://solution.example/api",
-        solution_vlm_model="solution-model",
-        solution_vlm_api_key="solution-key",
-        solution_vlm_timeout_seconds=7,
+        math_solution_vlm_endpoint="https://solution.example/api",
+        math_solution_vlm_model="solution-model",
+        math_solution_vlm_api_key="solution-key",
+        math_solution_vlm_timeout_seconds=7,
     )
     return SolutionVLMClient(settings=settings, http_client=http_client)
 
@@ -45,21 +45,21 @@ def _build_coaching_client(handler) -> CoachingVLMClient:
         headers={"Authorization": "Bearer coaching-key", "Content-Type": "application/json"},
     )
     settings = Settings(
-        coaching_vlm_endpoint="https://coaching.example/api",
-        coaching_vlm_model="coaching-model",
-        coaching_vlm_api_key="coaching-key",
-        coaching_vlm_timeout_seconds=9,
+        math_coaching_vlm_endpoint="https://coaching.example/api",
+        math_coaching_vlm_model="coaching-model",
+        math_coaching_vlm_api_key="coaching-key",
+        math_coaching_vlm_timeout_seconds=9,
     )
     return CoachingVLMClient(settings=settings, http_client=http_client)
 
 
 def test_solution_coaching_vlm_clients_use_capability_specific_timeouts() -> None:
     solution_client = SolutionVLMClient(
-        settings=Settings(solution_vlm_timeout_seconds=123),
+        settings=Settings(math_solution_vlm_timeout_seconds=123),
         http_client=httpx.AsyncClient(),
     )
     coaching_client = CoachingVLMClient(
-        settings=Settings(coaching_vlm_timeout_seconds=45),
+        settings=Settings(math_coaching_vlm_timeout_seconds=45),
         http_client=httpx.AsyncClient(),
     )
 
@@ -98,7 +98,7 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
                                 {
                                     "steps_markdown": "1. 两边同时减 3。\n2. 得到 x = 2。",
                                     "final_answer": "x = 2",
-                                    "math_level_classification": "middle-school",
+                                    "level_classification": "middle-school",
                                 }
                             ),
                         },
@@ -119,7 +119,7 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
 
     assert result.model == "solution-model"
     assert result.final_answer == "x = 2"
-    assert result.math_level_classification == "middle-school"
+    assert result.level_classification == "middle-school"
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_solution_vlm_client_accepts_fenced_json_response() -> None:
                         "index": 0,
                         "message": {
                             "role": "assistant",
-                            "content": "```json\n{\"steps_markdown\":\"步骤\",\"final_answer\":\"42\",\"math_level_classification\":\"primary\"}\n```",
+                            "content": "```json\n{\"steps_markdown\":\"步骤\",\"final_answer\":\"42\",\"level_classification\":\"primary\"}\n```",
                         },
                     }
                 ]
@@ -231,7 +231,7 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
             correct_answer="2",
             canonical_steps_markdown="1. 两边同时减 3。\n2. 得到 x = 2。",
             canonical_final_answer="x = 2",
-            math_level_classification="middle-school",
+            level_classification="middle-school",
             conversation_history=[
                 CoachingMessage(role="student", text="我想先看第一步"),
                 CoachingMessage(role="coach", text="先看已知条件"),
@@ -272,7 +272,7 @@ async def test_coaching_vlm_client_parses_optional_whiteboard_dsl() -> None:
             correct_answer="答案",
             canonical_steps_markdown="步骤",
             canonical_final_answer="答案",
-            math_level_classification="primary",
+            level_classification="primary",
             new_message="请画图",
         )
     )
@@ -306,7 +306,7 @@ async def test_coaching_vlm_client_extracts_json_from_wrapped_markdown() -> None
             correct_answer="答案",
             canonical_steps_markdown="步骤",
             canonical_final_answer="答案",
-            math_level_classification="primary",
+            level_classification="primary",
             new_message="请提示一下",
         )
     )
@@ -330,7 +330,7 @@ async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
                 correct_answer="答案",
                 canonical_steps_markdown="步骤",
                 canonical_final_answer="答案",
-                math_level_classification="primary",
+                level_classification="primary",
                 new_message="你好",
             )
         )
@@ -366,7 +366,7 @@ async def test_coaching_vlm_client_parses_reasoning_content() -> None:
             correct_answer="2",
             canonical_steps_markdown="步骤",
             canonical_final_answer="2",
-            math_level_classification="primary",
+            level_classification="primary",
             new_message="怎么做？",
         )
     )
@@ -401,7 +401,7 @@ async def test_coaching_vlm_client_reasoning_content_none_when_absent() -> None:
             correct_answer="答案",
             canonical_steps_markdown="步骤",
             canonical_final_answer="答案",
-            math_level_classification="primary",
+            level_classification="primary",
             new_message="你好",
         )
     )
