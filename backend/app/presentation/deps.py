@@ -16,6 +16,7 @@ from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document, get_database as get_mongo_database
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient
+from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
 from app.presentation.errors import ApiError
 
 
@@ -148,6 +149,7 @@ def create_english_ingestion_vlm_client(
         model=settings.english_ingestion_vlm_model,
         api_key=settings.english_ingestion_vlm_api_key,
         timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
+        extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
     )
 
 
