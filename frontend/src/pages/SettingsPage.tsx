@@ -20,23 +20,43 @@ interface SettingsResponse {
     region: string;
     force_path_style: boolean;
   };
-  ingestion_vlm: {
+  preview_extracting_window_seconds: number;
+  helper_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
-    preview_extracting_window_seconds: number;
+  };
+  math_ingestion_vlm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
+  };
+  english_ingestion_vlm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
   };
   grading_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
   };
-  solution_vlm: {
+  math_solution_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
   };
-  coaching_vlm: {
+  english_solution_vlm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
+  };
+  math_coaching_vlm: {
+    endpoint: string;
+    model: string;
+    timeout_seconds: number;
+  };
+  english_coaching_vlm: {
     endpoint: string;
     model: string;
     timeout_seconds: number;
@@ -95,6 +115,22 @@ function SettingSection({
       </h2>
       <div>{children}</div>
     </section>
+  );
+}
+
+function VlmSection({
+  title,
+  vlm,
+}: {
+  title: string;
+  vlm: { endpoint: string; model: string; timeout_seconds: number };
+}) {
+  return (
+    <SettingSection title={title}>
+      <SettingRow label="Endpoint" value={vlm.endpoint} />
+      <SettingRow label="Model" value={vlm.model} />
+      <SettingRow label="Timeout (seconds)" value={vlm.timeout_seconds} />
+    </SettingSection>
   );
 }
 
@@ -374,45 +410,18 @@ export function SettingsPage() {
         />
       </SettingSection>
 
-      <SettingSection title="Ingestion VLM">
-        <SettingRow label="Endpoint" value={data.ingestion_vlm.endpoint} />
-        <SettingRow label="Model" value={data.ingestion_vlm.model} />
-        <SettingRow
-          label="Timeout (seconds)"
-          value={data.ingestion_vlm.timeout_seconds}
-        />
-        <SettingRow
-          label="Preview Window (seconds)"
-          value={data.ingestion_vlm.preview_extracting_window_seconds}
-        />
+      <SettingSection title="Preview">
+        <SettingRow label="Preview Window (seconds)" value={data.preview_extracting_window_seconds} />
       </SettingSection>
 
-      <SettingSection title="Grading VLM">
-        <SettingRow label="Endpoint" value={data.grading_vlm.endpoint} />
-        <SettingRow label="Model" value={data.grading_vlm.model} />
-        <SettingRow
-          label="Timeout (seconds)"
-          value={data.grading_vlm.timeout_seconds}
-        />
-      </SettingSection>
-
-      <SettingSection title="Solution VLM">
-        <SettingRow label="Endpoint" value={data.solution_vlm.endpoint} />
-        <SettingRow label="Model" value={data.solution_vlm.model} />
-        <SettingRow
-          label="Timeout (seconds)"
-          value={data.solution_vlm.timeout_seconds}
-        />
-      </SettingSection>
-
-      <SettingSection title="Coaching VLM">
-        <SettingRow label="Endpoint" value={data.coaching_vlm.endpoint} />
-        <SettingRow label="Model" value={data.coaching_vlm.model} />
-        <SettingRow
-          label="Timeout (seconds)"
-          value={data.coaching_vlm.timeout_seconds}
-        />
-      </SettingSection>
+      <VlmSection title="Helper VLM" vlm={data.helper_vlm} />
+      <VlmSection title="Math Ingestion VLM" vlm={data.math_ingestion_vlm} />
+      <VlmSection title="English Ingestion VLM" vlm={data.english_ingestion_vlm} />
+      <VlmSection title="Grading VLM" vlm={data.grading_vlm} />
+      <VlmSection title="Math Solution VLM" vlm={data.math_solution_vlm} />
+      <VlmSection title="English Solution VLM" vlm={data.english_solution_vlm} />
+      <VlmSection title="Math Coaching VLM" vlm={data.math_coaching_vlm} />
+      <VlmSection title="English Coaching VLM" vlm={data.english_coaching_vlm} />
 
       <SettingSection title="Session">
         <SettingRow label="Cookie Name" value={data.session.cookie_name} />
