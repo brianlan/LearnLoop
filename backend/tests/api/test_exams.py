@@ -266,6 +266,7 @@ async def exams_app() -> FastAPI:
     application.state.fake_database = database
     application.state.fake_adapter = adapter
     application.state.fake_storage = storage
+    application.state.fake_grading_vlm = vlm
     application.state.fake_vlm = vlm
     application.state.primary_user = user
 
@@ -406,7 +407,7 @@ async def test_get_active_exam_sets_started_at_once_and_resume_returns_saved_ans
 async def test_submit_exam_grades_items_updates_tracking_and_history(exams_app: FastAPI, client: AsyncClient) -> None:
     database: FakeDatabase = exams_app.state.fake_database
     storage: FakeStorage = exams_app.state.fake_storage
-    vlm: FakeVLMClient = exams_app.state.fake_vlm
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
     user_id = exams_app.state.primary_user["_id"]
 
     objective = make_problem(
@@ -503,7 +504,7 @@ async def test_submit_exam_rejects_when_answers_modified_during_grading(
 ) -> None:
     database: FakeDatabase = exams_app.state.fake_database
     storage: FakeStorage = exams_app.state.fake_storage
-    vlm: FakeVLMClient = exams_app.state.fake_vlm
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
     user_id = exams_app.state.primary_user["_id"]
 
     problem = make_problem(
@@ -563,7 +564,7 @@ async def test_submit_exam_marks_pending_review_after_vlm_retry_and_self_report_
 ) -> None:
     database: FakeDatabase = exams_app.state.fake_database
     storage: FakeStorage = exams_app.state.fake_storage
-    vlm: FakeVLMClient = exams_app.state.fake_vlm
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
     user_id = exams_app.state.primary_user["_id"]
     short = make_problem(
         user_id,

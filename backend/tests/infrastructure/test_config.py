@@ -19,10 +19,18 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("S3_BUCKET", "media")
     monkeypatch.setenv("S3_REGION", "eu-central-1")
     monkeypatch.setenv("S3_FORCE_PATH_STYLE", "false")
-    monkeypatch.setenv("INGESTION_VLM_ENDPOINT", "https://ingestion.example/api")
-    monkeypatch.setenv("INGESTION_VLM_MODEL", "ingestion-model")
-    monkeypatch.setenv("INGESTION_VLM_API_KEY", "ingestion-key")
-    monkeypatch.setenv("INGESTION_VLM_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("HELPER_VLM_ENDPOINT", "https://helper.example/api")
+    monkeypatch.setenv("HELPER_VLM_MODEL", "helper-model")
+    monkeypatch.setenv("HELPER_VLM_API_KEY", "helper-key")
+    monkeypatch.setenv("HELPER_VLM_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("MATH_INGESTION_VLM_ENDPOINT", "https://math-ingestion.example/api")
+    monkeypatch.setenv("MATH_INGESTION_VLM_MODEL", "math-ingestion-model")
+    monkeypatch.setenv("MATH_INGESTION_VLM_API_KEY", "math-ingestion-key")
+    monkeypatch.setenv("MATH_INGESTION_VLM_TIMEOUT_SECONDS", "22")
+    monkeypatch.setenv("ENGLISH_INGESTION_VLM_ENDPOINT", "https://english-ingestion.example/api")
+    monkeypatch.setenv("ENGLISH_INGESTION_VLM_MODEL", "english-ingestion-model")
+    monkeypatch.setenv("ENGLISH_INGESTION_VLM_API_KEY", "english-ingestion-key")
+    monkeypatch.setenv("ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS", "32")
     monkeypatch.setenv("GRADING_VLM_ENDPOINT", "https://grading.example/api")
     monkeypatch.setenv("GRADING_VLM_MODEL", "grading-model")
     monkeypatch.setenv("GRADING_VLM_API_KEY", "grading-key")
@@ -57,10 +65,18 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.s3_bucket == "media"
     assert settings.s3_region == "eu-central-1"
     assert settings.s3_force_path_style is False
-    assert settings.ingestion_vlm_endpoint == "https://ingestion.example/api"
-    assert settings.ingestion_vlm_model == "ingestion-model"
-    assert settings.ingestion_vlm_api_key == "ingestion-key"
-    assert settings.ingestion_vlm_timeout_seconds == 12
+    assert settings.helper_vlm_endpoint == "https://helper.example/api"
+    assert settings.helper_vlm_model == "helper-model"
+    assert settings.helper_vlm_api_key == "helper-key"
+    assert settings.helper_vlm_timeout_seconds == 12
+    assert settings.math_ingestion_vlm_endpoint == "https://math-ingestion.example/api"
+    assert settings.math_ingestion_vlm_model == "math-ingestion-model"
+    assert settings.math_ingestion_vlm_api_key == "math-ingestion-key"
+    assert settings.math_ingestion_vlm_timeout_seconds == 22
+    assert settings.english_ingestion_vlm_endpoint == "https://english-ingestion.example/api"
+    assert settings.english_ingestion_vlm_model == "english-ingestion-model"
+    assert settings.english_ingestion_vlm_api_key == "english-ingestion-key"
+    assert settings.english_ingestion_vlm_timeout_seconds == 32
     assert settings.grading_vlm_endpoint == "https://grading.example/api"
     assert settings.grading_vlm_model == "grading-model"
     assert settings.grading_vlm_api_key == "grading-key"
@@ -96,10 +112,18 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
         "S3_BUCKET",
         "S3_REGION",
         "S3_FORCE_PATH_STYLE",
-        "INGESTION_VLM_ENDPOINT",
-        "INGESTION_VLM_MODEL",
-        "INGESTION_VLM_API_KEY",
-        "INGESTION_VLM_TIMEOUT_SECONDS",
+        "HELPER_VLM_ENDPOINT",
+        "HELPER_VLM_MODEL",
+        "HELPER_VLM_API_KEY",
+        "HELPER_VLM_TIMEOUT_SECONDS",
+        "MATH_INGESTION_VLM_ENDPOINT",
+        "MATH_INGESTION_VLM_MODEL",
+        "MATH_INGESTION_VLM_API_KEY",
+        "MATH_INGESTION_VLM_TIMEOUT_SECONDS",
+        "ENGLISH_INGESTION_VLM_ENDPOINT",
+        "ENGLISH_INGESTION_VLM_MODEL",
+        "ENGLISH_INGESTION_VLM_API_KEY",
+        "ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS",
         "GRADING_VLM_ENDPOINT",
         "GRADING_VLM_MODEL",
         "GRADING_VLM_API_KEY",
@@ -127,10 +151,18 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
     assert settings.mongodb_uri == "mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true"
     assert settings.s3_force_path_style is True
     assert settings.preview_extracting_window_seconds == 150
-    assert settings.ingestion_vlm_endpoint == "https://example-ingestion-vlm-provider.invalid/api"
-    assert settings.ingestion_vlm_model == "replace-me"
-    assert settings.ingestion_vlm_api_key == "replace-me"
-    assert settings.ingestion_vlm_timeout_seconds == 120
+    assert settings.helper_vlm_endpoint == "https://example-helper-vlm-provider.invalid/api"
+    assert settings.helper_vlm_model == "replace-me"
+    assert settings.helper_vlm_api_key == "replace-me"
+    assert settings.helper_vlm_timeout_seconds == 60
+    assert settings.math_ingestion_vlm_endpoint == "https://example-math-ingestion-vlm-provider.invalid/api"
+    assert settings.math_ingestion_vlm_model == "replace-me"
+    assert settings.math_ingestion_vlm_api_key == "replace-me"
+    assert settings.math_ingestion_vlm_timeout_seconds == 120
+    assert settings.english_ingestion_vlm_endpoint == "https://example-english-ingestion-vlm-provider.invalid/api"
+    assert settings.english_ingestion_vlm_model == "replace-me"
+    assert settings.english_ingestion_vlm_api_key == "replace-me"
+    assert settings.english_ingestion_vlm_timeout_seconds == 120
     assert settings.grading_vlm_endpoint == "https://example-grading-vlm-provider.invalid/api"
     assert settings.grading_vlm_model == "replace-me"
     assert settings.grading_vlm_api_key == "replace-me"
