@@ -103,8 +103,8 @@ class _ExtractionProviderPayload(BaseModel):
 class _ClassificationProviderPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    subject: str
-    confidence: float
+    subject: Literal["math", "english"]
+    confidence: float = Field(ge=0, le=1)
     reason: str
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
 
@@ -164,8 +164,8 @@ class ExtractionResult(BaseModel):
 class ClassificationResult(BaseModel):
     request_type: Literal["subject-classification"]
     model: str
-    subject: str
-    confidence: float
+    subject: Literal["math", "english"]
+    confidence: float = Field(ge=0, le=1)
     reason: str
     provider_metadata: dict[str, Any]
     raw_provider_response: dict[str, Any]

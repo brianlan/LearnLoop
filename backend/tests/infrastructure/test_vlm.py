@@ -13,6 +13,7 @@ from app.infrastructure.vlm.client import (
     FAILURE_CODE_PROVIDER_REJECTED,
     FAILURE_CODE_STALE_PREVIEW,
     FAILURE_CODE_TIMEOUT,
+    ClassificationResult,
     ExtractionResult,
     GradingResult,
     VLMClient,
@@ -429,6 +430,35 @@ def test_recover_stale_preview_ignores_fresh_extractions() -> None:
     assert recover_stale_preview(preview, now=now, extracting_window_seconds=30) is None
 
 
+def _classification_handler(subject: str, confidence: float) -> VLMClient:
+    """Build a mock VLM client that returns a classification response."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "subject": subject,
+                                    "confidence": confidence,
+                                    "reason": "test",
+                                    "providerMetadata": {"provider": "demo"},
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    return _build_client(handler)
+
+
 def test_math_extraction_prompt_contains_math_guidance() -> None:
     assert "JSXGraph" in MATH_EXTRACTION_SYSTEM_PROMPT
     assert "LaTeX" in MATH_EXTRACTION_SYSTEM_PROMPT
@@ -529,3 +559,61 @@ async def test_vlm_client_defaults_to_math_extraction_prompt() -> None:
     await client.aclose()
 
     assert captured_prompt == MATH_EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_vlm_classification_happy_path_math() -> None:
+    client = _classification_handler("math", 0.95)
+    result = await client.classify_subject(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert isinstance(result, ClassificationResult)
+    assert result.subject == "math"
+    assert result.confidence == 0.95
+
+
+@pytest.mark.asyncio
+async def test_vlm_classification_happy_path_english() -> None:
+    client = _classification_handler("english", 0.8)
+    result = await client.classify_subject(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert isinstance(result, ClassificationResult)
+    assert result.subject == "english"
+    assert result.confidence == 0.8
+
+
+@pytest.mark.asyncio
+async def test_vlm_classification_rejects_invalid_subject() -> None:
+    client = _classification_handler("science", 0.9)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.classify_subject(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_classification_rejects_confidence_below_zero() -> None:
+    client = _classification_handler("math", -0.1)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.classify_subject(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_classification_rejects_confidence_above_one() -> None:
+    client = _classification_handler("english", 1.5)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.classify_subject(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
