@@ -32,25 +32,45 @@ const mockSettings = {
   app: { env: "development", host: "0.0.0.0", port: 8000, log_level: "INFO" },
   database: { name: "learnloop" },
   storage: { endpoint: "http://localhost:9000", bucket: "media", region: "us-east-1", force_path_style: true },
-  ingestion_vlm: {
-    endpoint: "https://ingestion.example.com",
-    model: "ingestion-model",
+  preview_extracting_window_seconds: 150,
+  helper_vlm: {
+    endpoint: "https://helper.example.com",
+    model: "helper-model",
+    timeout_seconds: 30,
+  },
+  math_ingestion_vlm: {
+    endpoint: "https://math-ingestion.example.com",
+    model: "math-ingestion-model",
     timeout_seconds: 120,
-    preview_extracting_window_seconds: 150,
+  },
+  english_ingestion_vlm: {
+    endpoint: "https://english-ingestion.example.com",
+    model: "english-ingestion-model",
+    timeout_seconds: 120,
   },
   grading_vlm: {
     endpoint: "https://grading.example.com",
     model: "grading-model",
     timeout_seconds: 60,
   },
-  solution_vlm: {
-    endpoint: "https://solution.example.com",
-    model: "solution-model",
+  math_solution_vlm: {
+    endpoint: "https://math-solution.example.com",
+    model: "math-solution-model",
     timeout_seconds: 90,
   },
-  coaching_vlm: {
-    endpoint: "https://coaching.example.com",
-    model: "coaching-model",
+  english_solution_vlm: {
+    endpoint: "https://english-solution.example.com",
+    model: "english-solution-model",
+    timeout_seconds: 90,
+  },
+  math_coaching_vlm: {
+    endpoint: "https://math-coaching.example.com",
+    model: "math-coaching-model",
+    timeout_seconds: 45,
+  },
+  english_coaching_vlm: {
+    endpoint: "https://english-coaching.example.com",
+    model: "english-coaching-model",
     timeout_seconds: 45,
   },
   session: { cookie_name: "ll_session", secure: false, samesite: "lax" },
@@ -93,16 +113,32 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("http://localhost:9000")).toBeInTheDocument();
   });
 
-  it("renders explicit AI settings sections", async () => {
+  it("renders all VLM settings sections", async () => {
     renderWithProviders();
-    expect(await screen.findByText("Ingestion VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Helper VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Math Ingestion VLM")).toBeInTheDocument();
+    expect(await screen.findByText("English Ingestion VLM")).toBeInTheDocument();
     expect(await screen.findByText("Grading VLM")).toBeInTheDocument();
-    expect(await screen.findByText("Solution VLM")).toBeInTheDocument();
-    expect(await screen.findByText("Coaching VLM")).toBeInTheDocument();
-    expect(await screen.findByText("ingestion-model")).toBeInTheDocument();
+    expect(await screen.findByText("Math Solution VLM")).toBeInTheDocument();
+    expect(await screen.findByText("English Solution VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Math Coaching VLM")).toBeInTheDocument();
+    expect(await screen.findByText("English Coaching VLM")).toBeInTheDocument();
+    expect(await screen.findByText("helper-model")).toBeInTheDocument();
+    expect(await screen.findByText("math-ingestion-model")).toBeInTheDocument();
+    expect(await screen.findByText("english-ingestion-model")).toBeInTheDocument();
     expect(await screen.findByText("grading-model")).toBeInTheDocument();
-    expect(await screen.findByText("solution-model")).toBeInTheDocument();
-    expect(await screen.findByText("coaching-model")).toBeInTheDocument();
+    expect(await screen.findByText("math-solution-model")).toBeInTheDocument();
+    expect(await screen.findByText("english-solution-model")).toBeInTheDocument();
+    expect(await screen.findByText("math-coaching-model")).toBeInTheDocument();
+    expect(await screen.findByText("english-coaching-model")).toBeInTheDocument();
+  });
+
+  it("does not reference stale VLM keys", async () => {
+    renderWithProviders();
+    await screen.findByText("Settings");
+    expect(screen.queryByText("Ingestion VLM")).not.toBeInTheDocument();
+    expect(screen.queryByText("Solution VLM")).not.toBeInTheDocument();
+    expect(screen.queryByText("Coaching VLM")).not.toBeInTheDocument();
   });
 
   it("renders session settings section", async () => {
