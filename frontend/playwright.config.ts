@@ -10,7 +10,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "INGESTION_VLM_ENDPOINT=http://127.0.0.1:9 INGESTION_VLM_TIMEOUT_SECONDS=1 uv run --directory ../backend uvicorn app.main:app --host 127.0.0.1 --port 18000",
+      command: "MATH_INGESTION_VLM_ENDPOINT=http://127.0.0.1:9 MATH_INGESTION_VLM_TIMEOUT_SECONDS=1 ENGLISH_INGESTION_VLM_ENDPOINT=http://127.0.0.1:9 ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS=1 uv run --directory ../backend uvicorn app.main:app --host 127.0.0.1 --port 18000",
       url: "http://127.0.0.1:18000/api/health",
       name: "Backend",
       reuseExistingServer: false,

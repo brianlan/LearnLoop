@@ -180,23 +180,39 @@ The canonical template lives in `.env.example`.
 | `S3_BUCKET` | Media bucket name | `learnloop-media` |
 | `S3_REGION` | S3 region | `us-east-1` |
 | `S3_FORCE_PATH_STYLE` | Path-style S3 URLs | `true` |
-| `INGESTION_VLM_ENDPOINT` | Ingestion VLM endpoint for image extraction and problem structuring | example placeholder |
-| `INGESTION_VLM_MODEL` | Ingestion VLM model identifier | `replace-me` |
-| `INGESTION_VLM_API_KEY` | Ingestion VLM credential | `replace-me` |
-| `INGESTION_VLM_TIMEOUT_SECONDS` | Ingestion VLM request timeout | `120` |
+| `HELPER_VLM_ENDPOINT` | Helper VLM endpoint for subject classification | example placeholder |
+| `HELPER_VLM_MODEL` | Helper VLM model identifier | `replace-me` |
+| `HELPER_VLM_API_KEY` | Helper VLM credential | `replace-me` |
+| `HELPER_VLM_TIMEOUT_SECONDS` | Helper VLM request timeout | `60` |
+| `MATH_INGESTION_VLM_ENDPOINT` | Math ingestion VLM endpoint for math problem extraction | example placeholder |
+| `MATH_INGESTION_VLM_MODEL` | Math ingestion VLM model identifier | `replace-me` |
+| `MATH_INGESTION_VLM_API_KEY` | Math ingestion VLM credential | `replace-me` |
+| `MATH_INGESTION_VLM_TIMEOUT_SECONDS` | Math ingestion VLM request timeout | `120` |
+| `ENGLISH_INGESTION_VLM_ENDPOINT` | English ingestion VLM endpoint for English problem extraction | example placeholder |
+| `ENGLISH_INGESTION_VLM_MODEL` | English ingestion VLM model identifier | `replace-me` |
+| `ENGLISH_INGESTION_VLM_API_KEY` | English ingestion VLM credential | `replace-me` |
+| `ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS` | English ingestion VLM request timeout | `120` |
 | `GRADING_VLM_ENDPOINT` | Grading VLM endpoint for short-answer judging in practice and exams | example placeholder |
 | `GRADING_VLM_MODEL` | Grading VLM model identifier | `replace-me` |
 | `GRADING_VLM_API_KEY` | Grading VLM credential | `replace-me` |
 | `GRADING_VLM_TIMEOUT_SECONDS` | Grading VLM request timeout | `60` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
-| `SOLUTION_VLM_ENDPOINT` | Solution generation VLM endpoint (OpenAI-compatible base URL) | example placeholder |
-| `SOLUTION_VLM_MODEL` | Solution generation VLM model identifier | `replace-me` |
-| `SOLUTION_VLM_API_KEY` | Solution generation VLM credential | `replace-me` |
-| `SOLUTION_VLM_TIMEOUT_SECONDS` | Solution generation VLM request timeout | `120` |
-| `COACHING_VLM_ENDPOINT` | Coaching VLM endpoint (OpenAI-compatible base URL) | example placeholder |
-| `COACHING_VLM_MODEL` | Coaching VLM model identifier | `replace-me` |
-| `COACHING_VLM_API_KEY` | Coaching VLM credential | `replace-me` |
-| `COACHING_VLM_TIMEOUT_SECONDS` | Coaching VLM request timeout | `60` |
+| `MATH_SOLUTION_VLM_ENDPOINT` | Math solution generation VLM endpoint | example placeholder |
+| `MATH_SOLUTION_VLM_MODEL` | Math solution generation VLM model identifier | `replace-me` |
+| `MATH_SOLUTION_VLM_API_KEY` | Math solution generation VLM credential | `replace-me` |
+| `MATH_SOLUTION_VLM_TIMEOUT_SECONDS` | Math solution generation VLM request timeout | `120` |
+| `ENGLISH_SOLUTION_VLM_ENDPOINT` | English solution generation VLM endpoint | example placeholder |
+| `ENGLISH_SOLUTION_VLM_MODEL` | English solution generation VLM model identifier | `replace-me` |
+| `ENGLISH_SOLUTION_VLM_API_KEY` | English solution generation VLM credential | `replace-me` |
+| `ENGLISH_SOLUTION_VLM_TIMEOUT_SECONDS` | English solution generation VLM request timeout | `120` |
+| `MATH_COACHING_VLM_ENDPOINT` | Math coaching VLM endpoint | example placeholder |
+| `MATH_COACHING_VLM_MODEL` | Math coaching VLM model identifier | `replace-me` |
+| `MATH_COACHING_VLM_API_KEY` | Math coaching VLM credential | `replace-me` |
+| `MATH_COACHING_VLM_TIMEOUT_SECONDS` | Math coaching VLM request timeout | `60` |
+| `ENGLISH_COACHING_VLM_ENDPOINT` | English coaching VLM endpoint | example placeholder |
+| `ENGLISH_COACHING_VLM_MODEL` | English coaching VLM model identifier | `replace-me` |
+| `ENGLISH_COACHING_VLM_API_KEY` | English coaching VLM credential | `replace-me` |
+| `ENGLISH_COACHING_VLM_TIMEOUT_SECONDS` | English coaching VLM request timeout | `60` |
 | `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
 | `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
 | `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |
@@ -210,11 +226,12 @@ The canonical template lives in `.env.example`.
 
 ### AI tutoring VLM notes
 
-- `INGESTION_VLM_ENDPOINT`, `GRADING_VLM_ENDPOINT`, `SOLUTION_VLM_ENDPOINT`, and `COACHING_VLM_ENDPOINT` must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
-- Ingestion VLM is used for image extraction and problem structuring.
-- Grading VLM is used for short-answer correctness judgement in practice and exams.
-- Solution VLM is used for background canonical solution generation.
-- Coaching VLM is used for live tutoring responses.
+- All `*_ENDPOINT` VLM variables must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
+- Helper VLM classifies uploaded images as math or English and routes to the matching ingestion VLM.
+- Math and English ingestion VLMs handle subject-specific image extraction and problem structuring.
+- Grading VLM is used for short-answer correctness judgement in practice and exams (generic, not subject-specific).
+- Math and English solution VLMs generate background canonical solutions per subject.
+- Math and English coaching VLMs provide live tutoring responses per subject.
 
 ## Health checks and parity notes
 
