@@ -39,12 +39,12 @@ def test_canonical_solution_stores_markdown_content() -> None:
         user_id="user-1",
         steps_markdown="1. Start with **x + 2 = 4**.\n2. Subtract 2 from both sides.",
         final_answer="x = 2",
-        math_level_classification="algebra-1",
+        level_classification="algebra-1",
     )
 
     assert solution.steps_markdown.startswith("1. Start with **x + 2 = 4**.")
     assert solution.final_answer == "x = 2"
-    assert solution.math_level_classification == "algebra-1"
+    assert solution.level_classification == "algebra-1"
     assert isinstance(solution.created_at, datetime)
 
 

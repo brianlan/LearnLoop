@@ -29,12 +29,18 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
             grading_vlm_endpoint="https://grading.example/api",
             grading_vlm_model="grading-model",
             grading_vlm_timeout_seconds=34,
-            solution_vlm_endpoint="https://solution.example/api",
-            solution_vlm_model="solution-model",
-            solution_vlm_timeout_seconds=56,
-            coaching_vlm_endpoint="https://coaching.example/api",
-            coaching_vlm_model="coaching-model",
-            coaching_vlm_timeout_seconds=78,
+            math_solution_vlm_endpoint="https://math-solution.example/api",
+            math_solution_vlm_model="math-solution-model",
+            math_solution_vlm_timeout_seconds=56,
+            english_solution_vlm_endpoint="https://english-solution.example/api",
+            english_solution_vlm_model="english-solution-model",
+            english_solution_vlm_timeout_seconds=57,
+            math_coaching_vlm_endpoint="https://math-coaching.example/api",
+            math_coaching_vlm_model="math-coaching-model",
+            math_coaching_vlm_timeout_seconds=78,
+            english_coaching_vlm_endpoint="https://english-coaching.example/api",
+            english_coaching_vlm_model="english-coaching-model",
+            english_coaching_vlm_timeout_seconds=79,
             preview_extracting_window_seconds=18,
         ),
     )
@@ -70,14 +76,24 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
         "model": "grading-model",
         "timeout_seconds": 34,
     }
-    assert payload["solution_vlm"] == {
-        "endpoint": "https://solution.example/api",
-        "model": "solution-model",
+    assert payload["math_solution_vlm"] == {
+        "endpoint": "https://math-solution.example/api",
+        "model": "math-solution-model",
         "timeout_seconds": 56,
     }
-    assert payload["coaching_vlm"] == {
-        "endpoint": "https://coaching.example/api",
-        "model": "coaching-model",
+    assert payload["english_solution_vlm"] == {
+        "endpoint": "https://english-solution.example/api",
+        "model": "english-solution-model",
+        "timeout_seconds": 57,
+    }
+    assert payload["math_coaching_vlm"] == {
+        "endpoint": "https://math-coaching.example/api",
+        "model": "math-coaching-model",
         "timeout_seconds": 78,
+    }
+    assert payload["english_coaching_vlm"] == {
+        "endpoint": "https://english-coaching.example/api",
+        "model": "english-coaching-model",
+        "timeout_seconds": 79,
     }
     assert "vlm" not in payload

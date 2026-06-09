@@ -36,14 +36,22 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("GRADING_VLM_API_KEY", "grading-key")
     monkeypatch.setenv("GRADING_VLM_TIMEOUT_SECONDS", "34")
     monkeypatch.setenv("PREVIEW_EXTRACTING_WINDOW_SECONDS", "18")
-    monkeypatch.setenv("SOLUTION_VLM_ENDPOINT", "https://solution.example/api")
-    monkeypatch.setenv("SOLUTION_VLM_MODEL", "solution-model")
-    monkeypatch.setenv("SOLUTION_VLM_API_KEY", "solution-key")
-    monkeypatch.setenv("SOLUTION_VLM_TIMEOUT_SECONDS", "56")
-    monkeypatch.setenv("COACHING_VLM_ENDPOINT", "https://coaching.example/api")
-    monkeypatch.setenv("COACHING_VLM_MODEL", "coaching-model")
-    monkeypatch.setenv("COACHING_VLM_API_KEY", "coaching-key")
-    monkeypatch.setenv("COACHING_VLM_TIMEOUT_SECONDS", "78")
+    monkeypatch.setenv("MATH_SOLUTION_VLM_ENDPOINT", "https://math-solution.example/api")
+    monkeypatch.setenv("MATH_SOLUTION_VLM_MODEL", "math-solution-model")
+    monkeypatch.setenv("MATH_SOLUTION_VLM_API_KEY", "math-solution-key")
+    monkeypatch.setenv("MATH_SOLUTION_VLM_TIMEOUT_SECONDS", "56")
+    monkeypatch.setenv("ENGLISH_SOLUTION_VLM_ENDPOINT", "https://english-solution.example/api")
+    monkeypatch.setenv("ENGLISH_SOLUTION_VLM_MODEL", "english-solution-model")
+    monkeypatch.setenv("ENGLISH_SOLUTION_VLM_API_KEY", "english-solution-key")
+    monkeypatch.setenv("ENGLISH_SOLUTION_VLM_TIMEOUT_SECONDS", "57")
+    monkeypatch.setenv("MATH_COACHING_VLM_ENDPOINT", "https://math-coaching.example/api")
+    monkeypatch.setenv("MATH_COACHING_VLM_MODEL", "math-coaching-model")
+    monkeypatch.setenv("MATH_COACHING_VLM_API_KEY", "math-coaching-key")
+    monkeypatch.setenv("MATH_COACHING_VLM_TIMEOUT_SECONDS", "78")
+    monkeypatch.setenv("ENGLISH_COACHING_VLM_ENDPOINT", "https://english-coaching.example/api")
+    monkeypatch.setenv("ENGLISH_COACHING_VLM_MODEL", "english-coaching-model")
+    monkeypatch.setenv("ENGLISH_COACHING_VLM_API_KEY", "english-coaching-key")
+    monkeypatch.setenv("ENGLISH_COACHING_VLM_TIMEOUT_SECONDS", "79")
     monkeypatch.setenv("SOLUTION_WORKER_POLL_INTERVAL_SECONDS", "9")
     monkeypatch.setenv("SOLUTION_TASK_TIMEOUT_MINUTES", "15")
     monkeypatch.setenv("SOLUTION_MAX_RETRIES", "4")
@@ -82,14 +90,22 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.grading_vlm_api_key == "grading-key"
     assert settings.grading_vlm_timeout_seconds == 34
     assert settings.preview_extracting_window_seconds == 18
-    assert settings.solution_vlm_endpoint == "https://solution.example/api"
-    assert settings.solution_vlm_model == "solution-model"
-    assert settings.solution_vlm_api_key == "solution-key"
-    assert settings.solution_vlm_timeout_seconds == 56
-    assert settings.coaching_vlm_endpoint == "https://coaching.example/api"
-    assert settings.coaching_vlm_model == "coaching-model"
-    assert settings.coaching_vlm_api_key == "coaching-key"
-    assert settings.coaching_vlm_timeout_seconds == 78
+    assert settings.math_solution_vlm_endpoint == "https://math-solution.example/api"
+    assert settings.math_solution_vlm_model == "math-solution-model"
+    assert settings.math_solution_vlm_api_key == "math-solution-key"
+    assert settings.math_solution_vlm_timeout_seconds == 56
+    assert settings.english_solution_vlm_endpoint == "https://english-solution.example/api"
+    assert settings.english_solution_vlm_model == "english-solution-model"
+    assert settings.english_solution_vlm_api_key == "english-solution-key"
+    assert settings.english_solution_vlm_timeout_seconds == 57
+    assert settings.math_coaching_vlm_endpoint == "https://math-coaching.example/api"
+    assert settings.math_coaching_vlm_model == "math-coaching-model"
+    assert settings.math_coaching_vlm_api_key == "math-coaching-key"
+    assert settings.math_coaching_vlm_timeout_seconds == 78
+    assert settings.english_coaching_vlm_endpoint == "https://english-coaching.example/api"
+    assert settings.english_coaching_vlm_model == "english-coaching-model"
+    assert settings.english_coaching_vlm_api_key == "english-coaching-key"
+    assert settings.english_coaching_vlm_timeout_seconds == 79
     assert settings.solution_worker_poll_interval_seconds == 9
     assert settings.solution_task_timeout_minutes == 15
     assert settings.solution_max_retries == 4
@@ -129,14 +145,22 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
         "GRADING_VLM_API_KEY",
         "GRADING_VLM_TIMEOUT_SECONDS",
         "PREVIEW_EXTRACTING_WINDOW_SECONDS",
-        "SOLUTION_VLM_ENDPOINT",
-        "SOLUTION_VLM_MODEL",
-        "SOLUTION_VLM_API_KEY",
-        "SOLUTION_VLM_TIMEOUT_SECONDS",
-        "COACHING_VLM_ENDPOINT",
-        "COACHING_VLM_MODEL",
-        "COACHING_VLM_API_KEY",
-        "COACHING_VLM_TIMEOUT_SECONDS",
+        "MATH_SOLUTION_VLM_ENDPOINT",
+        "MATH_SOLUTION_VLM_MODEL",
+        "MATH_SOLUTION_VLM_API_KEY",
+        "MATH_SOLUTION_VLM_TIMEOUT_SECONDS",
+        "ENGLISH_SOLUTION_VLM_ENDPOINT",
+        "ENGLISH_SOLUTION_VLM_MODEL",
+        "ENGLISH_SOLUTION_VLM_API_KEY",
+        "ENGLISH_SOLUTION_VLM_TIMEOUT_SECONDS",
+        "MATH_COACHING_VLM_ENDPOINT",
+        "MATH_COACHING_VLM_MODEL",
+        "MATH_COACHING_VLM_API_KEY",
+        "MATH_COACHING_VLM_TIMEOUT_SECONDS",
+        "ENGLISH_COACHING_VLM_ENDPOINT",
+        "ENGLISH_COACHING_VLM_MODEL",
+        "ENGLISH_COACHING_VLM_API_KEY",
+        "ENGLISH_COACHING_VLM_TIMEOUT_SECONDS",
         "SOLUTION_WORKER_POLL_INTERVAL_SECONDS",
         "SOLUTION_TASK_TIMEOUT_MINUTES",
         "SOLUTION_MAX_RETRIES",
@@ -167,14 +191,22 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
     assert settings.grading_vlm_model == "replace-me"
     assert settings.grading_vlm_api_key == "replace-me"
     assert settings.grading_vlm_timeout_seconds == 60
-    assert settings.solution_vlm_endpoint == "https://example-solution-provider.invalid/api"
-    assert settings.solution_vlm_model == "replace-me"
-    assert settings.solution_vlm_api_key == "replace-me"
-    assert settings.solution_vlm_timeout_seconds == 120
-    assert settings.coaching_vlm_endpoint == "https://example-coaching-provider.invalid/api"
-    assert settings.coaching_vlm_model == "replace-me"
-    assert settings.coaching_vlm_api_key == "replace-me"
-    assert settings.coaching_vlm_timeout_seconds == 60
+    assert settings.math_solution_vlm_endpoint == "https://example-math-solution-provider.invalid/api"
+    assert settings.math_solution_vlm_model == "replace-me"
+    assert settings.math_solution_vlm_api_key == "replace-me"
+    assert settings.math_solution_vlm_timeout_seconds == 120
+    assert settings.english_solution_vlm_endpoint == "https://example-english-solution-provider.invalid/api"
+    assert settings.english_solution_vlm_model == "replace-me"
+    assert settings.english_solution_vlm_api_key == "replace-me"
+    assert settings.english_solution_vlm_timeout_seconds == 120
+    assert settings.math_coaching_vlm_endpoint == "https://example-math-coaching-provider.invalid/api"
+    assert settings.math_coaching_vlm_model == "replace-me"
+    assert settings.math_coaching_vlm_api_key == "replace-me"
+    assert settings.math_coaching_vlm_timeout_seconds == 60
+    assert settings.english_coaching_vlm_endpoint == "https://example-english-coaching-provider.invalid/api"
+    assert settings.english_coaching_vlm_model == "replace-me"
+    assert settings.english_coaching_vlm_api_key == "replace-me"
+    assert settings.english_coaching_vlm_timeout_seconds == 60
     assert settings.solution_worker_poll_interval_seconds == 5
     assert settings.solution_task_timeout_minutes == 10
     assert settings.solution_max_retries == 3

@@ -5,6 +5,7 @@ from typing import Any
 from bson import ObjectId
 
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole, ExamState
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.solution_coaching_client import (
     CoachingMessage as VLMCoachingMessage,
     CoachingVLMClient,
@@ -26,9 +27,10 @@ class CoachingError(Exception):
 
 
 class CoachingService:
-    def __init__(self, database: Any, vlm_client: CoachingVLMClient):
+    def __init__(self, database: Any, settings: Settings | None = None, vlm_client: CoachingVLMClient | None = None):
         self.db = database
-        self.vlm_client = vlm_client
+        self._settings = settings
+        self._vlm_client = vlm_client
 
     async def get_conversation(self, problem_id: str, user_id: str) -> CoachingConversation | None:
         doc = await self.db[COACHING_CONVERSATIONS_COLLECTION].find_one({
@@ -77,11 +79,11 @@ class CoachingService:
         if not solution:
             steps_markdown = "No canonical steps available."
             canonical_final_answer = problem.get("correctAnswer", {}).get("display", "Unknown")
-            math_level_classification = "unknown"
+            level_classification = "unknown"
         else:
             steps_markdown = solution.get("steps_markdown", "")
             canonical_final_answer = solution.get("final_answer", "")
-            math_level_classification = solution.get("math_level_classification", "unknown")
+            level_classification = solution.get("level_classification") or solution.get("math_level_classification", "unknown")
 
         # 4. Fetch or create Conversation
         conversation = await self.get_conversation(problem_id, user_id)
@@ -110,13 +112,19 @@ class CoachingService:
             correct_answer=problem.get("correctAnswer", {}).get("display", ""),
             canonical_steps_markdown=steps_markdown,
             canonical_final_answer=canonical_final_answer,
-            math_level_classification=math_level_classification,
+            level_classification=level_classification,
             conversation_history=history,
             new_message=message
         )
 
+        vlm_client = self._vlm_client
         try:
-            vlm_result = await self.vlm_client.send_message(request)
+            if vlm_client is not None:
+                vlm_result = await vlm_client.send_message(request)
+            else:
+                subject = problem.get("subject", "math")
+                vlm_client = CoachingVLMClient(settings=self._settings, subject=subject)
+                vlm_result = await vlm_client.send_message(request)
         except SolutionCoachingVLMError as exc:
             logger.error(f"Coaching VLM error: {exc}")
             raise CoachingError(
@@ -124,6 +132,9 @@ class CoachingService:
                 code="VLM_FAILURE",
                 status_code=503
             )
+        finally:
+            if self._vlm_client is None and vlm_client is not None:
+                await vlm_client.aclose()
 
         # 6. Add messages
         try:

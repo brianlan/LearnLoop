@@ -31,7 +31,7 @@ def _utc_now() -> datetime:
 
 async def process_task(
     task: dict[str, Any],
-    client: SolutionVLMClient,
+    client: SolutionVLMClient | None,
     storage: S3StorageAdapter,
     tasks_col: Any,
     solutions_col: Any,
@@ -41,7 +41,7 @@ async def process_task(
     problem_id = task["problem_id"]
     user_id = task["user_id"]
     log_solution_generation_event("started", problem_id)
-    
+
     problem = await problems_col.find_one({"_id": ObjectId(problem_id)})
     if not problem:
         now = _utc_now()
@@ -59,11 +59,18 @@ async def process_task(
         )
         log_solution_generation_event("failed", problem_id, failure_reason="Problem not found")
         return
-        
+
+    if client is not None:
+        task_client = client
+    else:
+        settings = get_settings()
+        subject = problem.get("subject", "math")
+        task_client = SolutionVLMClient(settings=settings, subject=subject)
+
     try:
         source_image = problem.get("sourceImage")
         image_base64 = load_source_image_base64(source_image, storage)
-        
+
         request = SolutionVLMRequest(
             problem_text=problem["text"],
             correct_answer=problem["correctAnswer"]["display"],
@@ -72,9 +79,8 @@ async def process_task(
             image_url=None
         )
 
-        
-        result = await client.generate_solution(request)
-        
+        result = await task_client.generate_solution(request)
+
         # Save solution
         solution = {
             "_id": ObjectId(),
@@ -82,11 +88,11 @@ async def process_task(
             "user_id": user_id,
             "steps_markdown": result.steps_markdown,
             "final_answer": result.final_answer,
-            "math_level_classification": result.math_level_classification,
+            "level_classification": result.level_classification,
             "created_at": datetime.now(UTC)
         }
         await solutions_col.insert_one(solution)
-        
+
         # Update task status to ready
         now = _utc_now()
         await tasks_col.update_one(
@@ -100,7 +106,7 @@ async def process_task(
             }
         )
         log_solution_generation_event("succeeded", problem_id)
-        
+
     except SolutionCoachingVLMError as exc:
         retry_count = int(task.get("retry_count", 0)) + 1
         logger.warning(f"VLM error for task {task['_id']}: {exc}")
@@ -153,71 +159,66 @@ async def process_task(
 
 async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = None) -> None:
     settings = get_settings()
-    client = SolutionVLMClient(settings)
     storage = S3StorageAdapter(settings)
     poll_interval = settings.solution_worker_poll_interval_seconds
     timeout_minutes = settings.solution_task_timeout_minutes
     max_retries = settings.solution_max_retries
-    
+
     tasks_col = _safe_get_collection(database, SOLUTION_GENERATION_TASKS_COLLECTION)
     solutions_col = _safe_get_collection(database, CANONICAL_SOLUTIONS_COLLECTION)
     problems_col = _safe_get_collection(database, "problems")
-    
+
     if tasks_col is None or solutions_col is None or problems_col is None:
         logger.error("Database collections missing for solution worker")
         return
 
     logger.info("Solution worker started")
 
-    try:
-        while True:
-            if stop_event and stop_event.is_set():
-                break
+    while True:
+        if stop_event and stop_event.is_set():
+            break
 
-            now = _utc_now()
-            
-            # 1. Stuck task recovery
-            stuck_threshold = now - timedelta(minutes=timeout_minutes)
-            await tasks_col.update_many(
-                {
-                    "status": {"$in": [SolutionGenerationStatus.PENDING.value, SolutionGenerationStatus.GENERATING.value]},
-                    "updated_at": {"$lt": stuck_threshold}
-                },
-                {
-                    "$set": {
-                        "status": SolutionGenerationStatus.PENDING.value,
-                        "updated_at": now,
-                        "process_after": now,
-                    }
-                }
-            )
+        now = _utc_now()
 
-            # 2. Find and claim a pending task
-            task = await tasks_col.find_one_and_update(
-                {
+        # 1. Stuck task recovery
+        stuck_threshold = now - timedelta(minutes=timeout_minutes)
+        await tasks_col.update_many(
+            {
+                "status": {"$in": [SolutionGenerationStatus.PENDING.value, SolutionGenerationStatus.GENERATING.value]},
+                "updated_at": {"$lt": stuck_threshold}
+            },
+            {
+                "$set": {
                     "status": SolutionGenerationStatus.PENDING.value,
-                    "$or": [
-                        {"process_after": {"$lte": now}},
-                        {"process_after": {"$exists": False}, "updated_at": {"$lte": now}},
-                    ],
-                },
-                {
-                    "$set": {
-                        "status": SolutionGenerationStatus.GENERATING.value,
-                        "started_at": now,
-                        "updated_at": now,
-                        "process_after": now,
-                    }
-                },
-                sort=[("created_at", 1)],
-                return_document=ReturnDocument.AFTER
-            )
+                    "updated_at": now,
+                    "process_after": now,
+                }
+            }
+        )
 
-            if task is None:
-                await asyncio.sleep(poll_interval)
-                continue
-                
-            await process_task(task, client, storage, tasks_col, solutions_col, problems_col, max_retries)
-            
-    finally:
-        await client.aclose()
+        # 2. Find and claim a pending task
+        task = await tasks_col.find_one_and_update(
+            {
+                "status": SolutionGenerationStatus.PENDING.value,
+                "$or": [
+                    {"process_after": {"$lte": now}},
+                    {"process_after": {"$exists": False}, "updated_at": {"$lte": now}},
+                ],
+            },
+            {
+                "$set": {
+                    "status": SolutionGenerationStatus.GENERATING.value,
+                    "started_at": now,
+                    "updated_at": now,
+                    "process_after": now,
+                }
+            },
+            sort=[("created_at", 1)],
+            return_document=ReturnDocument.AFTER
+        )
+
+        if task is None:
+            await asyncio.sleep(poll_interval)
+            continue
+
+        await process_task(task, None, storage, tasks_col, solutions_col, problems_col, max_retries)

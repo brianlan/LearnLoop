@@ -84,7 +84,7 @@ class FakeSolutionVLMClient:
             model="test",
             steps_markdown="steps",
             final_answer="answer",
-            math_level_classification="basic",
+            level_classification="basic",
             raw_provider_response={}
         )
         self.calls = []
@@ -162,19 +162,23 @@ async def test_run_worker_stuck_task_recovery():
         solution_worker_poll_interval_seconds = 0.01
         solution_task_timeout_minutes = 10
         solution_max_retries = 3
-        solution_vlm_endpoint = "http"
-        solution_vlm_model = "m"
-        solution_vlm_api_key = "k"
-        solution_vlm_timeout_seconds = 10
+        math_solution_vlm_endpoint = "http"
+        math_solution_vlm_model = "m"
+        math_solution_vlm_api_key = "k"
+        math_solution_vlm_timeout_seconds = 10
+        english_solution_vlm_endpoint = "http-en"
+        english_solution_vlm_model = "m-en"
+        english_solution_vlm_api_key = "k-en"
+        english_solution_vlm_timeout_seconds = 10
         s3_bucket = "b"
         s3_region = "r"
         s3_endpoint_url = "u"
         s3_access_key = "a"
         s3_secret_key = "s"
-    
+
     from app.infrastructure.config import settings
     settings.get_settings = lambda: FakeSettings()
-    
+
     class FakeDatabase:
         def __init__(self):
             self.cols = {"solution_generation_tasks": FakeCollection(), "canonical_solutions": FakeCollection(), "problems": FakeCollection()}
@@ -182,22 +186,22 @@ async def test_run_worker_stuck_task_recovery():
             return self.cols[k]
         def get_collection(self, k):
             return self.cols[k]
-            
+
     db = FakeDatabase()
     now = datetime.now(UTC)
-    
+
     stuck_task = {"_id": ObjectId(), "problem_id": str(ObjectId()), "user_id": str(ObjectId()), "status": "generating", "updated_at": now - timedelta(minutes=15)}
     db.cols["solution_generation_tasks"].seed(stuck_task)
-    
+
     stop_event = asyncio.Event()
-    
+
     # Let it run one loop and stop
     async def stop_soon():
         await asyncio.sleep(0.05)
         stop_event.set()
-        
+
     await asyncio.gather(run_solution_worker(db, stop_event), stop_soon())
-    
+
     # After one loop, stuck task should be recovered to generating and then maybe processed if problem exists.
     # But since problem doesn't exist, it will be marked failed.
     updated = await db.cols["solution_generation_tasks"].find_one({"_id": stuck_task["_id"]})
@@ -210,10 +214,14 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
         solution_worker_poll_interval_seconds = 0.01
         solution_task_timeout_minutes = 10
         solution_max_retries = 3
-        solution_vlm_endpoint = "http"
-        solution_vlm_model = "m"
-        solution_vlm_api_key = "k"
-        solution_vlm_timeout_seconds = 10
+        math_solution_vlm_endpoint = "http"
+        math_solution_vlm_model = "m"
+        math_solution_vlm_api_key = "k"
+        math_solution_vlm_timeout_seconds = 10
+        english_solution_vlm_endpoint = "http-en"
+        english_solution_vlm_model = "m-en"
+        english_solution_vlm_api_key = "k-en"
+        english_solution_vlm_timeout_seconds = 10
         s3_bucket = "b"
         s3_region = "r"
         s3_endpoint_url = "u"
