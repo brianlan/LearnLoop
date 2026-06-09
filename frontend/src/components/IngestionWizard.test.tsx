@@ -424,6 +424,78 @@ describe("IngestionWizard", () => {
         expect(retryCall).toBeTruthy();
       });
     });
+
+    it("calls retry directly without subject PATCH on extraction failure (non-helper failure)", async () => {
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              preview: {
+                id: "test-preview-id",
+                status: "vlm-failed",
+                sourceImage: { bucket: "test", objectKey: "test-key" },
+                draft: {},
+                extraction: {
+                  failureCode: "VLM_ERROR",
+                  failureMessage: "Extraction VLM failed",
+                },
+                helperDetection: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                expiresAt: new Date().toISOString(),
+              },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              preview: {
+                id: "test-preview-id",
+                status: "ready",
+                sourceImage: { bucket: "test", objectKey: "test-key" },
+                draft: { text: "test", problemType: "short-answer", subject: "math", tags: [] },
+                extraction: {},
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                expiresAt: new Date().toISOString(),
+              },
+            }),
+        });
+      vi.stubGlobal("fetch", mockFetch);
+
+      render(<IngestionWizard />);
+
+      const file = new File(["test"], "test.png", { type: "image/png" });
+      const fileInput = screen.getByRole("button", {
+        name: "Choose Image File",
+      }).parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Extraction Failed/)).toBeInTheDocument();
+      });
+
+      const retryButton = screen.getByRole("button", { name: /Try Again/ });
+      fireEvent.click(retryButton);
+
+      await waitFor(() => {
+        const postCalls = mockFetch.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { method?: string })?.method === "POST"
+        );
+        expect(postCalls.length).toBe(2);
+        const retryCall = postCalls[1];
+        const url = (retryCall![0] as string);
+        expect(url).toContain("/retry");
+      });
+
+      const patchCall = mockFetch.mock.calls.find(
+        (call: unknown[]) => (call[1] as { method?: string })?.method === "PATCH"
+      );
+      expect(patchCall).toBeUndefined();
+    });
   });
 
   describe("choice preview", () => {
