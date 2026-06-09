@@ -60,12 +60,14 @@ async def process_task(
         log_solution_generation_event("failed", problem_id, failure_reason="Problem not found")
         return
 
+    owned_client = False
     if client is not None:
         task_client = client
     else:
         settings = get_settings()
         subject = problem.get("subject", "math")
         task_client = SolutionVLMClient(settings=settings, subject=subject)
+        owned_client = True
 
     try:
         source_image = problem.get("sourceImage")
@@ -156,6 +158,9 @@ async def process_task(
             }
         )
         log_solution_generation_event("failed", problem_id, failure_reason=str(exc))
+    finally:
+        if owned_client:
+            await task_client.aclose()
 
 async def run_solution_worker(database: Any, stop_event: asyncio.Event | None = None) -> None:
     settings = get_settings()

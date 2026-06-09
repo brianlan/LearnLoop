@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from copy import deepcopy
+from unittest.mock import patch
 
 import pytest
 from bson import ObjectId
@@ -88,15 +89,16 @@ class FakeSolutionVLMClient:
             raw_provider_response={}
         )
         self.calls = []
+        self.closed = False
 
     async def generate_solution(self, request):
         self.calls.append(request)
         if self.error_to_raise:
             raise self.error_to_raise
         return self.result_to_return
-        
+
     async def aclose(self):
-        pass
+        self.closed = True
 
 class FakeStorage:
     def get_object(self, bucket, key):
@@ -119,11 +121,12 @@ async def test_process_task_success():
     tasks_col.seed(task)
     
     await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
-    
+
     updated_task = await tasks_col.find_one({"_id": task_id})
     assert updated_task["status"] == "ready"
     assert len(solutions_col._documents) == 1
     assert len(client.calls) == 1
+    assert not client.closed  # injected client must not be closed
 
 @pytest.mark.asyncio
 async def test_process_task_retry_and_fail():
@@ -155,6 +158,7 @@ async def test_process_task_retry_and_fail():
     updated = await tasks_col.find_one({"_id": task_id})
     assert updated["status"] == "failed"
     assert updated["retry_count"] == 4
+    assert not client.closed  # injected client must not be closed
 
 @pytest.mark.asyncio
 async def test_run_worker_stuck_task_recovery():
@@ -285,3 +289,88 @@ async def test_process_task_no_image():
     assert len(solutions_col._documents) == 1
     assert len(client.calls) == 1
     assert client.calls[0].image_base64 is None
+    assert not client.closed  # injected client must not be closed
+
+
+@pytest.mark.asyncio
+async def test_process_task_closes_internal_client_on_success():
+    """When process_task creates its own client, it must close it after success."""
+    internal_client = FakeSolutionVLMClient()
+    storage = FakeStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+
+    problem_id = str(ObjectId())
+    user_id = str(ObjectId())
+    task_id = ObjectId()
+
+    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
+    tasks_col.seed(task)
+
+    with patch(
+        "app.infrastructure.worker.solution_worker.SolutionVLMClient",
+        return_value=internal_client,
+    ):
+        await process_task(task, None, storage, tasks_col, solutions_col, problems_col, 3)
+
+    updated_task = await tasks_col.find_one({"_id": task_id})
+    assert updated_task["status"] == "ready"
+    assert internal_client.closed
+
+
+@pytest.mark.asyncio
+async def test_process_task_closes_internal_client_on_vlm_failure():
+    """When process_task creates its own client, it must close it after VLM error."""
+    internal_client = FakeSolutionVLMClient()
+    internal_client.error_to_raise = SolutionCoachingVLMError("err", code="err", retryable=True)
+    storage = FakeStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+
+    problem_id = str(ObjectId())
+    task_id = ObjectId()
+
+    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending", "retry_count": 3}
+    tasks_col.seed(task)
+
+    with patch(
+        "app.infrastructure.worker.solution_worker.SolutionVLMClient",
+        return_value=internal_client,
+    ):
+        await process_task(task, None, storage, tasks_col, solutions_col, problems_col, 3)
+
+    updated = await tasks_col.find_one({"_id": task_id})
+    assert updated["status"] == "failed"
+    assert internal_client.closed
+
+
+@pytest.mark.asyncio
+async def test_process_task_closes_internal_client_on_unexpected_failure():
+    """When process_task creates its own client, it must close it after unexpected error."""
+    internal_client = FakeSolutionVLMClient()
+    internal_client.error_to_raise = RuntimeError("boom")
+    storage = FakeStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+
+    problem_id = str(ObjectId())
+    task_id = ObjectId()
+
+    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending"}
+    tasks_col.seed(task)
+
+    with patch(
+        "app.infrastructure.worker.solution_worker.SolutionVLMClient",
+        return_value=internal_client,
+    ):
+        await process_task(task, None, storage, tasks_col, solutions_col, problems_col, 3)
+
+    updated = await tasks_col.find_one({"_id": task_id})
+    assert updated["status"] == "failed"
+    assert internal_client.closed
