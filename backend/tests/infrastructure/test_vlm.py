@@ -18,6 +18,10 @@ from app.infrastructure.vlm.client import (
     VLMClient,
     VLMError,
 )
+from app.infrastructure.vlm.prompts import (
+    ENGLISH_EXTRACTION_SYSTEM_PROMPT,
+    MATH_EXTRACTION_SYSTEM_PROMPT,
+)
 from app.domain.state import recover_stale_preview
 
 def _build_client(handler) -> VLMClient:
@@ -423,3 +427,105 @@ def test_recover_stale_preview_ignores_fresh_extractions() -> None:
     }
 
     assert recover_stale_preview(preview, now=now, extracting_window_seconds=30) is None
+
+
+def test_math_extraction_prompt_contains_math_guidance() -> None:
+    assert "JSXGraph" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "LaTeX" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "$...$" in MATH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_does_not_contain_jsxgraph() -> None:
+    assert "JSXGraph" not in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "graphDsl: null" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_contains_english_guidance() -> None:
+    assert "multiple-choice" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "passage" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "text" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower()
+
+
+@pytest.mark.asyncio
+async def test_vlm_client_uses_custom_extraction_prompt() -> None:
+    custom_prompt = "Custom extraction prompt for testing"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        assert payload["messages"][0]["content"] == custom_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Test problem",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        transport=transport,
+        base_url="https://vlm.example/api",
+        timeout=5,
+        headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
+    )
+    client = VLMClient(
+        endpoint="https://vlm.example/api",
+        model="demo",
+        api_key="demo",
+        timeout_seconds=5,
+        http_client=http_client,
+        extraction_system_prompt=custom_prompt,
+    )
+
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.text == "Test problem"
+
+
+@pytest.mark.asyncio
+async def test_vlm_client_defaults_to_math_extraction_prompt() -> None:
+    captured_prompt = None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_prompt
+        payload = json.loads((await request.aread()).decode())
+        captured_prompt = payload["messages"][0]["content"]
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Test",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert captured_prompt == MATH_EXTRACTION_SYSTEM_PROMPT

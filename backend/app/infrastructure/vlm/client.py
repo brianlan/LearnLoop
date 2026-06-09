@@ -10,9 +10,10 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.vlm.prompts import (
-    EXTRACTION_SYSTEM_PROMPT,
+    ENGLISH_EXTRACTION_SYSTEM_PROMPT,
     GRADING_SYSTEM_PROMPT,
     HELPER_SUBJECT_CLASSIFICATION_SYSTEM_PROMPT,
+    MATH_EXTRACTION_SYSTEM_PROMPT,
     build_extraction_user_prompt,
     build_grading_user_prompt,
     build_subject_classification_user_prompt,
@@ -188,6 +189,7 @@ class VLMClient:
         api_key: str,
         timeout_seconds: float,
         http_client: httpx.AsyncClient | None = None,
+        extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
     ) -> None:
         self._endpoint = endpoint
         self._model = model
@@ -195,6 +197,7 @@ class VLMClient:
         self._timeout_seconds = timeout_seconds
         self._http_client = http_client
         self._owns_client = http_client is None
+        self._extraction_system_prompt = extraction_system_prompt
 
     @property
     def model(self) -> str:
@@ -226,7 +229,7 @@ class VLMClient:
     ) -> ExtractionResult:
         request = ExtractionRequest(
             model=self._model,
-            prompt=EXTRACTION_SYSTEM_PROMPT,
+            prompt=self._extraction_system_prompt,
             imageUrl=image_url,
             imageBase64=image_base64,
             expectedResponseSchema={
