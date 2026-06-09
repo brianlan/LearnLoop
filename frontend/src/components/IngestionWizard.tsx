@@ -371,12 +371,13 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
         </div>
       )}
       {preview?.status === "vlm-failed" && (() => {
-        const isHelperFailure = preview?.helperDetection?.failureCode;
+        const helperDetection = preview?.helperDetection;
+        const isHelperFailure = helperDetection?.failureCode;
         const failureCode = isHelperFailure
-          ? preview.helperDetection.failureCode
+          ? helperDetection.failureCode
           : preview?.extraction?.failureCode;
         const failureMessage = isHelperFailure
-          ? preview.helperDetection.failureMessage
+          ? helperDetection.failureMessage
           : preview?.extraction?.failureMessage;
         return (
         <div
