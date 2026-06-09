@@ -343,9 +343,11 @@ interface PreviewStepProps {
   setFormData: React.Dispatch<React.SetStateAction<WizardFormData>>;
   setCurrentStep: (step: WizardStep) => void;
   error: string;
+  helperFailureSubject: string;
+  onHelperFailureSubjectChange: (subject: string) => void;
 }
 
-function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep, error }: PreviewStepProps) {
+function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep, error, helperFailureSubject, onHelperFailureSubjectChange }: PreviewStepProps) {
   return (
     <div style={{ padding: "32px" }}>
       <h3 style={{ margin: "0 0 16px", fontSize: "18px", fontWeight: 600 }}>
@@ -426,6 +428,34 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
                 )}
               </div>
             </details>
+          )}
+          {isHelperFailure && (
+            <div style={{ marginBottom: "12px" }}>
+              <label
+                htmlFor="helper-failure-subject"
+                style={{ display: "block", marginBottom: "4px", fontSize: "14px", color: "var(--color-text)" }}
+              >
+                Subject
+              </label>
+              <select
+                id="helper-failure-subject"
+                data-testid="helper-failure-subject-select"
+                value={helperFailureSubject}
+                onChange={(e) => onHelperFailureSubjectChange(e.target.value)}
+                disabled={isLoading}
+                style={{
+                  padding: "8px 12px",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "4px",
+                  backgroundColor: "var(--color-surface)",
+                  color: "var(--color-text)",
+                  fontSize: "14px",
+                }}
+              >
+                <option value="math">Math</option>
+                <option value="english">English</option>
+              </select>
+            </div>
           )}
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
             <button
@@ -1150,6 +1180,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
   });
 
   const [graphError, setGraphError] = useState<string>("");
+  const [helperFailureSubject, setHelperFailureSubject] = useState<string>("math");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const tagSuggestions = useTagSuggestions();
 
@@ -1308,6 +1339,11 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     setError("");
 
     try {
+      const isHelperFailure = preview?.helperDetection?.failureCode;
+      if (isHelperFailure) {
+        await updatePreview(previewId, { subject: helperFailureSubject });
+      }
+
       const result = await retryPreview(previewId);
       setPreview(result);
 
@@ -1323,7 +1359,7 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [previewId, startPolling]);
+  }, [previewId, preview, helperFailureSubject, startPolling]);
 
   const handleFieldChange = useCallback(
     (field: keyof typeof formData, value: string | string[]) => {
@@ -1386,6 +1422,8 @@ export function IngestionWizard({ onConfirm, onCancel }: IngestionWizardProps) {
             setFormData={setFormData}
             setCurrentStep={setCurrentStep}
             error={error}
+            helperFailureSubject={helperFailureSubject}
+            onHelperFailureSubjectChange={setHelperFailureSubject}
           />
         );
       case "editing":

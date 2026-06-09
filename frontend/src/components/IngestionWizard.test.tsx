@@ -304,6 +304,126 @@ describe("IngestionWizard", () => {
       });
       expect(screen.getByText(/select the subject manually/)).toBeInTheDocument();
     });
+
+    it("renders subject selector on helper classification failure", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            preview: {
+              id: "test-preview-id",
+              status: "vlm-failed",
+              sourceImage: { bucket: "test", objectKey: "test-key" },
+              draft: {},
+              extraction: {},
+              helperDetection: {
+                subject: null,
+                failureCode: "vlm-timeout",
+                failureMessage: "Helper VLM request timed out",
+              },
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              expiresAt: new Date().toISOString(),
+            },
+          }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      render(<IngestionWizard />);
+
+      const file = new File(["test"], "test.png", { type: "image/png" });
+      const fileInput = screen.getByRole("button", {
+        name: "Choose Image File",
+      }).parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("helper-failure-subject-select")).toBeInTheDocument();
+      });
+      const select = screen.getByTestId("helper-failure-subject-select") as HTMLSelectElement;
+      expect(select.value).toBe("math");
+    });
+
+    it("persists selected subject before retrying on helper failure", async () => {
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              preview: {
+                id: "test-preview-id",
+                status: "vlm-failed",
+                sourceImage: { bucket: "test", objectKey: "test-key" },
+                draft: {},
+                extraction: {},
+                helperDetection: {
+                  subject: null,
+                  failureCode: "vlm-timeout",
+                  failureMessage: "Helper VLM request timed out",
+                },
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                expiresAt: new Date().toISOString(),
+              },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ preview: { id: "test-preview-id" } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              preview: {
+                id: "test-preview-id",
+                status: "ready",
+                sourceImage: { bucket: "test", objectKey: "test-key" },
+                draft: { text: "test", problemType: "short-answer", subject: "english", tags: [] },
+                extraction: {},
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                expiresAt: new Date().toISOString(),
+              },
+            }),
+        });
+      vi.stubGlobal("fetch", mockFetch);
+
+      render(<IngestionWizard />);
+
+      const file = new File(["test"], "test.png", { type: "image/png" });
+      const fileInput = screen.getByRole("button", {
+        name: "Choose Image File",
+      }).parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("helper-failure-subject-select")).toBeInTheDocument();
+      });
+
+      const select = screen.getByTestId("helper-failure-subject-select") as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: "english" } });
+
+      const retryButton = screen.getByRole("button", { name: /Try Again/ });
+      fireEvent.click(retryButton);
+
+      await waitFor(() => {
+        const patchCall = mockFetch.mock.calls.find(
+          (call: unknown[]) => (call[1] as { method?: string })?.method === "PATCH"
+        );
+        expect(patchCall).toBeTruthy();
+        expect(JSON.parse((patchCall![1] as { body: string }).body)).toEqual({ subject: "english" });
+      });
+
+      await waitFor(() => {
+        const retryCall = mockFetch.mock.calls.find(
+          (call: unknown[]) => (call[1] as { method?: string })?.method === "POST"
+        );
+        expect(retryCall).toBeTruthy();
+      });
+    });
   });
 
   describe("choice preview", () => {
