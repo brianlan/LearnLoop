@@ -36,12 +36,23 @@ interface PreviewExtraction {
   [key: string]: unknown;
 }
 
+interface PreviewHelperDetection {
+  subject?: string | null;
+  confidence?: number | null;
+  reason?: string | null;
+  model?: string | null;
+  failureCode?: string | null;
+  failureMessage?: string | null;
+  [key: string]: unknown;
+}
+
 export interface IngestionPreview {
   id: string;
   status: "extracting" | "ready" | "vlm-failed" | "graph-error";
   sourceImage: PreviewSourceImage;
   draft: PreviewDraft;
   extraction: PreviewExtraction;
+  helperDetection?: PreviewHelperDetection;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
@@ -359,7 +370,15 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
           />
         </div>
       )}
-      {preview?.status === "vlm-failed" && (
+      {preview?.status === "vlm-failed" && (() => {
+        const isHelperFailure = preview?.helperDetection?.failureCode;
+        const failureCode = isHelperFailure
+          ? preview.helperDetection.failureCode
+          : preview?.extraction?.failureCode;
+        const failureMessage = isHelperFailure
+          ? preview.helperDetection.failureMessage
+          : preview?.extraction?.failureMessage;
+        return (
         <div
           style={{
             padding: "16px",
@@ -369,12 +388,14 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
           }}
         >
           <div style={{ color: "var(--color-text-danger)", fontWeight: 600, marginBottom: "8px" }}>
-            ⚠️ Extraction Failed
+            ⚠️ {isHelperFailure ? "Subject Classification Failed" : "Extraction Failed"}
           </div>
           <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "14px", margin: "0 0 12px" }}>
-            The AI was unable to extract problem data from the image.
+            {isHelperFailure
+              ? "The AI could not determine the subject (math or English). Please select the subject manually and retry."
+              : "The AI was unable to extract problem data from the image."}
           </p>
-          {(preview?.extraction?.failureCode || preview?.extraction?.failureMessage) && (
+          {(failureCode || failureMessage) && (
             <details style={{ marginBottom: "12px" }}>
               <summary style={{ cursor: "pointer", color: "var(--color-text-danger-secondary)", fontSize: "13px" }}>
                 View error details
@@ -389,16 +410,16 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
                   fontFamily: "monospace",
                 }}
               >
-                {preview.extraction.failureCode && (
+                {failureCode && (
                   <div style={{ marginBottom: "8px" }}>
-                    <span style={{ fontWeight: 600 }}>Code:</span> {preview.extraction.failureCode}
+                    <span style={{ fontWeight: 600 }}>Code:</span> {failureCode}
                   </div>
                 )}
-                {preview.extraction.failureMessage && (
+                {failureMessage && (
                   <div>
                     <span style={{ fontWeight: 600 }}>Message:</span>{" "}
                     <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {preview.extraction.failureMessage}
+                      {failureMessage}
                     </pre>
                   </div>
                 )}
@@ -442,7 +463,8 @@ function PreviewStep({ preview, isLoading, onRetry, setFormData, setCurrentStep,
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
       {preview?.status === "graph-error" && (
         <div
           style={{

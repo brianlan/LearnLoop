@@ -265,6 +265,45 @@ describe("IngestionWizard", () => {
 
       expect(screen.queryByText("View error details")).not.toBeInTheDocument();
     });
+
+    it("shows helper classification failure message when helperDetection has failureCode", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            preview: {
+              id: "test-preview-id",
+              status: "vlm-failed",
+              sourceImage: { bucket: "test", objectKey: "test-key" },
+              draft: {},
+              extraction: {},
+              helperDetection: {
+                subject: null,
+                failureCode: "vlm-timeout",
+                failureMessage: "Helper VLM request timed out",
+              },
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              expiresAt: new Date().toISOString(),
+            },
+          }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      render(<IngestionWizard />);
+
+      const file = new File(["test"], "test.png", { type: "image/png" });
+      const fileInput = screen.getByRole("button", {
+        name: "Choose Image File",
+      }).parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Subject Classification Failed/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/select the subject manually/)).toBeInTheDocument();
+    });
   });
 
   describe("choice preview", () => {

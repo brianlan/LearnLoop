@@ -1182,7 +1182,7 @@ async def test_retry_uses_edited_subject_for_routing(
 
 
 @pytest.mark.asyncio
-async def test_helper_failure_records_failure_metadata_and_falls_back_to_math(
+async def test_helper_failure_marks_preview_vlm_failed(
     ingestion_app: FastAPI,
     authenticated_client: AsyncClient,
 ) -> None:
@@ -1198,7 +1198,6 @@ async def test_helper_failure_records_failure_metadata_and_falls_back_to_math(
             raw_provider_response={"detail": "bad request"},
         )
     ]
-    math_vlm.responses = [make_extraction_result(text="Fallback math result")]
 
     image_bytes = make_png_bytes()
     create_response = await authenticated_client.post(
@@ -1208,15 +1207,66 @@ async def test_helper_failure_records_failure_metadata_and_falls_back_to_math(
 
     assert create_response.status_code == 201
     preview = create_response.json()["preview"]
-    assert preview["status"] == "ready"
-    assert preview["draft"]["text"] == "Fallback math result"
-    assert preview["draft"]["subject"] == "math"
+    assert preview["status"] == "vlm-failed"
     assert preview["helperDetection"]["subject"] is None
     assert preview["helperDetection"]["failureCode"] == "helper-error"
     assert preview["helperDetection"]["failureMessage"] == "Helper VLM failed"
 
-    assert len(math_vlm.calls) == 1
+    # No extraction attempted
+    assert len(math_vlm.calls) == 0
     assert len(english_vlm.calls) == 0
+
+
+async def test_helper_failure_recovery_via_manual_subject_and_retry(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    helper_vlm: FakeVLMClient = ingestion_app.state.fake_helper_vlm_client
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
+    english_vlm: FakeVLMClient = ingestion_app.state.fake_english_ingestion_vlm_client
+
+    # Helper fails
+    helper_vlm.responses = [
+        VLMError(
+            "Helper VLM failed",
+            code="helper-error",
+            retryable=False,
+            raw_provider_response={"detail": "bad request"},
+        )
+    ]
+
+    image_bytes = make_png_bytes()
+    create_response = await authenticated_client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("test.png", image_bytes, "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    preview = create_response.json()["preview"]
+    preview_id = preview["id"]
+    assert preview["status"] == "vlm-failed"
+
+    # User manually selects English subject
+    patch_response = await authenticated_client.patch(
+        f"/api/v1/ingestion-previews/{preview_id}",
+        json={"subject": "english"},
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.json()["preview"]["draft"]["subject"] == "english"
+
+    # Retry with manually selected subject
+    english_vlm.responses = [make_extraction_result(text="English passage")]
+    retry_response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview_id}/retry",
+    )
+    assert retry_response.status_code == 200
+    retried = retry_response.json()["preview"]
+    assert retried["status"] == "ready"
+    assert retried["draft"]["text"] == "English passage"
+    assert retried["draft"]["subject"] == "english"
+
+    assert len(english_vlm.calls) == 1
+    assert len(math_vlm.calls) == 0
 
 
 @pytest.mark.asyncio
