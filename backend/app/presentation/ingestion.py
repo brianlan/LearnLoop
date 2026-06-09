@@ -196,6 +196,20 @@ async def create_preview(
             "failureCode": exc.code,
             "failureMessage": str(exc),
         }
+        preview["status"] = IngestionPreviewStatus.VLM_FAILED.value
+        preview["updatedAt"] = utc_now()
+        await database["ingestion_previews"].update_one(
+            {"_id": preview["_id"]},
+            {
+                "$set": {
+                    "status": preview["status"],
+                    "helperDetection": preview["helperDetection"],
+                    "updatedAt": preview["updatedAt"],
+                },
+            },
+        )
+        await _maybe_close_vlm_client(helper_vlm_client)
+        return PreviewResponse(preview=serialize_preview(preview))
     finally:
         await _maybe_close_vlm_client(helper_vlm_client)
 
