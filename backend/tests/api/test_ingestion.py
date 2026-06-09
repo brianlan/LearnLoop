@@ -206,7 +206,11 @@ class FakeVLMClient:
         self._model = model
         self.responses: list[Any] = []
         self.calls: list[dict[str, Any]] = []
-        self.closed = False
+        self.close_count = 0
+
+    @property
+    def closed(self) -> bool:
+        return self.close_count > 0
 
     @property
     def model(self) -> str:
@@ -240,7 +244,7 @@ class FakeVLMClient:
         return response
 
     async def aclose(self) -> None:
-        self.closed = True
+        self.close_count += 1
 
 
 def make_png_bytes() -> bytes:
@@ -1217,6 +1221,34 @@ async def test_helper_failure_marks_preview_vlm_failed(
     assert len(english_vlm.calls) == 0
 
 
+@pytest.mark.asyncio
+async def test_helper_failure_closes_helper_client_exactly_once(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    helper_vlm: FakeVLMClient = ingestion_app.state.fake_helper_vlm_client
+
+    helper_vlm.responses = [
+        VLMError(
+            "Helper VLM failed",
+            code="helper-error",
+            retryable=False,
+            raw_provider_response={"detail": "bad request"},
+        )
+    ]
+
+    image_bytes = make_png_bytes()
+    create_response = await authenticated_client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("test.png", image_bytes, "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    assert create_response.json()["preview"]["status"] == "vlm-failed"
+    assert helper_vlm.close_count == 1
+
+
+@pytest.mark.asyncio
 async def test_helper_failure_recovery_via_manual_subject_and_retry(
     ingestion_app: FastAPI,
     authenticated_client: AsyncClient,

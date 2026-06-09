@@ -208,7 +208,6 @@ async def create_preview(
                 },
             },
         )
-        await _maybe_close_vlm_client(helper_vlm_client)
         return PreviewResponse(preview=serialize_preview(preview))
     finally:
         await _maybe_close_vlm_client(helper_vlm_client)
