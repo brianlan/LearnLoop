@@ -16,6 +16,7 @@ vi.mock("@/api/client", () => ({
     patch: vi.fn(),
     delete: vi.fn(),
     verifyTeacherPassword: vi.fn(),
+    getSolutionStatus: vi.fn(),
   },
 }));
 
@@ -80,7 +81,11 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.patch).mockReset();
     vi.mocked(api.delete).mockReset();
     vi.mocked(api.verifyTeacherPassword).mockReset();
+    vi.mocked(api.getSolutionStatus).mockReset();
     mockNavigate.mockReset();
+
+    // Default: no solution status
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
   });
 
   it("renders problem details", async () => {
@@ -494,5 +499,96 @@ describe("ProblemDetailPage", () => {
 
     // Edit Answer button should still be visible (teacher-password gated)
     expect(screen.getByTestId("edit-answer-button")).toBeInTheDocument();
+  });
+
+  it("renders Solution Generated and AI Explain button when status is ready", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "ready" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("solution-status")).toHaveTextContent("Solution Generated");
+    });
+    expect(screen.getByTestId("ai-explain-button")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-explain-button")).toHaveTextContent("AI Explain");
+  });
+
+  it("clicking AI Explain navigates to coaching page with from state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "ready" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ai-explain-button")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("ai-explain-button"));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/coaching/abc123", {
+      state: { from: "/problems/abc123" },
+    });
+  });
+
+  it("renders Solution Pending and no AI Explain button when status is pending", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "pending" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("solution-status")).toHaveTextContent("Solution Pending");
+    });
+    expect(screen.queryByTestId("ai-explain-button")).not.toBeInTheDocument();
+  });
+
+  it("renders Solution Generating and no AI Explain button when status is generating", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "generating" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("solution-status")).toHaveTextContent("Solution Generating");
+    });
+    expect(screen.queryByTestId("ai-explain-button")).not.toBeInTheDocument();
+  });
+
+  it("renders Solution Failed and no AI Explain button when status is failed", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "failed" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("solution-status")).toHaveTextContent("Solution Failed");
+    });
+    expect(screen.queryByTestId("ai-explain-button")).not.toBeInTheDocument();
+  });
+
+  it("renders Solution Not Started when status is none", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("solution-status")).toHaveTextContent("Solution Not Started");
+    });
+    expect(screen.queryByTestId("ai-explain-button")).not.toBeInTheDocument();
   });
 });
