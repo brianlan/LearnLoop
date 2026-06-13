@@ -572,4 +572,112 @@ describe("CoachingPage", () => {
     expect(coachReply).toBeTruthy();
     expect(coachReply!.textContent).toContain("The answer is x = 2.");
   });
+
+  it("whiteboard starts expanded by default with collapse button visible", async () => {
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("whiteboard")).toBeInTheDocument();
+    });
+
+    // Full whiteboard canvas/empty state is visible
+    expect(screen.getByTestId("whiteboard-empty")).toBeInTheDocument();
+    // Collapse button is present
+    expect(screen.getByTestId("whiteboard-collapse")).toBeInTheDocument();
+    // Expand button (in rail) is not present
+    expect(screen.queryByTestId("whiteboard-expand")).not.toBeInTheDocument();
+  });
+
+  it("clicking collapse hides full whiteboard and shows compact rail with expand button", async () => {
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(mockConversationWithMessages);
+
+    const user = userEvent.setup();
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("whiteboard-collapse")).toBeInTheDocument();
+    });
+
+    // Collapse the whiteboard
+    await user.click(screen.getByTestId("whiteboard-collapse"));
+
+    // The whiteboard should no longer contain the full graph-sandbox canvas
+    const whiteboard = screen.getByTestId("whiteboard");
+    expect(within(whiteboard).queryByTestId("graph-sandbox")).not.toBeInTheDocument();
+    // Expand button should now be present
+    expect(screen.getByTestId("whiteboard-expand")).toBeInTheDocument();
+    // Vertical label is shown
+    expect(whiteboard.textContent).toContain("Whiteboard");
+  });
+
+  it("clicking expand restores full whiteboard content after collapsing", async () => {
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(mockConversationWithMessages);
+
+    const user = userEvent.setup();
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("whiteboard-collapse")).toBeInTheDocument();
+    });
+
+    // Collapse
+    await user.click(screen.getByTestId("whiteboard-collapse"));
+    expect(screen.getByTestId("whiteboard-expand")).toBeInTheDocument();
+
+    // Expand
+    await user.click(screen.getByTestId("whiteboard-expand"));
+
+    // Full whiteboard is restored with graph sandbox
+    const whiteboard = screen.getByTestId("whiteboard");
+    await waitFor(() => {
+      expect(within(whiteboard).getByTestId("whiteboard-collapse")).toBeInTheDocument();
+    });
+    expect(within(whiteboard).getByTestId("graph-sandbox")).toBeInTheDocument();
+    expect(screen.queryByTestId("whiteboard-expand")).not.toBeInTheDocument();
+  });
+
+  it("whiteboard pagination and DSL rendering still work after re-expansion", async () => {
+    const conversationWithMultipleWhiteboards: CoachingConversation = {
+      problem_id: "prob-123",
+      user_id: "user-456",
+      messages: [
+        {
+          role: "coach",
+          content: "Drawing 1",
+          whiteboard_dsl: "board.create('circle', [[0,0], 2]);",
+          created_at: "2026-05-25T12:31:00Z",
+        },
+        {
+          role: "coach",
+          content: "Drawing 2",
+          whiteboard_dsl: "board.create('circle', [[1,1], 3]);",
+          created_at: "2026-05-25T12:32:00Z",
+        },
+      ],
+      created_at: "2026-05-25T12:30:00Z",
+      updated_at: "2026-05-25T12:32:00Z",
+    };
+
+    vi.spyOn(api, "getCoachingConversation").mockResolvedValue(conversationWithMultipleWhiteboards);
+
+    const user = userEvent.setup();
+    renderCoachingPage("prob-123", "/practice");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("whiteboard-collapse")).toBeInTheDocument();
+    });
+
+    // Collapse and re-expand
+    await user.click(screen.getByTestId("whiteboard-collapse"));
+    await user.click(screen.getByTestId("whiteboard-expand"));
+
+    // Pagination still works on the latest page
+    await waitFor(() => {
+      expect(screen.getByTestId("whiteboard-page-indicator")).toHaveTextContent("2 / 2");
+    });
+
+    // Navigate to previous page
+    await user.click(screen.getByTestId("whiteboard-prev"));
+    expect(screen.getByTestId("whiteboard-page-indicator")).toHaveTextContent("1 / 2");
+  });
 });
