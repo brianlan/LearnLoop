@@ -90,6 +90,26 @@ export function ProblemDetailPage() {
     enabled: !!problemId,
   });
 
+  const { data: solutionStatusData } = useQuery({
+    queryKey: ["solution-status", problemId],
+    queryFn: () => api.getSolutionStatus(problemId),
+    enabled: !!problemId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return (status === "pending" || status === "generating") ? 2000 : false;
+    },
+  });
+
+  const solutionStatus = solutionStatusData?.status;
+
+  const solutionStatusLabel: Record<string, string> = {
+    ready: "Solution Generated",
+    pending: "Solution Pending",
+    generating: "Solution Generating",
+    failed: "Solution Failed",
+    none: "Solution Not Started",
+  };
+
   const updateMutation = useMutation({
     mutationFn: (data: UpdateProblemInput) =>
       api.patch<ProblemResponse>(`/problems/${problemId}`, data),
@@ -206,7 +226,7 @@ export function ProblemDetailPage() {
               Reference: {problem.id}
             </div>
           </div>
-          <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
             {problem.isDeleted && (
               <span
                 style={{
@@ -217,6 +237,43 @@ export function ProblemDetailPage() {
               >
                 Deleted
               </span>
+            )}
+            {solutionStatus && (
+              <span
+                data-testid="solution-status"
+                style={{
+                  padding: "0.25rem 0.5rem",
+                  borderRadius: "4px",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
+                  ...(solutionStatus === "ready"
+                    ? { background: "var(--color-success-bg)", color: "var(--color-success-text)" }
+                    : solutionStatus === "failed"
+                      ? { background: "var(--color-danger-bg)", color: "var(--color-text-danger-secondary)" }
+                      : { background: "var(--color-warning-bg)", color: "var(--color-warning-text)" }),
+                }}
+              >
+                {solutionStatusLabel[solutionStatus] ?? solutionStatus}
+              </span>
+            )}
+            {solutionStatus === "ready" && (
+              <button
+                type="button"
+                onClick={() => navigate(`/coaching/${problemId}`, { state: { from: `/problems/${problemId}` } })}
+                data-testid="ai-explain-button"
+                style={{
+                  padding: "0.375rem 0.75rem",
+                  borderRadius: "0.25rem",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
+                  background: "linear-gradient(135deg, var(--color-link), var(--color-primary))",
+                  color: "white",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                AI Explain
+              </button>
             )}
           </div>
         </div>
