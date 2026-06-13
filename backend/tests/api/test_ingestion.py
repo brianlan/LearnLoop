@@ -1326,3 +1326,97 @@ async def test_stream_preview_image_returns_404_for_other_user_preview(
     assert response.json() == {
         "error": {"code": "NOT_FOUND", "message": "Preview not found"}
     }
+
+
+# ---------------------------------------------------------------------------
+# normalize_choice_options unit tests
+# ---------------------------------------------------------------------------
+
+from app.presentation.ingestion_workflow import normalize_choice_options, _merge_draft_with_extraction
+
+
+class TestNormalizeChoiceOptions:
+    def test_inline_dot_markers(self) -> None:
+        text = "What is 2+2? A. 3 B. 4 C. 5 D. 6"
+        result = normalize_choice_options(text)
+        assert result == "What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6"
+
+    def test_inline_paren_markers(self) -> None:
+        text = "Choose one: A) Alpha B) Beta C) Gamma"
+        result = normalize_choice_options(text)
+        assert result == "Choose one:\nA) Alpha\nB) Beta\nC) Gamma"
+
+    def test_inline_colon_markers(self) -> None:
+        text = "Pick: A: Red B: Blue C: Green"
+        result = normalize_choice_options(text)
+        assert result == "Pick:\nA: Red\nB: Blue\nC: Green"
+
+    def test_already_separated_unchanged(self) -> None:
+        text = "Question?\nA. 1\nB. 2\nC. 3\nD. 4"
+        result = normalize_choice_options(text)
+        assert result == "Question?\nA. 1\nB. 2\nC. 3\nD. 4"
+
+    def test_non_choice_text_unchanged(self) -> None:
+        text = "What is the capital of France?"
+        result = normalize_choice_options(text)
+        assert result == text
+
+    def test_preserves_extra_content_before_options(self) -> None:
+        text = "Read the passage. A. True B. False"
+        result = normalize_choice_options(text)
+        assert result == "Read the passage.\nA. True\nB. False"
+
+
+class TestMergeDraftWithExtractionNormalizesOptions:
+    def test_single_choice_inline_options_normalized(self) -> None:
+        draft = _merge_draft_with_extraction(
+            None,
+            text="Q? A. 1 B. 2 C. 3 D. 4",
+            problem_type="single-choice",
+            graph_dsl=None,
+        )
+        assert draft["text"] == "Q?\nA. 1\nB. 2\nC. 3\nD. 4"
+        assert draft["problemType"] == "single-choice"
+
+    def test_multi_choice_inline_options_normalized(self) -> None:
+        draft = _merge_draft_with_extraction(
+            None,
+            text="Select: A. X B. Y C. Z",
+            problem_type="multi-choice",
+            graph_dsl=None,
+        )
+        assert draft["text"] == "Select:\nA. X\nB. Y\nC. Z"
+
+    def test_non_choice_type_not_normalized(self) -> None:
+        text = "What is 2+2? A. 3 B. 4 C. 5"
+        draft = _merge_draft_with_extraction(
+            None,
+            text=text,
+            problem_type="short-answer",
+            graph_dsl=None,
+        )
+        assert draft["text"] == text
+
+    def test_existing_draft_text_not_renormalized(self) -> None:
+        existing = {"text": "Already edited\nA. 1\nB. 2", "problemType": "single-choice"}
+        draft = _merge_draft_with_extraction(
+            existing,
+            text="Q? A. 1 B. 2",
+            problem_type="single-choice",
+            graph_dsl=None,
+        )
+        # existing draft text takes precedence
+        assert draft["text"] == "Already edited\nA. 1\nB. 2"
+
+    def test_raw_text_preserved_in_extraction(self) -> None:
+        """rawText should store original VLM output, not normalized."""
+        raw = "Q? A. 1 B. 2 C. 3"
+        draft = _merge_draft_with_extraction(
+            None,
+            text=raw,
+            problem_type="single-choice",
+            graph_dsl=None,
+        )
+        # editableDraft.text is normalized
+        assert draft["text"] == "Q?\nA. 1\nB. 2\nC. 3"
+        # But rawText would still be the original (stored in extraction.rawText, not draft)
