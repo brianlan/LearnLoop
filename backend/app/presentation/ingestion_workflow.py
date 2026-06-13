@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
@@ -42,6 +43,28 @@ def clean_optional_text(value: str | None) -> str | None:
     return cleaned or None
 
 
+# Matches option markers like A., B), C: that appear inline (not at line start).
+# Captures the marker (letter + separator) and the text after it up to the next marker or end.
+_OPTION_MARKER_RE = re.compile(
+    r"(?<!\n)([A-Z])([.):])(\s*)(?=[A-Z][.):]\s|\S)",
+)
+
+
+def normalize_choice_options(text: str) -> str:
+    """Insert newlines before inline choice option markers.
+
+    For example, ``"Q? A. 1 B. 2"`` becomes ``"Q?\nA. 1\nB. 2"``.
+    Already-separated options are left unchanged.
+    """
+    # First, insert a newline before any inline marker that is not already at line start.
+    result = _OPTION_MARKER_RE.sub(r"\n\1\2\3", text)
+    # Collapse any double blank lines that may have been introduced.
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    # Strip trailing whitespace from each line.
+    result = "\n".join(line.rstrip() for line in result.split("\n"))
+    return result.strip()
+
+
 def _merge_draft_with_extraction(
     existing_draft: Mapping[str, Any] | None,
     *,
@@ -50,9 +73,14 @@ def _merge_draft_with_extraction(
     graph_dsl: str | None,
 ) -> dict[str, Any]:
     draft = dict(existing_draft or {})
+    resolved_text = clean_optional_text(draft.get("text")) or clean_optional_text(text)
+    resolved_type = draft.get("problemType") or problem_type
+    # Normalize choice options for choice problem types when using extracted text.
+    if resolved_text and resolved_type in ("single-choice", "multi-choice"):
+        resolved_text = normalize_choice_options(resolved_text)
     return {
-        "text": clean_optional_text(draft.get("text")) or clean_optional_text(text),
-        "problemType": draft.get("problemType") or problem_type,
+        "text": resolved_text,
+        "problemType": resolved_type,
         "graphDsl": draft.get("graphDsl") if draft.get("graphDsl") is not None else graph_dsl,
         "correctAnswer": clean_optional_text(draft.get("correctAnswer")),
         "tags": normalize_tags(list(draft.get("tags", []))),

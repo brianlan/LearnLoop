@@ -475,6 +475,16 @@ def test_english_extraction_prompt_contains_english_guidance() -> None:
     assert "passage" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "text" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower()
 
 
+def test_math_extraction_prompt_instructs_options_on_own_line() -> None:
+    assert "each option" in MATH_EXTRACTION_SYSTEM_PROMPT.lower() or "each option" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "own line" in MATH_EXTRACTION_SYSTEM_PROMPT.lower() or "own line" in MATH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_instructs_options_on_own_line() -> None:
+    assert "each option" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "each option" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "own line" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "own line" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_vlm_client_uses_custom_extraction_prompt() -> None:
     custom_prompt = "Custom extraction prompt for testing"

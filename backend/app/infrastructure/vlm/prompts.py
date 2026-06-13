@@ -16,6 +16,7 @@ Text formatting:
 - Use `$...$` for inline math and `$$...$$` for display math.
 - Put whitespace around inline `$...$` when it is adjacent to words, numbers, or other
   non-punctuation text. For example, write `Find $x$ when $x+1=2$`, not `Find$x$when$x+1=2$`.
+- For single-choice and multi-choice problems, place each option (e.g. A, B, C, D) on its own line.
 
 ## JSXGraph DSL rules
 
@@ -72,6 +73,7 @@ Text formatting:
 - Use standard punctuation and capitalization as shown in the image.
 - For fill-in-the-blank problems, use underscores or blanks as they appear in the source.
 - For multiple-choice problems, preserve the option labels (A, B, C, D) and their text exactly.
+- For single-choice and multi-choice problems, place each option (e.g. A, B, C, D) on its own line.
 """
 
 GRADING_SYSTEM_PROMPT = """You are grading a short-answer response against a stored answer key.
