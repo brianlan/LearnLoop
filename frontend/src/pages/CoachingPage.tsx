@@ -81,6 +81,9 @@ export function CoachingPage() {
   const [whiteboardError, setWhiteboardError] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
 
+  // Whiteboard collapse state
+  const [isWhiteboardCollapsed, setIsWhiteboardCollapsed] = useState(false);
+
   // Active whiteboard page index
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
 
@@ -291,7 +294,7 @@ export function CoachingPage() {
       </div>
 
       {/* Main split layout container */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "1.5rem", flex: 1, minHeight: "650px", alignItems: "stretch" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isWhiteboardCollapsed ? "1fr 48px" : "1fr 1.2fr", gap: "1.5rem", flex: 1, minHeight: "650px", alignItems: "stretch" }}>
         
         {/* Left side: Context + Chat Area */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -589,6 +592,44 @@ export function CoachingPage() {
         </div>
 
         {/* Right side: Interactive Whiteboard Area */}
+        {isWhiteboardCollapsed ? (
+          <div
+            data-testid="whiteboard"
+            style={{
+              backgroundColor: "var(--color-surface)",
+              borderRadius: "0.75rem",
+              border: "1px solid var(--color-border)",
+              boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
+              padding: "0.5rem",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              gap: "0.5rem",
+              minHeight: "650px",
+            }}
+          >
+            <button
+              onClick={() => setIsWhiteboardCollapsed(false)}
+              data-testid="whiteboard-expand"
+              aria-label="Expand whiteboard"
+              style={{
+                padding: "0.375rem",
+                borderRadius: "0.25rem",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface)",
+                cursor: "pointer",
+                fontSize: "1rem",
+                lineHeight: 1,
+              }}
+            >
+              ◀
+            </button>
+            <span style={{ writingMode: "vertical-rl", fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)", letterSpacing: "0.05em" }}>
+              🎨 Whiteboard
+            </span>
+          </div>
+        ) : (
         <div
           data-testid="whiteboard"
           style={{
@@ -609,54 +650,74 @@ export function CoachingPage() {
               <strong style={{ fontSize: "1rem", color: "var(--color-text)", fontWeight: 700 }}>Interactive Whiteboard</strong>
             </div>
 
-            {/* Whiteboard pagination controls */}
-            {dslPages.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <button
-                  onClick={() => {
-                    setCurrentPageIndex((prev) => Math.max(0, prev - 1));
-                    setWhiteboardError(null);
-                  }}
-                  disabled={currentPageIndex === 0}
-                  data-testid="whiteboard-prev"
-                  style={{
-                    padding: "0.25rem 0.5rem",
-                    borderRadius: "0.25rem",
-                    border: "1px solid var(--color-border)",
-                    backgroundColor: "var(--color-surface)",
-                    cursor: currentPageIndex === 0 ? "not-allowed" : "pointer",
-                    fontSize: "0.875rem",
-                    fontWeight: 600,
-                  }}
-                >
-                  ◀
-                </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              {/* Whiteboard pagination controls */}
+              {dslPages.length > 0 && (
+                <>
+                  <button
+                    onClick={() => {
+                      setCurrentPageIndex((prev) => Math.max(0, prev - 1));
+                      setWhiteboardError(null);
+                    }}
+                    disabled={currentPageIndex === 0}
+                    data-testid="whiteboard-prev"
+                    style={{
+                      padding: "0.25rem 0.5rem",
+                      borderRadius: "0.25rem",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-surface)",
+                      cursor: currentPageIndex === 0 ? "not-allowed" : "pointer",
+                      fontSize: "0.875rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    ◀
+                  </button>
 
-                <span data-testid="whiteboard-page-indicator" style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--color-text-muted)" }}>
-                  {currentPageIndex + 1} / {dslPages.length}
-                </span>
+                  <span data-testid="whiteboard-page-indicator" style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--color-text-muted)" }}>
+                    {currentPageIndex + 1} / {dslPages.length}
+                  </span>
 
-                <button
-                  onClick={() => {
-                    setCurrentPageIndex((prev) => Math.min(dslPages.length - 1, prev + 1));
-                    setWhiteboardError(null);
-                  }}
-                  disabled={currentPageIndex === dslPages.length - 1}
-                  data-testid="whiteboard-next"
-                  style={{
-                    padding: "0.25rem 0.5rem",
-                    borderRadius: "0.25rem",
-                    border: "1px solid var(--color-border)",
-                    backgroundColor: "var(--color-surface)",
-                    cursor: currentPageIndex === dslPages.length - 1 ? "not-allowed" : "pointer",
-                    fontSize: "0.875rem",
-                    fontWeight: 600,
-                  }}
-                >
-                  ▶
-                </button>
-              </div>
-            )}
+                  <button
+                    onClick={() => {
+                      setCurrentPageIndex((prev) => Math.min(dslPages.length - 1, prev + 1));
+                      setWhiteboardError(null);
+                    }}
+                    disabled={currentPageIndex === dslPages.length - 1}
+                    data-testid="whiteboard-next"
+                    style={{
+                      padding: "0.25rem 0.5rem",
+                      borderRadius: "0.25rem",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-surface)",
+                      cursor: currentPageIndex === dslPages.length - 1 ? "not-allowed" : "pointer",
+                      fontSize: "0.875rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    ▶
+                  </button>
+                </>
+              )}
+
+              {/* Collapse button */}
+              <button
+                onClick={() => setIsWhiteboardCollapsed(true)}
+                data-testid="whiteboard-collapse"
+                aria-label="Collapse whiteboard"
+                style={{
+                  padding: "0.25rem 0.5rem",
+                  borderRadius: "0.25rem",
+                  border: "1px solid var(--color-border)",
+                  backgroundColor: "var(--color-surface)",
+                  cursor: "pointer",
+                  fontSize: "0.875rem",
+                  fontWeight: 600,
+                }}
+              >
+                ▶
+              </button>
+            </div>
           </div>
 
           {/* Canvas area wrapper */}
@@ -729,6 +790,7 @@ export function CoachingPage() {
             }
           </div>
         </div>
+        )}
       </div>
     </main>
   );
