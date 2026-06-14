@@ -17,6 +17,10 @@ Text formatting:
 - Use `$...$` for inline math and `$$...$$` for display math.
 - Put whitespace around inline `$...$` when it is adjacent to words, numbers, or other
   non-punctuation text. For example, write `Find $x$ when $x+1=2$`, not `Find$x$when$x+1=2$`.
+- Do not add spaces between inline `$...$` and Chinese/Japanese-style punctuation such as
+  `，`, `。`, `、`, `；`, `：`, `？`, or `！`. For example, write `$A$、$B$、$C$` and
+  `$80\\text{km}/\\text{h}$，$70\\text{km}/\\text{h}$`, not `$A$ 、 $B$` or
+  `$80\\text{km}/\\text{h}$ ， $70\\text{km}/\\text{h}$`.
 - For single-choice and multi-choice problems, place each option (e.g. A, B, C, D) on its own line.
 
 ## JSXGraph DSL rules
