@@ -488,6 +488,12 @@ def test_math_extraction_prompt_instructs_options_on_own_line() -> None:
     assert "own line" in MATH_EXTRACTION_SYSTEM_PROMPT.lower() or "own line" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
+def test_math_extraction_prompt_preserves_cjk_punctuation_next_to_inline_latex() -> None:
+    assert "Do not add spaces between inline `$...$` and Chinese/Japanese-style punctuation" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "$A$、$B$、$C$" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "$80\\text{km}/\\text{h}$，$70\\text{km}/\\text{h}$" in MATH_EXTRACTION_SYSTEM_PROMPT
+
+
 def test_english_extraction_prompt_instructs_options_on_own_line() -> None:
     assert "each option" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "each option" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "own line" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "own line" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
