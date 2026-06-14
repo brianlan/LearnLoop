@@ -474,6 +474,10 @@ export function GraphSandbox({
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const renderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track whether the iframe is ready to receive commands (separate from render status)
+  const iframeReadyRef = useRef(false);
+  // Track the last DSL sent to the iframe to avoid redundant renders
+  const lastSentDslRef = useRef<string>("");
 
   // Clear any pending timeout
   const clearRenderTimeout = useCallback(() => {
@@ -489,6 +493,9 @@ export function GraphSandbox({
     setIframeKey((k) => k + 1);
     setStatus("idle");
     setErrorMessage("");
+    // Reset iframe readiness tracking
+    iframeReadyRef.current = false;
+    lastSentDslRef.current = "";
   }, [clearRenderTimeout]);
 
   // Handle postMessage from iframe
@@ -506,6 +513,7 @@ export function GraphSandbox({
 
       switch (data.type) {
         case "ready":
+          iframeReadyRef.current = true;
           setStatus("ready");
           break;
         case "rendered":
@@ -530,9 +538,15 @@ export function GraphSandbox({
     return () => window.removeEventListener("message", handleMessage);
   }, [onError, onRender, clearRenderTimeout]);
 
-  // Send render command when dsl changes
+  // Send render command when dsl changes or iframe becomes ready
   useEffect(() => {
-    if (!dsl || !iframeRef.current || status !== "ready") {
+    // Only send render if iframe is ready and we have a DSL to render
+    if (!dsl || !iframeRef.current || !iframeReadyRef.current) {
+      return;
+    }
+
+    // Skip if we've already sent this exact DSL (prevents render loops)
+    if (lastSentDslRef.current === dsl) {
       return;
     }
 
@@ -558,6 +572,9 @@ export function GraphSandbox({
       onError?.(timeoutError);
     }, RENDER_TIMEOUT_MS);
 
+    // Track the DSL we're about to send
+    lastSentDslRef.current = dsl;
+
     // Send render command to iframe
     iframeRef.current.contentWindow?.postMessage(
       { type: "render", payload: dsl },
@@ -569,10 +586,11 @@ export function GraphSandbox({
 
   // Clear iframe when dsl is empty
   useEffect(() => {
-    if (!dsl && iframeRef.current && status === "ready") {
+    if (!dsl && iframeRef.current && iframeReadyRef.current) {
       iframeRef.current.contentWindow?.postMessage({ type: "clear" }, "*");
+      lastSentDslRef.current = "";
     }
-  }, [dsl, status]);
+  }, [dsl]);
 
   // Generate blob URL for iframe content
   const iframeSrc = useRef<string>("");
