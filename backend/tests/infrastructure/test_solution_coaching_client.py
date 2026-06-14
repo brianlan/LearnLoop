@@ -17,6 +17,10 @@ from app.infrastructure.vlm.solution_coaching_client import (
     SolutionVLMClient,
     SolutionVLMRequest,
 )
+from app.infrastructure.vlm.solution_coaching_prompts import (
+    ENGLISH_COACHING_SYSTEM_PROMPT,
+    MATH_COACHING_SYSTEM_PROMPT,
+)
 
 
 def _build_solution_client(handler) -> SolutionVLMClient:
@@ -350,6 +354,100 @@ async def test_coaching_vlm_client_parses_optional_whiteboard_dsl() -> None:
     await client.aclose()
 
     assert result.whiteboard_dsl == "board.create('point', [0, 0]);"
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_preserves_allowed_whiteboard_dsl() -> None:
+    allowed_dsl = (
+        "board.setBoundingBox([-1, 2, 6, -2]);"
+        "var A = board.create('point', [0, 0], {name:'A'});"
+        "var B = board.create('point', [5, 0], {name:'B'});"
+        "board.create('segment', [A, B], {strokeWidth:2});"
+        "board.create('text', [2.5, 0.3, '490米'], {anchorX:'middle', fontSize:12});"
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"text": "看图示。", "whiteboard_dsl": allowed_dsl}),
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_coaching_client(handler)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="答案",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="答案",
+            level_classification="primary",
+            new_message="请画图",
+        )
+    )
+    await client.aclose()
+
+    assert result.whiteboard_dsl == allowed_dsl
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_dsl",
+    [
+        "fetch('/api/private'); board.create('point', [0, 0]);",
+        "while (true) { board.create('point', [0, 0]); }",
+        "window.location = 'https://example.com';",
+        "new Function('return document.cookie')();",
+        "board.constructor.constructor('return window')();",
+        "board.create('functiongraph', [function(x) { return x; }, -1, 1]);",
+        "board.create('point', [1 + 2, 0]);",
+    ],
+)
+async def test_coaching_vlm_client_drops_unsafe_whiteboard_dsl(unsafe_dsl: str) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"text": "看图示。", "whiteboard_dsl": unsafe_dsl}),
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_coaching_client(handler)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="答案",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="答案",
+            level_classification="primary",
+            new_message="请画图",
+        )
+    )
+    await client.aclose()
+
+    assert result.whiteboard_dsl is None
+
+
+def test_coaching_prompts_exclude_functiongraph_and_disallow_dynamic_javascript() -> None:
+    for prompt in [MATH_COACHING_SYSTEM_PROMPT, ENGLISH_COACHING_SYSTEM_PROMPT]:
+        assert "functiongraph" not in prompt
+        assert "Do not use loops, functions, conditionals, arithmetic expressions" in prompt
 
 
 @pytest.mark.asyncio
