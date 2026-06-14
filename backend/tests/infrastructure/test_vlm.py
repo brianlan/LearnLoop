@@ -465,14 +465,22 @@ def test_math_extraction_prompt_contains_math_guidance() -> None:
     assert "$...$" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
-def test_english_extraction_prompt_does_not_contain_jsxgraph() -> None:
-    assert "JSXGraph" not in ENGLISH_EXTRACTION_SYSTEM_PROMPT
-    assert "graphDsl: null" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+def test_english_extraction_prompt_allows_diagram_dsl() -> None:
+    assert "JSXGraph" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "graphDsl: nullable string" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "English problems do not use geometric diagrams" not in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "diagram, chart" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_english_extraction_prompt_contains_english_guidance() -> None:
     assert "multiple-choice" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "passage" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "text" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower()
+
+
+def test_math_extraction_prompt_scopes_javascript_to_graph_dsl_field() -> None:
+    assert "graphDsl JSON field" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "Output ONLY the JavaScript code" not in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "Return only JSON" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_math_extraction_prompt_instructs_options_on_own_line() -> None:

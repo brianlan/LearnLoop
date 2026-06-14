@@ -76,13 +76,16 @@ Allowed element forms:
 - angle: board.create('angle', [p3, vertex, p1], {radius:1, fillColor:'#ff000050'})
 - polygon: board.create('polygon', [p1, p2, p3], {fillColor:'#cccccc'})
 - text: board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})
-- functiongraph: board.create('functiongraph', [f, xMin, xMax])
 
 Critical syntax rules:
 - For text, the label string is the third item inside `[x, y, 'label']`.
 - Text styling options must be the third argument to `board.create`, outside the `[x, y, 'label']` array.
 - Never write `board.create('text', [x, y, 'label', {options}])`.
 - Every `board.create` call must have balanced parentheses, brackets, and braces.
+- Use only numeric literals, string labels, simple object literals, declared point variables,
+  and the allowed `board.create` calls.
+- Do not use loops, functions, conditionals, arithmetic expressions, browser globals, or any
+  JavaScript other than the listed statements.
 - If the default range [-5, 5, 5, -5] is unsuitable, start with `board.setBoundingBox([xMin, yMax, xMax, yMin]);`.
 - Keep diagrams simple. Draw only the visual parts needed to explain this problem.
 - Do not call `JXG.JSXGraph.initBoard`; the board already exists.
@@ -130,13 +133,16 @@ Allowed element forms:
 - angle: board.create('angle', [p3, vertex, p1], {radius:1, fillColor:'#ff000050'})
 - polygon: board.create('polygon', [p1, p2, p3], {fillColor:'#cccccc'})
 - text: board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})
-- functiongraph: board.create('functiongraph', [f, xMin, xMax])
 
 Critical syntax rules:
 - For text, the label string is the third item inside `[x, y, 'label']`.
 - Text styling options must be the third argument to `board.create`, outside the `[x, y, 'label']` array.
 - Never write `board.create('text', [x, y, 'label', {options}])`.
 - Every `board.create` call must have balanced parentheses, brackets, and braces.
+- Use only numeric literals, string labels, simple object literals, declared point variables,
+  and the allowed `board.create` calls.
+- Do not use loops, functions, conditionals, arithmetic expressions, browser globals, or any
+  JavaScript other than the listed statements.
 - If the default range [-5, 5, 5, -5] is unsuitable, start with `board.setBoundingBox([xMin, yMax, xMax, yMin]);`.
 - Keep diagrams simple. Draw only the visual parts needed to explain this problem.
 - Do not call `JXG.JSXGraph.initBoard`; the board already exists.
