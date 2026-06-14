@@ -120,6 +120,7 @@ class ClientMeta(BaseModel):
 class SelectionPolicyConfig(BaseModel):
     recencyWeight: float
     failureWeight: float
+    minProblemAgeDays: int = 3
 
 
 class ExamConfigSnapshot(BaseModel):

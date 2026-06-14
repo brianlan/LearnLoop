@@ -63,6 +63,7 @@ class ExamItemPayload(BaseModel):
 class SelectionPolicyPayload(BaseModel):
     recencyWeight: float
     failureWeight: float
+    minProblemAgeDays: int = 3
 
 
 class ExamConfigSnapshotPayload(BaseModel):
@@ -200,6 +201,7 @@ def serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
             selectionPolicy=SelectionPolicyPayload(
                 recencyWeight=float(selection_policy.get("recencyWeight", 1.0)),
                 failureWeight=float(selection_policy.get("failureWeight", 1.0)),
+                minProblemAgeDays=int(selection_policy.get("minProblemAgeDays", 3)),
             ),
             generatedAt=config_snapshot["generatedAt"],
         ),

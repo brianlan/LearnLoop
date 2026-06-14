@@ -101,7 +101,10 @@ async def get_practice_stats(
     ).to_list(length=None)
 
     problem_models = [problem_document_to_model(p) for p in problem_documents]
-    config = PracticeSelectionConfig(cooldown_days=settings.practice_cooldown_days)
+    config = PracticeSelectionConfig(
+        cooldown_days=settings.practice_cooldown_days,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
     now = datetime.now(UTC)
     eligible = get_eligible_practice_problems(problem_models, config, now)
 
@@ -133,6 +136,7 @@ async def get_next_practice_problem(
         last_wrong_weight=settings.practice_last_wrong_weight,
         failure_rate_weight=settings.practice_failure_rate_weight,
         recency_weight=settings.practice_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
     )
 
     problem_models = [problem_document_to_model(p) for p in eligible_documents]

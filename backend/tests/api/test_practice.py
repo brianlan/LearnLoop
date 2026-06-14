@@ -20,7 +20,7 @@ from tests.api.conftest import FakeDatabase, make_user, make_problem
 def practice_app() -> FastAPI:
     application = create_app()
     database = FakeDatabase()
-    settings = Settings(practice_cooldown_days=7)
+    settings = Settings(practice_cooldown_days=7, problem_selection_min_age_days=0)
     user = make_user(ObjectId(), "student")
 
     application.state.fake_database = database
@@ -259,3 +259,59 @@ async def test_next_problem_without_graph_dsl(
     data = response.json()
     assert data["status"] == "ok"
     assert "graphDsl" not in data["problem"]
+
+
+@pytest.fixture
+def practice_app_with_min_age() -> FastAPI:
+    application = create_app()
+    database = FakeDatabase()
+    settings = Settings(practice_cooldown_days=7, problem_selection_min_age_days=3)
+    user = make_user(ObjectId(), "student")
+
+    application.state.fake_database = database
+    application.state.user = user
+
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_app_settings] = lambda: settings
+    application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
+    return application
+
+
+@pytest_asyncio.fixture
+async def client_with_min_age(practice_app_with_min_age: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=practice_app_with_min_age)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest.mark.asyncio
+async def test_stats_excludes_too_new_problems(
+    practice_app_with_min_age: FastAPI,
+    client_with_min_age: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app_with_min_age.state.fake_database
+    user_id = practice_app_with_min_age.state.user["_id"]
+    old_problem = make_problem(user_id, text="Old", correct_answer_display="1")
+    old_problem["createdAt"] = datetime.now(UTC) - timedelta(days=10)
+    new_problem = make_problem(user_id, text="New", correct_answer_display="2")
+    database.seed("problems", [old_problem, new_problem])
+
+    response = await client_with_min_age.get("/api/v1/practice/stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["practiceableCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_next_returns_no_eligible_when_all_too_new(
+    practice_app_with_min_age: FastAPI,
+    client_with_min_age: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app_with_min_age.state.fake_database
+    user_id = practice_app_with_min_age.state.user["_id"]
+    new_problem = make_problem(user_id, text="New", correct_answer_display="1")
+    database.seed("problems", [new_problem])
+
+    response = await client_with_min_age.post("/api/v1/practice/next")
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_eligible"
