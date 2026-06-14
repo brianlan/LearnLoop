@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.vlm.client import VLMError
 from app.main import create_app
+from app.infrastructure.config.settings import Settings, get_settings
 from app.presentation.deps import get_current_user, get_database
 from app.presentation.exams import (
     get_exam_mongo_adapter,
@@ -270,8 +271,10 @@ async def exams_app() -> FastAPI:
     application.state.fake_vlm = vlm
     application.state.primary_user = user
 
+    settings = Settings(problem_selection_min_age_days=0)
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
+    application.dependency_overrides[get_settings] = lambda: settings
     application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
     application.dependency_overrides[get_exam_storage] = lambda: storage
     application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
@@ -302,7 +305,7 @@ async def test_create_exam_snapshots_selected_problems(exams_app: FastAPI, clien
     assert response.status_code == 201
     body = response.json()["exam"]
     assert body["state"] == "in-progress"
-    assert body["configSnapshot"]["selectionPolicy"] == {"recencyWeight": 1.0, "failureWeight": 1.0}
+    assert body["configSnapshot"]["selectionPolicy"] == {"recencyWeight": 1.0, "failureWeight": 1.0, "minProblemAgeDays": 0}
     assert len(body["items"]) == 2
     assert body["items"][0]["problem"]["correctAnswer"] is None
     stored_exam = database["exams"]._documents[0]
@@ -620,3 +623,75 @@ async def test_submit_exam_marks_pending_review_after_vlm_retry_and_self_report_
     }
     assert database["problems"]._documents[0]["tracking"]["exposureCount"] == 5
     assert database["problems"]._documents[0]["tracking"]["failedCount"] == 3
+
+
+@pytest_asyncio.fixture
+async def exams_app_with_min_age() -> FastAPI:
+    application = create_app()
+    database = FakeDatabase()
+    adapter = FakeMongoAdapter()
+    storage = FakeStorage()
+    vlm = FakeVLMClient()
+    user = make_user()
+
+    settings = Settings(problem_selection_min_age_days=3)
+
+    application.state.fake_database = database
+    application.state.fake_adapter = adapter
+    application.state.fake_storage = storage
+    application.state.fake_grading_vlm = vlm
+    application.state.fake_vlm = vlm
+    application.state.primary_user = user
+
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
+    application.dependency_overrides[get_settings] = lambda: settings
+    application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_exam_storage] = lambda: storage
+    application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
+    return application
+
+
+@pytest_asyncio.fixture
+async def client_with_min_age(exams_app_with_min_age: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=exams_app_with_min_age)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest.mark.asyncio
+async def test_create_exam_rejects_when_all_too_new(
+    exams_app_with_min_age: FastAPI,
+    client_with_min_age: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app_with_min_age.state.fake_database
+    user_id = exams_app_with_min_age.state.primary_user["_id"]
+    new_problem = make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(new_problem)
+
+    response = await client_with_min_age.post("/api/v1/exams", json={"maxProblemCount": 1})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "NO_ELIGIBLE_PROBLEMS"
+
+
+@pytest.mark.asyncio
+async def test_create_exam_succeeds_with_old_problems_and_records_min_age(
+    exams_app_with_min_age: FastAPI,
+    client_with_min_age: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app_with_min_age.state.fake_database
+    storage: FakeStorage = exams_app_with_min_age.state.fake_storage
+    user_id = exams_app_with_min_age.state.primary_user["_id"]
+    old = datetime.now(UTC) - timedelta(days=10)
+    old_problem = make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4", last_tested_at=old)
+    old_problem["createdAt"] = old
+    database["problems"].seed(old_problem)
+    storage.seed(old_problem["sourceImage"]["bucket"], old_problem["sourceImage"]["objectKey"], b"img")
+
+    response = await client_with_min_age.post("/api/v1/exams", json={"maxProblemCount": 1})
+
+    assert response.status_code == 201
+    body = response.json()["exam"]
+    assert body["configSnapshot"]["selectionPolicy"]["minProblemAgeDays"] == 3
+    assert len(body["items"]) == 1

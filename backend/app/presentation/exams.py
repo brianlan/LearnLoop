@@ -15,7 +15,6 @@ from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document, MongoClientAdapter, get_mongo_adapter
 from app.presentation.exam_grading import build_tracking_update, grade_item
 from app.presentation.exam_helpers import (
-    DEFAULT_SELECTION_POLICY,
     build_exam_summary,
     find_item,
     get_owned_exam,
