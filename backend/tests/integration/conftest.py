@@ -13,7 +13,7 @@ from bson import ObjectId
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.infrastructure.config.settings import Settings
+from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import ClassificationResult, ExtractionResult
 from app.main import create_app
@@ -431,6 +431,7 @@ async def exams_app() -> AsyncIterator[FastAPI]:
         math_ingestion_vlm_timeout_seconds=1.0,
         english_ingestion_vlm_model="english-model",
         english_ingestion_vlm_timeout_seconds=1.0,
+        problem_selection_min_age_days=0,
     )
 
     primary_user = {
@@ -448,6 +449,7 @@ async def exams_app() -> AsyncIterator[FastAPI]:
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
+    application.dependency_overrides[get_settings] = lambda: settings
     application.dependency_overrides[get_current_user] = lambda: primary_user
     application.dependency_overrides[get_exam_storage] = lambda: storage
     application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
@@ -480,6 +482,7 @@ async def app() -> AsyncIterator[FastAPI]:
         math_ingestion_vlm_timeout_seconds=1.0,
         english_ingestion_vlm_model="english-model",
         english_ingestion_vlm_timeout_seconds=1.0,
+        problem_selection_min_age_days=0,
     )
 
     application.state.fake_database = database
@@ -493,6 +496,7 @@ async def app() -> AsyncIterator[FastAPI]:
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
+    application.dependency_overrides[get_settings] = lambda: settings
     application.dependency_overrides[get_problem_storage] = lambda: storage
     application.dependency_overrides[get_exam_storage] = lambda: storage
     application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter

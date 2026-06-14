@@ -13,6 +13,7 @@ class PracticeSelectionConfig:
     last_wrong_weight: float = 1.0
     failure_rate_weight: float = 1.0
     recency_weight: float = 1.0
+    min_problem_age_days: int = 3
 
 
 @dataclass
@@ -32,6 +33,11 @@ def get_eligible_practice_problems(
             continue
         if not p.correctAnswer or not p.correctAnswer.normalizedText:
             continue
+        if config.min_problem_age_days > 0:
+            created_at = ensure_utc(p.createdAt)
+            age_cutoff = now - timedelta(days=config.min_problem_age_days)
+            if created_at > age_cutoff:
+                continue
         if p.tracking.lastTestedAt:
             last_tested = ensure_utc(p.tracking.lastTestedAt)
             cutoff = now - timedelta(days=config.cooldown_days)

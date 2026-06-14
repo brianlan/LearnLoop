@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import List
 import random
 from .models import Problem, SelectionPolicyConfig
@@ -16,15 +16,21 @@ def select_problems(
     config: SelectionPolicyConfig,
     rng: random.Random | None = None
 ) -> List[Problem]:
-    eligible = [
-        p for p in problems
-        if not p.isDeleted
-    ]
+    now = datetime.now(timezone.utc)
+    eligible = []
+    for p in problems:
+        if p.isDeleted:
+            continue
+        if config.minProblemAgeDays > 0:
+            created_at = ensure_utc(p.createdAt)
+            age_cutoff = now - timedelta(days=config.minProblemAgeDays)
+            if created_at > age_cutoff:
+                continue
+        eligible.append(p)
 
     if not eligible:
         return []
 
-    now = datetime.now(timezone.utc)
     weighted = []
 
     for problem in eligible:

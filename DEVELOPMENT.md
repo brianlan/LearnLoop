@@ -223,6 +223,7 @@ The canonical template lives in `.env.example`.
 | `PRACTICE_LAST_WRONG_WEIGHT` | Weight for problems last answered incorrectly | `1.0` |
 | `PRACTICE_FAILURE_RATE_WEIGHT` | Weight for problems with high failure rates | `1.0` |
 | `PRACTICE_RECENCY_WEIGHT` | Weight for recently tested problems | `1.0` |
+| `PROBLEM_SELECTION_MIN_AGE_DAYS` | Minimum age (days) before a problem appears in practice or exams | `3` |
 
 ### AI tutoring VLM notes
 
