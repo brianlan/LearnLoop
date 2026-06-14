@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -110,7 +110,10 @@ export function ProblemsPage() {
   const [selectedProblemType, setSelectedProblemType] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedProblemIds, setSelectedProblemIds] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [bulkTarget, setBulkTarget] = useState<string>(UNFILED_FOLDER_ID);
+  const longPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressNavigationRef = useRef(false);
   const [movingFolderId, setMovingFolderId] = useState<string | null>(null);
   const [movingParentId, setMovingParentId] = useState<string>("root");
   const [feedback, setFeedback] = useState<Feedback>(null);
@@ -197,7 +200,7 @@ export function ProblemsPage() {
       return api.patch<{ ok: boolean }>("/problems/bulk-folder", { problemIds, folderId });
     },
     onSuccess: async () => {
-      setSelectedProblemIds(new Set());
+      exitSelectionMode();
       setPage(1);
       setFeedback({ type: "success", message: "Problems moved" });
       await refreshProblemsAndFolders();
@@ -214,7 +217,7 @@ export function ProblemsPage() {
     else next.delete("folderId");
     setSearchParams(next);
     setPage(1);
-    setSelectedProblemIds(new Set());
+    exitSelectionMode();
   };
 
   const runFolderOperation = async (
@@ -278,6 +281,43 @@ export function ProblemsPage() {
       else next.add(problemId);
       return next;
     });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectedProblemIds(new Set());
+    setIsSelectionMode(false);
+  };
+
+  const handleProblemPointerDown = (problemId: string) => {
+    suppressNavigationRef.current = false;
+    longPressTimeoutRef.current = setTimeout(() => {
+      suppressNavigationRef.current = true;
+      setIsSelectionMode(true);
+      setSelectedProblemIds((current) => {
+        const next = new Set(current);
+        next.add(problemId);
+        return next;
+      });
+    }, 500);
+  };
+
+  const handleProblemPointerUpOrCancel = () => {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  };
+
+  const handleProblemCardClick = (problemId: string) => {
+    if (suppressNavigationRef.current) {
+      suppressNavigationRef.current = false;
+      return;
+    }
+    if (isSelectionMode) {
+      toggleProblemSelection(problemId);
+    } else {
+      navigate(`/problems/${problemId}`);
+    }
   };
 
   const moveSelectedProblems = () => {
@@ -510,6 +550,7 @@ export function ProblemsPage() {
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setPage(1);
+                exitSelectionMode();
               }}
               placeholder="Search by text or tag..."
             />
@@ -522,6 +563,7 @@ export function ProblemsPage() {
             onChange={(e) => {
               setSelectedTag(e.target.value);
               setPage(1);
+              exitSelectionMode();
             }}
           >
             <option value="">All Tags</option>
@@ -540,6 +582,7 @@ export function ProblemsPage() {
               onChange={(e) => {
                 setSelectedProblemType(e.target.value);
                 setPage(1);
+                exitSelectionMode();
               }}
             >
               {PROBLEM_TYPE_OPTIONS.map((option) => (
@@ -621,7 +664,7 @@ export function ProblemsPage() {
         )}
 
         <section>
-          {selectedProblemIds.size > 0 && (
+          {isSelectionMode && (
             <div
               aria-label="Bulk actions"
               style={{
@@ -636,6 +679,28 @@ export function ProblemsPage() {
               }}
             >
               <span>{selectedProblemIds.size} selected</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const currentPageIds = problems.map((p) => p.id);
+                  const allSelected = currentPageIds.every((id) => selectedProblemIds.has(id));
+                  if (allSelected) {
+                    setSelectedProblemIds((current) => {
+                      const next = new Set(current);
+                      currentPageIds.forEach((id) => next.delete(id));
+                      return next;
+                    });
+                  } else {
+                    setSelectedProblemIds((current) => {
+                      const next = new Set(current);
+                      currentPageIds.forEach((id) => next.add(id));
+                      return next;
+                    });
+                  }
+                }}
+              >
+                {problems.every((p) => selectedProblemIds.has(p.id)) ? "Deselect all" : "Select all"}
+              </button>
               <label htmlFor="bulk-folder-picker">Move to: </label>
               <select
                 id="bulk-folder-picker"
@@ -649,10 +714,11 @@ export function ProblemsPage() {
                   </option>
                 ))}
               </select>
-              <button type="button" onClick={moveSelectedProblems} disabled={bulkMoveMutation.isPending}>
+              <button type="button" onClick={moveSelectedProblems} disabled={selectedProblemIds.size === 0 || bulkMoveMutation.isPending}>
                 Move selected
               </button>
               <button type="button" onClick={() => setSelectedProblemIds(new Set())}>Clear selection</button>
+              <button type="button" onClick={exitSelectionMode}>Quit selection</button>
             </div>
           )}
 
@@ -670,7 +736,11 @@ export function ProblemsPage() {
             {problems.map((problem) => (
               <div
                 key={problem.id}
-                onClick={() => navigate(`/problems/${problem.id}`)}
+                onClick={() => handleProblemCardClick(problem.id)}
+                onPointerDown={() => handleProblemPointerDown(problem.id)}
+                onPointerUp={handleProblemPointerUpOrCancel}
+                onPointerCancel={handleProblemPointerUpOrCancel}
+                onPointerLeave={handleProblemPointerUpOrCancel}
                 style={{
                   border: "1px solid var(--color-border)",
                   borderRadius: "4px",
@@ -680,18 +750,20 @@ export function ProblemsPage() {
                   backgroundColor: "var(--color-surface)",
                 }}
               >
-                <label
-                  onClick={(event) => event.stopPropagation()}
-                  style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}
-                >
-                  <input
-                    type="checkbox"
-                    aria-label={`Select problem ${formatProblemReference(problem.id)}`}
-                    checked={selectedProblemIds.has(problem.id)}
-                    onChange={() => toggleProblemSelection(problem.id)}
-                  />
-                  Select problem
-                </label>
+                {isSelectionMode && (
+                  <label
+                    onClick={(event) => event.stopPropagation()}
+                    style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`Select problem ${formatProblemReference(problem.id)}`}
+                      checked={selectedProblemIds.has(problem.id)}
+                      onChange={() => toggleProblemSelection(problem.id)}
+                    />
+                    Select problem
+                  </label>
+                )}
                 <div style={{ marginBottom: "0.5rem" }}>
                   <strong title={problem.id}>Problem {formatProblemReference(problem.id)}</strong>
                   <span

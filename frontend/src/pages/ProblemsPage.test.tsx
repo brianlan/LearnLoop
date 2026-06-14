@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -313,7 +313,15 @@ describe("ProblemsPage", () => {
     renderProblemsPage();
     await screen.findByText("Second problem");
 
-    await user.click(screen.getByRole("checkbox", { name: "Select problem p1" }));
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
     await user.selectOptions(screen.getByLabelText("Move to:"), "section-1");
     await user.click(screen.getByRole("button", { name: "Move selected" }));
 
@@ -337,7 +345,15 @@ describe("ProblemsPage", () => {
     renderProblemsPage();
     await screen.findByText("What is 2+2?");
 
-    await user.click(screen.getByRole("checkbox", { name: "Select problem p1" }));
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
     await user.click(screen.getByRole("button", { name: "Move selected" }));
 
     await waitFor(() => {
@@ -371,13 +387,21 @@ describe("ProblemsPage", () => {
 
     await screen.findByText("Folder request failed");
 
-    await user.click(screen.getByRole("checkbox", { name: "Select problem p1" }));
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
     await user.click(screen.getByRole("button", { name: "Move selected" }));
 
     await screen.findByText("Folder request failed");
   });
 
-  it("navigates to problem detail on card click", async () => {
+  it("navigates to problem detail on card click outside selection mode", async () => {
     const user = userEvent.setup();
     installApiMock({ problems: [problem({ id: "abc123", text: "Test problem" })] });
 
@@ -386,5 +410,216 @@ describe("ProblemsPage", () => {
     await user.click(await screen.findByText("Test problem"));
 
     expect(mockNavigate).toHaveBeenCalledWith("/problems/abc123");
+  });
+
+  // Selection mode tests
+  it("hides per-problem checkboxes by default", async () => {
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    expect(screen.queryByRole("checkbox", { name: "Select problem p1" })).not.toBeInTheDocument();
+  });
+
+  it("long press enters selection mode and selects the pressed problem", async () => {
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+
+    // Long press on first problem card
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    // Should now be in selection mode with checkboxes visible
+    const checkbox = await screen.findByRole("checkbox", { name: "Select problem p1" });
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox).toBeChecked();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+  });
+
+  it("in selection mode, card click toggles selection without navigating", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+
+    // Enter selection mode via long press on first card
+    const firstCard = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(firstCard);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(firstCard);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    // Click on second card should toggle selection, not navigate
+    mockNavigate.mockClear();
+    const secondCard = screen.getByText("Second problem").closest("div")!;
+    await user.click(secondCard);
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(screen.getByRole("checkbox", { name: "Select problem p2" })).toBeChecked();
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+  });
+
+  it("Select all selects only current-page problems", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    // Click Select all
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+
+    expect(screen.getByRole("checkbox", { name: "Select problem p1" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select problem p2" })).toBeChecked();
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+  });
+
+  it("Deselect all removes only current-page problems from selection", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+
+    // Enter selection mode and select all
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+
+    // Now deselect all
+    await user.click(screen.getByRole("button", { name: "Deselect all" }));
+
+    expect(screen.getByRole("checkbox", { name: "Select problem p1" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select problem p2" })).not.toBeChecked();
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    // Bulk actions bar should still be visible (still in selection mode)
+    expect(screen.getByLabelText("Bulk actions")).toBeInTheDocument();
+  });
+
+  it("Clear selection clears selected IDs but keeps selection mode active", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    // Click Clear selection
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+
+    // Checkbox should still be visible (still in selection mode)
+    expect(screen.getByRole("checkbox", { name: "Select problem p1" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select problem p1" })).not.toBeChecked();
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Bulk actions")).toBeInTheDocument();
+  });
+
+  it("Quit selection clears selected IDs and hides checkboxes", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    // Click Quit selection
+    await user.click(screen.getByRole("button", { name: "Quit selection" }));
+
+    // Checkbox should no longer be visible
+    expect(screen.queryByRole("checkbox", { name: "Select problem p1" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Bulk actions")).not.toBeInTheDocument();
+  });
+
+  it("filter changes exit selection mode and clear selection", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    // Enter selection mode via long press
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    // Change filter
+    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
+
+    // Should exit selection mode
+    await waitFor(() => {
+      expect(screen.queryByRole("checkbox", { name: "Select problem p1" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Bulk actions")).not.toBeInTheDocument();
+    });
+  });
+
+  it("Move selected button is disabled when no problems are selected", async () => {
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+
+    // Enter selection mode via long press, then deselect all
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select problem p1" })); // deselect
+
+    // Move selected should be disabled
+    expect(screen.getByRole("button", { name: "Move selected" })).toBeDisabled();
   });
 });
