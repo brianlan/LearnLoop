@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     practice_failure_rate_weight: float = Field(default=1.0, ge=0)
     practice_recency_weight: float = Field(default=1.0, ge=0)
 
+    # Problem selection minimum age
+    problem_selection_min_age_days: int = Field(default=3, ge=0)
+
     # Teacher password configuration
     teacher_password_default: str = Field(default="default-teacher-password")
 

@@ -20,6 +20,7 @@ def _make_problem(
     exposure_count: int = 0,
     correct_count: int | None = None,
     failed_count: int = 0,
+    created_at: datetime | None = None,
 ) -> Problem:
     cc = correct_count if correct_count is not None else max(0, exposure_count - failed_count)
     return Problem(
@@ -41,6 +42,7 @@ def _make_problem(
             lastAttemptCorrect=last_attempt_correct,
         ),
         isDeleted=is_deleted,
+        createdAt=created_at or datetime.now(UTC) - timedelta(days=30),
     )
 
 
@@ -294,3 +296,80 @@ def test_get_eligible_all_in_cooldown():
     config = PracticeSelectionConfig(cooldown_days=7)
     eligible = get_eligible_practice_problems(problems, config, now)
     assert eligible == []
+
+
+def test_min_age_excludes_too_new():
+    now = datetime.now(UTC)
+    too_new = now - timedelta(days=1)
+    old_enough = now - timedelta(days=5)
+    problems = [
+        _make_problem("new", created_at=too_new),
+        _make_problem("old", created_at=old_enough),
+    ]
+    config = PracticeSelectionConfig(min_problem_age_days=3)
+    result = select_practice_problem(problems, config, now)
+
+    assert result.status == "ok"
+    assert result.selected_problem.id == "old"
+
+
+def test_min_age_boundary_at_threshold():
+    now = datetime.now(UTC)
+    exactly_at = now - timedelta(days=3)
+    problems = [_make_problem("boundary", created_at=exactly_at)]
+    config = PracticeSelectionConfig(min_problem_age_days=3)
+    result = select_practice_problem(problems, config, now)
+
+    assert result.status == "ok"
+    assert result.selected_problem.id == "boundary"
+
+
+def test_min_age_allows_old_problems():
+    now = datetime.now(UTC)
+    old = now - timedelta(days=10)
+    problems = [_make_problem("old", created_at=old)]
+    config = PracticeSelectionConfig(min_problem_age_days=3)
+    result = select_practice_problem(problems, config, now)
+
+    assert result.status == "ok"
+    assert result.selected_problem.id == "old"
+
+
+def test_min_age_zero_allows_immediate():
+    now = datetime.now(UTC)
+    just_created = now - timedelta(seconds=10)
+    problems = [_make_problem("fresh", created_at=just_created)]
+    config = PracticeSelectionConfig(min_problem_age_days=0)
+    result = select_practice_problem(problems, config, now)
+
+    assert result.status == "ok"
+    assert result.selected_problem.id == "fresh"
+
+
+def test_min_age_no_eligible_when_all_too_new():
+    now = datetime.now(UTC)
+    too_new = now - timedelta(days=1)
+    problems = [
+        _make_problem("a", created_at=too_new),
+        _make_problem("b", created_at=too_new),
+    ]
+    config = PracticeSelectionConfig(min_problem_age_days=3)
+    result = select_practice_problem(problems, config, now)
+
+    assert result.status == "no_eligible"
+
+
+def test_get_eligible_excludes_too_new():
+    now = datetime.now(UTC)
+    too_new = now - timedelta(days=1)
+    old_enough = now - timedelta(days=5)
+    problems = [
+        _make_problem("new", created_at=too_new),
+        _make_problem("old", created_at=old_enough),
+    ]
+    config = PracticeSelectionConfig(min_problem_age_days=3)
+    eligible = get_eligible_practice_problems(problems, config, now)
+
+    ids = [p.id for p in eligible]
+    assert "old" in ids
+    assert "new" not in ids

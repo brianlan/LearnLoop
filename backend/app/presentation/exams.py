@@ -8,9 +8,10 @@ from typing import Annotated, Any
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
 
-from app.domain.models import ExamState, GradingStatus, ProblemType
+from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
 from app.domain.selection import select_problems
 from app.domain.state import transition_exam_state
+from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document, MongoClientAdapter, get_mongo_adapter
 from app.presentation.exam_grading import build_tracking_update, grade_item
 from app.presentation.exam_helpers import (
@@ -49,6 +50,7 @@ router = APIRouter(prefix="/exams", tags=["exams"])
 
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
+SettingsDependency = Annotated[Settings, Depends(get_settings)]
 
 
 def get_exam_mongo_adapter() -> MongoClientAdapter:
@@ -67,8 +69,14 @@ async def create_exam(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
     adapter: AdapterDependency,
+    settings: SettingsDependency,
 ) -> CreateExamResponse:
     query = {"userId": current_user["_id"], "state": ExamState.IN_PROGRESS.value}
+    selection_policy = SelectionPolicyConfig(
+        recencyWeight=1.0,
+        failureWeight=1.0,
+        minProblemAgeDays=settings.problem_selection_min_age_days,
+    )
 
     async def _transaction(session: Any) -> dict[str, Any]:
         existing = await database["exams"].find_one(query, session=session)
@@ -91,7 +99,7 @@ async def create_exam(
         selected_models = select_problems(
             [problem_document_to_model(problem) for problem in eligible_documents],
             payload.maxProblemCount,
-            DEFAULT_SELECTION_POLICY,
+            selection_policy,
             rng=Random(),
         )
         if not selected_models:
@@ -115,7 +123,7 @@ async def create_exam(
             "state": ExamState.IN_PROGRESS.value,
             "configSnapshot": {
                 "maxProblemCount": payload.maxProblemCount,
-                "selectionPolicy": DEFAULT_SELECTION_POLICY.model_dump(),
+                "selectionPolicy": selection_policy.model_dump(),
                 "generatedAt": now,
             },
             "items": items,

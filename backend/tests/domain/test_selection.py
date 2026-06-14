@@ -14,6 +14,7 @@ def create_test_problem(
     last_tested_days_ago: int | None = None,
     failed_count: int = 0,
     exposure_count: int = 1,
+    created_at: datetime | None = None,
 ) -> Problem:
     from app.domain import Tracking
     tracking = Tracking(
@@ -31,6 +32,7 @@ def create_test_problem(
         correctAnswer=CorrectAnswer(display="a", normalizedText="a", normalizedSet=[], format="single"),
         isDeleted=is_deleted,
         tracking=tracking,
+        createdAt=created_at or datetime.now(timezone.utc) - timedelta(days=30),
     )
 
 
@@ -69,3 +71,58 @@ def test_selects_top_weighted():
         assert selected_ids == ["3", "2"]
     finally:
         random.sample = original_random_sample
+
+
+def test_min_age_excludes_too_new():
+    now = datetime.now(timezone.utc)
+    too_new = now - timedelta(days=1)
+    old_enough = now - timedelta(days=5)
+    problems = [
+        create_test_problem("new", created_at=too_new),
+        create_test_problem("old", created_at=old_enough),
+    ]
+    config = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0, minProblemAgeDays=3)
+    selected = select_problems(problems, 2, config)
+
+    assert len(selected) == 1
+    assert selected[0].id == "old"
+
+
+def test_min_age_boundary_at_threshold():
+    now = datetime.now(timezone.utc)
+    exactly_at = now - timedelta(days=3)
+    problems = [create_test_problem("boundary", created_at=exactly_at)]
+    config = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0, minProblemAgeDays=3)
+    selected = select_problems(problems, 1, config)
+
+    assert len(selected) == 1
+    assert selected[0].id == "boundary"
+
+
+def test_min_age_zero_allows_immediate():
+    now = datetime.now(timezone.utc)
+    just_created = now - timedelta(seconds=10)
+    problems = [create_test_problem("fresh", created_at=just_created)]
+    config = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0, minProblemAgeDays=0)
+    selected = select_problems(problems, 1, config)
+
+    assert len(selected) == 1
+    assert selected[0].id == "fresh"
+
+
+def test_min_age_all_too_new_returns_empty():
+    now = datetime.now(timezone.utc)
+    too_new = now - timedelta(days=1)
+    problems = [
+        create_test_problem("a", created_at=too_new),
+        create_test_problem("b", created_at=too_new),
+    ]
+    config = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0, minProblemAgeDays=3)
+    selected = select_problems(problems, 2, config)
+
+    assert selected == []
+
+
+def test_min_age_default_value():
+    config = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0)
+    assert config.minProblemAgeDays == 3
