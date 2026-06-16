@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from base64 import b64encode
 from typing import Any
 
 from bson import ObjectId
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.infrastructure.storage.mongo import Document
-from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
 from app.presentation.errors import ApiError
 
 
@@ -53,19 +51,3 @@ async def get_owned_problem(
     return problem
 
 
-def load_source_image_base64(
-    source_image: dict[str, Any] | None,
-    storage: S3StorageAdapter,
-) -> str | None:
-    """Load image from S3 and return as base64 string, or None if not found."""
-    if not source_image:
-        return None
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        return None
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError:
-        return None
-    return b64encode(image_bytes).decode("ascii")

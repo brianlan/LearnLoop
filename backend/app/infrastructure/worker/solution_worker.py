@@ -18,9 +18,7 @@ from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
     SOLUTION_GENERATION_TASKS_COLLECTION,
 )
-from app.infrastructure.storage.s3 import S3StorageAdapter
-from app.presentation.helpers import load_source_image_base64
-
+from app.infrastructure.storage.s3 import S3StorageAdapter, load_source_image_base64
 
 logger = logging.getLogger(__name__)
 from app.observability import log_solution_generation_event
