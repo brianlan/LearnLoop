@@ -228,6 +228,7 @@ async def test_worker_process_task_logs_observability(caplog):
     import app.infrastructure.worker.solution_worker as sw
     original_load = sw.load_source_image_base64
     sw.load_source_image_base64 = lambda img, store: None
+    assert sw.load_source_image_base64 is not original_load
 
     try:
         with caplog.at_level(logging.INFO):

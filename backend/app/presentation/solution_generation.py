@@ -8,6 +8,7 @@ from bson import ObjectId
 
 from app.domain import SolutionGenerationStatus, SolutionGenerationTask
 from app.infrastructure.storage.mongo import (
+    _safe_get_collection,
     CANONICAL_SOLUTIONS_COLLECTION,
     Document,
     SOLUTION_GENERATION_TASKS_COLLECTION,
@@ -19,13 +20,6 @@ SOLUTION_BACKFILL_BATCH_SIZE = 100
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _safe_get_collection(database: Any, name: str) -> Any | None:
-    try:
-        return database[name]
-    except (KeyError, TypeError, AttributeError):
-        return None
 
 
 def _build_solution_task_document(
