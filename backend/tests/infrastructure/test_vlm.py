@@ -365,6 +365,58 @@ def test_strip_json_code_fences_leaves_plain_json_unchanged() -> None:
     assert VLMClient._strip_json_code_fences(plain) == plain
 
 
+def test_strip_json_code_fences_strips_json_fence() -> None:
+    fenced = '```json\n{"text":"hello"}\n```'
+
+    assert VLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
+
+
+def test_strip_json_code_fences_strips_plain_fence() -> None:
+    fenced = '```\n{"text":"hello"}\n```'
+
+    assert VLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
+
+
+def test_strip_json_code_fences_preserves_non_json_fence_language() -> None:
+    fenced = '```python\n{"text":"hello"}\n```'
+
+    assert VLMClient._strip_json_code_fences(fenced) == fenced
+
+
+def test_strip_json_code_fences_preserves_incomplete_opening_fence() -> None:
+    fenced = '```json\n{"text":"hello"}'
+
+    assert VLMClient._strip_json_code_fences(fenced) == fenced
+
+
+def test_strip_json_code_fences_preserves_incomplete_closing_fence() -> None:
+    fenced = '{"text":"hello"}\n```'
+
+    assert VLMClient._strip_json_code_fences(fenced) == fenced
+
+
+def test_strip_json_code_fences_preserves_single_line_fence() -> None:
+    fenced = '```json {"text":"hello"} ```'
+
+    assert VLMClient._strip_json_code_fences(fenced) == fenced
+
+
+def test_strip_json_code_fences_strips_fence_with_trailing_whitespace() -> None:
+    fenced = '  ```json\n{"text":"hello"}\n```  '
+
+    assert VLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
+
+
+def test_strip_json_code_fences_returns_empty_string_for_empty_input() -> None:
+    assert VLMClient._strip_json_code_fences("") == ""
+
+
+def test_strip_json_code_fences_strips_multiline_json_content() -> None:
+    fenced = '```json\n{\n  "text": "hello",\n  "value": 42\n}\n```'
+
+    assert VLMClient._strip_json_code_fences(fenced) == '{\n  "text": "hello",\n  "value": 42\n}'
+
+
 @pytest.mark.asyncio
 async def test_vlm_timeout_is_classified_explicitly() -> None:
     async def timeout_handler(request: httpx.Request) -> httpx.Response:

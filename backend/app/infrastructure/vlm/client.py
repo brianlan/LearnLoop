@@ -9,6 +9,12 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.infrastructure.vlm._models import (
+    _ChatCompletionRequest,
+    _ChatMessage,
+    _ChatMessageContentImageUrl,
+    _ChatMessageContentText,
+)
 from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
     GRADING_SYSTEM_PROMPT,
@@ -115,26 +121,6 @@ class _GradingProviderPayload(BaseModel):
     is_correct: bool = Field(alias="isCorrect")
     feedback: str
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
-
-
-class _ChatMessageContentText(BaseModel):
-    type: Literal["text"]
-    text: str
-
-
-class _ChatMessageContentImageUrl(BaseModel):
-    type: Literal["image_url"]
-    image_url: dict[str, str]
-
-
-class _ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] | str
-
-
-class _ChatCompletionRequest(BaseModel):
-    model: str
-    messages: list[_ChatMessage]
 
 
 class _ChatCompletionMessage(BaseModel):

@@ -8,6 +8,12 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.vlm._models import (
+    _ChatCompletionRequest,
+    _ChatMessage,
+    _ChatMessageContentImageUrl,
+    _ChatMessageContentText,
+)
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
@@ -103,26 +109,6 @@ class SolutionCoachingVLMError(Exception):
         self.retryable = retryable
         self.status_code = status_code
         self.raw_provider_response = raw_provider_response
-
-
-class _ChatMessageContentText(BaseModel):
-    type: Literal["text"]
-    text: str
-
-
-class _ChatMessageContentImageUrl(BaseModel):
-    type: Literal["image_url"]
-    image_url: dict[str, str]
-
-
-class _ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] | str
-
-
-class _ChatCompletionRequest(BaseModel):
-    model: str
-    messages: list[_ChatMessage]
 
 
 class _ChatCompletionMessage(BaseModel):
