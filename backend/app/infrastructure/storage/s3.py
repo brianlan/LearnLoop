@@ -1,3 +1,4 @@
+from base64 import b64encode
 from collections.abc import Callable
 from typing import Any, BinaryIO, Protocol, cast
 from uuid import UUID, uuid4
@@ -133,3 +134,21 @@ class S3StorageAdapter:
             raise
 
         return True
+
+
+def load_source_image_base64(
+    source_image: dict[str, Any] | None,
+    storage: S3StorageAdapter,
+) -> str | None:
+    """Load image from S3 and return as base64 string, or None if not found."""
+    if not source_image:
+        return None
+    bucket = source_image.get("bucket")
+    object_key = source_image.get("objectKey")
+    if not bucket or not object_key:
+        return None
+    try:
+        image_bytes = storage.get_object(str(bucket), str(object_key))
+    except StorageObjectNotFoundError:
+        return None
+    return b64encode(image_bytes).decode("ascii")

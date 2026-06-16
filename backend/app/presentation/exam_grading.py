@@ -7,9 +7,8 @@ from typing import Any
 
 from app.domain.models import GradingStatus, ProblemType
 from app.domain.normalization import compare_answers, normalize_answer
-from app.infrastructure.storage.s3 import S3StorageAdapter
+from app.infrastructure.storage.s3 import S3StorageAdapter, load_source_image_base64
 from app.infrastructure.vlm.client import VLMClient, VLMError
-from app.presentation.helpers import load_source_image_base64
 
 
 def build_grading_result(
