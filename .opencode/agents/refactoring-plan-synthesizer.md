@@ -1,0 +1,1 @@
+/Users/rlan/projects/improved-ai-agent/refactoring-agents/.opencode/agent/refactoring-plan-synthesizer.md
