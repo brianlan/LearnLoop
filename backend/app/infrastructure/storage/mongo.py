@@ -19,6 +19,14 @@ COACHING_CONVERSATIONS_COLLECTION = "coaching_conversations"
 FOLDERS_COLLECTION = "folders"
 
 
+def _safe_get_collection(database: Any, name: str) -> Any | None:
+    """Accommodates fake database test doubles that may not support item access."""
+    try:
+        return database[name]
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
 class SupportsAsyncClose(Protocol):
     async def close(self) -> None: ...
 
