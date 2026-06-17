@@ -222,6 +222,18 @@ export const api = {
     });
     return handleResponse<T>(response);
   },
+
+  /**
+   * Generic POST request with FormData
+   */
+  async postFormData<T>(path: string, formData: FormData): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+    return handleResponse<T>(response);
+  },
 };
 
 export default api;

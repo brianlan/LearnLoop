@@ -490,4 +490,56 @@ describe("IngestionWizard", () => {
       expect(subjectSelect.value).toBe("math");
     });
   });
+
+  describe("API Client migration contracts", () => {
+    it("sends FormData with image field and no Content-Type header on file upload", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            preview: {
+              id: "test-preview-id",
+              status: "extracting",
+              sourceImage: { bucket: "test", objectKey: "test-key" },
+              draft: {},
+              extraction: {},
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              expiresAt: new Date().toISOString(),
+            },
+          }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      render(<IngestionWizard />);
+
+      const file = new File(["test-content"], "test-image.png", { type: "image/png" });
+      const fileInput = screen.getByRole("button", {
+        name: "Choose Image File",
+      }).parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+
+      const uploadCall = mockFetch.mock.calls.find(call => call[0] === "/api/v1/ingestion-previews");
+      expect(uploadCall).toBeDefined();
+      const [, options] = uploadCall!;
+      
+      expect(options.method).toBe("POST");
+      expect(options.credentials).toBe("include");
+      expect(options.body).toBeInstanceOf(FormData);
+      
+      const formData = options.body as FormData;
+      expect(formData.get("image")).toEqual(file);
+      
+      if (options.headers) {
+        const headers = options.headers as Record<string, string>;
+        expect(headers["Content-Type"]).toBeUndefined();
+        expect(headers["content-type"]).toBeUndefined();
+      }
+    });
+  });
 });

@@ -121,18 +121,7 @@ async function createPreview(file: File): Promise<IngestionPreview> {
   const formData = new FormData();
   formData.append("image", file);
 
-  const response = await fetch("/api/v1/ingestion-previews", {
-    method: "POST",
-    credentials: "include",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-  }
-
-  const data = await response.json();
+  const data = await api.postFormData<PreviewResponse>("/ingestion-previews", formData);
   return normalizePreviewResponse(data);
 }
 
@@ -151,51 +140,20 @@ interface PreviewUpdateData {
 }
 
 async function updatePreview(id: string, data: PreviewUpdateData): Promise<IngestionPreview> {
-  const response = await fetch(`/api/v1/ingestion-previews/${id}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-  }
-
-  const result = await response.json();
+  const result = await api.patch<PreviewResponse>(`/ingestion-previews/${id}`, data);
   return normalizePreviewResponse(result);
 }
 
 async function retryPreview(id: string): Promise<IngestionPreview> {
-  const response = await fetch(`/api/v1/ingestion-previews/${id}/retry`, {
-    method: "POST",
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-  }
-
-  const data = await response.json();
+  const data = await api.post<PreviewResponse>(`/ingestion-previews/${id}/retry`, undefined);
   return normalizePreviewResponse(data);
 }
 
 async function confirmPreview(id: string): Promise<{ problemId: string }> {
-  const response = await fetch(`/api/v1/ingestion-previews/${id}/confirm`, {
-    method: "POST",
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-  }
-
-  const data = (await response.json()) as { problem: { id: string } };
+  const data = await api.post<{ problem: { id: string } }>(
+    `/ingestion-previews/${id}/confirm`,
+    undefined
+  );
   return { problemId: data.problem.id };
 }
 
