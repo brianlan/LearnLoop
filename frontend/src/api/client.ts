@@ -33,7 +33,8 @@ export interface MeResponse {
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
+    const rawData = await response.json().catch(() => ({}));
+    const errorData = rawData && typeof rawData === "object" ? rawData : {};
     throw new ApiError(
       errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`,
       response.status,

@@ -79,4 +79,25 @@ describe("API Client postFormData", () => {
       expect(error.code).toBeUndefined();
     }
   });
+
+  it("falls back to HTTP status text when json resolves to null", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: () => Promise.resolve(null),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const formData = new FormData();
+    try {
+      await api.postFormData("/test-path", formData);
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      const error = err as ApiError;
+      expect(error.message).toBe("HTTP 500: Internal Server Error");
+      expect(error.status).toBe(500);
+      expect(error.code).toBeUndefined();
+    }
+  });
 });
