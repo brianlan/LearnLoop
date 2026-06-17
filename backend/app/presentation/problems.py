@@ -14,7 +14,7 @@ from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
 from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
-from app.presentation.helpers import build_problem_image_url, get_owned_problem, normalize_tags, parse_object_id
+from app.presentation.helpers import build_problem_image_url, get_all_descendant_folder_ids, get_owned_folder, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
 from app.presentation.tags import _register_tags
 
@@ -173,49 +173,6 @@ def _serialize_problem_detail(problem: dict[str, Any]) -> ProblemDetailPayload:
     )
 
 
-async def _get_owned_folder(
-    database: DatabaseDependency,
-    folder_id: str,
-    user_id: ObjectId,
-) -> dict[str, Any]:
-    """Get a folder by ID, verifying ownership."""
-    object_id = parse_object_id(folder_id, resource_name="Folder")
-    folder = await database["folders"].find_one({"_id": object_id})
-    if folder is None:
-        raise ApiError(404, "NOT_FOUND", "Folder not found")
-    if folder.get("userId") != user_id:
-        raise ApiError(403, "FORBIDDEN", "Forbidden")
-    return folder
-
-
-async def _get_all_descendant_folder_ids(
-    database: DatabaseDependency,
-    folder_id: ObjectId,
-) -> set[ObjectId]:
-    """Get all descendant folder IDs recursively."""
-    descendants: set[ObjectId] = set()
-    to_check = [folder_id]
-
-    while to_check:
-        current_batch = to_check
-        to_check = []
-
-        cursor = database["folders"].find(
-            {"parentId": {"$in": current_batch}},
-            {"_id": 1},
-        )
-        children = await cursor.to_list(length=None)
-
-        for child in children:
-            child_id = child["_id"]
-            if child_id not in descendants:
-                descendants.add(child_id)
-                to_check.append(child_id)
-
-    return descendants
-
-
-
 @router.get("/tags", response_model=ProblemTagsResponse)
 async def list_problem_tags(
     database: DatabaseDependency,
@@ -261,9 +218,9 @@ async def list_problems(
             query["folderId"] = None
         else:
             # Real folder: validate ownership and include descendants
-            folder = await _get_owned_folder(database, folder_id, user_id)
+            folder = await get_owned_folder(database, folder_id, user_id)
             folder_oid = folder["_id"]
-            descendant_ids = await _get_all_descendant_folder_ids(database, folder_oid)
+            descendant_ids = await get_all_descendant_folder_ids(database, folder_oid)
             all_folder_ids = {folder_oid} | descendant_ids
             query["folderId"] = {"$in": [str(fid) for fid in all_folder_ids]}
 
@@ -291,7 +248,7 @@ async def bulk_set_problem_folder(
     # Validate target folder if provided
     target_folder_id: str | None = None
     if payload.folderId is not None:
-        folder = await _get_owned_folder(database, payload.folderId, user_id)
+        folder = await get_owned_folder(database, payload.folderId, user_id)
         target_folder_id = str(folder["_id"])
 
     # Validate all problem IDs and ownership
@@ -387,7 +344,7 @@ async def set_problem_folder(
     # Validate target folder if provided
     target_folder_id: str | None = None
     if payload.folderId is not None:
-        folder = await _get_owned_folder(database, payload.folderId, user_id)
+        folder = await get_owned_folder(database, payload.folderId, user_id)
         target_folder_id = str(folder["_id"])
 
     # Update the problem

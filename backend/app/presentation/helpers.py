@@ -51,3 +51,45 @@ async def get_owned_problem(
     return problem
 
 
+async def get_owned_folder(
+    database: AsyncDatabase[Document],
+    folder_id: str,
+    user_id: ObjectId,
+) -> dict[str, Any]:
+    """Get a folder by ID, verifying ownership."""
+    object_id = parse_object_id(folder_id, resource_name="Folder")
+    folder = await database["folders"].find_one({"_id": object_id})
+    if folder is None:
+        raise ApiError(404, "NOT_FOUND", "Folder not found")
+    if folder.get("userId") != user_id:
+        raise ApiError(403, "FORBIDDEN", "Forbidden")
+    return folder
+
+
+async def get_all_descendant_folder_ids(
+    database: AsyncDatabase[Document],
+    folder_id: ObjectId,
+) -> set[ObjectId]:
+    """Get all descendant folder IDs recursively."""
+    descendants: set[ObjectId] = set()
+    to_check = [folder_id]
+
+    while to_check:
+        current_batch = to_check
+        to_check = []
+
+        cursor = database["folders"].find(
+            {"parentId": {"$in": current_batch}},
+            {"_id": 1},
+        )
+        children = await cursor.to_list(length=None)
+
+        for child in children:
+            child_id = child["_id"]
+            if child_id not in descendants:
+                descendants.add(child_id)
+                to_check.append(child_id)
+
+    return descendants
+
+
