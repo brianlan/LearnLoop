@@ -7,30 +7,8 @@ import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 import Pagination from "@/components/Pagination";
 import { TagList } from "@/components/TagPill";
 import type { ProblemListItem, ProblemsResponse } from "@/types/problem";
-
-interface FolderNode {
-  id: string;
-  name: string;
-  parentId: string | null;
-  problemCount: number;
-  children: FolderNode[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface FolderTreeResponse {
-  allProblemsCount: number;
-  unfiledCount: number;
-  items: FolderNode[];
-}
-
-const PROBLEM_TYPE_OPTIONS = [
-  { value: "", label: "All Types" },
-  { value: "single-choice", label: "Single Choice" },
-  { value: "multi-choice", label: "Multi Choice" },
-  { value: "fill-in-the-blank", label: "Fill in the Blank" },
-  { value: "short-answer", label: "Short Answer" },
-];
+import type { FolderNode, FolderTreeResponse } from "@/types/folder";
+import { PROBLEM_TYPE_FILTER_OPTIONS } from "@/constants/problemTypes";
 
 const SIDEBAR_COLLAPSED_KEY = "problems.folderSidebarCollapsed";
 const UNFILED_FOLDER_ID = "unfiled";
@@ -561,7 +539,7 @@ export function ProblemsPage() {
                 exitSelectionMode();
               }}
             >
-              {PROBLEM_TYPE_OPTIONS.map((option) => (
+              {PROBLEM_TYPE_FILTER_OPTIONS.map((option) => (
                 <option key={option.value || "all"} value={option.value}>
                   {option.label}
                 </option>
