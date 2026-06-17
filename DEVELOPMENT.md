@@ -162,6 +162,24 @@ Frontend browser tests:
 cd frontend && npm run test:ui
 ```
 
+Docker Compose smoke validation tests (requires running Compose stack):
+
+```bash
+# Start the full stack in Docker Compose
+docker compose up -d mongodb rustfs app frontend
+docker compose --profile bootstrap run --rm rustfs-bootstrap
+
+# Wait for health checks to pass
+curl -fsS http://127.0.0.1:8000/api/health
+curl -fsS http://127.0.0.1:8080/healthz
+
+# Run the Compose smoke browser test suite
+cd frontend && npm run test:smoke:compose
+
+# Tear down the stack when finished
+docker compose down
+```
+
 ## Environment variable reference
 
 The canonical template lives in `.env.example`.

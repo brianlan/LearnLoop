@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest",
     "test:ui": "playwright test",
+    "test:smoke:compose": "playwright test --config=playwright.compose.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

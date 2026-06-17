@@ -4,6 +4,7 @@ process.env.PLAYWRIGHT_API_ORIGIN ??= "http://127.0.0.1:18000";
 
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: ["**/compose-smoke.spec.ts"],
   use: {
     baseURL: "http://127.0.0.1:5173",
     headless: true,
