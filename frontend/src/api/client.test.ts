@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api } from "./client";
+import { api, ApiError } from "./client";
 
 describe("API Client postFormData", () => {
   beforeEach(() => {
@@ -31,7 +31,7 @@ describe("API Client postFormData", () => {
     expect(result).toEqual({ success: true });
   });
 
-  it("handles HTTP errors correctly by throwing enriched error", async () => {
+  it("handles HTTP errors correctly by throwing ApiError", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
@@ -51,9 +51,32 @@ describe("API Client postFormData", () => {
     try {
       await api.postFormData("/test-path", formData);
     } catch (err) {
-      const error = err as Error & { code?: string; status?: number };
+      expect(err).toBeInstanceOf(ApiError);
+      const error = err as ApiError;
       expect(error.code).toBe("VALIDATION_FAILED");
       expect(error.status).toBe(400);
+      expect(error.name).toBe("ApiError");
+    }
+  });
+
+  it("falls back to HTTP status text when error body is missing", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: () => Promise.reject(new Error("no json")),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const formData = new FormData();
+    try {
+      await api.postFormData("/test-path", formData);
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      const error = err as ApiError;
+      expect(error.message).toBe("HTTP 500: Internal Server Error");
+      expect(error.status).toBe(500);
+      expect(error.code).toBeUndefined();
     }
   });
 });

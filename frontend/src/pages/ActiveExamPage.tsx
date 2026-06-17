@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
@@ -188,7 +188,7 @@ export function ActiveExamPage() {
     );
   }
 
-  const isNotFoundError = examError instanceof Error && examError.message.includes("404");
+  const isNotFoundError = examError instanceof ApiError && examError.status === 404;
   if (isNotFoundError || !exam) {
     return (
       <main style={pageCanvasStyle}>
