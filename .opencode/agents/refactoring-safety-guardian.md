@@ -1,1 +1,0 @@
-/Users/rlan/projects/improved-ai-agent/refactoring-agents/.opencode/agent/refactoring-safety-guardian.md
