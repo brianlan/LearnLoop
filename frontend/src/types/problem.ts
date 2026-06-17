@@ -35,6 +35,13 @@ export interface ProblemListItem {
   updatedAt: string;
 }
 
+export interface PracticeWeight {
+  lastWrong: number;
+  failure: number;
+  recency: number;
+  total: number;
+}
+
 export interface ProblemsResponse {
   items: ProblemListItem[];
   total: number;

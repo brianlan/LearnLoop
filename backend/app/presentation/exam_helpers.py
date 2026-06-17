@@ -19,6 +19,10 @@ DEFAULT_SELECTION_POLICY = SelectionPolicyConfig(recencyWeight=1.0, failureWeigh
 
 def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
     try:
+        origin = dict(problem.get("origin") or {})
+        preview_id = origin.get("previewId")
+        if preview_id is not None:
+            origin["previewId"] = str(preview_id)
         return Problem.model_validate(
             {
                 "id": str(problem["_id"]),
@@ -30,7 +34,7 @@ def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
                 "correctAnswer": problem["correctAnswer"],
                 "tags": list(problem.get("tags", [])),
                 "sourceImage": problem.get("sourceImage"),
-                "origin": problem.get("origin", {}),
+                "origin": origin,
                 "tracking": problem.get("tracking", {}),
                 "isDeleted": problem.get("isDeleted", False),
                 "deletedAt": problem.get("deletedAt"),

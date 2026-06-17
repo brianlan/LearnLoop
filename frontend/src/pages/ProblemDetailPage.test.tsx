@@ -73,6 +73,12 @@ const baseTracking = {
     lastTestedAt: "2024-01-01T00:00:00Z",
     lastAttemptCorrect: true,
   },
+  practiceWeight: {
+    lastWrong: 1.0,
+    failure: 1.2,
+    recency: 2.5,
+    total: 4.7,
+  },
 };
 
 describe("ProblemDetailPage", () => {
@@ -303,6 +309,62 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByText("10")).toBeInTheDocument();
     expect(screen.getByText("8")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("displays practice weight and hover breakdown", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test" } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("practice-weight")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("4.70")).toBeInTheDocument();
+
+    // Breakdown hidden by default
+    expect(screen.queryByTestId("practice-weight-breakdown")).not.toBeInTheDocument();
+
+    // Hover to show breakdown
+    await user.hover(screen.getByTestId("practice-weight"));
+    await waitFor(() => {
+      expect(screen.getByTestId("practice-weight-breakdown")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("last_wrong: 1.00")).toBeInTheDocument();
+    expect(screen.getByText("failure: 1.20")).toBeInTheDocument();
+    expect(screen.getByText("recency: 2.50")).toBeInTheDocument();
+    expect(screen.getByText("total: 4.70")).toBeInTheDocument();
+
+    // Move mouse away to hide
+    await user.unhover(screen.getByTestId("practice-weight"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("practice-weight-breakdown")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows practice weight breakdown on focus", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, text: "Test" } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    const weight = await screen.findByTestId("practice-weight");
+    await user.click(weight);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("practice-weight-breakdown")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("last_wrong: 1.00")).toBeInTheDocument();
+    expect(screen.getByText("failure: 1.20")).toBeInTheDocument();
+    expect(screen.getByText("recency: 2.50")).toBeInTheDocument();
+    expect(screen.getByText("total: 4.70")).toBeInTheDocument();
   });
 
   it("displays image when imageUrl exists", async () => {

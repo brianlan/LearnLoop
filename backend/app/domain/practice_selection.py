@@ -22,6 +22,14 @@ class PracticeSelectionResult:
     status: str  # "ok", "no_eligible", "no_problems"
 
 
+@dataclass
+class PracticeWeightBreakdown:
+    lastWrong: float
+    failure: float
+    recency: float
+    total: float
+
+
 def get_eligible_practice_problems(
     problems: List[Problem],
     config: PracticeSelectionConfig,
@@ -88,7 +96,9 @@ def select_practice_problem(
     return PracticeSelectionResult(selected, "ok")
 
 
-def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, now: datetime) -> float:
+def compute_problem_weight_breakdown(
+    problem: Problem, config: PracticeSelectionConfig, now: datetime
+) -> PracticeWeightBreakdown:
     last_wrong_score = 1.0
     if problem.tracking.lastAttemptCorrect is False:
         last_wrong_score = 2.0
@@ -104,8 +114,17 @@ def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, n
         days_since = (now - ensure_utc(problem.tracking.lastTestedAt)).days
         recency_score = 1.0 + days_since / 30.0
 
-    return (
-        last_wrong_score * config.last_wrong_weight +
-        failure_score * config.failure_rate_weight +
-        recency_score * config.recency_weight
+    last_wrong = last_wrong_score * config.last_wrong_weight
+    failure = failure_score * config.failure_rate_weight
+    recency = recency_score * config.recency_weight
+
+    return PracticeWeightBreakdown(
+        lastWrong=last_wrong,
+        failure=failure,
+        recency=recency,
+        total=last_wrong + failure + recency,
     )
+
+
+def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, now: datetime) -> float:
+    return compute_problem_weight_breakdown(problem, config, now).total

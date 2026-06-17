@@ -424,16 +424,19 @@ async def test_list_detail_update_delete_tags_and_tracking(
 
     tracking_response = await client.get(f"/api/v1/problems/{newest_problem['_id']}/tracking")
     assert tracking_response.status_code == 200
-    assert tracking_response.json() == {
-        "problemId": str(newest_problem["_id"]),
-        "tracking": {
-            "exposureCount": 3,
-            "correctCount": 2,
-            "failedCount": 1,
-            "lastTestedAt": newest_problem["updatedAt"].isoformat().replace("+00:00", "Z"),
-            "lastAttemptCorrect": True,
-        },
+    tracking_body = tracking_response.json()
+    assert tracking_body["problemId"] == str(newest_problem["_id"])
+    assert tracking_body["tracking"] == {
+        "exposureCount": 3,
+        "correctCount": 2,
+        "failedCount": 1,
+        "lastTestedAt": newest_problem["updatedAt"].isoformat().replace("+00:00", "Z"),
+        "lastAttemptCorrect": True,
     }
+    assert "practiceWeight" in tracking_body
+    weight = tracking_body["practiceWeight"]
+    assert set(weight.keys()) == {"lastWrong", "failure", "recency", "total"}
+    assert weight["total"] == weight["lastWrong"] + weight["failure"] + weight["recency"]
 
     tags_response = await client.get("/api/v1/problems/tags")
     assert tags_response.status_code == 200
@@ -475,6 +478,34 @@ async def test_list_detail_update_delete_tags_and_tracking(
     assert deleted_detail_response.status_code == 404
     assert deleted_detail_response.json() == {
         "error": {"code": "NOT_FOUND", "message": "Problem not found"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_problem_tracking_includes_practice_weight_with_exact_values(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Weighted problem")
+    problem["tracking"] = {
+        "exposureCount": 0,
+        "correctCount": 0,
+        "failedCount": 0,
+        "lastTestedAt": None,
+        "lastAttemptCorrect": None,
+    }
+    database["problems"].seed(problem)
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/tracking")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["problemId"] == str(problem["_id"])
+    assert body["practiceWeight"] == {
+        "lastWrong": 1.0,
+        "failure": 1.0,
+        "recency": 1.0,
+        "total": 3.0,
     }
 
 

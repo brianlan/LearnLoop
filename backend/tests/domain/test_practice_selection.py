@@ -5,6 +5,7 @@ from app.domain.models import CorrectAnswer, Problem, Tracking
 from app.domain.practice_selection import (
     PracticeSelectionConfig,
     PracticeSelectionResult,
+    compute_problem_weight_breakdown,
     get_eligible_practice_problems,
     select_practice_problem,
 )
@@ -373,3 +374,81 @@ def test_get_eligible_excludes_too_new():
     ids = [p.id for p in eligible]
     assert "old" in ids
     assert "new" not in ids
+
+
+def test_compute_problem_weight_breakdown_all_components():
+    now = datetime.now(UTC)
+    last_tested = now - timedelta(days=30)
+    problem = _make_problem(
+        "p1",
+        last_attempt_correct=False,
+        exposure_count=10,
+        failed_count=5,
+        last_tested_at=last_tested,
+    )
+    config = PracticeSelectionConfig(
+        last_wrong_weight=1.5,
+        failure_rate_weight=2.0,
+        recency_weight=1.0,
+    )
+    breakdown = compute_problem_weight_breakdown(problem, config, now)
+
+    # last_wrong_score = 2.0 because lastAttemptCorrect is False
+    # lastWrong = 2.0 * 1.5 = 3.0
+    assert breakdown.lastWrong == 3.0
+
+    # failure_rate = 5 / 10 = 0.5, failure_score = 1.5
+    # failure = 1.5 * 2.0 = 3.0
+    assert breakdown.failure == 3.0
+
+    # days_since = 30, recency_score = 1.0 + 30/30 = 2.0
+    # recency = 2.0 * 1.0 = 2.0
+    assert breakdown.recency == 2.0
+
+    assert breakdown.total == 8.0
+    assert breakdown.total == breakdown.lastWrong + breakdown.failure + breakdown.recency
+
+
+def test_compute_problem_weight_breakdown_never_tested():
+    now = datetime.now(UTC)
+    problem = _make_problem("p1", last_tested_at=None, last_attempt_correct=None)
+    config = PracticeSelectionConfig()
+    breakdown = compute_problem_weight_breakdown(problem, config, now)
+
+    assert breakdown.lastWrong == 1.0
+    assert breakdown.failure == 1.0
+    assert breakdown.recency == 1.0
+    assert breakdown.total == 3.0
+
+
+def test_compute_problem_weight_breakdown_zero_attempts():
+    now = datetime.now(UTC)
+    problem = _make_problem("p1", exposure_count=0, correct_count=0, failed_count=0)
+    config = PracticeSelectionConfig()
+    breakdown = compute_problem_weight_breakdown(problem, config, now)
+
+    assert breakdown.lastWrong == 1.0
+    assert breakdown.failure == 1.0
+    assert breakdown.recency == 1.0
+    assert breakdown.total == 3.0
+
+
+def test_compute_problem_weight_breakdown_uses_same_total_as_selection():
+    now = datetime.now(UTC)
+    last_tested = now - timedelta(days=15)
+    problem = _make_problem(
+        "p1",
+        last_attempt_correct=True,
+        exposure_count=8,
+        failed_count=2,
+        last_tested_at=last_tested,
+    )
+    config = PracticeSelectionConfig()
+    breakdown = compute_problem_weight_breakdown(problem, config, now)
+
+    # Regression check: the total from the breakdown helper must equal
+    # the weight used internally by select_practice_problem.
+    from app.domain.practice_selection import _compute_problem_weight
+
+    internal_total = _compute_problem_weight(problem, config, now)
+    assert breakdown.total == internal_total
