@@ -630,3 +630,94 @@ def test_solution_coaching_strip_json_code_fences_strips_multiline_json_content(
     fenced = '```json\n{\n  "text": "hello",\n  "value": 42\n}\n```'
 
     assert SolutionVLMClient._strip_json_code_fences(fenced) == '{\n  "text": "hello",\n  "value": 42\n}'
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_extracts_embedded_json_without_fences() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "Here is the solution:\n{\"steps_markdown\":\"Step 1\\nStep 2\",\"final_answer\":\"42\",\"level_classification\":\"primary\"}\nHope this helps!",
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_solution_client(handler)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+    )
+    await client.aclose()
+
+    assert result.steps_markdown == "Step 1\nStep 2"
+    assert result.final_answer == "42"
+    assert result.level_classification == "primary"
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_extracts_embedded_json_without_fences() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "Here is the reply:\n{\"text\":\"先想想已知条件。\"}\nDone",
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_coaching_client(handler)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="答案",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="答案",
+            level_classification="primary",
+            new_message="请提示一下",
+        )
+    )
+    await client.aclose()
+
+    assert result.text == "先想想已知条件。"
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_preserves_reasoning_content_in_raw_response() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"steps_markdown":"步骤","final_answer":"42","level_classification":"primary"}),
+                            "reasoning_content": "推理过程",
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_solution_client(handler)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+    )
+    await client.aclose()
+
+    assert result.raw_provider_response["reasoning_content"] == "推理过程"
