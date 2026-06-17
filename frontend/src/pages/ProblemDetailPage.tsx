@@ -10,18 +10,19 @@ import { TagInput } from "@/components/TagInput";
 import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
-import type { ProblemDetail, ProblemResponse } from "@/types/problem";
+import type { ProblemDetail, ProblemResponse, PracticeWeight } from "@/types/problem";
 import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
 
 interface TrackingData {
   problemId: string;
   tracking: {
-  exposureCount: number;
-  correctCount: number;
-  failedCount: number;
-  lastTestedAt?: string;
+    exposureCount: number;
+    correctCount: number;
+    failedCount: number;
+    lastTestedAt?: string;
     lastAttemptCorrect?: boolean;
   };
+  practiceWeight?: PracticeWeight;
 }
 
 interface UpdateProblemInput {
@@ -30,6 +31,64 @@ interface UpdateProblemInput {
   tags?: string[];
   graphDsl?: string;
   correctAnswer?: string;
+}
+
+function WeightBreakdown({ weight }: { weight: PracticeWeight }) {
+  const [showDetails, setShowDetails] = useState(false);
+
+  const lastWrongDisplay = weight.lastWrong.toFixed(2);
+  const failureDisplay = weight.failure.toFixed(2);
+  const recencyDisplay = weight.recency.toFixed(2);
+  const derivedTotal = (
+    parseFloat(lastWrongDisplay) +
+    parseFloat(failureDisplay) +
+    parseFloat(recencyDisplay)
+  ).toFixed(2);
+
+  return (
+    <div
+      style={{ position: "relative" }}
+      onMouseEnter={() => setShowDetails(true)}
+      onMouseLeave={() => setShowDetails(false)}
+      onFocus={() => setShowDetails(true)}
+      onBlur={() => setShowDetails(false)}
+      tabIndex={0}
+      role="button"
+      aria-label={`Practice weight: ${derivedTotal}. Focus for breakdown.`}
+      data-testid="practice-weight"
+    >
+      <div>
+        <label style={{ fontWeight: "bold" }}>Practice Weight:</label>
+        <div style={{ fontSize: "1.5rem" }}>{derivedTotal}</div>
+      </div>
+      {showDetails && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            zIndex: 10,
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "4px",
+            padding: "0.5rem 0.75rem",
+            marginTop: "0.25rem",
+            minWidth: "180px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+          }}
+          data-testid="practice-weight-breakdown"
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>Components</div>
+          <div>last_wrong: {lastWrongDisplay}</div>
+          <div>failure: {failureDisplay}</div>
+          <div>recency: {recencyDisplay}</div>
+          <div style={{ marginTop: "0.25rem", fontWeight: "bold" }}>
+            total: {derivedTotal}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ProblemDetailPage() {
@@ -63,7 +122,7 @@ export function ProblemDetailPage() {
     queryKey: ["tracking", problemId],
     queryFn: async () => {
       const response = await api.get<TrackingData>(`/problems/${problemId}/tracking`);
-      return response.tracking;
+      return { ...response.tracking, practiceWeight: response.practiceWeight };
     },
     enabled: !!problemId,
   });
@@ -476,7 +535,7 @@ export function ProblemDetailPage() {
           <div>Loading tracking data...</div>
         ) : tracking ? (
           <div>
-            <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap", alignItems: "flex-start" }}>
               <div>
                 <label style={{ fontWeight: "bold" }}>Exposures:</label>
                 <div style={{ fontSize: "1.5rem" }}>{tracking.exposureCount}</div>
@@ -498,6 +557,9 @@ export function ProblemDetailPage() {
                   <label style={{ fontWeight: "bold" }}>Last Tested:</label>
                   <div>{new Date(tracking.lastTestedAt).toLocaleString()}</div>
                 </div>
+              )}
+              {tracking.practiceWeight && (
+                <WeightBreakdown weight={tracking.practiceWeight} />
               )}
             </div>
           </div>

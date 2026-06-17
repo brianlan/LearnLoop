@@ -12,8 +12,11 @@ from pydantic import BaseModel, Field
 
 from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
+from app.domain.practice_selection import PracticeSelectionConfig, compute_problem_weight_breakdown
+from app.infrastructure.config.settings import Settings, get_settings
 from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
+from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.helpers import build_problem_image_url, get_all_descendant_folder_ids, get_owned_folder, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
 from app.presentation.tags import _register_tags
@@ -81,9 +84,17 @@ class ProblemDeleteResponse(BaseModel):
     ok: bool
 
 
+class PracticeWeightPayload(BaseModel):
+    lastWrong: float
+    failure: float
+    recency: float
+    total: float
+
+
 class ProblemTrackingResponse(BaseModel):
     problemId: str
     tracking: TrackingPayload
+    practiceWeight: PracticeWeightPayload | None = None
 
 
 class ProblemTagsResponse(BaseModel):
@@ -411,14 +422,31 @@ async def get_problem_tracking(
     problem_id: str,
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ProblemTrackingResponse:
-    problem = await get_owned_problem(
+    problem_doc = await get_owned_problem(
         database,
         problem_id,
         current_user["_id"],
         allow_deleted=False,
     )
+    problem_model = problem_document_to_model(problem_doc)
+    config = PracticeSelectionConfig(
+        cooldown_days=settings.practice_cooldown_days,
+        last_wrong_weight=settings.practice_last_wrong_weight,
+        failure_rate_weight=settings.practice_failure_rate_weight,
+        recency_weight=settings.practice_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
+    now = datetime.now(UTC)
+    breakdown = compute_problem_weight_breakdown(problem_model, config, now)
     return ProblemTrackingResponse(
-        problemId=str(problem["_id"]),
-        tracking=_serialize_tracking(problem),
+        problemId=str(problem_doc["_id"]),
+        tracking=_serialize_tracking(problem_doc),
+        practiceWeight=PracticeWeightPayload(
+            lastWrong=breakdown.lastWrong,
+            failure=breakdown.failure,
+            recency=breakdown.recency,
+            total=breakdown.total,
+        ),
     )
