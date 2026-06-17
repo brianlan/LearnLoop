@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.vlm.base_client import BaseVLMClient
 from app.infrastructure.vlm._models import (
     _ChatCompletionRequest,
     _ChatMessage,
@@ -190,7 +191,7 @@ class _CoachingProviderPayload(BaseModel):
     reasoning_content: str | None = None
 
 
-class _BaseSolutionCoachingVLMClient:
+class _BaseSolutionCoachingVLMClient(BaseVLMClient):
     def __init__(
         self,
         *,
@@ -200,76 +201,17 @@ class _BaseSolutionCoachingVLMClient:
         timeout_seconds: float,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._endpoint = endpoint
-        self._model = model
-        self._api_key = api_key
-        self._timeout_seconds = timeout_seconds
-        self._http_client = http_client
-        self._owns_client = http_client is None
-
-    @property
-    def http_client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(
-                base_url=self._endpoint,
-                timeout=self._timeout_seconds,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-        return self._http_client
-
-    async def aclose(self) -> None:
-        if self._owns_client and self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        super().__init__(
+            endpoint=endpoint,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            http_client=http_client,
+            error_factory=SolutionCoachingVLMError,
+        )
 
     async def _send_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            response = await self.http_client.post("/chat/completions", json=payload)
-        except httpx.TimeoutException as exc:
-            raise SolutionCoachingVLMError(
-                "VLM request timed out",
-                code=FAILURE_CODE_TIMEOUT,
-                retryable=True,
-            ) from exc
-        except httpx.NetworkError as exc:
-            raise SolutionCoachingVLMError(
-                "VLM network request failed",
-                code=FAILURE_CODE_NETWORK,
-                retryable=True,
-            ) from exc
-
-        raw_body = self._decode_raw_response(response)
-
-        if 500 <= response.status_code:
-            raise SolutionCoachingVLMError(
-                f"VLM provider returned server error {response.status_code}",
-                code=FAILURE_CODE_PROVIDER,
-                retryable=True,
-                status_code=response.status_code,
-                raw_provider_response=raw_body,
-            )
-
-        if 400 <= response.status_code:
-            raise SolutionCoachingVLMError(
-                f"VLM provider rejected request with status {response.status_code}",
-                code=FAILURE_CODE_PROVIDER_REJECTED,
-                retryable=False,
-                status_code=response.status_code,
-                raw_provider_response=raw_body,
-            )
-
-        if not isinstance(raw_body, dict):
-            raise SolutionCoachingVLMError(
-                "VLM provider response must be a JSON object",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                status_code=response.status_code,
-                raw_provider_response=raw_body,
-            )
-
+        raw_body = await super()._send_chat_completion(payload)
         return self._parse_chat_completion_response(raw_body)
 
     @staticmethod
