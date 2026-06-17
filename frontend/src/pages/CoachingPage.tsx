@@ -7,46 +7,8 @@ import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { MarkdownText } from "@/components/MarkdownText";
 import { LatexText } from "@/components/LatexText";
 import type { CoachingConversation } from "@/types/coaching";
-
-interface CorrectAnswer {
-  display: string;
-  normalizedText: string;
-  normalizedSet: string[];
-  format: string;
-}
-
-interface Problem {
-  id: string;
-  problemType: string;
-  text: string;
-  tags: string[];
-  graphDsl?: string;
-  imageUrl?: string;
-  correctAnswer?: CorrectAnswer;
-  isDeleted: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ProblemResponse {
-  problem: Problem;
-}
-
-interface PracticeAttemptDetail {
-  submittedAnswer: string;
-  gradingStatus: string;
-  gradingMethod: string;
-  createdAt: string;
-}
-
-interface PracticeHistoryItem {
-  problemId: string;
-  attempts: PracticeAttemptDetail[];
-}
-
-export interface PracticeHistoryResponse {
-  items: PracticeHistoryItem[];
-}
+import type { ProblemDetail, ProblemResponse } from "@/types/problem";
+import type { PracticeHistoryResponse } from "@/types/practice";
 
 interface ExamItem {
   problemId: string;

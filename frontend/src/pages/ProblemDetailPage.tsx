@@ -10,30 +10,7 @@ import { TagInput } from "@/components/TagInput";
 import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
-
-interface CorrectAnswer {
-  display: string;
-  normalizedText: string;
-  normalizedSet: string[];
-  format: string;
-}
-
-interface Problem {
-  id: string;
-  problemType: string;
-  text: string;
-  tags: string[];
-  graphDsl?: string;
-  imageUrl?: string;
-  correctAnswer?: CorrectAnswer;
-  isDeleted: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ProblemResponse {
-  problem: Problem;
-}
+import type { ProblemDetail, ProblemResponse } from "@/types/problem";
 
 interface TrackingData {
   problemId: string;
