@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 
 from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
-from app.presentation.helpers import parse_object_id
+from app.presentation.helpers import (
+    get_all_descendant_folder_ids,
+    get_owned_folder,
+    parse_object_id,
+)
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -71,21 +75,6 @@ def _normalize_folder_name(name: str) -> str:
     return trimmed
 
 
-async def _get_owned_folder(
-    database: DatabaseDependency,
-    folder_id: str,
-    user_id: ObjectId,
-) -> dict[str, Any]:
-    """Get a folder by ID, verifying ownership."""
-    object_id = parse_object_id(folder_id, resource_name="Folder")
-    folder = await database["folders"].find_one({"_id": object_id})
-    if folder is None:
-        raise ApiError(404, "NOT_FOUND", "Folder not found")
-    if folder.get("userId") != user_id:
-        raise ApiError(403, "FORBIDDEN", "Forbidden")
-    return folder
-
-
 async def _check_sibling_name_conflict(
     database: DatabaseDependency,
     user_id: ObjectId,
@@ -110,33 +99,6 @@ async def _check_sibling_name_conflict(
         raise ApiError(409, "DUPLICATE_FOLDER_NAME", "A folder with this name already exists in this location")
 
 
-async def _get_all_descendant_ids(
-    database: DatabaseDependency,
-    folder_id: ObjectId,
-) -> set[ObjectId]:
-    """Get all descendant folder IDs recursively."""
-    descendants: set[ObjectId] = set()
-    to_check = [folder_id]
-
-    while to_check:
-        current_batch = to_check
-        to_check = []
-
-        cursor = database["folders"].find(
-            {"parentId": {"$in": current_batch}},
-            {"_id": 1},
-        )
-        children = await cursor.to_list(length=None)
-
-        for child in children:
-            child_id = child["_id"]
-            if child_id not in descendants:
-                descendants.add(child_id)
-                to_check.append(child_id)
-
-    return descendants
-
-
 async def _count_problems_in_folder(
     database: DatabaseDependency,
     user_id: ObjectId,
@@ -158,7 +120,7 @@ async def _count_problems_in_folder_tree(
 ) -> int:
     """Count non-deleted problems in a folder and all its descendants."""
     # Get all descendants
-    descendant_ids = await _get_all_descendant_ids(database, folder_id)
+    descendant_ids = await get_all_descendant_folder_ids(database, folder_id)
     all_folder_ids = {folder_id} | descendant_ids
 
     # Count problems in all these folders
@@ -288,7 +250,7 @@ async def get_folder(
 ) -> FolderResponse:
     """Get a single folder by ID."""
     user_id = current_user["_id"]
-    folder = await _get_owned_folder(database, folder_id, user_id)
+    folder = await get_owned_folder(database, folder_id, user_id)
     return FolderResponse(folder=_serialize_folder(folder))
 
 
@@ -301,7 +263,7 @@ async def update_folder(
 ) -> FolderResponse:
     """Rename or move a folder."""
     user_id = current_user["_id"]
-    folder = await _get_owned_folder(database, folder_id, user_id)
+    folder = await get_owned_folder(database, folder_id, user_id)
     folder_oid = folder["_id"]
 
     updates: dict[str, Any] = {"updatedAt": datetime.now(UTC)}
@@ -334,7 +296,7 @@ async def update_folder(
             if new_parent_id == folder_oid:
                 raise ApiError(400, "INVALID_MOVE", "Cannot move folder under itself")
 
-            descendants = await _get_all_descendant_ids(database, folder_oid)
+            descendants = await get_all_descendant_folder_ids(database, folder_oid)
             if new_parent_id in descendants:
                 raise ApiError(400, "INVALID_MOVE", "Cannot move folder under its descendant")
 
@@ -360,7 +322,7 @@ async def delete_folder(
 ) -> DeleteFolderResponse:
     """Delete an empty folder."""
     user_id = current_user["_id"]
-    folder = await _get_owned_folder(database, folder_id, user_id)
+    folder = await get_owned_folder(database, folder_id, user_id)
     folder_oid = folder["_id"]
 
     # Check for child folders
