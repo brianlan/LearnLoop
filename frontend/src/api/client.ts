@@ -5,6 +5,18 @@ import type { CoachingConversation } from "@/types/coaching";
 
 const API_BASE = "/api/v1";
 
+export class ApiError extends Error {
+  code?: string;
+  status: number;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export interface User {
   id: string;
   username: string;
@@ -21,13 +33,13 @@ export interface MeResponse {
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const error = new Error(
+    const rawData = await response.json().catch(() => ({}));
+    const errorData = rawData && typeof rawData === "object" ? rawData : {};
+    throw new ApiError(
       errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`,
+      response.status,
+      errorData.error?.code,
     );
-    (error as Error & { code?: string; status?: number }).code = errorData.error?.code;
-    (error as Error & { code?: string; status?: number }).status = response.status;
-    throw error;
   }
   if (response.status === 204) {
     return undefined as unknown as T;
@@ -235,5 +247,3 @@ export const api = {
     return handleResponse<T>(response);
   },
 };
-
-export default api;
