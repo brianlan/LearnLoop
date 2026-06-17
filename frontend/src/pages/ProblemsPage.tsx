@@ -6,24 +6,7 @@ import { formatProblemReference } from "@/utils/format";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 import Pagination from "@/components/Pagination";
 import { TagList } from "@/components/TagPill";
-
-interface Problem {
-  id: string;
-  problemType: string;
-  text: string;
-  tags: string[];
-  imageUrl?: string;
-  tracking: {
-    exposureCount: number;
-    correctCount: number;
-    failedCount: number;
-    lastTestedAt?: string;
-    lastAttemptCorrect?: boolean;
-  };
-  isDeleted: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+import type { ProblemListItem, ProblemsResponse } from "@/types/problem";
 
 interface FolderNode {
   id: string;
@@ -39,13 +22,6 @@ interface FolderTreeResponse {
   allProblemsCount: number;
   unfiledCount: number;
   items: FolderNode[];
-}
-
-interface ProblemsResponse {
-  items: Problem[];
-  total: number;
-  page: number;
-  pageSize: number;
 }
 
 const PROBLEM_TYPE_OPTIONS = [

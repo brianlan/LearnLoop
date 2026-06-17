@@ -5,11 +5,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { formatDate } from "@/utils/format";
 import { LatexText } from "@/components/LatexText";
-import type { PracticeHistoryItem, PracticeNextResponse } from "@/types/practice";
-
-interface PracticeHistoryResponse {
-  items: PracticeHistoryItem[];
-}
+import type { PracticeHistoryItem, PracticeHistoryResponse, PracticeNextResponse } from "@/types/practice";
 
 interface PracticeStatsResponse {
   practiceableCount: number;

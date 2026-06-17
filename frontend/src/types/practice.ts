@@ -43,3 +43,7 @@ export interface PracticeNextResponse {
   status: PracticeNextStatus;
   problem?: PracticeProblem;
 }
+
+export interface PracticeHistoryResponse {
+  items: PracticeHistoryItem[];
+}

@@ -5,7 +5,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { api } from "@/api/client";
-import { CoachingPage, type PracticeHistoryResponse, type ExamResponse } from "./CoachingPage";
+import { CoachingPage, type ExamResponse } from "./CoachingPage";
+import type { PracticeHistoryResponse } from "@/types/practice";
 import type { CoachingConversation, CoachingMessage } from "@/types/coaching";
 
 // Mock GraphSandbox component to easily verify DSL and trigger errors
@@ -100,6 +101,15 @@ const mockPracticeHistory: PracticeHistoryResponse = {
   items: [
     {
       problemId: "prob-123",
+      problemText: "Given $x^2 = 4$, find $x$.",
+      problemType: "short-answer",
+      summary: {
+        totalAttempts: 1,
+        correctCount: 0,
+        wrongCount: 1,
+        lastPracticedAt: "2026-05-25T12:15:00Z",
+        lastResult: "incorrect",
+      },
       attempts: [
         {
           submittedAnswer: "3",
