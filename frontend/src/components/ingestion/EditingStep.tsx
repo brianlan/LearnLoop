@@ -2,6 +2,7 @@ import { GraphSandbox } from "../GraphSandbox";
 import { TagInput } from "../TagInput";
 import { parseOptions } from "../AnswerInput";
 import type { IngestionPreview, WizardFormData, WizardStep } from "../IngestionWizard";
+import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
 
 export interface EditingStepProps {
   previewId: string;
@@ -158,10 +159,9 @@ export function EditingStep({
           data-testid="problem-type-input"
         >
           <option value="">Select a problem type…</option>
-          <option value="single-choice">Single Choice</option>
-          <option value="multi-choice">Multi Choice</option>
-          <option value="fill-in-the-blank">Fill in the Blank</option>
-          <option value="short-answer">Short Answer</option>
+          {PROBLEM_TYPE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
         </select>
       </div>
 

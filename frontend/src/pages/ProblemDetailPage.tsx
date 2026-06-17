@@ -11,6 +11,7 @@ import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 import type { ProblemDetail, ProblemResponse } from "@/types/problem";
+import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
 
 interface TrackingData {
   problemId: string;
@@ -299,10 +300,9 @@ export function ProblemDetailPage() {
                 data-testid="problem-type-input"
               >
                 <option value="">Select a problem type…</option>
-                <option value="single-choice">Single Choice</option>
-                <option value="multi-choice">Multi Choice</option>
-                <option value="fill-in-the-blank">Fill in the Blank</option>
-                <option value="short-answer">Short Answer</option>
+                {PROBLEM_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
               <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
                 The existing correct answer will be interpreted using the selected type.
