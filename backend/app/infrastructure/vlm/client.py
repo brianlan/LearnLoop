@@ -9,7 +9,14 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.infrastructure.vlm.base_client import BaseVLMClient
+from app.infrastructure.vlm.base_client import (
+    FAILURE_CODE_INVALID_RESPONSE,
+    FAILURE_CODE_NETWORK,
+    FAILURE_CODE_PROVIDER,
+    FAILURE_CODE_PROVIDER_REJECTED,
+    FAILURE_CODE_TIMEOUT,
+    BaseVLMClient,
+)
 from app.infrastructure.vlm._models import (
     _ChatCompletionRequest,
     _ChatMessage,
@@ -28,11 +35,6 @@ from app.infrastructure.vlm.prompts import (
 
 ProblemType = Literal["single-choice", "multi-choice", "fill-in-the-blank", "short-answer"]
 
-FAILURE_CODE_TIMEOUT = "vlm-timeout"
-FAILURE_CODE_NETWORK = "vlm-network-error"
-FAILURE_CODE_PROVIDER = "vlm-provider-error"
-FAILURE_CODE_PROVIDER_REJECTED = "vlm-provider-rejected"
-FAILURE_CODE_INVALID_RESPONSE = "vlm-invalid-response"
 FAILURE_CODE_STALE_PREVIEW = "vlm-stale-preview-timeout"
 
 

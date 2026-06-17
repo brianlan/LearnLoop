@@ -8,20 +8,21 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.vlm.base_client import BaseVLMClient
+from app.infrastructure.vlm.base_client import (
+    FAILURE_CODE_INVALID_RESPONSE,
+    FAILURE_CODE_NETWORK,
+    FAILURE_CODE_PROVIDER,
+    FAILURE_CODE_PROVIDER_REJECTED,
+    FAILURE_CODE_TIMEOUT,
+    BaseVLMClient,
+)
 from app.infrastructure.vlm._models import (
     _ChatCompletionRequest,
     _ChatMessage,
     _ChatMessageContentImageUrl,
     _ChatMessageContentText,
 )
-from app.infrastructure.vlm.client import (
-    FAILURE_CODE_INVALID_RESPONSE,
-    FAILURE_CODE_NETWORK,
-    FAILURE_CODE_PROVIDER,
-    FAILURE_CODE_PROVIDER_REJECTED,
-    FAILURE_CODE_TIMEOUT,
-)
+
 from app.infrastructure.vlm.solution_coaching_prompts import (
     ENGLISH_COACHING_SYSTEM_PROMPT,
     ENGLISH_SOLUTION_SYSTEM_PROMPT,
