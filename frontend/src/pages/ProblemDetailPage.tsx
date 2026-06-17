@@ -36,6 +36,15 @@ interface UpdateProblemInput {
 function WeightBreakdown({ weight }: { weight: PracticeWeight }) {
   const [showDetails, setShowDetails] = useState(false);
 
+  const lastWrongDisplay = weight.lastWrong.toFixed(2);
+  const failureDisplay = weight.failure.toFixed(2);
+  const recencyDisplay = weight.recency.toFixed(2);
+  const derivedTotal = (
+    parseFloat(lastWrongDisplay) +
+    parseFloat(failureDisplay) +
+    parseFloat(recencyDisplay)
+  ).toFixed(2);
+
   return (
     <div
       style={{ position: "relative" }}
@@ -45,12 +54,12 @@ function WeightBreakdown({ weight }: { weight: PracticeWeight }) {
       onBlur={() => setShowDetails(false)}
       tabIndex={0}
       role="button"
-      aria-label={`Practice weight: ${weight.total.toFixed(2)}. Focus for breakdown.`}
+      aria-label={`Practice weight: ${derivedTotal}. Focus for breakdown.`}
       data-testid="practice-weight"
     >
       <div>
         <label style={{ fontWeight: "bold" }}>Practice Weight:</label>
-        <div style={{ fontSize: "1.5rem" }}>{weight.total.toFixed(2)}</div>
+        <div style={{ fontSize: "1.5rem" }}>{derivedTotal}</div>
       </div>
       {showDetails && (
         <div
@@ -70,11 +79,11 @@ function WeightBreakdown({ weight }: { weight: PracticeWeight }) {
           data-testid="practice-weight-breakdown"
         >
           <div style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>Components</div>
-          <div>last_wrong: {weight.lastWrong.toFixed(2)}</div>
-          <div>failure: {weight.failure.toFixed(2)}</div>
-          <div>recency: {weight.recency.toFixed(2)}</div>
+          <div>last_wrong: {lastWrongDisplay}</div>
+          <div>failure: {failureDisplay}</div>
+          <div>recency: {recencyDisplay}</div>
           <div style={{ marginTop: "0.25rem", fontWeight: "bold" }}>
-            total: {weight.total.toFixed(2)}
+            total: {derivedTotal}
           </div>
         </div>
       )}

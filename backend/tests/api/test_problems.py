@@ -485,6 +485,15 @@ async def test_list_detail_update_delete_tags_and_tracking(
 async def test_problem_tracking_includes_practice_weight_with_exact_values(
     problems_app: FastAPI, client: AsyncClient
 ) -> None:
+    from app.infrastructure.config.settings import Settings, get_settings
+
+    explicit_settings = Settings(
+        practice_last_wrong_weight=1.5,
+        practice_failure_rate_weight=2.0,
+        practice_recency_weight=1.0,
+    )
+    problems_app.dependency_overrides[get_settings] = lambda: explicit_settings
+
     database: FakeDatabase = problems_app.state.fake_database
     user_id = problems_app.state.primary_user["_id"]
     problem = make_problem(user_id, text="Weighted problem")
@@ -502,10 +511,10 @@ async def test_problem_tracking_includes_practice_weight_with_exact_values(
     body = response.json()
     assert body["problemId"] == str(problem["_id"])
     assert body["practiceWeight"] == {
-        "lastWrong": 1.0,
-        "failure": 1.0,
+        "lastWrong": 1.5,
+        "failure": 2.0,
         "recency": 1.0,
-        "total": 3.0,
+        "total": 4.5,
     }
 
 
