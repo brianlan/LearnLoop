@@ -81,13 +81,11 @@ class Settings(BaseSettings):
     session_secure: bool = Field(default=False)
     session_samesite: Literal["lax", "strict", "none"] = Field(default="lax")
 
-    # Practice mode configuration
-    practice_cooldown_days: int = Field(default=7, ge=0)
-    practice_last_wrong_weight: float = Field(default=1.0, ge=0)
-    practice_failure_rate_weight: float = Field(default=1.0, ge=0)
-    practice_recency_weight: float = Field(default=1.0, ge=0)
-
-    # Problem selection minimum age
+    # Problem selection configuration (shared by practice and exam)
+    problem_selection_cooldown_days: int = Field(default=7, ge=0)
+    problem_selection_last_wrong_weight: float = Field(default=1.0, ge=0)
+    problem_selection_failure_rate_weight: float = Field(default=1.0, ge=0)
+    problem_selection_recency_weight: float = Field(default=1.0, ge=0)
     problem_selection_min_age_days: int = Field(default=3, ge=0)
 
     # Teacher password configuration

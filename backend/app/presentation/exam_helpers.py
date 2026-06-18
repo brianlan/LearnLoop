@@ -8,14 +8,11 @@ from bson import ObjectId
 from pydantic import ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 
-from app.domain.models import ExamItem, GradingStatus, Problem, SelectionPolicyConfig
+from app.domain.models import ExamItem, GradingStatus, Problem
 from app.domain.scoring import compute_summary
 from app.infrastructure.storage.mongo import Document
 from app.presentation.errors import ApiError
 from app.presentation.helpers import parse_object_id
-
-DEFAULT_SELECTION_POLICY = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0)
-
 
 def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
     try:

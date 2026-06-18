@@ -65,8 +65,11 @@ export interface ExamItem {
 }
 
 export interface SelectionPolicy {
+  cooldownDays: number;
+  lastWrongWeight: number;
+  failureRateWeight: number;
   recencyWeight: number;
-  failureWeight: number;
+  minProblemAgeDays: number;
 }
 
 export interface ExamConfigSnapshot {

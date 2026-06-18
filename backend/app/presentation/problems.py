@@ -432,10 +432,10 @@ async def get_problem_tracking(
     )
     problem_model = problem_document_to_model(problem_doc)
     config = PracticeSelectionConfig(
-        cooldown_days=settings.practice_cooldown_days,
-        last_wrong_weight=settings.practice_last_wrong_weight,
-        failure_rate_weight=settings.practice_failure_rate_weight,
-        recency_weight=settings.practice_recency_weight,
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
         min_problem_age_days=settings.problem_selection_min_age_days,
     )
     now = datetime.now(UTC)

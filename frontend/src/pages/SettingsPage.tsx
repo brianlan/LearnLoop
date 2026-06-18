@@ -66,11 +66,12 @@ interface SettingsResponse {
     secure: boolean;
     samesite: string;
   };
-  practice: {
+  problem_selection: {
     cooldown_days: number;
     last_wrong_weight: number;
     failure_rate_weight: number;
     recency_weight: number;
+    min_problem_age_days: number;
   };
 }
 
@@ -429,17 +430,18 @@ export function SettingsPage() {
         <SettingRow label="SameSite" value={data.session.samesite} />
       </SettingSection>
 
-      <SettingSection title="Practice Mode">
-        <SettingRow label="Cooldown Days" value={data.practice.cooldown_days} />
+      <SettingSection title="Problem Selection">
+        <SettingRow label="Cooldown Days" value={data.problem_selection.cooldown_days} />
         <SettingRow
           label="Last Wrong Weight"
-          value={data.practice.last_wrong_weight}
+          value={data.problem_selection.last_wrong_weight}
         />
         <SettingRow
           label="Failure Rate Weight"
-          value={data.practice.failure_rate_weight}
+          value={data.problem_selection.failure_rate_weight}
         />
-        <SettingRow label="Recency Weight" value={data.practice.recency_weight} />
+        <SettingRow label="Recency Weight" value={data.problem_selection.recency_weight} />
+        <SettingRow label="Min Problem Age Days" value={data.problem_selection.min_problem_age_days} />
       </SettingSection>
 
       <ChangeTeacherPasswordModal

@@ -20,7 +20,7 @@ from tests.api.conftest import FakeDatabase, make_user, make_problem
 def practice_app() -> FastAPI:
     application = create_app()
     database = FakeDatabase()
-    settings = Settings(practice_cooldown_days=7, problem_selection_min_age_days=0)
+    settings = Settings(problem_selection_cooldown_days=7, problem_selection_min_age_days=0)
     user = make_user(ObjectId(), "student")
 
     application.state.fake_database = database
@@ -265,7 +265,7 @@ async def test_next_problem_without_graph_dsl(
 def practice_app_with_min_age() -> FastAPI:
     application = create_app()
     database = FakeDatabase()
-    settings = Settings(practice_cooldown_days=7, problem_selection_min_age_days=3)
+    settings = Settings(problem_selection_cooldown_days=7, problem_selection_min_age_days=3)
     user = make_user(ObjectId(), "student")
 
     application.state.fake_database = database
