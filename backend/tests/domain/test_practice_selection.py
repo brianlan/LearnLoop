@@ -235,7 +235,7 @@ def test_failure_rate_uses_attempts_not_exposures():
         _make_problem("many-exposures-no-attempts", exposure_count=100, correct_count=0, failed_count=0),
         _make_problem("some-failed-attempts", exposure_count=5, correct_count=1, failed_count=4),
     ]
-    config = PracticeSelectionConfig()
+    config = PracticeSelectionConfig(failure_rate_weight=2.0)
     rng = random.Random(42)
 
     failed_count = 0
@@ -397,40 +397,42 @@ def test_compute_problem_weight_breakdown_all_components():
     # lastWrong = 2.0 * 1.5 = 3.0
     assert breakdown.lastWrong == 3.0
 
-    # failure_rate = 5 / 10 = 0.5, failure_score = 1.5
-    # failure = 1.5 * 2.0 = 3.0
-    assert breakdown.failure == 3.0
+    # failure_rate = 5 / 10 = 0.5, failure_score = 1.0 + (0.5 - 0.5)/0.5 = 1.0
+    # failure = 1.0 * 2.0 = 2.0
+    assert breakdown.failure == 2.0
 
     # days_since = 30, recency_score = 1.0 + 30/30 = 2.0
     # recency = 2.0 * 1.0 = 2.0
     assert breakdown.recency == 2.0
 
-    assert breakdown.total == 8.0
+    assert breakdown.total == 7.0
     assert breakdown.total == breakdown.lastWrong + breakdown.failure + breakdown.recency
 
 
 def test_compute_problem_weight_breakdown_never_tested():
     now = datetime.now(UTC)
-    problem = _make_problem("p1", last_tested_at=None, last_attempt_correct=None)
+    problem = _make_problem("p1", last_tested_at=None, last_attempt_correct=None, created_at=now - timedelta(days=30))
     config = PracticeSelectionConfig()
     breakdown = compute_problem_weight_breakdown(problem, config, now)
 
     assert breakdown.lastWrong == 1.0
     assert breakdown.failure == 1.0
-    assert breakdown.recency == 1.0
-    assert breakdown.total == 3.0
+    # Recency falls back to createdAt (30 days ago): score = 1.0 + 30/30 = 2.0
+    assert breakdown.recency == 2.0
+    assert breakdown.total == 4.0
 
 
 def test_compute_problem_weight_breakdown_zero_attempts():
     now = datetime.now(UTC)
-    problem = _make_problem("p1", exposure_count=0, correct_count=0, failed_count=0)
+    problem = _make_problem("p1", exposure_count=0, correct_count=0, failed_count=0, created_at=now - timedelta(days=30))
     config = PracticeSelectionConfig()
     breakdown = compute_problem_weight_breakdown(problem, config, now)
 
     assert breakdown.lastWrong == 1.0
     assert breakdown.failure == 1.0
-    assert breakdown.recency == 1.0
-    assert breakdown.total == 3.0
+    # Recency falls back to createdAt (30 days ago): score = 1.0 + 30/30 = 2.0
+    assert breakdown.recency == 2.0
+    assert breakdown.total == 4.0
 
 
 def test_compute_problem_weight_breakdown_uses_same_total_as_selection():

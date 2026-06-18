@@ -9,7 +9,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
 
 from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
-from app.domain.selection import select_problems
+from app.domain.selection import ProblemSelectionConfig, select_problems
 from app.domain.state import transition_exam_state
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import Document, MongoClientAdapter, get_mongo_adapter
@@ -71,6 +71,13 @@ async def create_exam(
     settings: SettingsDependency,
 ) -> CreateExamResponse:
     query = {"userId": current_user["_id"], "state": ExamState.IN_PROGRESS.value}
+    selection_config = ProblemSelectionConfig(
+        cooldown_days=settings.practice_cooldown_days,
+        last_wrong_weight=settings.practice_last_wrong_weight,
+        failure_rate_weight=settings.practice_failure_rate_weight,
+        recency_weight=settings.practice_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
     selection_policy = SelectionPolicyConfig(
         recencyWeight=1.0,
         failureWeight=1.0,
@@ -95,10 +102,12 @@ async def create_exam(
         if not eligible_documents:
             raise ApiError(422, "NO_ELIGIBLE_PROBLEMS", "No eligible problems available")
 
+        now = datetime.now(UTC)
         selected_models = select_problems(
             [problem_document_to_model(problem) for problem in eligible_documents],
             payload.maxProblemCount,
-            selection_policy,
+            selection_config,
+            now=now,
             rng=Random(),
         )
         if not selected_models:
@@ -111,7 +120,6 @@ async def create_exam(
             if problem.id is not None and problem.id in document_by_id
         ]
 
-        now = datetime.now(UTC)
         items = [
             make_exam_item(problem, order=index)
             for index, problem in enumerate(selected_documents, start=1)

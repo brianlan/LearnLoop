@@ -4,7 +4,14 @@ from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
 from .models import Problem
-from .selection import ensure_utc
+from .selection import (
+    ProblemSelectionConfig,
+    ScoreBreakdown,
+    compute_score_breakdown,
+    ensure_utc,
+    get_eligible_problems,
+    select_problems as _select_problems,
+)
 
 
 @dataclass
@@ -14,6 +21,15 @@ class PracticeSelectionConfig:
     failure_rate_weight: float = 1.0
     recency_weight: float = 1.0
     min_problem_age_days: int = 3
+
+    def to_shared_config(self) -> ProblemSelectionConfig:
+        return ProblemSelectionConfig(
+            cooldown_days=self.cooldown_days,
+            last_wrong_weight=self.last_wrong_weight,
+            failure_rate_weight=self.failure_rate_weight,
+            recency_weight=self.recency_weight,
+            min_problem_age_days=self.min_problem_age_days,
+        )
 
 
 @dataclass
@@ -35,24 +51,19 @@ def get_eligible_practice_problems(
     config: PracticeSelectionConfig,
     now: datetime,
 ) -> list[Problem]:
-    eligible = []
-    for p in problems:
-        if p.isDeleted:
-            continue
-        if not p.correctAnswer or not p.correctAnswer.normalizedText:
-            continue
-        if config.min_problem_age_days > 0:
-            created_at = ensure_utc(p.createdAt)
-            age_cutoff = now - timedelta(days=config.min_problem_age_days)
-            if created_at > age_cutoff:
-                continue
-        if p.tracking.lastTestedAt:
-            last_tested = ensure_utc(p.tracking.lastTestedAt)
-            cutoff = now - timedelta(days=config.cooldown_days)
-            if last_tested > cutoff:
-                continue
-        eligible.append(p)
-    return eligible
+    return get_eligible_problems(problems, config.to_shared_config(), now)
+
+
+def compute_problem_weight_breakdown(
+    problem: Problem, config: PracticeSelectionConfig, now: datetime
+) -> PracticeWeightBreakdown:
+    shared = compute_score_breakdown(problem, config.to_shared_config(), now)
+    return PracticeWeightBreakdown(
+        lastWrong=shared.last_wrong,
+        failure=shared.failure,
+        recency=shared.recency,
+        total=shared.total,
+    )
 
 
 def _has_practiceable_answer(problems: List[Problem]) -> list[Problem]:
@@ -75,55 +86,12 @@ def select_practice_problem(
             return PracticeSelectionResult(None, "no_eligible")
         return PracticeSelectionResult(None, "no_problems")
 
-    weighted = []
-    for problem in eligible:
-        weight = _compute_problem_weight(problem, config, now)
-        weighted.append((problem, weight))
+    selected = _select_problems(problems, 1, config.to_shared_config(), now, rng=rng)
 
-    total = sum(w for _, w in weighted)
-    if total <= 0:
-        selected = (rng or random).choice(eligible)
-    else:
-        r = (rng or random).random() * total
-        cumulative = 0.0
-        selected = eligible[0]
-        for problem, weight in weighted:
-            cumulative += weight
-            if r <= cumulative:
-                selected = problem
-                break
+    if not selected:
+        return PracticeSelectionResult(None, "no_eligible")
 
-    return PracticeSelectionResult(selected, "ok")
-
-
-def compute_problem_weight_breakdown(
-    problem: Problem, config: PracticeSelectionConfig, now: datetime
-) -> PracticeWeightBreakdown:
-    last_wrong_score = 1.0
-    if problem.tracking.lastAttemptCorrect is False:
-        last_wrong_score = 2.0
-
-    failure_score = 1.0
-    attempt_count = problem.tracking.correctCount + problem.tracking.failedCount
-    if attempt_count > 0:
-        failure_rate = problem.tracking.failedCount / attempt_count
-        failure_score = 1.0 + failure_rate
-
-    recency_score = 1.0
-    if problem.tracking.lastTestedAt:
-        days_since = (now - ensure_utc(problem.tracking.lastTestedAt)).days
-        recency_score = 1.0 + days_since / 30.0
-
-    last_wrong = last_wrong_score * config.last_wrong_weight
-    failure = failure_score * config.failure_rate_weight
-    recency = recency_score * config.recency_weight
-
-    return PracticeWeightBreakdown(
-        lastWrong=last_wrong,
-        failure=failure,
-        recency=recency,
-        total=last_wrong + failure + recency,
-    )
+    return PracticeSelectionResult(selected[0], "ok")
 
 
 def _compute_problem_weight(problem: Problem, config: PracticeSelectionConfig, now: datetime) -> float:
