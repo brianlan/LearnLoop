@@ -67,8 +67,8 @@ const BLOCKED_TOKENS = [
 const RENDER_TIMEOUT_MS = 30000;
 
 // Pinned JSXGraph version for security and stability
-const JSXGRAPH_VERSION = "1.10.0";
-const JSXGRAPH_CDN_URL = `https://cdn.jsdelivr.net/npm/jsxgraph@${JSXGRAPH_VERSION}/distrib/jsxgraphcore.js`;
+export const JSXGRAPH_VERSION = "1.10.0";
+export const JSXGRAPH_CDN_URL = `https://cdn.jsdelivr.net/npm/jsxgraph@${JSXGRAPH_VERSION}/distrib/jsxgraphcore.js`;
 
 export interface GraphSandboxProps {
   /** The JSXGraph DSL code to render */
@@ -337,6 +337,15 @@ export function validateDsl(dsl: string): string | null {
  * Exported for testing only.
  */
 export function generateIframeHtml(): string {
+  // CSP justification:
+  // - default-src 'none': block everything by default
+  // - script-src:
+  //   - 'unsafe-eval': required for new Function('board', dsl) to execute the DSL
+  //   - 'unsafe-inline': required for the inline <script> tag that sets up the sandbox
+  //   - ${JSXGRAPH_CDN_URL}: only allow JSXGraph from our pinned CDN version
+  // - style-src 'unsafe-inline': required for inline JSXGraph styles
+  // - img-src data:: allow data URIs for JSXGraph images
+  // - All other directives set to 'none' to block unnecessary capabilities
   return `<!DOCTYPE html>
 <html>
 <head>
