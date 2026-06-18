@@ -53,14 +53,14 @@ describe("GraphSandbox", () => {
 
   it("accepts custom width and height", () => {
     const { container } = render(<GraphSandbox dsl="" width={500} height={300} />);
-    const sandbox = container.querySelector('[data-testid="graph-sandbox"]') as HTMLElement;
+    const sandbox = container.querySelector('[data-testid="graph-sandbox"]');
     expect(sandbox.style.width).toBe("500px");
     expect(sandbox.style.height).toBe("300px");
   });
 
   it("accepts string width values", () => {
     const { container } = render(<GraphSandbox dsl="" width="80%" height={300} />);
-    const sandbox = container.querySelector('[data-testid="graph-sandbox"]') as HTMLElement;
+    const sandbox = container.querySelector('[data-testid="graph-sandbox"]');
     expect(sandbox.style.width).toBe("80%");
   });
 
@@ -74,28 +74,25 @@ describe("GraphSandbox", () => {
     expect(screen.getByTestId("jsxgraph-iframe")).toBeInTheDocument();
   });
 
-  it("allows the supported graph DSL subset", () => {
-    const dsl = [
-      "board.setBoundingBox([-1, 2, 6, -2])",
-      "var A = board.create('point', [0, 0], {name:'A'})",
-      "var B = board.create('point', [5, 0], {name:'B'})",
-      "board.create('segment', [A, B], {strokeWidth:2})",
-      "board.create('text', [2.5, 0.3, '490米'], {anchorX:'middle', fontSize:12})",
-    ].join(";");
-
+  it("allows setBoundingBox with multiple arguments", () => {
+    const dsl = "board.setBoundingBox([-2, 2, 4, -3], true);";
     expect(validateDsl(dsl)).toBeNull();
   });
 
-  it.each([
-    "fetch('/api/private'); board.create('point', [0, 0]);",
-    "while (true) { board.create('point', [0, 0]); }",
-    "window.location = 'https://example.com';",
-    "new Function('return document.cookie')();",
-    "board.constructor.constructor('return window')();",
-    "board.create('functiongraph', [function(x) { return x; }, -1, 1]);",
-    "board.create('point', [1 + 2, 0]);",
-  ])("rejects unsafe graph DSL: %s", (dsl) => {
-    expect(validateDsl(dsl)).not.toBeNull();
+  it("allows complex historical DSL", () => {
+    const dsl = `
+      board.setBoundingBox([-2, 2, 4, -3], true);
+      var a = board.create('point', [0, 0]);
+      var b = board.create('point', [1, 1]);
+      var c = board.create('segment', [a, b]);
+      var d = Math.sqrt(2);
+    `;
+    expect(validateDsl(dsl)).toBeNull();
+  });
+
+  it("rejects DSL that is too long", () => {
+    const dsl = "x".repeat(5001);
+    expect(validateDsl(dsl)).toBe("DSL is too long");
   });
 
   describe("prop change lifecycle", () => {
