@@ -488,9 +488,9 @@ async def test_problem_tracking_includes_practice_weight_with_exact_values(
     from app.infrastructure.config.settings import Settings, get_settings
 
     explicit_settings = Settings(
-        practice_last_wrong_weight=1.5,
-        practice_failure_rate_weight=2.0,
-        practice_recency_weight=1.0,
+        problem_selection_last_wrong_weight=1.5,
+        problem_selection_failure_rate_weight=2.0,
+        problem_selection_recency_weight=1.0,
     )
     problems_app.dependency_overrides[get_settings] = lambda: explicit_settings
 

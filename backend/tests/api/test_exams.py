@@ -305,7 +305,7 @@ async def test_create_exam_snapshots_selected_problems(exams_app: FastAPI, clien
     assert response.status_code == 201
     body = response.json()["exam"]
     assert body["state"] == "in-progress"
-    assert body["configSnapshot"]["selectionPolicy"] == {"recencyWeight": 1.0, "failureWeight": 1.0, "minProblemAgeDays": 0}
+    assert body["configSnapshot"]["selectionPolicy"] == {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 0}
     assert len(body["items"]) == 2
     assert body["items"][0]["problem"]["correctAnswer"] is None
     stored_exam = database["exams"]._documents[0]
@@ -322,7 +322,7 @@ async def test_create_exam_rejects_when_active_exam_exists(exams_app: FastAPI, c
             "_id": ObjectId(),
             "userId": user_id,
             "state": "in-progress",
-            "configSnapshot": {"maxProblemCount": 1, "selectionPolicy": {"recencyWeight": 1.0, "failureWeight": 1.0}, "generatedAt": datetime.now(UTC)},
+            "configSnapshot": {"maxProblemCount": 1, "selectionPolicy": {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 0}, "generatedAt": datetime.now(UTC)},
             "items": [],
             "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
             "createdAt": datetime.now(UTC),
@@ -693,5 +693,5 @@ async def test_create_exam_succeeds_with_old_problems_and_records_min_age(
 
     assert response.status_code == 201
     body = response.json()["exam"]
-    assert body["configSnapshot"]["selectionPolicy"]["minProblemAgeDays"] == 3
+    assert body["configSnapshot"]["selectionPolicy"] == {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 3}
     assert len(body["items"]) == 1

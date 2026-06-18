@@ -61,9 +61,11 @@ class ExamItemPayload(BaseModel):
 
 
 class SelectionPolicyPayload(BaseModel):
+    cooldownDays: int
+    lastWrongWeight: float
+    failureRateWeight: float
     recencyWeight: float
-    failureWeight: float
-    minProblemAgeDays: int = 3
+    minProblemAgeDays: int
 
 
 class ExamConfigSnapshotPayload(BaseModel):
@@ -193,14 +195,20 @@ def serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
     include_correct_answer = str(exam.get("state")) == ExamState.SUBMITTED.value
     config_snapshot = dict(exam.get("configSnapshot", {}))
     selection_policy = dict(config_snapshot.get("selectionPolicy", {}))
+    # Backward compatibility: historical snapshots may use failureWeight instead of failureRateWeight
+    failure_rate_weight = float(
+        selection_policy.get("failureRateWeight", selection_policy.get("failureWeight", 1.0))
+    )
     return ExamPayload(
         id=str(exam["_id"]),
         state=ExamState(exam["state"]),
         configSnapshot=ExamConfigSnapshotPayload(
             maxProblemCount=int(config_snapshot.get("maxProblemCount", 0)),
             selectionPolicy=SelectionPolicyPayload(
+                cooldownDays=int(selection_policy.get("cooldownDays", 7)),
+                lastWrongWeight=float(selection_policy.get("lastWrongWeight", 1.0)),
+                failureRateWeight=failure_rate_weight,
                 recencyWeight=float(selection_policy.get("recencyWeight", 1.0)),
-                failureWeight=float(selection_policy.get("failureWeight", 1.0)),
                 minProblemAgeDays=int(selection_policy.get("minProblemAgeDays", 3)),
             ),
             generatedAt=config_snapshot["generatedAt"],

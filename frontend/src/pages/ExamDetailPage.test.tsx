@@ -64,7 +64,7 @@ const baseExam = {
   state: "submitted",
   configSnapshot: {
     maxProblemCount: 5,
-    selectionPolicy: { recencyWeight: 1.0, failureWeight: 1.0 },
+    selectionPolicy: { cooldownDays: 7, lastWrongWeight: 1.0, failureRateWeight: 1.0, recencyWeight: 1.0, minProblemAgeDays: 3 },
     generatedAt: "2024-01-01T00:00:00Z",
   },
   items: [

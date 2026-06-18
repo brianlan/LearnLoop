@@ -118,8 +118,10 @@ class ClientMeta(BaseModel):
 
 
 class SelectionPolicyConfig(BaseModel):
+    cooldownDays: int = 7
+    lastWrongWeight: float = 1.0
+    failureRateWeight: float = 1.0
     recencyWeight: float
-    failureWeight: float
     minProblemAgeDays: int = 3
 
 

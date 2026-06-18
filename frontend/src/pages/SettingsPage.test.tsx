@@ -74,7 +74,7 @@ const mockSettings = {
     timeout_seconds: 45,
   },
   session: { cookie_name: "ll_session", secure: false, samesite: "lax" },
-  practice: { cooldown_days: 7, last_wrong_weight: 1.0, failure_rate_weight: 1.0, recency_weight: 1.0 },
+  problem_selection: { cooldown_days: 7, last_wrong_weight: 1.0, failure_rate_weight: 1.0, recency_weight: 1.0, min_problem_age_days: 3 },
 };
 
 describe("SettingsPage", () => {
@@ -147,9 +147,9 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("ll_session")).toBeInTheDocument();
   });
 
-  it("renders practice settings section", async () => {
+  it("renders problem selection settings section", async () => {
     renderWithProviders();
-    expect(await screen.findByText("Practice Mode")).toBeInTheDocument();
+    expect(await screen.findByText("Problem Selection")).toBeInTheDocument();
     expect(await screen.findByText("7")).toBeInTheDocument();
   });
 

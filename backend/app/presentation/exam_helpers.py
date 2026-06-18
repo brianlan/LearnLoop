@@ -14,7 +14,13 @@ from app.infrastructure.storage.mongo import Document
 from app.presentation.errors import ApiError
 from app.presentation.helpers import parse_object_id
 
-DEFAULT_SELECTION_POLICY = SelectionPolicyConfig(recencyWeight=1.0, failureWeight=1.0)
+DEFAULT_SELECTION_POLICY = SelectionPolicyConfig(
+    cooldownDays=7,
+    lastWrongWeight=1.0,
+    failureRateWeight=1.0,
+    recencyWeight=1.0,
+    minProblemAgeDays=3,
+)
 
 
 def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:

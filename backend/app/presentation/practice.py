@@ -103,7 +103,7 @@ async def get_practice_stats(
 
     problem_models = [problem_document_to_model(p) for p in problem_documents]
     config = PracticeSelectionConfig(
-        cooldown_days=settings.practice_cooldown_days,
+        cooldown_days=settings.problem_selection_cooldown_days,
         min_problem_age_days=settings.problem_selection_min_age_days,
     )
     now = datetime.now(UTC)
@@ -133,10 +133,10 @@ async def get_next_practice_problem(
         return PracticeNextResponse(status="no_problems")
 
     config = PracticeSelectionConfig(
-        cooldown_days=settings.practice_cooldown_days,
-        last_wrong_weight=settings.practice_last_wrong_weight,
-        failure_rate_weight=settings.practice_failure_rate_weight,
-        recency_weight=settings.practice_recency_weight,
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
         min_problem_age_days=settings.problem_selection_min_age_days,
     )
 
