@@ -93,7 +93,7 @@ def compute_score_breakdown(
         recency=recency,
         failure=failure,
         last_wrong=last_wrong,
-        total=recency + failure + last_wrong,
+        total=last_wrong + failure + recency,
     )
 
 
