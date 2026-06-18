@@ -97,3 +97,11 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
         "timeout_seconds": 79,
     }
     assert "vlm" not in payload
+    assert payload["problem_selection"] == {
+        "cooldown_days": 7,
+        "last_wrong_weight": 1.0,
+        "failure_rate_weight": 1.0,
+        "recency_weight": 1.0,
+        "min_problem_age_days": 3,
+    }
+    assert "practice" not in payload

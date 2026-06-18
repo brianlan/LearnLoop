@@ -695,3 +695,150 @@ async def test_create_exam_succeeds_with_old_problems_and_records_min_age(
     body = response.json()["exam"]
     assert body["configSnapshot"]["selectionPolicy"] == {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 3}
     assert len(body["items"]) == 1
+
+
+@pytest_asyncio.fixture
+async def exams_app_with_custom_policy() -> FastAPI:
+    application = create_app()
+    database = FakeDatabase()
+    adapter = FakeMongoAdapter()
+    storage = FakeStorage()
+    vlm = FakeVLMClient()
+    user = make_user()
+
+    settings = Settings(
+        problem_selection_cooldown_days=5,
+        problem_selection_last_wrong_weight=1.5,
+        problem_selection_failure_rate_weight=2.0,
+        problem_selection_recency_weight=2.5,
+        problem_selection_min_age_days=0,
+    )
+
+    application.state.fake_database = database
+    application.state.fake_adapter = adapter
+    application.state.fake_storage = storage
+    application.state.fake_grading_vlm = vlm
+    application.state.fake_vlm = vlm
+    application.state.primary_user = user
+
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
+    application.dependency_overrides[get_settings] = lambda: settings
+    application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_exam_storage] = lambda: storage
+    application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
+    return application
+
+
+@pytest_asyncio.fixture
+async def client_custom_policy(exams_app_with_custom_policy: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=exams_app_with_custom_policy)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest.mark.asyncio
+async def test_create_exam_snapshots_all_non_default_policy_values(
+    exams_app_with_custom_policy: FastAPI,
+    client_custom_policy: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app_with_custom_policy.state.fake_database
+    storage: FakeStorage = exams_app_with_custom_policy.state.fake_storage
+    user_id = exams_app_with_custom_policy.state.primary_user["_id"]
+    problem = make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(problem)
+    storage.seed(problem["sourceImage"]["bucket"], problem["sourceImage"]["objectKey"], b"img")
+
+    response = await client_custom_policy.post("/api/v1/exams", json={"maxProblemCount": 1})
+
+    assert response.status_code == 201
+    body = response.json()["exam"]
+    assert body["configSnapshot"]["selectionPolicy"] == {
+        "cooldownDays": 5,
+        "lastWrongWeight": 1.5,
+        "failureRateWeight": 2.0,
+        "recencyWeight": 2.5,
+        "minProblemAgeDays": 0,
+    }
+    stored_exam = database["exams"]._documents[0]
+    assert stored_exam["configSnapshot"]["selectionPolicy"] == {
+        "cooldownDays": 5,
+        "lastWrongWeight": 1.5,
+        "failureRateWeight": 2.0,
+        "recencyWeight": 2.5,
+        "minProblemAgeDays": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_exam_deserializes_legacy_selection_policy(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    exam_id = ObjectId()
+    database["exams"].seed(
+        {
+            "_id": exam_id,
+            "userId": user_id,
+            "state": "submitted",
+            "configSnapshot": {
+                "maxProblemCount": 1,
+                "selectionPolicy": {"recencyWeight": 1.5, "failureWeight": 1.7},
+                "generatedAt": datetime.now(UTC),
+            },
+            "items": [],
+            "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC),
+            "startedAt": None,
+            "submittedAt": None,
+            "updatedAt": datetime.now(UTC),
+        }
+    )
+
+    response = await client.get(f"/api/v1/exams/{exam_id}")
+
+    assert response.status_code == 200
+    body = response.json()["exam"]
+    assert body["configSnapshot"]["selectionPolicy"] == {
+        "cooldownDays": 7,
+        "lastWrongWeight": 1.0,
+        "failureRateWeight": 1.7,
+        "recencyWeight": 1.5,
+        "minProblemAgeDays": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_exam_prefers_failure_rate_weight_over_legacy_failure_weight(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    exam_id = ObjectId()
+    database["exams"].seed(
+        {
+            "_id": exam_id,
+            "userId": user_id,
+            "state": "submitted",
+            "configSnapshot": {
+                "maxProblemCount": 1,
+                "selectionPolicy": {"recencyWeight": 1.2, "failureWeight": 1.7, "failureRateWeight": 2.3},
+                "generatedAt": datetime.now(UTC),
+            },
+            "items": [],
+            "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC),
+            "startedAt": None,
+            "submittedAt": None,
+            "updatedAt": datetime.now(UTC),
+        }
+    )
+
+    response = await client.get(f"/api/v1/exams/{exam_id}")
+
+    assert response.status_code == 200
+    body = response.json()["exam"]
+    assert body["configSnapshot"]["selectionPolicy"]["failureRateWeight"] == 2.3

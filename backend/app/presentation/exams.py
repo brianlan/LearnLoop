@@ -82,7 +82,7 @@ async def create_exam(
         cooldownDays=settings.problem_selection_cooldown_days,
         lastWrongWeight=settings.problem_selection_last_wrong_weight,
         failureRateWeight=settings.problem_selection_failure_rate_weight,
-        recencyWeight=1.0,
+        recencyWeight=settings.problem_selection_recency_weight,
         minProblemAgeDays=settings.problem_selection_min_age_days,
     )
 
