@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { GraphSandbox, validateDsl } from "./GraphSandbox";
+import { GraphSandbox, validateDsl, generateIframeHtml } from "./GraphSandbox";
+
+// Pinned JSXGraph version - keep in sync with GraphSandbox.tsx
+const JSXGRAPH_VERSION = "1.10.0";
+const JSXGRAPH_CDN_URL = `https://cdn.jsdelivr.net/npm/jsxgraph@${JSXGRAPH_VERSION}/distrib/jsxgraphcore.js`;
 
 describe("GraphSandbox", () => {
   beforeEach(() => {
@@ -24,6 +28,27 @@ describe("GraphSandbox", () => {
     const iframe = screen.getByTestId("jsxgraph-iframe");
     expect(iframe).toBeInTheDocument();
     expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
+  });
+
+  it("generates iframe HTML with restrictive Content Security Policy", () => {
+    const html = generateIframeHtml();
+
+    // Verify CSP meta tag exists with restrictive directives
+    expect(html).toContain("<meta http-equiv=\"Content-Security-Policy\"");
+    expect(html).toContain("default-src 'none'");
+    expect(html).toContain("connect-src 'none'");
+    expect(html).toContain("frame-src 'none'");
+    expect(html).toContain("object-src 'none'");
+    expect(html).toContain("base-uri 'none'");
+    expect(html).toContain("form-action 'none'");
+  });
+
+  it("generates iframe HTML with pinned JSXGraph version", () => {
+    const html = generateIframeHtml();
+
+    // Verify pinned JSXGraph URL is used
+    expect(html).toContain(JSXGRAPH_CDN_URL);
+    expect(html).not.toContain("https://cdn.jsdelivr.net/npm/jsxgraph/distrib/jsxgraphcore.js");
   });
 
   it("accepts custom width and height", () => {

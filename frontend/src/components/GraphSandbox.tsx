@@ -66,6 +66,10 @@ const BLOCKED_TOKENS = [
 // Timeout for rendering operations (30 seconds)
 const RENDER_TIMEOUT_MS = 30000;
 
+// Pinned JSXGraph version for security and stability
+const JSXGRAPH_VERSION = "1.10.0";
+const JSXGRAPH_CDN_URL = `https://cdn.jsdelivr.net/npm/jsxgraph@${JSXGRAPH_VERSION}/distrib/jsxgraphcore.js`;
+
 export interface GraphSandboxProps {
   /** The JSXGraph DSL code to render */
   dsl: string;
@@ -330,14 +334,28 @@ export function validateDsl(dsl: string): string | null {
 /**
  * Generates the iframe HTML content with JSXGraph loader.
  * This is loaded into the sandboxed iframe.
+ * Exported for testing only.
  */
-function generateIframeHtml(): string {
+export function generateIframeHtml(): string {
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    script-src 'unsafe-eval' 'unsafe-inline' ${JSXGRAPH_CDN_URL};
+    style-src 'unsafe-inline';
+    img-src data:;
+    connect-src 'none';
+    font-src 'none';
+    frame-src 'none';
+    object-src 'none';
+    media-src 'none';
+    base-uri 'none';
+    form-action 'none';
+  ">
   <title>JSXGraph Sandbox</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsxgraph/distrib/jsxgraphcore.js"></script>
+  <script src="${JSXGRAPH_CDN_URL}"></script>
   <style>
     html, body {
       margin: 0;
@@ -453,11 +471,13 @@ interface MessagePayload {
 
 /**
  * GraphSandbox Component
- * 
+ *
  * Renders JSXGraph DSL in a sandboxed iframe with strict postMessage protocol.
- * 
+ *
  * Security features:
  * - iframe with sandbox="allow-scripts" (no allow-same-origin, no allow-forms)
+ * - Restrictive Content Security Policy (CSP) blocking all network requests and unsafe operations
+ * - Pinned JSXGraph version from trusted CDN
  * - DSL validation against denylist patterns
  * - Timeout handling with iframe recreation
  * - No external API access from iframe
