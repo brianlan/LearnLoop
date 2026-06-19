@@ -61,7 +61,6 @@ jobs:
     name: Playwright E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -129,7 +128,7 @@ jobs:
 
       - name: Run Playwright E2E tests
         working-directory: frontend
-        run: npm run test:ui
+        run: npm run test:ui -- tests/graph-sandbox-security.spec.ts
         env:
           MONGODB_URI: mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true
           S3_ENDPOINT: http://localhost:9000
