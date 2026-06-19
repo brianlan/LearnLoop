@@ -32,20 +32,22 @@ export function EditingStep({
   onCancel,
 }: EditingStepProps) {
   return (
-    <div style={{ padding: "32px" }}>
-      <h3 style={{ margin: "0 0 24px", fontSize: "18px", fontWeight: 600 }}>
+    <div style={{ padding: "2rem" }}>
+      <h3 style={{ margin: "0 0 1.5rem", fontSize: "1.25rem", fontWeight: 800 }}>
         Edit Problem Details
       </h3>
 
       {previewId && preview?.sourceImage && (
-        <div style={{ marginBottom: "24px" }}>
+        <div style={{ marginBottom: "1.5rem" }}>
           <label
             style={{
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              color: "var(--color-text-muted)",
               display: "block",
-              marginBottom: "6px",
-              fontSize: "14px",
-              fontWeight: 500,
-              color: "var(--color-text)",
+              marginBottom: "0.5rem"
             }}
           >
             Original Image
@@ -56,22 +58,25 @@ export function EditingStep({
             style={{
               maxWidth: "100%",
               maxHeight: "300px",
-              borderRadius: "6px",
+              borderRadius: "var(--radius-md)",
               border: "1px solid var(--color-border)",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
             }}
             data-testid="source-image"
           />
         </div>
       )}
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
         <label
           style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-muted)",
             display: "block",
-            marginBottom: "6px",
-            fontSize: "14px",
-            fontWeight: 500,
-            color: "var(--color-text)",
+            marginBottom: "0.5rem"
           }}
         >
           Problem Text
@@ -82,29 +87,32 @@ export function EditingStep({
           rows={4}
           style={{
             width: "100%",
-            padding: "10px 12px",
-            border: "1px solid var(--color-border-muted)",
-            borderRadius: "6px",
-            fontSize: "14px",
+            padding: "0.6rem 0.8rem",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            fontSize: "0.95rem",
             fontFamily: "inherit",
             resize: "vertical",
             boxSizing: "border-box",
-            backgroundColor: "var(--color-surface)",
+            backgroundColor: "var(--color-bg)",
             color: "var(--color-text)",
+            outline: "none",
           }}
           placeholder="Enter the problem statement..."
           data-testid="text-input"
         />
       </div>
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
         <label
           style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-muted)",
             display: "block",
-            marginBottom: "6px",
-            fontSize: "14px",
-            fontWeight: 500,
-            color: "var(--color-text)",
+            marginBottom: "0.5rem"
           }}
         >
           Subject
@@ -114,14 +122,15 @@ export function EditingStep({
           onChange={(e) => onFieldChange("subject", e.target.value)}
           style={{
             width: "100%",
-            padding: "10px 12px",
-            border: "1px solid var(--color-border-muted)",
-            borderRadius: "6px",
-            fontSize: "14px",
+            padding: "0.6rem 0.8rem",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            fontSize: "0.9rem",
             fontFamily: "inherit",
             boxSizing: "border-box",
-            backgroundColor: "var(--color-surface)",
+            backgroundColor: "var(--color-bg)",
             color: "var(--color-text)",
+            outline: "none",
           }}
           data-testid="subject-input"
         >
@@ -130,14 +139,16 @@ export function EditingStep({
         </select>
       </div>
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
         <label
           style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-muted)",
             display: "block",
-            marginBottom: "6px",
-            fontSize: "14px",
-            fontWeight: 500,
-            color: "var(--color-text)",
+            marginBottom: "0.5rem"
           }}
         >
           Problem Type
@@ -147,14 +158,15 @@ export function EditingStep({
           onChange={(e) => onFieldChange("problemType", e.target.value)}
           style={{
             width: "100%",
-            padding: "10px 12px",
-            border: "1px solid var(--color-border-muted)",
-            borderRadius: "6px",
-            fontSize: "14px",
+            padding: "0.6rem 0.8rem",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            fontSize: "0.9rem",
             fontFamily: "inherit",
             boxSizing: "border-box",
-            backgroundColor: "var(--color-surface)",
+            backgroundColor: "var(--color-bg)",
             color: "var(--color-text)",
+            outline: "none",
           }}
           data-testid="problem-type-input"
         >
@@ -165,14 +177,16 @@ export function EditingStep({
         </select>
       </div>
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
         <label
           style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-muted)",
             display: "block",
-            marginBottom: "6px",
-            fontSize: "14px",
-            fontWeight: 500,
-            color: "var(--color-text)",
+            marginBottom: "0.5rem"
           }}
         >
           Graph DSL
@@ -183,28 +197,31 @@ export function EditingStep({
           rows={6}
           style={{
             width: "100%",
-            padding: "10px 12px",
-            border: "1px solid var(--color-border-muted)",
-            borderRadius: "6px",
-            fontSize: "13px",
+            padding: "0.6rem 0.8rem",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            fontSize: "0.875rem",
             fontFamily: "monospace",
             resize: "vertical",
             boxSizing: "border-box",
-            backgroundColor: "var(--color-surface)",
+            backgroundColor: "var(--color-bg)",
             color: "var(--color-text)",
+            outline: "none",
           }}
           placeholder="Enter JSXGraph DSL code..."
           data-testid="graph-dsl-input"
         />
 
         {formData.graphDsl && (
-          <div style={{ marginTop: "16px" }}>
+          <div style={{ marginTop: "1rem" }}>
             <div
               style={{
-                fontSize: "14px",
-                fontWeight: 500,
-                color: "var(--color-text)",
-                marginBottom: "8px",
+                fontSize: "0.75rem",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: "var(--color-text-muted)",
+                marginBottom: "0.5rem",
               }}
             >
               Graph Preview
@@ -216,7 +233,18 @@ export function EditingStep({
               onRender={onClearGraphError}
             />
             {graphError && (
-              <div style={{ marginTop: "8px", color: "var(--color-text-danger)", fontSize: "14px" }}>
+              <div 
+                className="badge badge-danger"
+                style={{ 
+                  marginTop: "0.75rem",
+                  padding: "0.5rem 0.75rem",
+                  fontSize: "0.875rem",
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: 500,
+                  display: "block"
+                }}
+              >
                 {graphError}
               </div>
             )}
@@ -224,14 +252,16 @@ export function EditingStep({
         )}
       </div>
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
         <label
           style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-muted)",
             display: "block",
-            marginBottom: "6px",
-            fontSize: "14px",
-            fontWeight: 500,
-            color: "var(--color-text)",
+            marginBottom: "0.5rem"
           }}
         >
           Correct Answer
@@ -242,14 +272,15 @@ export function EditingStep({
           onChange={(e) => onFieldChange("correctAnswer", e.target.value)}
           style={{
             width: "100%",
-            padding: "10px 12px",
-            border: "1px solid var(--color-border-muted)",
-            borderRadius: "6px",
-            fontSize: "14px",
+            padding: "0.6rem 0.8rem",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            fontSize: "0.9rem",
             fontFamily: "inherit",
             boxSizing: "border-box",
-            backgroundColor: "var(--color-surface)",
+            backgroundColor: "var(--color-bg)",
             color: "var(--color-text)",
+            outline: "none",
           }}
           placeholder="Enter the correct answer..."
           data-testid="correct-answer-input"
@@ -257,14 +288,16 @@ export function EditingStep({
       </div>
 
       {(formData.problemType === "single-choice" || formData.problemType === "multi-choice") && (
-        <div style={{ marginBottom: "24px" }}>
+        <div style={{ marginBottom: "1.5rem" }}>
           <label
             style={{
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              color: "var(--color-text-muted)",
               display: "block",
-              marginBottom: "6px",
-              fontSize: "14px",
-              fontWeight: 500,
-              color: "var(--color-text)",
+              marginBottom: "0.5rem"
             }}
           >
             Detected Choices
@@ -272,20 +305,28 @@ export function EditingStep({
           {(() => {
             const choices = parseOptions(formData.text);
             return choices.length > 0 ? (
-              <div data-testid="detected-choices" style={{ padding: "10px 12px", backgroundColor: "var(--color-surface-muted)", borderRadius: "6px", border: "1px solid var(--color-border)" }}>
-                <div data-testid="detected-choices-count" style={{ fontSize: "12px", color: "var(--color-text-muted)", marginBottom: "8px" }}>
+              <div 
+                data-testid="detected-choices" 
+                style={{ 
+                  padding: "0.75rem 1rem", 
+                  backgroundColor: "var(--color-surface-muted)", 
+                  borderRadius: "var(--radius-md)", 
+                  border: "1px solid var(--color-border)" 
+                }}
+              >
+                <div data-testid="detected-choices-count" style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", marginBottom: "0.5rem", fontWeight: 600 }}>
                   {choices.length} choice{choices.length !== 1 ? "s" : ""} detected
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
                   {choices.map((choice, index) => (
-                    <div key={index} style={{ fontSize: "14px", color: "var(--color-text)", padding: "2px 0" }}>
+                    <div key={index} style={{ fontSize: "0.9rem", color: "var(--color-text)", fontWeight: 500 }}>
                       {choice}
                     </div>
                   ))}
                 </div>
               </div>
             ) : (
-              <div data-testid="detected-choices" style={{ padding: "10px 12px", backgroundColor: "var(--color-surface-muted)", borderRadius: "6px", border: "1px solid var(--color-border)", fontSize: "14px", color: "var(--color-text-muted)" }}>
+              <div data-testid="detected-choices" style={{ padding: "0.75rem 1rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)", fontSize: "0.9rem", color: "var(--color-text-muted)", fontWeight: 500 }}>
                 No choices detected in problem text
               </div>
             );
@@ -293,7 +334,7 @@ export function EditingStep({
         </div>
       )}
 
-      <div style={{ marginBottom: "24px" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
         <TagInput
           tags={formData.tags}
           onChange={(tags) => onFieldChange("tags", tags)}
@@ -305,31 +346,29 @@ export function EditingStep({
 
       {error && (
         <div
+          className="badge badge-danger"
           style={{
-            padding: "12px 16px",
-            backgroundColor: "var(--color-danger-bg)",
-            borderRadius: "6px",
-            color: "var(--color-text-danger)",
-            fontSize: "14px",
-            marginBottom: "16px",
+            padding: "0.75rem 1rem",
+            fontSize: "0.875rem",
+            textTransform: "none",
+            letterSpacing: "normal",
+            fontWeight: 500,
+            display: "block",
+            marginBottom: "1.5rem"
           }}
         >
           {error}
         </div>
       )}
 
-      <div style={{ display: "flex", gap: "12px" }}>
+      <div style={{ display: "flex", gap: "0.75rem", borderTop: "1px solid var(--color-border)", paddingTop: "1.5rem", marginTop: "1rem" }}>
         <button
           onClick={() => setCurrentStep("confirming")}
+          className="btn btn-primary"
           style={{
-            padding: "10px 20px",
-            backgroundColor: "var(--color-primary)",
-            color: "white",
-            border: "none",
-            borderRadius: "6px",
-            cursor: "pointer",
-            fontSize: "14px",
-            fontWeight: 500,
+            padding: "0.5rem 1.25rem",
+            fontSize: "0.875rem",
+            fontWeight: 700,
           }}
           data-testid="review-button"
         >
@@ -337,15 +376,11 @@ export function EditingStep({
         </button>
         <button
           onClick={onCancel}
+          className="btn btn-secondary"
           style={{
-            padding: "10px 20px",
-            backgroundColor: "var(--color-surface)",
-            color: "var(--color-text)",
-            border: "1px solid var(--color-border-muted)",
-            borderRadius: "6px",
-            cursor: "pointer",
-            fontSize: "14px",
-            fontWeight: 500,
+            padding: "0.5rem 1.25rem",
+            fontSize: "0.875rem",
+            fontWeight: 700,
           }}
         >
           Cancel

@@ -7,11 +7,15 @@ export function TagPill({ tag }: TagPillProps) {
     <span
       key={tag}
       style={{
-        padding: "0.125rem 0.375rem",
-        background: "var(--color-surface-muted)",
-        borderRadius: "4px",
+        padding: "0.2rem 0.6rem",
+        background: "var(--color-tag-bg)",
+        color: "var(--color-primary-text)",
+        borderRadius: "var(--radius-full)",
         fontSize: "0.75rem",
+        fontWeight: 600,
         display: "inline-flex",
+        border: "1px solid rgba(79, 70, 229, 0.1)",
+        transition: "all var(--transition-fast)"
       }}
     >
       {tag}

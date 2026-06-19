@@ -322,13 +322,16 @@ export function ProblemsPage() {
     justifyContent: "space-between",
     alignItems: "center",
     gap: "0.5rem",
-    padding: "0.45rem 0.5rem",
-    borderRadius: "4px",
+    padding: "0.5rem 0.75rem",
+    borderRadius: "var(--radius-md)",
     border: active ? "1px solid var(--color-primary)" : "1px solid transparent",
     background: active ? "var(--color-primary-bg)" : "transparent",
-    color: active ? "var(--color-primary-text)" : "var(--color-text)",
+    color: active ? "var(--color-primary-text)" : "var(--color-text-muted)",
     cursor: "pointer",
     textAlign: "left",
+    fontWeight: active ? 700 : 500,
+    fontSize: "0.875rem",
+    transition: "all var(--transition-fast)",
   });
 
   const renderFolderNode = (folder: FolderNode, depth = 0): JSX.Element => {
@@ -463,21 +466,26 @@ export function ProblemsPage() {
       </li>
     );
   };
-
   return (
-    <main style={{ padding: "1rem", minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-surface-muted)", color: "var(--color-text)" }}>
-      <h1>Problems</h1>
+    <main style={{ padding: "2rem", minHeight: "calc(100vh - 60px)", backgroundColor: "var(--color-bg)", color: "var(--color-text)", transition: "background var(--transition-normal)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", gap: "1rem", flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: "2rem", fontWeight: 800, margin: 0, letterSpacing: "-0.03em" }}>Problems</h1>
+      </div>
 
       {feedback && (
         <div
           role="status"
+          className={`badge badge-${feedback.type === "success" ? "success" : "danger"}`}
           style={{
-            marginBottom: "1rem",
-            padding: "0.75rem",
-            borderRadius: "4px",
-            border: `1px solid ${feedback.type === "success" ? "var(--color-success-border)" : "var(--color-danger-border)"}`,
-            background: feedback.type === "success" ? "var(--color-success-bg)" : "var(--color-danger-bg)",
-            color: feedback.type === "success" ? "var(--color-success-text)" : "var(--color-text-danger-secondary)",
+            display: "block",
+            marginBottom: "1.5rem",
+            padding: "1rem",
+            borderRadius: "var(--radius-md)",
+            fontSize: "0.875rem",
+            textTransform: "none",
+            fontWeight: 500,
+            letterSpacing: "normal",
+            lineHeight: "1.4"
           }}
         >
           {feedback.message}
@@ -488,19 +496,22 @@ export function ProblemsPage() {
         <div
           role="dialog"
           aria-label="Move folder"
+          className="card-premium"
           style={{
-            marginBottom: "1rem",
-            padding: "1rem",
-            border: "1px solid var(--color-border)",
-            borderRadius: "4px",
-            background: "var(--color-surface-muted)",
+            marginBottom: "1.5rem",
+            padding: "1.25rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "1rem",
+            flexWrap: "wrap"
           }}
         >
-          <label htmlFor="folder-parent-picker">Move {movingFolder?.name ?? "folder"} to: </label>
+          <label htmlFor="folder-parent-picker" style={{ fontWeight: 600, fontSize: "0.9rem" }}>Move {movingFolder?.name ?? "folder"} to: </label>
           <select
             id="folder-parent-picker"
             value={movingParentId}
             onChange={(event) => setMovingParentId(event.target.value)}
+            style={{ width: "auto", minWidth: "180px", padding: "0.5rem", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)", backgroundColor: "var(--color-bg)" }}
           >
             <option value="root">Root</option>
             {flatFolders
@@ -511,24 +522,29 @@ export function ProblemsPage() {
                 </option>
               ))}
           </select>
-          <button type="button" onClick={moveFolder}>Save move</button>
-          <button type="button" onClick={() => setMovingFolderId(null)}>Cancel</button>
+          <button type="button" className="btn btn-primary" style={{ padding: "0.5rem 1rem", fontSize: "0.875rem" }} onClick={moveFolder}>Save move</button>
+          <button type="button" className="btn btn-secondary" style={{ padding: "0.5rem 1rem", fontSize: "0.875rem" }} onClick={() => setMovingFolderId(null)}>Cancel</button>
         </div>
       )}
 
       <div
         style={{
-          marginBottom: "1rem",
+          marginBottom: "1.5rem",
+          padding: "1.25rem 1.5rem",
+          borderRadius: "var(--radius-xl)",
+          backgroundColor: "var(--color-surface)",
+          border: "1px solid var(--color-border)",
+          boxShadow: "var(--shadow-sm)",
           display: "flex",
-          gap: "1rem",
-          alignItems: "end",
+          gap: "1.25rem",
+          alignItems: "center",
           flexWrap: "wrap",
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", alignItems: "center" }}>
           <div>
-            <label htmlFor="search-input">Search problems: </label>
+            <label htmlFor="search-input" style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.375rem" }}>Search problems: </label>
             <input
               id="search-input"
               type="text"
@@ -538,30 +554,50 @@ export function ProblemsPage() {
                 setPage(1);
                 exitSelectionMode();
               }}
-              placeholder="Search by text or tag..."
+              placeholder="Search text or tag..."
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface-muted)",
+                color: "var(--color-text)",
+                fontSize: "0.875rem",
+                minWidth: "220px",
+                outline: "none"
+              }}
             />
           </div>
-        <div>
-          <label htmlFor="tag-filter">Filter by Tag: </label>
-          <select
-            id="tag-filter"
-            value={selectedTag}
-            onChange={(e) => {
-              setSelectedTag(e.target.value);
-              setPage(1);
-              exitSelectionMode();
-            }}
-          >
-            <option value="">All Tags</option>
-            {tags.map((tag) => (
-              <option key={tag} value={tag}>
-                {tag}
-              </option>
-            ))}
-          </select>
-        </div>
           <div>
-            <label htmlFor="type-filter">Filter by Type: </label>
+            <label htmlFor="tag-filter" style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.375rem" }}>Filter by Tag: </label>
+            <select
+              id="tag-filter"
+              value={selectedTag}
+              onChange={(e) => {
+                setSelectedTag(e.target.value);
+                setPage(1);
+                exitSelectionMode();
+              }}
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface-muted)",
+                color: "var(--color-text)",
+                fontSize: "0.875rem",
+                minWidth: "150px",
+                outline: "none"
+              }}
+            >
+              <option value="">All Tags</option>
+              {tags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="type-filter" style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.375rem" }}>Filter by Type: </label>
             <select
               id="type-filter"
               value={selectedProblemType}
@@ -569,6 +605,16 @@ export function ProblemsPage() {
                 setSelectedProblemType(e.target.value);
                 setPage(1);
                 exitSelectionMode();
+              }}
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface-muted)",
+                color: "var(--color-text)",
+                fontSize: "0.875rem",
+                minWidth: "160px",
+                outline: "none"
               }}
             >
               {PROBLEM_TYPE_FILTER_OPTIONS.map((option) => (
@@ -579,11 +625,21 @@ export function ProblemsPage() {
             </select>
           </div>
           <div>
-            <label htmlFor="sort-by">Sort by: </label>
+            <label htmlFor="sort-by" style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.375rem" }}>Sort by: </label>
             <select
               id="sort-by"
               value={sortBy}
               onChange={(e) => updateSortBy(e.target.value as ProblemSortBy)}
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface-muted)",
+                color: "var(--color-text)",
+                fontSize: "0.875rem",
+                minWidth: "140px",
+                outline: "none"
+              }}
             >
               {SORT_BY_OPTIONS.map((option) => (
                 <option key={option.value || "default"} value={option.value}>
@@ -593,12 +649,22 @@ export function ProblemsPage() {
             </select>
           </div>
           <div>
-            <label htmlFor="sort-order">Order: </label>
+            <label htmlFor="sort-order" style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.375rem" }}>Order: </label>
             <select
               id="sort-order"
               value={sortOrder}
               onChange={(e) => updateSortOrder(e.target.value as ProblemSortOrder)}
               disabled={!sortBy}
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: !sortBy ? "var(--color-disabled-bg)" : "var(--color-surface-muted)",
+                color: !sortBy ? "var(--color-disabled-text)" : "var(--color-text)",
+                fontSize: "0.875rem",
+                minWidth: "130px",
+                outline: "none"
+              }}
             >
               {SORT_ORDER_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -608,7 +674,7 @@ export function ProblemsPage() {
             </select>
           </div>
         </div>
-        <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
+        <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem", fontWeight: 600 }}>
           {total === 0
             ? selectedFolderId
               ? `No problems found in ${activeFolderLabel}`
@@ -617,42 +683,38 @@ export function ProblemsPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isSidebarCollapsed ? "minmax(0, 1fr)" : "260px minmax(0, 1fr)", gap: "1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isSidebarCollapsed ? "minmax(0, 1fr)" : "280px minmax(0, 1fr)", gap: "1.5rem" }}>
         {isSidebarCollapsed ? (
           <div
+            className="card-premium"
             style={{
-              marginBottom: "1rem",
+              marginBottom: "1.5rem",
               display: "flex",
               alignItems: "center",
-              gap: "0.75rem",
-              padding: "0.75rem",
-              border: "1px solid var(--color-border)",
-              borderRadius: "4px",
-              backgroundColor: "var(--color-surface)",
+              gap: "1rem",
+              padding: "0.75rem 1.25rem",
             }}
           >
-            <button type="button" onClick={() => setIsSidebarCollapsed(false)}>Show folders</button>
-            <span>Folder: {activeFolderLabel}</span>
+            <button type="button" className="btn btn-secondary" style={{ padding: "0.4rem 0.75rem", fontSize: "0.825rem" }} onClick={() => setIsSidebarCollapsed(false)}>Show folders</button>
+            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Folder: {activeFolderLabel}</span>
           </div>
         ) : (
           <aside
             aria-label="Problem folders"
+            className="card-premium"
             style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: "4px",
-              padding: "0.75rem",
+              padding: "1.25rem",
               alignSelf: "start",
-              backgroundColor: "var(--color-surface)",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-              <strong>Folders</strong>
-              <button type="button" onClick={() => setIsSidebarCollapsed(true)}>Hide</button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
+              <strong style={{ fontSize: "1.125rem", fontWeight: 800 }}>Folders</strong>
+              <button type="button" className="btn btn-secondary" style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }} onClick={() => setIsSidebarCollapsed(true)}>Hide</button>
             </div>
-            <button type="button" onClick={() => createFolder(null)} style={{ width: "100%", marginBottom: "0.75rem" }}>
+            <button type="button" className="btn btn-primary" onClick={() => createFolder(null)} style={{ width: "100%", marginBottom: "1rem", padding: "0.5rem 1rem", fontSize: "0.875rem" }}>
               Create folder
             </button>
-            <nav aria-label="Folder filters">
+            <nav aria-label="Folder filters" style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
               <button
                 type="button"
                 aria-label="Show All Problems"
@@ -660,7 +722,7 @@ export function ProblemsPage() {
                 style={folderButtonStyle(!selectedFolderId)}
               >
                 <span>All Problems</span>
-                <span aria-label="All Problems count">{folderTree?.allProblemsCount ?? 0}</span>
+                <span aria-label="All Problems count" className="badge badge-muted" style={{ padding: "0.1rem 0.4rem", fontSize: "0.7rem", borderRadius: "var(--radius-sm)" }}>{folderTree?.allProblemsCount ?? 0}</span>
               </button>
               <button
                 type="button"
@@ -669,9 +731,9 @@ export function ProblemsPage() {
                 style={folderButtonStyle(selectedFolderId === UNFILED_FOLDER_ID)}
               >
                 <span>Unfiled</span>
-                <span aria-label="Unfiled count">{folderTree?.unfiledCount ?? 0}</span>
+                <span aria-label="Unfiled count" className="badge badge-muted" style={{ padding: "0.1rem 0.4rem", fontSize: "0.7rem", borderRadius: "var(--radius-sm)" }}>{folderTree?.unfiledCount ?? 0}</span>
               </button>
-              <ul style={{ listStyle: "none", margin: "0.75rem 0 0", padding: 0 }}>
+              <ul style={{ listStyle: "none", margin: "0.5rem 0 0", padding: 0 }}>
                 {folders.map((folder) => renderFolderNode(folder))}
               </ul>
             </nav>
@@ -682,20 +744,24 @@ export function ProblemsPage() {
           {isSelectionMode && (
             <div
               aria-label="Bulk actions"
+              className="card-premium"
               style={{
-                marginBottom: "1rem",
-                padding: "0.75rem",
-                border: "1px solid var(--color-border)",
-                borderRadius: "4px",
+                marginBottom: "1.5rem",
+                padding: "0.75rem 1.25rem",
+                border: "1px solid var(--color-primary)",
+                backgroundColor: "var(--color-primary-bg)",
                 display: "flex",
-                gap: "0.75rem",
+                gap: "1rem",
                 alignItems: "center",
                 flexWrap: "wrap",
+                boxShadow: "var(--shadow-sm)"
               }}
             >
-              <span>{selectedProblemIds.size} selected</span>
+              <span style={{ color: "var(--color-primary-text)", fontWeight: 700, fontSize: "0.9rem" }}>{selectedProblemIds.size} selected</span>
               <button
                 type="button"
+                className="btn btn-secondary"
+                style={{ padding: "0.4rem 0.75rem", fontSize: "0.825rem" }}
                 onClick={() => {
                   const currentPageIds = problems.map((p) => p.id);
                   const allSelected = currentPageIds.every((id) => selectedProblemIds.has(id));
@@ -716,11 +782,12 @@ export function ProblemsPage() {
               >
                 {problems.every((p) => selectedProblemIds.has(p.id)) ? "Deselect all" : "Select all"}
               </button>
-              <label htmlFor="bulk-folder-picker">Move to: </label>
+              <label htmlFor="bulk-folder-picker" style={{ color: "var(--color-primary-text)", fontWeight: 600, fontSize: "0.9rem" }}>Move to: </label>
               <select
                 id="bulk-folder-picker"
                 value={bulkTarget}
                 onChange={(event) => setBulkTarget(event.target.value)}
+                style={{ width: "auto", minWidth: "150px", padding: "0.4rem 0.6rem", fontSize: "0.875rem", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)", backgroundColor: "var(--color-surface)" }}
               >
                 <option value={UNFILED_FOLDER_ID}>Unfiled</option>
                 {flatFolders.map((folder) => (
@@ -729,23 +796,23 @@ export function ProblemsPage() {
                   </option>
                 ))}
               </select>
-              <button type="button" onClick={moveSelectedProblems} disabled={selectedProblemIds.size === 0 || bulkMoveMutation.isPending}>
+              <button type="button" className="btn btn-primary" style={{ padding: "0.4rem 0.75rem", fontSize: "0.825rem" }} onClick={moveSelectedProblems} disabled={selectedProblemIds.size === 0 || bulkMoveMutation.isPending}>
                 Move selected
               </button>
-              <button type="button" onClick={() => setSelectedProblemIds(new Set())}>Clear selection</button>
-              <button type="button" onClick={exitSelectionMode}>Quit selection</button>
+              <button type="button" className="btn btn-secondary" style={{ padding: "0.4rem 0.75rem", fontSize: "0.825rem" }} onClick={() => setSelectedProblemIds(new Set())}>Clear selection</button>
+              <button type="button" className="btn btn-secondary" style={{ padding: "0.4rem 0.75rem", fontSize: "0.825rem" }} onClick={exitSelectionMode}>Quit selection</button>
             </div>
           )}
 
       {isLoadingProblems ? (
-        <div>Loading...</div>
+        <div style={{ padding: "2rem", textAlign: "center", color: "var(--color-text-muted)", fontWeight: 600 }}>Loading problems...</div>
       ) : (
         <>
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-              gap: "1rem",
+              gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+              gap: "1.5rem",
             }}
           >
             {problems.map((problem) => (
@@ -756,61 +823,73 @@ export function ProblemsPage() {
                 onPointerUp={handleProblemPointerUpOrCancel}
                 onPointerCancel={handleProblemPointerUpOrCancel}
                 onPointerLeave={handleProblemPointerUpOrCancel}
+                className="card-premium card-hover"
                 style={{
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "4px",
-                  padding: "1rem",
                   cursor: "pointer",
                   opacity: problem.isDeleted ? 0.5 : 1,
-                  backgroundColor: "var(--color-surface)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.75rem"
                 }}
               >
                 {isSelectionMode && (
                   <label
                     onClick={(event) => event.stopPropagation()}
-                    style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}
+                    style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem", fontWeight: 600, fontSize: "0.875rem", color: "var(--color-text-muted)" }}
                   >
                     <input
                       type="checkbox"
                       aria-label={`Select problem ${formatProblemReference(problem.id)}`}
                       checked={selectedProblemIds.has(problem.id)}
                       onChange={() => toggleProblemSelection(problem.id)}
+                      style={{ width: "auto", cursor: "pointer" }}
                     />
                     Select problem
                   </label>
                 )}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <strong title={problem.id}>Problem {formatProblemReference(problem.id)}</strong>
-                  <span
-                    style={{
-                      marginLeft: "0.5rem",
-                      padding: "0.25rem 0.5rem",
-                      background: "var(--color-surface-muted)",
-                      borderRadius: "4px",
-                      fontSize: "0.875rem",
-                    }}
-                  >
-                    {problem.problemType}
-                  </span>
-                  {problem.isDeleted && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+                  <strong title={problem.id} style={{ fontSize: "1rem", color: "var(--color-primary)", fontWeight: 700 }}>
+                    Problem {formatProblemReference(problem.id)}
+                  </strong>
+                  <div style={{ display: "flex", gap: "0.375rem" }}>
                     <span
+                      className="badge badge-muted"
                       style={{
-                        marginLeft: "0.5rem",
-                        padding: "0.25rem 0.5rem",
-                        background: "var(--color-danger-bg)",
-                        borderRadius: "4px",
-                        fontSize: "0.875rem",
+                        fontSize: "0.75rem",
+                        padding: "0.15rem 0.5rem",
+                        borderRadius: "var(--radius-sm)",
+                        fontWeight: 600,
+                        textTransform: "none",
+                        letterSpacing: "normal"
                       }}
                     >
-                      Deleted
+                      {problem.problemType}
                     </span>
-                  )}
+                    {problem.isDeleted && (
+                      <span
+                        className="badge badge-danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          padding: "0.15rem 0.5rem",
+                          borderRadius: "var(--radius-sm)",
+                          fontWeight: 600,
+                          textTransform: "none",
+                          letterSpacing: "normal"
+                        }}
+                      >
+                        Deleted
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div
                   style={{
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
+                    fontSize: "0.925rem",
+                    color: "var(--color-text)",
+                    lineHeight: "1.4"
                   }}
                 >
                   {problem.text}
@@ -827,7 +906,7 @@ export function ProblemsPage() {
           />
 
           {problems.length === 0 && (
-            <div style={{ textAlign: "center", marginTop: "2rem" }}>
+            <div style={{ textAlign: "center", padding: "3rem 1rem", color: "var(--color-text-muted)" }}>
               {selectedFolderId ? `No problems found in ${activeFolderLabel}` : "No problems found"}
             </div>
           )}

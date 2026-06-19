@@ -42,21 +42,33 @@ function AppShell({ children }: { children: ReactNode }) {
   return (
     <>
       <header
+        className="glass-header"
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          gap: "1rem",
-          padding: "0.75rem 1rem",
-          borderBottom: "1px solid var(--color-border)",
-          backgroundColor: "var(--color-surface)",
+          gap: "1.5rem",
+          padding: "0.875rem 1.5rem",
           position: "sticky",
           top: 0,
           zIndex: 10,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-          <strong>LearnLoop</strong>
+        <div style={{ display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
+          <strong 
+            style={{ 
+              fontSize: "1.25rem", 
+              fontWeight: 800, 
+              letterSpacing: "-0.03em",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.25rem"
+            }}
+          >
+            <span className="text-gradient">Learn</span>
+            <span style={{ color: "var(--color-text)" }}>Loop</span>
+            <span style={{ width: "6px", height: "6px", backgroundColor: "var(--color-primary)", borderRadius: "50%", display: "inline-block" }} />
+          </strong>
           <nav aria-label="Primary" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             {navItems.map((item) => {
               const active = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
@@ -65,14 +77,17 @@ function AppShell({ children }: { children: ReactNode }) {
                   key={item.path}
                   type="button"
                   onClick={() => navigate(item.path)}
+                  className="btn"
                   style={{
-                    padding: "0.5rem 0.75rem",
-                    borderRadius: "0.375rem",
-                    border: active ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
-                    backgroundColor: active ? "var(--color-primary-bg)" : "var(--color-surface)",
-                    color: active ? "var(--color-primary-text)" : "var(--color-text)",
+                    padding: "0.5rem 0.875rem",
+                    borderRadius: "var(--radius-md)",
+                    border: active ? "1px solid var(--color-primary)" : "1px solid transparent",
+                    backgroundColor: active ? "var(--color-primary-bg)" : "transparent",
+                    color: active ? "var(--color-primary-text)" : "var(--color-text-muted)",
                     cursor: "pointer",
-                    fontWeight: active ? 600 : 500,
+                    fontWeight: active ? 700 : 500,
+                    fontSize: "0.875rem",
+                    boxShadow: active ? "var(--shadow-sm)" : "none",
                   }}
                 >
                   {item.label}
@@ -86,28 +101,51 @@ function AppShell({ children }: { children: ReactNode }) {
             type="button"
             onClick={toggleTheme}
             aria-label="Toggle theme"
+            className="btn btn-secondary"
             style={{
-              padding: "0.5rem 0.75rem",
-              borderRadius: "0.375rem",
-              border: "1px solid var(--color-border)",
-              backgroundColor: "var(--color-surface)",
-              color: "var(--color-text)",
-              cursor: "pointer",
+              padding: "0.5rem 0.875rem",
+              fontSize: "0.875rem",
+              borderRadius: "var(--radius-md)",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.375rem"
             }}
           >
             {theme === "light" ? "Dark" : "Light"}
           </button>
-          <span style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>{user?.username}</span>
+          
+          <div 
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: "0.5rem",
+              padding: "0.375rem 0.75rem",
+              backgroundColor: "var(--color-surface-muted)",
+              borderRadius: "var(--radius-full)",
+              border: "1px solid var(--color-border)"
+            }}
+          >
+            <div 
+              style={{ 
+                width: "8px", 
+                height: "8px", 
+                borderRadius: "50%", 
+                backgroundColor: "var(--color-success)" 
+              }} 
+            />
+            <span style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.825rem" }}>
+              {user?.username}
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={() => void handleLogout()}
+            className="btn btn-secondary"
             style={{
-              padding: "0.5rem 0.75rem",
-              borderRadius: "0.375rem",
-              border: "1px solid var(--color-border)",
-              backgroundColor: "var(--color-surface)",
-              color: "var(--color-text)",
-              cursor: "pointer",
+              padding: "0.5rem 0.875rem",
+              fontSize: "0.875rem",
+              borderRadius: "var(--radius-md)"
             }}
           >
             Logout

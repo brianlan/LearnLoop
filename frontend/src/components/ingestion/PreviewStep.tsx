@@ -23,14 +23,14 @@ export function PreviewStep({
   onHelperFailureSubjectChange,
 }: PreviewStepProps) {
   return (
-    <div style={{ padding: "32px" }}>
-      <h3 style={{ margin: "0 0 16px", fontSize: "18px", fontWeight: 600 }}>
+    <div style={{ padding: "2rem" }}>
+      <h3 style={{ margin: "0 0 1.25rem", fontSize: "1.25rem", fontWeight: 700 }}>
         Processing Image
       </h3>
       {preview?.status === "extracting" && (
-        <div style={{ textAlign: "center", padding: "32px" }}>
-          <div style={{ fontSize: "32px", marginBottom: "16px" }}>🤖</div>
-          <p style={{ color: "var(--color-text-muted)" }}>
+        <div style={{ textAlign: "center", padding: "2rem" }}>
+          <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🤖</div>
+          <p style={{ color: "var(--color-text-muted)", fontWeight: 500, fontSize: "0.95rem" }}>
             AI is analyzing the image and extracting problem data...
           </p>
           <div
@@ -40,7 +40,7 @@ export function PreviewStep({
               border: "3px solid var(--color-border)",
               borderTopColor: "var(--color-primary)",
               borderRadius: "50%",
-              margin: "16px auto",
+              margin: "1.5rem auto",
               animation: "spin 1s linear infinite",
             }}
           />
@@ -58,37 +58,39 @@ export function PreviewStep({
         return (
         <div
           style={{
-            padding: "16px",
+            padding: "1.25rem",
             backgroundColor: "var(--color-danger-bg)",
-            borderRadius: "6px",
-            marginBottom: "16px",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid var(--color-danger-border)",
+            marginBottom: "1.25rem",
           }}
         >
-          <div style={{ color: "var(--color-text-danger)", fontWeight: 600, marginBottom: "8px" }}>
+          <div style={{ color: "var(--color-text-danger)", fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>
             ⚠️ {isHelperFailure ? "Subject Classification Failed" : "Extraction Failed"}
           </div>
-          <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "14px", margin: "0 0 12px" }}>
+          <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "0.875rem", margin: "0 0 1rem", lineHeight: "1.4" }}>
             {isHelperFailure
               ? "The AI could not determine the subject (math or English). Please select the subject manually and retry."
               : "The AI was unable to extract problem data from the image."}
           </p>
           {(failureCode || failureMessage) && (
-            <details style={{ marginBottom: "12px" }}>
-              <summary style={{ cursor: "pointer", color: "var(--color-text-danger-secondary)", fontSize: "13px" }}>
+            <details style={{ marginBottom: "1rem" }}>
+              <summary style={{ cursor: "pointer", color: "var(--color-text-danger)", fontSize: "0.8125rem", fontWeight: 600 }}>
                 View error details
               </summary>
               <div
                 style={{
-                  marginTop: "8px",
-                  padding: "12px",
+                  marginTop: "0.5rem",
+                  padding: "0.75rem",
                   backgroundColor: "var(--color-danger-border)",
-                  borderRadius: "4px",
-                  fontSize: "12px",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "0.75rem",
                   fontFamily: "monospace",
+                  color: "var(--color-text-danger-secondary)",
                 }}
               >
                 {failureCode && (
-                  <div style={{ marginBottom: "8px" }}>
+                  <div style={{ marginBottom: "0.5rem" }}>
                     <span style={{ fontWeight: 600 }}>Code:</span> {failureCode}
                   </div>
                 )}
@@ -104,10 +106,10 @@ export function PreviewStep({
             </details>
           )}
           {isHelperFailure && (
-            <div style={{ marginBottom: "12px" }}>
+            <div style={{ marginBottom: "1.25rem" }}>
               <label
                 htmlFor="helper-failure-subject"
-                style={{ display: "block", marginBottom: "4px", fontSize: "14px", color: "var(--color-text)" }}
+                style={{ display: "block", marginBottom: "0.375rem", fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}
               >
                 Subject
               </label>
@@ -118,12 +120,14 @@ export function PreviewStep({
                 onChange={(e) => onHelperFailureSubjectChange(e.target.value)}
                 disabled={isLoading}
                 style={{
-                  padding: "8px 12px",
+                  padding: "0.5rem 0.75rem",
                   border: "1px solid var(--color-border)",
-                  borderRadius: "4px",
-                  backgroundColor: "var(--color-surface)",
+                  borderRadius: "var(--radius-md)",
+                  backgroundColor: "var(--color-bg)",
                   color: "var(--color-text)",
-                  fontSize: "14px",
+                  fontSize: "0.875rem",
+                  width: "100%",
+                  maxWidth: "200px",
                 }}
               >
                 <option value="math">Math</option>
@@ -131,18 +135,15 @@ export function PreviewStep({
               </select>
             </div>
           )}
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
               onClick={onRetry}
               disabled={isLoading}
+              className="btn btn-danger"
               style={{
-                padding: "8px 16px",
-                backgroundColor: "var(--color-danger)",
-                color: "white",
-                border: "none",
-                borderRadius: "4px",
-                cursor: isLoading ? "not-allowed" : "pointer",
-                opacity: isLoading ? 0.7 : 1,
+                padding: "0.5rem 1.25rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
               }}
             >
               {isLoading ? "Retrying..." : "Try Again"}
@@ -155,13 +156,11 @@ export function PreviewStep({
                   setCurrentStep("editing");
                 }
               }}
+              className="btn btn-secondary"
               style={{
-                padding: "8px 16px",
-                backgroundColor: "var(--color-surface)",
-                color: "var(--color-text-danger-secondary)",
-                border: "1px solid var(--color-danger-border)",
-                borderRadius: "4px",
-                cursor: "pointer",
+                padding: "0.5rem 1.25rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
               }}
             >
               Edit Manually
@@ -173,27 +172,26 @@ export function PreviewStep({
       {preview?.status === "graph-error" && (
         <div
           style={{
-            padding: "16px",
+            padding: "1.25rem",
             backgroundColor: "var(--color-danger-bg)",
-            borderRadius: "6px",
-            marginBottom: "16px",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid var(--color-danger-border)",
+            marginBottom: "1.25rem",
           }}
         >
-          <div style={{ color: "var(--color-text-danger)", fontWeight: 600, marginBottom: "8px" }}>
+          <div style={{ color: "var(--color-text-danger)", fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.95rem" }}>
             ⚠️ Graph Error
           </div>
-          <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "14px", margin: "0 0 12px" }}>
+          <p style={{ color: "var(--color-text-danger-secondary)", fontSize: "0.875rem", margin: "0 0 1rem" }}>
             The extracted graph DSL is invalid.
           </p>
           <button
             onClick={() => setCurrentStep("editing")}
+            className="btn btn-danger"
             style={{
-              padding: "8px 16px",
-              backgroundColor: "var(--color-danger)",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
+              padding: "0.5rem 1.25rem",
+              fontSize: "0.875rem",
+              fontWeight: 600,
             }}
           >
             Edit Manually
@@ -202,12 +200,14 @@ export function PreviewStep({
       )}
       {error && (
         <div
+          className="badge badge-danger"
           style={{
-            padding: "12px 16px",
-            backgroundColor: "var(--color-danger-bg)",
-            borderRadius: "6px",
-            color: "var(--color-text-danger)",
-            fontSize: "14px",
+            padding: "0.75rem 1rem",
+            fontSize: "0.875rem",
+            textTransform: "none",
+            letterSpacing: "normal",
+            fontWeight: 500,
+            display: "block"
           }}
         >
           {error}
