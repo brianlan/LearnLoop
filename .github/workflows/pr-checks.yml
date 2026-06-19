@@ -113,7 +113,7 @@ jobs:
       - name: Wait for MongoDB replica set
         run: |
           for i in {1..30}; do
-            if docker compose exec -T mongodb mongosh --quiet --host 127.0.0.1 --port 27017 --eval 'try { rs.status().ok === 1 ? quit(0) : quit(1) } catch (error) { quit(1) }'; then
+            if docker compose exec -T mongodb mongo --quiet --host 127.0.0.1 --port 27017 --eval 'try { rs.status().ok === 1 ? quit(0) : quit(1) } catch (error) { quit(1) }'; then
               echo "MongoDB replica set is ready"
               exit 0
             fi
