@@ -313,6 +313,48 @@ async def test_create_exam_snapshots_selected_problems(exams_app: FastAPI, clien
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("max_problem_count", [1, 20])
+async def test_create_exam_accepts_problem_count_boundaries(
+    exams_app: FastAPI,
+    client: AsyncClient,
+    max_problem_count: int,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    user_id = exams_app.state.primary_user["_id"]
+    problems = [
+        make_problem(
+            user_id,
+            text=f"Problem {index}?",
+            problem_type="fill-in-the-blank",
+            correct_answer=str(index),
+        )
+        for index in range(max_problem_count)
+    ]
+    database["problems"].seed(*problems)
+    for problem in problems:
+        storage.seed(problem["sourceImage"]["bucket"], problem["sourceImage"]["objectKey"], b"img")
+
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": max_problem_count})
+
+    assert response.status_code == 201
+    body = response.json()["exam"]
+    assert body["configSnapshot"]["maxProblemCount"] == max_problem_count
+    assert len(body["items"]) == max_problem_count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_problem_count", [0, 21])
+async def test_create_exam_rejects_problem_count_outside_product_limit(
+    client: AsyncClient,
+    max_problem_count: int,
+) -> None:
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": max_problem_count})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_create_exam_rejects_when_active_exam_exists(exams_app: FastAPI, client: AsyncClient) -> None:
     database: FakeDatabase = exams_app.state.fake_database
     user_id = exams_app.state.primary_user["_id"]
