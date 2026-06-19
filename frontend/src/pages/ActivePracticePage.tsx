@@ -97,9 +97,9 @@ export function ActivePracticePage() {
 
   const pageCanvasStyle: React.CSSProperties = {
     minHeight: "calc(100vh - 60px)",
-    backgroundColor: "var(--color-surface-muted)",
+    backgroundColor: "var(--color-bg)",
     color: "var(--color-text)",
-    padding: "1rem",
+    padding: "2rem 1.5rem",
   };
 
   const contentWrapperStyle: React.CSSProperties = {
@@ -111,7 +111,7 @@ export function ActivePracticePage() {
     return (
       <main style={pageCanvasStyle}>
         <div style={contentWrapperStyle}>
-          <div>No active problem.</div>
+          <div style={{ color: "var(--color-text-muted)", fontWeight: 600 }}>No active problem.</div>
         </div>
       </main>
     );
@@ -123,20 +123,19 @@ export function ActivePracticePage() {
   return (
     <main style={pageCanvasStyle}>
       <div style={contentWrapperStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap", gap: "1rem" }}>
-        <h1 style={{ margin: 0 }}>Practice</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
+        <h1 style={{ margin: 0, fontSize: "2rem", fontWeight: 800, letterSpacing: "-0.02em" }}>Practice</h1>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button
             type="button"
             onClick={handleNext}
             disabled={isMutating}
             data-testid="skip-button"
+            className="btn btn-secondary"
             style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid var(--color-border-muted)",
-              borderRadius: "0.25rem",
-              backgroundColor: "var(--color-disabled-bg)",
-              cursor: isMutating ? "not-allowed" : "pointer",
+              padding: "0.5rem 1.25rem",
+              fontSize: "0.875rem",
+              fontWeight: 700,
             }}
           >
             Skip
@@ -145,13 +144,11 @@ export function ActivePracticePage() {
             type="button"
             onClick={handleQuit}
             data-testid="quit-button"
+            className="btn btn-danger"
             style={{
-              padding: "0.5rem 1rem",
-              backgroundColor: "var(--color-danger-bg)",
-              color: "var(--color-text-danger)",
-              border: "1px solid var(--color-danger-border)",
-              borderRadius: "0.25rem",
-              cursor: "pointer",
+              padding: "0.5rem 1.25rem",
+              fontSize: "0.875rem",
+              fontWeight: 700,
             }}
           >
             Quit
@@ -162,11 +159,14 @@ export function ActivePracticePage() {
       {statusMessage && (
         <div
           style={{
-            padding: "1rem",
+            padding: "1.25rem",
             backgroundColor: "var(--color-warning-bg)",
-            border: "1px solid var(--color-warning-border)",
-            borderRadius: "0.5rem",
-            marginBottom: "1rem",
+            border: "1px dashed var(--color-warning-border)",
+            borderRadius: "var(--radius-md)",
+            marginBottom: "1.5rem",
+            fontSize: "0.95rem",
+            color: "var(--color-warning-text)",
+            fontWeight: 600
           }}
           data-testid="status-message"
         >
@@ -175,42 +175,57 @@ export function ActivePracticePage() {
       )}
 
       <div
+        className="card-premium"
         style={{
-          backgroundColor: "var(--color-surface-muted)",
+          backgroundColor: "var(--color-surface)",
           border: "1px solid var(--color-border)",
-          borderRadius: "0.5rem",
-          padding: "1.5rem",
-          marginBottom: "1rem",
+          padding: "2rem",
+          marginBottom: "1.5rem",
+          display: "flex",
+          flexDirection: "column",
+          gap: "1.5rem"
         }}
       >
         <LatexText
           text={currentProblem.text}
           style={{
             fontSize: "1.125rem",
-            lineHeight: "1.75",
-            marginBottom: "1.5rem",
+            lineHeight: "1.6",
             whiteSpace: "pre-wrap",
+            color: "var(--color-text)",
           }}
           data-testid="problem-text"
         />
 
         {currentProblem.graphDsl && (
-          <div style={{ marginBottom: "1.5rem" }}>
+          <div style={{ maxWidth: "400px" }}>
             <GraphSandbox dsl={currentProblem.graphDsl} height={250} />
           </div>
         )}
 
         {currentProblem.imageUrl && (
-          <CollapsibleImage
-            src={currentProblem.imageUrl}
-            alt="Problem"
-            style={{ maxWidth: "100%", height: "auto", borderRadius: "0.25rem" }}
-          />
+          <div style={{ display: "flex", backgroundColor: "var(--color-surface-muted)", padding: "1rem", borderRadius: "var(--radius-lg)", border: "1px solid var(--color-border)" }}>
+            <CollapsibleImage
+              src={currentProblem.imageUrl}
+              alt="Problem"
+              style={{ maxWidth: "100%", height: "auto", borderRadius: "var(--radius-md)" }}
+            />
+          </div>
         )}
 
         {phase === "showing" || phase === "grading" ? (
-          <div style={{ marginTop: "1.5rem" }}>
-            <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+          <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "1.5rem", marginTop: "0.5rem" }}>
+            <label 
+              style={{ 
+                fontSize: "0.75rem",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: "var(--color-text-muted)",
+                display: "block",
+                marginBottom: "0.5rem"
+              }}
+            >
               Your Answer:
             </label>
             <AnswerInput
@@ -220,20 +235,17 @@ export function ActivePracticePage() {
               options={options}
               disabled={phase === "grading"}
             />
-            <div style={{ marginTop: "1rem" }}>
+            <div style={{ marginTop: "1.5rem" }}>
               <button
                 type="button"
                 onClick={handleSubmit}
                 disabled={phase === "grading" || !answer.trim()}
                 data-testid="submit-button"
+                className="btn btn-primary"
                 style={{
-                  padding: "0.75rem 1.5rem",
-                  backgroundColor: phase === "grading" || !answer.trim() ? "var(--color-primary-disabled)" : "var(--color-primary)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.375rem",
-                  cursor: phase === "grading" || !answer.trim() ? "not-allowed" : "pointer",
-                  fontWeight: 600,
+                  padding: "0.6rem 1.5rem",
+                  fontSize: "0.875rem",
+                  fontWeight: 700,
                 }}
               >
                 {phase === "grading" ? "Grading..." : "Submit"}
@@ -246,9 +258,9 @@ export function ActivePracticePage() {
       {phase === "feedback" && gradingResult && (
         <div
           style={{
-            padding: "1rem 1.5rem",
-            borderRadius: "0.5rem",
-            marginBottom: "1rem",
+            padding: "1.25rem 1.5rem",
+            borderRadius: "var(--radius-md)",
+            marginBottom: "1.5rem",
             backgroundColor:
               gradingResult.gradingStatus === "correct"
                 ? "var(--color-success-bg)"
@@ -261,17 +273,31 @@ export function ActivePracticePage() {
                 : gradingResult.gradingStatus === "incorrect"
                   ? "1px solid var(--color-danger-border)"
                   : "1px solid var(--color-warning-border)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.25rem"
           }}
           data-testid="grading-feedback"
         >
-          <div style={{ fontWeight: 600, fontSize: "1.125rem" }}>
+          <div 
+            style={{ 
+              fontWeight: 800, 
+              fontSize: "1.2rem",
+              color: 
+                gradingResult.gradingStatus === "correct"
+                  ? "var(--color-success-text)"
+                  : gradingResult.gradingStatus === "incorrect"
+                    ? "var(--color-text-danger-secondary)"
+                    : "var(--color-warning-text)"
+            }}
+          >
             {gradingResult.gradingStatus === "correct"
               ? "Correct!"
               : gradingResult.gradingStatus === "incorrect"
                 ? "Incorrect"
                 : "Pending Review"}
           </div>
-          <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+          <div style={{ color: "var(--color-text-muted)", fontSize: "0.8125rem", fontWeight: 500 }}>
             Graded via: {gradingResult.gradingMethod}
           </div>
         </div>
@@ -279,14 +305,15 @@ export function ActivePracticePage() {
 
       {phase === "feedback" && explainInfoMessage && (
         <div
+          className="badge badge-warning"
           style={{
-            padding: "0.75rem 1rem",
-            backgroundColor: "var(--color-warning-bg)",
-            border: "1px solid var(--color-warning-border)",
-            borderRadius: "0.375rem",
-            color: "var(--color-warning-text)",
+            padding: "0.5rem 0.75rem",
             fontSize: "0.875rem",
-            marginBottom: "1rem",
+            textTransform: "none",
+            letterSpacing: "normal",
+            fontWeight: 500,
+            display: "block",
+            marginBottom: "1.5rem",
           }}
           data-testid="explain-info-message"
         >
@@ -295,20 +322,17 @@ export function ActivePracticePage() {
       )}
 
       {phase === "feedback" && (
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", borderTop: "1px solid var(--color-border)", paddingTop: "1.5rem", marginTop: "1rem" }}>
           <button
             type="button"
             onClick={handleNext}
             disabled={nextMutation.isPending}
             data-testid="next-button"
+            className="btn btn-primary"
             style={{
-              padding: "0.75rem 1.5rem",
-              backgroundColor: nextMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
-              color: "white",
-              border: "none",
-              borderRadius: "0.375rem",
-              cursor: nextMutation.isPending ? "not-allowed" : "pointer",
-              fontWeight: 600,
+              padding: "0.6rem 1.5rem",
+              fontSize: "0.875rem",
+              fontWeight: 700,
             }}
           >
             {nextMutation.isPending ? "Loading..." : "Next Problem"}
@@ -322,20 +346,21 @@ export function ActivePracticePage() {
               onMouseLeave={() => setIsExplainHovered(false)}
               data-testid="explain-button"
               style={{
-                padding: "0.75rem 1.5rem",
-                borderRadius: "0.375rem",
-                fontWeight: 600,
+                padding: "0.6rem 1.5rem",
+                borderRadius: "var(--radius-md)",
+                fontWeight: 700,
+                fontSize: "0.875rem",
                 transition: "all 0.2s ease-in-out",
                 ...(solutionStatus === "failed"
                   ? {
-                      background: "var(--color-disabled-bg)",
+                      background: "var(--color-surface-muted)",
                       color: "var(--color-disabled-text)",
                       border: "1px solid var(--color-border)",
                       cursor: "not-allowed",
                     }
                   : solutionStatus === "pending" || solutionStatus === "generating"
                     ? {
-                        background: "var(--color-surface)",
+                        background: "var(--color-bg)",
                         color: "var(--color-link)",
                         border: "2px dashed var(--color-link)",
                         cursor: "pointer",
@@ -365,12 +390,11 @@ export function ActivePracticePage() {
           <button
             type="button"
             onClick={handleQuit}
+            className="btn btn-secondary"
             style={{
-              padding: "0.75rem 1rem",
-              border: "1px solid var(--color-border-muted)",
-              borderRadius: "0.375rem",
-              backgroundColor: "var(--color-surface)",
-              cursor: "pointer",
+              padding: "0.6rem 1.25rem",
+              fontSize: "0.875rem",
+              fontWeight: 700,
             }}
           >
             Done
