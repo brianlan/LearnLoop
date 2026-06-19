@@ -15,6 +15,20 @@ const UNFILED_FOLDER_ID = "unfiled";
 const EMPTY_FOLDERS: FolderNode[] = [];
 
 type Feedback = { type: "success" | "error"; message: string } | null;
+type ProblemSortBy = "" | "selectionScore" | "addDate" | "lastTestDate";
+type ProblemSortOrder = "asc" | "desc";
+
+const SORT_BY_OPTIONS: Array<{ value: ProblemSortBy; label: string }> = [
+  { value: "", label: "Default" },
+  { value: "selectionScore", label: "Selection score" },
+  { value: "addDate", label: "Add date" },
+  { value: "lastTestDate", label: "Last test date" },
+];
+
+const SORT_ORDER_OPTIONS: Array<{ value: ProblemSortOrder; label: string }> = [
+  { value: "desc", label: "Descending" },
+  { value: "asc", label: "Ascending" },
+];
 
 function flattenFolders(folders: FolderNode[], depth = 0): Array<FolderNode & { depth: number }> {
   return folders.flatMap((folder) => [
@@ -63,6 +77,8 @@ export function ProblemsPage() {
   const [selectedTag, setSelectedTag] = useState<string>("");
   const [selectedProblemType, setSelectedProblemType] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [sortBy, setSortBy] = useState<ProblemSortBy>("");
+  const [sortOrder, setSortOrder] = useState<ProblemSortOrder>("desc");
   const [selectedProblemIds, setSelectedProblemIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [bulkTarget, setBulkTarget] = useState<string>(UNFILED_FOLDER_ID);
@@ -80,7 +96,7 @@ export function ProblemsPage() {
   const selectedFolderId = searchParams.get("folderId") ?? "";
 
   const { data: problemsData, isLoading: isLoadingProblems } = useQuery({
-    queryKey: ["problems", page, selectedTag, selectedProblemType, searchQuery, selectedFolderId],
+    queryKey: ["problems", page, selectedTag, selectedProblemType, searchQuery, selectedFolderId, sortBy, sortOrder],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: String(page),
@@ -90,6 +106,10 @@ export function ProblemsPage() {
       if (selectedProblemType) params.append("type", selectedProblemType);
       if (searchQuery.trim()) params.append("q", searchQuery.trim());
       if (selectedFolderId) params.append("folderId", selectedFolderId);
+      if (sortBy) {
+        params.append("sortBy", sortBy);
+        params.append("sortOrder", sortOrder);
+      }
       return api.get<ProblemsResponse>(`/problems?${params.toString()}`);
     },
   });
@@ -170,6 +190,18 @@ export function ProblemsPage() {
     if (folderId) next.set("folderId", folderId);
     else next.delete("folderId");
     setSearchParams(next);
+    setPage(1);
+    exitSelectionMode();
+  };
+
+  const updateSortBy = (value: ProblemSortBy) => {
+    setSortBy(value);
+    setPage(1);
+    exitSelectionMode();
+  };
+
+  const updateSortOrder = (value: ProblemSortOrder) => {
+    setSortOrder(value);
     setPage(1);
     exitSelectionMode();
   };
@@ -541,6 +573,35 @@ export function ProblemsPage() {
             >
               {PROBLEM_TYPE_FILTER_OPTIONS.map((option) => (
                 <option key={option.value || "all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="sort-by">Sort by: </label>
+            <select
+              id="sort-by"
+              value={sortBy}
+              onChange={(e) => updateSortBy(e.target.value as ProblemSortBy)}
+            >
+              {SORT_BY_OPTIONS.map((option) => (
+                <option key={option.value || "default"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="sort-order">Order: </label>
+            <select
+              id="sort-order"
+              value={sortOrder}
+              onChange={(e) => updateSortOrder(e.target.value as ProblemSortOrder)}
+              disabled={!sortBy}
+            >
+              {SORT_ORDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
               ))}

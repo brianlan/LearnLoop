@@ -34,12 +34,14 @@ class FakeCursor:
         self._skip = 0
         self._limit: int | None = None
 
-    def sort(self, field: str, direction: int) -> FakeCursor:
-        reverse = direction < 0
-        self._documents.sort(
-            key=lambda document: cast(Any, document.get(field)),
-            reverse=reverse,
-        )
+    def sort(self, field: str | list[tuple[str, int]], direction: int | None = None) -> FakeCursor:
+        sort_fields = field if isinstance(field, list) else [(field, direction or 1)]
+        for sort_field, sort_direction in reversed(sort_fields):
+            reverse = sort_direction < 0
+            self._documents.sort(
+                key=lambda document: cast(Any, document.get(sort_field)),
+                reverse=reverse,
+            )
         return self
 
     def skip(self, amount: int) -> FakeCursor:
@@ -237,17 +239,23 @@ def make_preview(user_id: ObjectId, *, status: str = "ready") -> dict[str, Any]:
     }
 
 
+DEFAULT_LAST_TESTED = object()
+
+
 def make_problem(
     user_id: ObjectId,
     *,
     text: str = "What is 2+2?",
     problem_type: str = "short-answer",
     updated_at: datetime | None = None,
+    created_at: datetime | None = None,
+    last_tested_at: Any = DEFAULT_LAST_TESTED,
     tags: list[str] | None = None,
     is_deleted: bool = False,
     folder_id: str | None = None,
 ) -> dict[str, Any]:
     now = updated_at or datetime.now(UTC)
+    created = created_at or now
     return {
         "_id": ObjectId(),
         "userId": user_id,
@@ -280,13 +288,13 @@ def make_problem(
             "exposureCount": 3,
             "correctCount": 2,
             "failedCount": 1,
-            "lastTestedAt": now,
+            "lastTestedAt": now if last_tested_at is DEFAULT_LAST_TESTED else last_tested_at,
             "lastAttemptCorrect": True,
         },
         "isDeleted": is_deleted,
         "deletedAt": now if is_deleted else None,
         "folderId": folder_id,
-        "createdAt": now,
+        "createdAt": created,
         "updatedAt": now,
     }
 
@@ -827,6 +835,148 @@ async def test_search_pagination_total_reflects_filtered(
     data = response.json()
     assert data["total"] == 5
     assert len(data["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_problems_sorts_by_add_date_before_pagination(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    newest = make_problem(user_id, text="Newest", created_at=base + timedelta(days=2))
+    oldest = make_problem(user_id, text="Oldest", created_at=base)
+    middle = make_problem(user_id, text="Middle", created_at=base + timedelta(days=1))
+    database["problems"].seed(newest, oldest, middle)
+
+    asc_response = await client.get("/api/v1/problems?sortBy=addDate&sortOrder=asc&pageSize=2&page=2")
+    desc_response = await client.get("/api/v1/problems?sortBy=addDate&sortOrder=desc")
+
+    assert asc_response.status_code == 200
+    assert [item["text"] for item in asc_response.json()["items"]] == ["Newest"]
+    assert desc_response.status_code == 200
+    assert [item["text"] for item in desc_response.json()["items"]] == ["Newest", "Middle", "Oldest"]
+
+
+@pytest.mark.asyncio
+async def test_list_problems_sorts_by_last_test_date_with_never_tested_last_and_ties(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    older = make_problem(user_id, text="Older tested", last_tested_at=base)
+    never = make_problem(user_id, text="Never tested", last_tested_at=None)
+    same_a = make_problem(user_id, text="Same A", last_tested_at=base + timedelta(days=1))
+    same_b = make_problem(user_id, text="Same B", last_tested_at=base + timedelta(days=1))
+    same_a["_id"] = ObjectId("000000000000000000000001")
+    same_b["_id"] = ObjectId("000000000000000000000002")
+    database["problems"].seed(never, same_b, older, same_a)
+
+    asc_response = await client.get("/api/v1/problems?sortBy=lastTestDate&sortOrder=asc")
+    desc_response = await client.get("/api/v1/problems?sortBy=lastTestDate&sortOrder=desc")
+
+    assert asc_response.status_code == 200
+    assert [item["text"] for item in asc_response.json()["items"]] == [
+        "Older tested",
+        "Same A",
+        "Same B",
+        "Never tested",
+    ]
+    assert desc_response.status_code == 200
+    assert [item["text"] for item in desc_response.json()["items"]] == [
+        "Same A",
+        "Same B",
+        "Older tested",
+        "Never tested",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_problems_sorts_by_selection_score_using_configured_weights(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    from app.infrastructure.config.settings import Settings, get_settings
+
+    problems_app.dependency_overrides[get_settings] = lambda: Settings(
+        problem_selection_last_wrong_weight=10.0,
+        problem_selection_failure_rate_weight=0.0,
+        problem_selection_recency_weight=0.0,
+    )
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    now = datetime.now(UTC) - timedelta(days=30)
+    low = make_problem(user_id, text="Last correct", created_at=now, last_tested_at=now)
+    low["tracking"]["lastAttemptCorrect"] = True
+    high = make_problem(user_id, text="Last wrong", created_at=now, last_tested_at=now)
+    high["tracking"]["lastAttemptCorrect"] = False
+    database["problems"].seed(low, high)
+
+    asc_response = await client.get("/api/v1/problems?sortBy=selectionScore&sortOrder=asc")
+    desc_response = await client.get("/api/v1/problems?sortBy=selectionScore&sortOrder=desc")
+
+    assert asc_response.status_code == 200
+    assert [item["text"] for item in asc_response.json()["items"]] == ["Last correct", "Last wrong"]
+    assert desc_response.status_code == 200
+    assert [item["text"] for item in desc_response.json()["items"]] == ["Last wrong", "Last correct"]
+
+
+@pytest.mark.asyncio
+async def test_list_problems_sorting_composes_with_filters_and_rejects_invalid_values(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    folder = make_folder(user_id, "Chapter")
+    database["folders"].seed(folder)
+    old_matching = make_problem(
+        user_id,
+        text="Alpha matching",
+        problem_type="short-answer",
+        tags=["algebra"],
+        folder_id=str(folder["_id"]),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    new_matching = make_problem(
+        user_id,
+        text="Alpha matching newer",
+        problem_type="short-answer",
+        tags=["algebra"],
+        folder_id=str(folder["_id"]),
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    non_matching = make_problem(
+        user_id,
+        text="Alpha other",
+        problem_type="single-choice",
+        tags=["algebra"],
+        folder_id=str(folder["_id"]),
+        created_at=datetime(2026, 1, 3, tzinfo=UTC),
+    )
+    database["problems"].seed(non_matching, new_matching, old_matching)
+
+    response = await client.get(
+        "/api/v1/problems",
+        params={
+            "sortBy": "addDate",
+            "sortOrder": "asc",
+            "folderId": str(folder["_id"]),
+            "tag": "algebra",
+            "type": "short-answer",
+            "q": "Alpha",
+        },
+    )
+    bad_sort_response = await client.get("/api/v1/problems?sortBy=updatedAt")
+    bad_order_response = await client.get("/api/v1/problems?sortBy=addDate&sortOrder=sideways")
+
+    assert response.status_code == 200
+    assert [item["text"] for item in response.json()["items"]] == ["Alpha matching", "Alpha matching newer"]
+    assert bad_sort_response.status_code == 422
+    assert bad_order_response.status_code == 422
 
 
 # Folder assignment and filtering tests
