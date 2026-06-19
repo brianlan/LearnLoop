@@ -66,6 +66,10 @@ const BLOCKED_TOKENS = [
 // Timeout for rendering operations (30 seconds)
 const RENDER_TIMEOUT_MS = 30000;
 
+import { JSXGRAPH_VERSION, JSXGRAPH_CDN_URL, generateIframeHtml } from "./GraphSandbox.iframe";
+
+export { JSXGRAPH_VERSION, JSXGRAPH_CDN_URL, generateIframeHtml };
+
 export interface GraphSandboxProps {
   /** The JSXGraph DSL code to render */
   dsl: string;
@@ -327,125 +331,6 @@ export function validateDsl(dsl: string): string | null {
   return null;
 }
 
-/**
- * Generates the iframe HTML content with JSXGraph loader.
- * This is loaded into the sandboxed iframe.
- */
-function generateIframeHtml(): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>JSXGraph Sandbox</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsxgraph/distrib/jsxgraphcore.js"></script>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      font-family: sans-serif;
-    }
-    #jxgbox {
-      width: 100%;
-      height: 100%;
-    }
-    .error {
-      color: #dc2626;
-      padding: 16px;
-      font-size: 14px;
-    }
-  </style>
-</head>
-<body>
-  <div id="jxgbox"></div>
-  <script>
-    (function() {
-      // Track board instance for cleanup
-      let board = null;
-
-      // Message handler for postMessage protocol
-      function handleMessage(event) {
-        const data = event.data;
-        
-        if (!data || typeof data !== 'object') {
-          return;
-        }
-
-        switch (data.type) {
-          case 'render':
-            handleRender(data.payload);
-            break;
-          case 'clear':
-            handleClear();
-            break;
-          default:
-            console.warn('Unknown message type:', data.type);
-        }
-      }
-
-      function handleRender(dsl) {
-        try {
-          // Clear any existing board
-          if (board) {
-            JXG.JSXGraph.freeBoard(board);
-            board = null;
-          }
-
-          // Create new board
-          board = JXG.JSXGraph.initBoard('jxgbox', {
-            boundingbox: [-5, 5, 5, -5],
-            axis: false,
-            grid: false,
-            showCopyright: false,
-            showNavigation: true,
-            keepaspectratio: true
-          });
-
-          // Execute the DSL in a controlled way
-          // The DSL is expected to be a function that takes the board as parameter
-          const dslFunction = new Function('board', dsl);
-          dslFunction(board);
-
-          // Notify parent of success
-          parent.postMessage({ type: 'rendered' }, '*');
-        } catch (error) {
-          // Notify parent of error
-          parent.postMessage({ 
-            type: 'error', 
-            payload: error instanceof Error ? error.message : String(error)
-          }, '*');
-        }
-      }
-
-      function handleClear() {
-        if (board) {
-          JXG.JSXGraph.freeBoard(board);
-          board = null;
-        }
-        // Notify parent of clear completion
-        parent.postMessage({ type: 'cleared' }, '*');
-      }
-
-      // Listen for messages from parent
-      window.addEventListener('message', handleMessage);
-
-      // Notify parent that sandbox is ready
-      parent.postMessage({ type: 'ready' }, '*');
-
-      // Cleanup on page unload
-      window.addEventListener('beforeunload', function() {
-        if (board) {
-          JXG.JSXGraph.freeBoard(board);
-        }
-      });
-    })();
-  </script>
-</body>
-</html>`;
-}
-
 interface MessagePayload {
   type: string;
   payload?: string;
@@ -453,11 +338,13 @@ interface MessagePayload {
 
 /**
  * GraphSandbox Component
- * 
+ *
  * Renders JSXGraph DSL in a sandboxed iframe with strict postMessage protocol.
- * 
+ *
  * Security features:
  * - iframe with sandbox="allow-scripts" (no allow-same-origin, no allow-forms)
+ * - Restrictive Content Security Policy (CSP) blocking all network requests and unsafe operations
+ * - Pinned JSXGraph version from trusted CDN
  * - DSL validation against denylist patterns
  * - Timeout handling with iframe recreation
  * - No external API access from iframe
