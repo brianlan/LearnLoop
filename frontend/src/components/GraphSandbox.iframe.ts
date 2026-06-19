@@ -26,7 +26,7 @@ export function generateIframeHtml(): string {
     script-src 'unsafe-eval' 'unsafe-inline' ${JSXGRAPH_CDN_URL};
     style-src 'unsafe-inline';
     img-src data:;
-    connect-src 'none';
+    connect-src *;
     font-src 'none';
     frame-src 'none';
     object-src 'none';
