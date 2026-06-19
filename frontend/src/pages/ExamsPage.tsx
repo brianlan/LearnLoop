@@ -6,6 +6,11 @@ import { api } from "@/api/client";
 import { formatDate, formatScore } from "@/utils/format";
 import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse } from "@/types/exam";
 import Pagination from "@/components/Pagination";
+import { Modal } from "@/components/Modal";
+
+const EXAM_PROBLEM_COUNT_MIN = 1;
+const EXAM_PROBLEM_COUNT_MAX = 20;
+const EXAM_PROBLEM_COUNT_DEFAULT = 5;
 
 function getStateStyle(state: string) {
   switch (state) {
@@ -105,6 +110,8 @@ export function ExamsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [showActiveExamPrompt, setShowActiveExamPrompt] = useState(false);
+  const [showCreateExamModal, setShowCreateExamModal] = useState(false);
+  const [problemCountInput, setProblemCountInput] = useState(String(EXAM_PROBLEM_COUNT_DEFAULT));
   const [showDiscarded, setShowDiscarded] = useState(false);
   const pageSize = 10;
 
@@ -119,17 +126,44 @@ export function ExamsPage() {
   const createExamMutation = useMutation({
     mutationFn: (req: CreateExamRequest) => api.post<CreateExamResponse>("/exams", req),
     onSuccess: () => {
+      setShowCreateExamModal(false);
       queryClient.invalidateQueries({ queryKey: ["exams"] });
       navigate("/exams/active");
     },
   });
 
+  const parsedProblemCount = /^\d+$/.test(problemCountInput) ? Number(problemCountInput) : null;
+  const validProblemCount =
+    parsedProblemCount !== null &&
+    parsedProblemCount >= EXAM_PROBLEM_COUNT_MIN &&
+    parsedProblemCount <= EXAM_PROBLEM_COUNT_MAX
+      ? parsedProblemCount
+      : null;
+  const problemCountError =
+    validProblemCount === null
+      ? `Enter a whole number from ${EXAM_PROBLEM_COUNT_MIN} to ${EXAM_PROBLEM_COUNT_MAX}.`
+      : null;
+
+  const handleOpenCreateExamModal = () => {
+    setProblemCountInput(String(EXAM_PROBLEM_COUNT_DEFAULT));
+    setShowCreateExamModal(true);
+  };
+
+  const handleCloseCreateExamModal = () => {
+    if (!createExamMutation.isPending) {
+      setShowCreateExamModal(false);
+    }
+  };
+
   const handleCreateExam = async () => {
+    if (validProblemCount === null) return;
+
     try {
-      await createExamMutation.mutateAsync({ maxProblemCount: 10 });
+      await createExamMutation.mutateAsync({ maxProblemCount: validProblemCount });
     } catch (err) {
       const code = (err as Error & { code?: string }).code;
       if (code === "ACTIVE_EXAM_EXISTS") {
+        setShowCreateExamModal(false);
         setShowActiveExamPrompt(true);
       }
     }
@@ -160,21 +194,129 @@ export function ExamsPage() {
         </div>
         <button
           type="button"
-          onClick={() => void handleCreateExam()}
-          disabled={createExamMutation.isPending}
+          onClick={handleOpenCreateExamModal}
           style={{
             padding: "0.75rem 1rem",
-            backgroundColor: createExamMutation.isPending ? "var(--color-primary-disabled)" : "var(--color-primary)",
+            backgroundColor: "var(--color-primary)",
             color: "white",
             border: "none",
             borderRadius: "0.375rem",
-            cursor: createExamMutation.isPending ? "not-allowed" : "pointer",
+            cursor: "pointer",
             fontWeight: 600,
           }}
         >
-          {createExamMutation.isPending ? "Creating..." : "Start New Exam"}
+          Start New Exam
         </button>
       </div>
+
+
+
+      <Modal
+        isOpen={showCreateExamModal}
+        onClose={handleCloseCreateExamModal}
+        ariaLabelledby="create-exam-title"
+      >
+        <h2 id="create-exam-title" style={{ marginTop: 0 }}>Start New Exam</h2>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleCreateExam();
+          }}
+        >
+          <p style={{ color: "var(--color-text-muted)", marginTop: 0 }}>
+            Choose how many problems to include.
+          </p>
+          <label htmlFor="exam-problem-count" style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+            Problem count
+          </label>
+          <input
+            id="exam-problem-count"
+            type="number"
+            min={EXAM_PROBLEM_COUNT_MIN}
+            max={EXAM_PROBLEM_COUNT_MAX}
+            step={1}
+            value={problemCountInput}
+            onChange={(event) => setProblemCountInput(event.target.value)}
+            aria-invalid={problemCountError ? "true" : "false"}
+            aria-describedby={problemCountError ? "exam-problem-count-error" : undefined}
+            style={{
+              width: "100%",
+              padding: "0.5rem",
+              border: `1px solid ${problemCountError ? "var(--color-danger-border)" : "var(--color-border)"}`,
+              borderRadius: "0.375rem",
+              marginBottom: "0.75rem",
+            }}
+          />
+          <label htmlFor="exam-problem-count-slider" style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+            Problem count slider
+          </label>
+          <input
+            id="exam-problem-count-slider"
+            type="range"
+            min={EXAM_PROBLEM_COUNT_MIN}
+            max={EXAM_PROBLEM_COUNT_MAX}
+            step={1}
+            value={validProblemCount ?? EXAM_PROBLEM_COUNT_DEFAULT}
+            onChange={(event) => setProblemCountInput(event.target.value)}
+            style={{ width: "100%" }}
+          />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              color: "var(--color-text-muted)",
+              fontSize: "0.875rem",
+              marginBottom: "0.75rem",
+            }}
+          >
+            <span>{EXAM_PROBLEM_COUNT_MIN}</span>
+            <span>{EXAM_PROBLEM_COUNT_MAX}</span>
+          </div>
+          {problemCountError && (
+            <div
+              id="exam-problem-count-error"
+              role="alert"
+              style={{ color: "var(--color-text-danger)", marginBottom: "0.75rem" }}
+            >
+              {problemCountError}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+            <button
+              type="button"
+              onClick={handleCloseCreateExamModal}
+              disabled={createExamMutation.isPending}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor: "var(--color-disabled-bg)",
+                border: "1px solid var(--color-border-muted)",
+                borderRadius: "0.375rem",
+                cursor: createExamMutation.isPending ? "not-allowed" : "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={validProblemCount === null || createExamMutation.isPending}
+              style={{
+                padding: "0.5rem 1rem",
+                backgroundColor:
+                  validProblemCount === null || createExamMutation.isPending
+                    ? "var(--color-primary-disabled)"
+                    : "var(--color-primary)",
+                color: "white",
+                border: "none",
+                borderRadius: "0.375rem",
+                cursor: validProblemCount === null || createExamMutation.isPending ? "not-allowed" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              {createExamMutation.isPending ? "Creating..." : "Create Exam"}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {showActiveExamPrompt && (
         <div
