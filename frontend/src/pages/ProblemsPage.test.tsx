@@ -226,6 +226,59 @@ describe("ProblemsPage", () => {
     });
   });
 
+  it("sends sort parameters with existing filters", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    expect(screen.getByRole("option", { name: "Selection score" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Add date" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Last test date" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
+    await user.selectOptions(screen.getByLabelText("Sort by:"), "selectionScore");
+    await user.selectOptions(screen.getByLabelText("Order:"), "asc");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=section-1");
+      expect(lastUrl).toContain("tag=algebra");
+      expect(lastUrl).toContain("sortBy=selectionScore");
+      expect(lastUrl).toContain("sortOrder=asc");
+      expect(lastUrl).toContain("page=1");
+    });
+  });
+
+  it("resets pagination and selection mode when sort changes", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })], total: 25 });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    await user.selectOptions(screen.getByLabelText("Sort by:"), "addDate");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("sortBy=addDate");
+      expect(lastUrl).toContain("sortOrder=desc");
+      expect(lastUrl).toContain("page=1");
+    });
+    expect(screen.queryByLabelText("Bulk actions")).not.toBeInTheDocument();
+  });
+
   it("persists sidebar collapse state in session storage and shows the active label", async () => {
     const user = userEvent.setup();
     installApiMock();

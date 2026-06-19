@@ -4,7 +4,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 import re
 
-from typing import Any, Annotated
+from typing import Any, Annotated, Literal
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
@@ -119,6 +119,10 @@ class BulkSetFolderResponse(BaseModel):
 
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
+ProblemSortBy = Literal["selectionScore", "addDate", "lastTestDate"]
+ProblemSortOrder = Literal["asc", "desc"]
+
+
 
 
 def _serialize_tracking(problem: dict[str, Any]) -> TrackingPayload:
@@ -184,6 +188,56 @@ def _serialize_problem_detail(problem: dict[str, Any]) -> ProblemDetailPayload:
     )
 
 
+def _practice_selection_config(settings: Settings) -> PracticeSelectionConfig:
+    return PracticeSelectionConfig(
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
+
+
+def _problem_id_sort_value(problem: dict[str, Any]) -> str:
+    return str(problem["_id"])
+
+
+def _sort_by_last_test_date(
+    problems: list[dict[str, Any]],
+    *,
+    reverse: bool,
+) -> list[dict[str, Any]]:
+    tested = [problem for problem in problems if problem.get("tracking", {}).get("lastTestedAt") is not None]
+    never_tested = [problem for problem in problems if problem.get("tracking", {}).get("lastTestedAt") is None]
+    tested.sort(key=_problem_id_sort_value)
+    tested.sort(
+        key=lambda problem: problem.get("tracking", {})["lastTestedAt"],
+        reverse=reverse,
+    )
+    never_tested.sort(key=_problem_id_sort_value)
+    return tested + never_tested
+
+
+def _sort_by_selection_score(
+    problems: list[dict[str, Any]],
+    *,
+    reverse: bool,
+    settings: Settings,
+) -> list[dict[str, Any]]:
+    config = _practice_selection_config(settings)
+    now = datetime.now(UTC)
+    scored = [
+        (
+            compute_problem_weight_breakdown(problem_document_to_model(problem), config, now).total,
+            problem,
+        )
+        for problem in problems
+    ]
+    scored.sort(key=lambda item: _problem_id_sort_value(item[1]))
+    scored.sort(key=lambda item: item[0], reverse=reverse)
+    return [problem for _, problem in scored]
+
+
 @router.get("/tags", response_model=ProblemTagsResponse)
 async def list_problem_tags(
     database: DatabaseDependency,
@@ -200,10 +254,13 @@ async def list_problem_tags(
 async def list_problems(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    settings: Annotated[Settings, Depends(get_settings)],
     tag: str | None = Query(default=None),
     problem_type: ProblemType | None = Query(default=None, alias="type"),
     q: str | None = Query(default=None),
     folder_id: str | None = Query(default=None, alias="folderId"),
+    sort_by: ProblemSortBy | None = Query(default=None, alias="sortBy"),
+    sort_order: ProblemSortOrder | None = Query(default=None, alias="sortOrder"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ProblemListResponse:
@@ -236,9 +293,24 @@ async def list_problems(
             query["folderId"] = {"$in": [str(fid) for fid in all_folder_ids]}
 
     total = await database["problems"].count_documents(query)
-    cursor = database["problems"].find(query).sort("updatedAt", -1)
-    cursor = cursor.skip((page - 1) * page_size).limit(page_size)
-    items = await cursor.to_list(length=page_size)
+    skip = (page - 1) * page_size
+    effective_sort_order = sort_order or "desc"
+    if sort_by is None:
+        cursor = database["problems"].find(query).sort("updatedAt", -1)
+        items = await cursor.skip(skip).limit(page_size).to_list(length=page_size)
+    elif sort_by == "addDate":
+        direction = 1 if effective_sort_order == "asc" else -1
+        cursor = database["problems"].find(query).sort([("createdAt", direction), ("_id", 1)])
+        items = await cursor.skip(skip).limit(page_size).to_list(length=page_size)
+    else:
+        all_items = await database["problems"].find(query).to_list(length=None)
+        reverse = effective_sort_order == "desc"
+        if sort_by == "lastTestDate":
+            sorted_items = _sort_by_last_test_date(all_items, reverse=reverse)
+        else:
+            sorted_items = _sort_by_selection_score(all_items, reverse=reverse, settings=settings)
+        items = sorted_items[skip : skip + page_size]
+
     return ProblemListResponse(
         items=[_serialize_problem_summary(problem) for problem in items],
         page=page,
@@ -431,13 +503,7 @@ async def get_problem_tracking(
         allow_deleted=False,
     )
     problem_model = problem_document_to_model(problem_doc)
-    config = PracticeSelectionConfig(
-        cooldown_days=settings.problem_selection_cooldown_days,
-        last_wrong_weight=settings.problem_selection_last_wrong_weight,
-        failure_rate_weight=settings.problem_selection_failure_rate_weight,
-        recency_weight=settings.problem_selection_recency_weight,
-        min_problem_age_days=settings.problem_selection_min_age_days,
-    )
+    config = _practice_selection_config(settings)
     now = datetime.now(UTC)
     breakdown = compute_problem_weight_breakdown(problem_model, config, now)
     return ProblemTrackingResponse(
