@@ -49,14 +49,16 @@ describe("GraphSandbox", () => {
 
   it("accepts custom width and height", () => {
     const { container } = render(<GraphSandbox dsl="" width={500} height={300} />);
-    const sandbox = container.querySelector('[data-testid="graph-sandbox"]');
+    const sandbox = container.querySelector('[data-testid="graph-sandbox"]') as HTMLElement;
+    expect(sandbox).toBeTruthy();
     expect(sandbox.style.width).toBe("500px");
     expect(sandbox.style.height).toBe("300px");
   });
 
   it("accepts string width values", () => {
     const { container } = render(<GraphSandbox dsl="" width="80%" height={300} />);
-    const sandbox = container.querySelector('[data-testid="graph-sandbox"]');
+    const sandbox = container.querySelector('[data-testid="graph-sandbox"]') as HTMLElement;
+    expect(sandbox).toBeTruthy();
     expect(sandbox.style.width).toBe("80%");
   });
 
