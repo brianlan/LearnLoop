@@ -178,8 +178,8 @@ test.describe("Theme E2E", () => {
     await expect(header).toBeVisible();
 
     // Verify nav items are visible
-    await expect(page.getByRole("button", { name: "Problems" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "Problems" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "Settings" })).toBeVisible();
 
     // Toggle to dark
     await page.getByRole("button", { name: "Toggle theme" }).click();
@@ -189,8 +189,8 @@ test.describe("Theme E2E", () => {
     await expect(header).toBeVisible();
 
     // Verify nav items remain visible
-    await expect(page.getByRole("button", { name: "Problems" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "Problems" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "Settings" })).toBeVisible();
   });
 });
 
@@ -356,7 +356,7 @@ test.describe("Tags Page Theme", () => {
     await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
 
     // Verify create tag button is visible
-    await expect(page.getByRole("button", { name: "Create Tag" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add Tag" })).toBeVisible();
   });
 
   test("tags page renders in dark theme", async ({ page, request }) => {
@@ -374,7 +374,7 @@ test.describe("Tags Page Theme", () => {
     await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
 
     // Verify create tag button is visible
-    await expect(page.getByRole("button", { name: "Create Tag" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add Tag" })).toBeVisible();
   });
 
   test("tags page dark theme paints a full-page themed background", async ({ page, request }) => {
