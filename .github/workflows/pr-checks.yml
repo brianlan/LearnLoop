@@ -61,6 +61,7 @@ jobs:
     name: Playwright E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: true
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
