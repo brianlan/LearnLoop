@@ -57,6 +57,88 @@ jobs:
         working-directory: frontend
         run: npm test -- --run
 
+  playwright-tests:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: |
+            backend/pyproject.toml
+            backend/uv.lock
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file and start infrastructure services
+        run: |
+          mkdir -p backend
+          echo "VLM_API_KEY=ci-placeholder" >> backend/.env
+          echo "S3_ACCESS_KEY=minioadmin" >> backend/.env
+          echo "S3_SECRET_KEY=minioadmin" >> backend/.env
+          docker compose up -d mongodb rustfs
+          docker compose --profile bootstrap run --rm rustfs-bootstrap
+        env:
+          DOCKER_BUILDKIT: 1
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+
+      - name: Wait for MongoDB replica set
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T mongodb mongo --quiet --host 127.0.0.1 --port 27017 --eval 'try { rs.status().ok === 1 ? quit(0) : quit(1) } catch (error) { quit(1) }'; then
+              echo "MongoDB replica set is ready"
+              exit 0
+            fi
+            echo "Waiting for MongoDB... ($i)"
+            sleep 2
+          done
+          echo "MongoDB did not become ready in time"
+          docker compose logs mongodb
+          exit 1
+
+      - name: Run Playwright E2E tests
+        working-directory: frontend
+        run: npm run test:ui -- tests/graph-sandbox-security.spec.ts
+        env:
+          MONGODB_URI: mongodb://localhost:27017/learnloop?replicaSet=rs0&directConnection=true
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose down --volumes
+
   docker-smoke-test:
     name: Docker Compose Smoke Test
     runs-on: ubuntu-latest
