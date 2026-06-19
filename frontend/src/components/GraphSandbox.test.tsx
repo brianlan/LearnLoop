@@ -2,11 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { GraphSandbox, validateDsl, generateIframeHtml } from "./GraphSandbox";
-
-// Pinned JSXGraph version - keep in sync with GraphSandbox.tsx
-const JSXGRAPH_VERSION = "1.10.0";
-const JSXGRAPH_CDN_URL = `https://cdn.jsdelivr.net/npm/jsxgraph@${JSXGRAPH_VERSION}/distrib/jsxgraphcore.js`;
+import { GraphSandbox, validateDsl, generateIframeHtml, JSXGRAPH_VERSION, JSXGRAPH_CDN_URL } from "./GraphSandbox";
 
 describe("GraphSandbox", () => {
   beforeEach(() => {
