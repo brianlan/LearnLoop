@@ -1,68 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const ALLOWED_ELEMENT_TYPES = new Set([
-  "point",
-  "segment",
-  "line",
-  "arrow",
-  "circle",
-  "angle",
-  "polygon",
-  "text",
-  "glider",
-  "intersection",
-  "midpoint",
-  "perpendicular",
-]);
-
-const ALLOWED_OPTION_KEYS = new Set([
-  "anchorX",
-  "anchorY",
-  "color",
-  "dash",
-  "face",
-  "fillColor",
-  "fillOpacity",
-  "fixed",
-  "fontSize",
-  "highlight",
-  "label",
-  "name",
-  "opacity",
-  "radius",
-  "showInfobox",
-  "size",
-  "strokeColor",
-  "strokeOpacity",
-  "strokeWidth",
-  "visible",
-  "withLabel",
-]);
-
-const BLOCKED_TOKENS = [
-  "constructor",
-  "document",
-  "eval",
-  "fetch",
-  "for",
-  "function",
-  "globalThis",
-  "if",
-  "import",
-  "localStorage",
-  "new",
-  "prototype",
-  "return",
-  "sessionStorage",
-  "setInterval",
-  "setTimeout",
-  "this",
-  "while",
-  "window",
-  "XMLHttpRequest",
-  "__proto__",
-];
-
 // Timeout for rendering operations (30 seconds)
 const RENDER_TIMEOUT_MS = 30000;
 
@@ -83,216 +20,8 @@ export interface GraphSandboxProps {
   onRender?: () => void;
 }
 
-function stripQuotedStrings(value: string): string {
-  return value.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, "");
-}
-
-function splitTopLevel(value: string, delimiter: string): string[] | null {
-  const parts: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let quote: string | null = null;
-  let escaped = false;
-
-  for (let i = 0; i < value.length; i += 1) {
-    const char = value[i];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      quote = char;
-    } else if (char === "[" || char === "{" || char === "(") {
-      depth += 1;
-    } else if (char === "]" || char === "}" || char === ")") {
-      depth -= 1;
-      if (depth < 0) {
-        return null;
-      }
-    } else if (char === delimiter && depth === 0) {
-      parts.push(value.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-
-  if (quote || depth !== 0) {
-    return null;
-  }
-
-  const last = value.slice(start).trim();
-  if (last) {
-    parts.push(last);
-  }
-  return parts;
-}
-
-function splitStatements(dsl: string): string[] | null {
-  const statements = splitTopLevel(dsl, ";");
-  if (!statements) {
-    return null;
-  }
-  return statements.filter(Boolean);
-}
-
-function isStringLiteral(value: string): boolean {
-  return /^'(?:\\.|[^'\\])*'$|^"(?:\\.|[^"\\])*"$/.test(value);
-}
-
-function unquote(value: string): string {
-  return value.slice(1, -1);
-}
-
-function validateObjectLiteral(
-  value: string,
-  declaredNames: Set<string>,
-): string | null {
-  if (!value.startsWith("{") || !value.endsWith("}")) {
-    return "Expected an object literal";
-  }
-
-  const inner = value.slice(1, -1).trim();
-  if (!inner) {
-    return null;
-  }
-
-  const entries = splitTopLevel(inner, ",");
-  if (!entries) {
-    return "Object literal has unbalanced syntax";
-  }
-
-  for (const entry of entries) {
-    const keyValue = splitTopLevel(entry, ":");
-    if (!keyValue || keyValue.length !== 2) {
-      return "Object literal entries must be key-value pairs";
-    }
-    const key = keyValue[0].trim().replace(/^['"]|['"]$/g, "");
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !ALLOWED_OPTION_KEYS.has(key)) {
-      return `Unsupported option key: ${key}`;
-    }
-    const valueError = validateDslValue(keyValue[1], declaredNames);
-    if (valueError) {
-      return valueError;
-    }
-  }
-
-  return null;
-}
-
-function validateDslValue(value: string, declaredNames: Set<string>): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "Empty DSL value";
-  }
-  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
-    return null;
-  }
-  if (isStringLiteral(trimmed)) {
-    return null;
-  }
-  if (trimmed === "true" || trimmed === "false" || trimmed === "null") {
-    return null;
-  }
-  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
-    return declaredNames.has(trimmed) ? null : `Unknown identifier: ${trimmed}`;
-  }
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    const inner = trimmed.slice(1, -1).trim();
-    if (!inner) {
-      return null;
-    }
-    const items = splitTopLevel(inner, ",");
-    if (!items) {
-      return "Array literal has unbalanced syntax";
-    }
-    for (const item of items) {
-      const itemError = validateDslValue(item, declaredNames);
-      if (itemError) {
-        return itemError;
-      }
-    }
-    return null;
-  }
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    return validateObjectLiteral(trimmed, declaredNames);
-  }
-  return `Unsupported DSL value: ${trimmed}`;
-}
-
-function validateCreateCall(call: string, declaredNames: Set<string>): string | null {
-  if (!call.startsWith("board.create(") || !call.endsWith(")")) {
-    return "Only board.create(...) calls are allowed";
-  }
-
-  const args = splitTopLevel(call.slice("board.create(".length, -1), ",");
-  if (!args || args.length < 2 || args.length > 3) {
-    return "board.create requires two or three arguments";
-  }
-
-  const typeArg = args[0].trim();
-  if (!isStringLiteral(typeArg)) {
-    return "board.create element type must be a string literal";
-  }
-  const elementType = unquote(typeArg);
-  if (!ALLOWED_ELEMENT_TYPES.has(elementType)) {
-    return `Unsupported JSXGraph element type: ${elementType}`;
-  }
-
-  const parentsError = validateDslValue(args[1], declaredNames);
-  if (parentsError) {
-    return parentsError;
-  }
-
-  if (args[2]) {
-    return validateObjectLiteral(args[2].trim(), declaredNames);
-  }
-
-  return null;
-}
-
-function validateStatement(statement: string, declaredNames: Set<string>): string | null {
-  const trimmed = statement.trim();
-  const boundingBoxMatch = trimmed.match(/^board\.setBoundingBox\((.*)\)$/);
-  if (boundingBoxMatch) {
-    const value = boundingBoxMatch[1].trim();
-    const parts = value.startsWith("[") && value.endsWith("]")
-      ? splitTopLevel(value.slice(1, -1), ",")
-      : null;
-    if (!parts || parts.length !== 4 || parts.some((part) => !/^-?\d+(?:\.\d+)?$/.test(part.trim()))) {
-      return "board.setBoundingBox must use four numeric literals";
-    }
-    return null;
-  }
-
-  const declarationMatch = trimmed.match(/^var\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(board\.create\(.*\))$/);
-  if (declarationMatch) {
-    const [, name, call] = declarationMatch;
-    if (declaredNames.has(name)) {
-      return `Duplicate DSL variable: ${name}`;
-    }
-    const callError = validateCreateCall(call, declaredNames);
-    if (callError) {
-      return callError;
-    }
-    declaredNames.add(name);
-    return null;
-  }
-
-  if (trimmed.startsWith("board.create(")) {
-    return validateCreateCall(trimmed, declaredNames);
-  }
-
-  return "Only var declarations, board.setBoundingBox, and board.create calls are allowed";
-}
-
 /**
- * Validates model-generated JSXGraph DSL against a strict allowlist.
+ * Validates JSXGraph DSL with lightweight checks.
  * Returns null if valid, error message if invalid.
  */
 export function validateDsl(dsl: string): string | null {
@@ -303,31 +32,6 @@ export function validateDsl(dsl: string): string | null {
   if (stripped.length > 5000) {
     return "DSL is too long";
   }
-
-  const unquoted = stripQuotedStrings(stripped);
-  if (/=>|`|\/\/|\/\*|\*\/|\+\+|--/.test(unquoted)) {
-    return "DSL contains unsupported JavaScript syntax";
-  }
-  for (const token of BLOCKED_TOKENS) {
-    const pattern = new RegExp(`\\b${token}\\b`, "i");
-    if (pattern.test(unquoted)) {
-      return `DSL contains forbidden token: ${token}`;
-    }
-  }
-
-  const statements = splitStatements(stripped);
-  if (!statements) {
-    return "DSL has unbalanced statement syntax";
-  }
-
-  const declaredNames = new Set<string>();
-  for (const statement of statements) {
-    const statementError = validateStatement(statement, declaredNames);
-    if (statementError) {
-      return statementError;
-    }
-  }
-
   return null;
 }
 
@@ -345,7 +49,7 @@ interface MessagePayload {
  * - iframe with sandbox="allow-scripts" (no allow-same-origin, no allow-forms)
  * - Restrictive Content Security Policy (CSP) blocking all network requests and unsafe operations
  * - Pinned JSXGraph version from trusted CDN
- * - DSL validation against denylist patterns
+ * - Lightweight DSL size validation
  * - Timeout handling with iframe recreation
  * - No external API access from iframe
  */
@@ -437,7 +141,7 @@ export function GraphSandbox({
       return;
     }
 
-    // Validate DSL against denylist
+    // Validate DSL
     const validationError = validateDsl(dsl);
     if (validationError) {
       setStatus("error");

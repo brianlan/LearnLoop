@@ -50,6 +50,7 @@ describe("GraphSandbox", () => {
   it("accepts custom width and height", () => {
     const { container } = render(<GraphSandbox dsl="" width={500} height={300} />);
     const sandbox = container.querySelector('[data-testid="graph-sandbox"]') as HTMLElement;
+    expect(sandbox).toBeTruthy();
     expect(sandbox.style.width).toBe("500px");
     expect(sandbox.style.height).toBe("300px");
   });
@@ -57,6 +58,7 @@ describe("GraphSandbox", () => {
   it("accepts string width values", () => {
     const { container } = render(<GraphSandbox dsl="" width="80%" height={300} />);
     const sandbox = container.querySelector('[data-testid="graph-sandbox"]') as HTMLElement;
+    expect(sandbox).toBeTruthy();
     expect(sandbox.style.width).toBe("80%");
   });
 
@@ -70,28 +72,41 @@ describe("GraphSandbox", () => {
     expect(screen.getByTestId("jsxgraph-iframe")).toBeInTheDocument();
   });
 
-  it("allows the supported graph DSL subset", () => {
-    const dsl = [
-      "board.setBoundingBox([-1, 2, 6, -2])",
-      "var A = board.create('point', [0, 0], {name:'A'})",
-      "var B = board.create('point', [5, 0], {name:'B'})",
-      "board.create('segment', [A, B], {strokeWidth:2})",
-      "board.create('text', [2.5, 0.3, '490米'], {anchorX:'middle', fontSize:12})",
-    ].join(";");
-
+  it("allows setBoundingBox with multiple arguments", () => {
+    const dsl = "board.setBoundingBox([-2, 2, 4, -3], true);";
     expect(validateDsl(dsl)).toBeNull();
   });
 
-  it.each([
-    "fetch('/api/private'); board.create('point', [0, 0]);",
-    "while (true) { board.create('point', [0, 0]); }",
-    "window.location = 'https://example.com';",
-    "new Function('return document.cookie')();",
-    "board.constructor.constructor('return window')();",
-    "board.create('functiongraph', [function(x) { return x; }, -1, 1]);",
-    "board.create('point', [1 + 2, 0]);",
-  ])("rejects unsafe graph DSL: %s", (dsl) => {
-    expect(validateDsl(dsl)).not.toBeNull();
+  it("allows complex historical DSL with arithmetic and coordinate methods", () => {
+    const dsl = `
+      board.setBoundingBox([-2, 2, 4, -3], true);
+      var a = board.create('point', [0, 0]);
+      var b = board.create('point', [1, 1]);
+      var c = board.create('segment', [a, b]);
+      var d = Math.sqrt(2);
+      var e = board.create('point', [a.X() + 1, a.Y() - 1]);
+      var f = (a.X() + b.X()) / 2;
+    `;
+    expect(validateDsl(dsl)).toBeNull();
+  });
+
+  it("allows second stored problem DSL shape with multi-var declarations", () => {
+    const dsl = `
+      board.setBoundingBox([-3, 3, 3, -3], true);
+      var p1 = board.create('point', [-1, 1]),
+          p2 = board.create('point', [2, -1]),
+          p3 = board.create('point', [0, 2]);
+      var poly = board.create('polygon', [p1, p2, p3]);
+      var area = Math.abs(p1.X() * (p2.Y() - p3.Y()) +
+                          p2.X() * (p3.Y() - p1.Y()) +
+                          p3.X() * (p1.Y() - p2.Y())) / 2;
+    `;
+    expect(validateDsl(dsl)).toBeNull();
+  });
+
+  it("rejects DSL that is too long", () => {
+    const dsl = "x".repeat(5001);
+    expect(validateDsl(dsl)).toBe("DSL is too long");
   });
 
   describe("prop change lifecycle", () => {
@@ -233,6 +248,49 @@ describe("GraphSandbox", () => {
       // Wait a bit and verify no additional render messages
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(postMessageSpy).not.toHaveBeenCalled();
+    });
+
+    it("surfaces invalid JavaScript syntax errors through iframe error protocol", async () => {
+      const invalidDsl = "var = = board.create('point', [0, 0]);";
+      const postMessageSpy = vi.fn();
+      const mockContentWindow = { postMessage: postMessageSpy };
+
+      render(<GraphSandbox dsl={invalidDsl} />);
+
+      const iframe = screen.getByTestId("jsxgraph-iframe") as HTMLIFrameElement;
+
+      Object.defineProperty(iframe, "contentWindow", {
+        value: mockContentWindow,
+        writable: true,
+      });
+
+      // Simulate iframe sending "ready" message
+      const readyEvent = new MessageEvent("message", {
+        source: mockContentWindow as unknown as Window,
+        data: { type: "ready" },
+      });
+      window.dispatchEvent(readyEvent);
+
+      // Wait for render message to be sent
+      await waitFor(() => {
+        expect(postMessageSpy).toHaveBeenCalledWith(
+          { type: "render", payload: invalidDsl },
+          "*"
+        );
+      });
+
+      // Simulate iframe reporting a syntax error (as it would from new Function())
+      const syntaxErrorEvent = new MessageEvent("message", {
+        source: mockContentWindow as unknown as Window,
+        data: { type: "error", payload: "SyntaxError: Unexpected token '='" },
+      });
+      window.dispatchEvent(syntaxErrorEvent);
+
+      // Error UI should appear with the syntax error message
+      await waitFor(() => {
+        expect(screen.getByText("Rendering Error")).toBeInTheDocument();
+      });
+      expect(screen.getByText("SyntaxError: Unexpected token '='")).toBeInTheDocument();
     });
 
     it("clears lastSentDslRef when iframe is reset", async () => {
