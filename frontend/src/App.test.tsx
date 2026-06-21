@@ -60,16 +60,30 @@ describe("App", () => {
     });
   });
 
-  it("redirects from root to problems when authenticated", async () => {
+  it("redirects from root to home when authenticated", async () => {
     renderWithRouterAndAuth(["/"], {
       authenticated: true,
       user: { id: "abc123", username: "test" },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Problems" })).toBeInTheDocument();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        coverage: { totalProblems: 0, triedProblems: 0, percentage: 0 },
+        activity: { startDate: "2024-01-01", endDate: "2024-12-31", days: [{ date: "2024-01-01", count: 0 }] },
+      }),
     });
-    expect(screen.getByRole("button", { name: "Problems" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
+    });
+    const navButtons = screen.getAllByRole("button");
+    const labels = navButtons.map((b) => b.textContent);
+    const homeIndex = labels.indexOf("Home");
+    const problemsIndex = labels.indexOf("Problems");
+    expect(homeIndex).toBeGreaterThanOrEqual(0);
+    expect(problemsIndex).toBeGreaterThanOrEqual(0);
+    expect(homeIndex).toBeLessThan(problemsIndex);
     expect(screen.getByRole("button", { name: "Ingest" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Exams" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Logout" })).toBeInTheDocument();
