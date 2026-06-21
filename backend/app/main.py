@@ -24,6 +24,7 @@ from app.presentation.practice import router as practice_router
 from app.presentation.settings import router as settings_router
 from app.presentation.teacher_password import router as teacher_password_router
 from app.presentation.coaching import router as coaching_router
+from app.presentation.home import router as home_router
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(settings_router)
     api_v1_router.include_router(teacher_password_router)
     api_v1_router.include_router(coaching_router)
+    api_v1_router.include_router(home_router)
     application.include_router(api_v1_router)
 
     return application

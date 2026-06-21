@@ -7,6 +7,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 import { LoginPage } from "@/pages/LoginPage";
 import { RegisterPage } from "@/pages/RegisterPage";
+import { HomePage } from "@/pages/HomePage";
 import { ProblemsPage } from "@/pages/ProblemsPage";
 import { ProblemDetailPage } from "@/pages/ProblemDetailPage";
 import { IngestPage } from "@/pages/IngestPage";
@@ -26,6 +27,7 @@ function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   const navItems = [
+    { label: "Home", path: "/home" },
     { label: "Problems", path: "/problems" },
     { label: "Ingest", path: "/ingest" },
     { label: "Exams", path: "/exams" },
@@ -171,6 +173,14 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route
+        path="/home"
+        element={
+          <ProtectedPage>
+            <HomePage />
+          </ProtectedPage>
+        }
+      />
+      <Route
         path="/problems"
         element={
           <ProtectedPage>
@@ -258,8 +268,8 @@ export function AppRoutes() {
           </ProtectedPage>
         }
       />
-      <Route path="/" element={<Navigate to="/problems" replace />} />
-      <Route path="*" element={<Navigate to="/problems" replace />} />
+      <Route path="/" element={<Navigate to="/home" replace />} />
+      <Route path="*" element={<Navigate to="/home" replace />} />
     </Routes>
   );
 }
