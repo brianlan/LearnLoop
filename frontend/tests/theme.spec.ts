@@ -194,6 +194,81 @@ test.describe("Theme E2E", () => {
   });
 });
 
+test.describe("Home Page Theme", () => {
+  test("home page renders in light theme", async ({ page, request }) => {
+    const session = await createSession(request, "home_light");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "light");
+
+    await page.goto("/");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("light");
+
+    await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+  });
+
+  test("home page renders in dark theme", async ({ page, request }) => {
+    const session = await createSession(request, "home_dark");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+  });
+
+  test("home page dark theme paints a non-white full-page background", async ({ page, request }) => {
+    const session = await createSession(request, "home_dark_bg");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/");
+
+    const themeAttr = await page.locator("html").getAttribute("data-theme");
+    expect(themeAttr).toBe("dark");
+
+    await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+    const mainBg = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return null;
+      return window.getComputedStyle(main).backgroundColor;
+    });
+    expect(mainBg).not.toBe("rgb(255, 255, 255)");
+    expect(mainBg).not.toBe("rgba(0, 0, 0, 0)");
+
+    const mainHeight = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      return main ? main.getBoundingClientRect().height : 0;
+    });
+    const viewportHeight = await page.evaluate(() => window.innerHeight);
+    expect(mainHeight).toBeGreaterThanOrEqual(viewportHeight - 60);
+  });
+
+  test("home page dark theme has no white pixel below the fold", async ({ page, request }) => {
+    const session = await createSession(request, "home_dark_no_white");
+    await addAuthenticatedSession(page, session);
+    await setTheme(page, "dark");
+
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+    const bottomBg = await page.evaluate(() => {
+      const x = Math.floor(window.innerWidth / 2);
+      const y = window.innerHeight - 5;
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      return window.getComputedStyle(el).backgroundColor;
+    });
+
+    expect(bottomBg).not.toBe("rgb(255, 255, 255)");
+  });
+});
+
 test.describe("Problems Page Theme", () => {
   test("problems page renders in light theme", async ({ page, request }) => {
     const session = await createSession(request, "problems_light");

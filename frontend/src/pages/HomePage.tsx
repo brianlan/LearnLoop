@@ -99,25 +99,37 @@ export function HomePage() {
     queryFn: () => api.get<HomeSummaryResponse>("/home/summary"),
   });
 
+  const pageCanvasStyle = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-bg)",
+    color: "var(--color-text)",
+    padding: "1.5rem",
+  } as const;
+  const contentStyle = { maxWidth: "1100px", margin: "0 auto" } as const;
+
   if (isLoading) {
     return (
-      <div data-testid="loading" style={{ padding: "2rem", color: "var(--color-text-muted)" }}>
-        Loading dashboard...
-      </div>
+      <main style={pageCanvasStyle}>
+        <div data-testid="loading" style={{ ...contentStyle, padding: "0.5rem 0", color: "var(--color-text-muted)" }}>
+          Loading dashboard...
+        </div>
+      </main>
     );
   }
 
   if (error) {
     const message = error instanceof ApiError ? error.message : "Failed to load dashboard";
     return (
-      <div data-testid="error" style={{ padding: "2rem", color: "var(--color-text-danger)" }}>
-        {message}
-      </div>
+      <main style={pageCanvasStyle}>
+        <div data-testid="error" style={{ ...contentStyle, padding: "0.5rem 0", color: "var(--color-text-danger)" }}>
+          {message}
+        </div>
+      </main>
     );
   }
 
   if (!data) {
-    return null;
+    return <main style={pageCanvasStyle} />;
   }
 
   const { coverage, conquest, activity } = data;
@@ -137,10 +149,11 @@ export function HomePage() {
   } as const;
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "1100px", margin: "0 auto" }}>
-      <h1 style={{ fontSize: "1.75rem", fontWeight: 800, marginBottom: "1.5rem", color: "var(--color-text)" }}>
-        Home
-      </h1>
+    <main style={pageCanvasStyle}>
+      <div style={contentStyle}>
+        <h1 style={{ fontSize: "1.75rem", fontWeight: 800, marginBottom: "1.5rem", color: "var(--color-text)" }}>
+          Home
+        </h1>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
         <section style={statCardStyle}>
@@ -268,5 +281,6 @@ export function HomePage() {
         </div>
       </section>
     </div>
+    </main>
   );
 }
