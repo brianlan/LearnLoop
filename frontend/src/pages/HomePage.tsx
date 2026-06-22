@@ -32,40 +32,59 @@ interface HomeSummaryResponse {
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTH_ABBREVIATIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const CELL_SIZE_PX = 11;
+const CELL_GAP_PX = 3;
+const COLUMN_WIDTH_PX = CELL_SIZE_PX + CELL_GAP_PX;
+
+function parseUtcDate(value: string): Date {
+  return new Date(`${value}T00:00:00Z`);
+}
 
 function mondayIndex(date: Date): number {
-  return (date.getDay() + 6) % 7;
+  return (date.getUTCDay() + 6) % 7;
 }
 
 function buildWeekColumns(days: HomeActivityDay[]): (HomeActivityDay | null)[][] {
+  if (days.length === 0) return [];
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  const firstDate = parseUtcDate(sorted[0].date);
+  const startRow = mondayIndex(firstDate);
+
   const columns: (HomeActivityDay | null)[][] = [];
-  days.forEach((day) => {
-    const date = new Date(`${day.date}T00:00:00Z`);
-    const row = mondayIndex(date);
-    const lastColumn = columns[columns.length - 1];
-    if (!lastColumn || lastColumn.every((cell) => cell === null)) {
-      const column: (HomeActivityDay | null)[] = new Array(7).fill(null);
-      column[row] = day;
-      columns.push(column);
-    } else {
-      const firstDayInColumn = lastColumn.find((cell) => cell !== null);
-      if (firstDayInColumn) {
-        const firstDate = new Date(`${firstDayInColumn.date}T00:00:00Z`);
-        const dayDiff = Math.round(
-          (date.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24),
-        );
-        const expectedColumnIndex = Math.floor((dayDiff + mondayIndex(firstDate)) / 7);
-        if (expectedColumnIndex === columns.length - 1) {
-          lastColumn[row] = day;
-        } else {
-          const column: (HomeActivityDay | null)[] = new Array(7).fill(null);
-          column[row] = day;
-          columns.push(column);
-        }
-      }
+  for (let i = 0; i < sorted.length; i++) {
+    const offset = startRow + i;
+    const colIndex = Math.floor(offset / 7);
+    const row = offset % 7;
+    if (!columns[colIndex]) {
+      columns[colIndex] = new Array(7).fill(null);
+    }
+    columns[colIndex][row] = sorted[i];
+  }
+  return columns;
+}
+
+interface MonthLabel {
+  columnIndex: number;
+  text: string;
+}
+
+function buildMonthLabels(columns: (HomeActivityDay | null)[][]): MonthLabel[] {
+  const labels: MonthLabel[] = [];
+  let previousMonth = -1;
+  columns.forEach((column, columnIndex) => {
+    const firstDay = column.find((cell): cell is HomeActivityDay => cell !== null);
+    if (!firstDay) return;
+    const month = parseUtcDate(firstDay.date).getUTCMonth();
+    if (month !== previousMonth) {
+      labels.push({ columnIndex, text: MONTH_ABBREVIATIONS[month] });
+      previousMonth = month;
     }
   });
-  return columns;
+  return labels;
 }
 
 function cellIntensity(count: number, maxCount: number): number {
@@ -104,6 +123,7 @@ export function HomePage() {
   const { coverage, conquest, activity } = data;
   const maxCount = activity.days.reduce((max, day) => Math.max(max, day.count), 0);
   const weekColumns = buildWeekColumns(activity.days);
+  const monthLabels = buildMonthLabels(weekColumns);
   const zeroProblems = coverage.totalProblems === 0;
 
   const statCardStyle = {
@@ -173,40 +193,77 @@ export function HomePage() {
           Activity (last year)
         </div>
         <div data-testid="home-activity-grid" style={{ overflowX: "auto" }}>
-          <div style={{ display: "flex", gap: "0.25rem" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.125rem", marginRight: "0.25rem", justifyContent: "space-around" }}>
-              {WEEKDAY_LABELS.map((label) => (
-                <div key={label} style={{ fontSize: "0.625rem", color: "var(--color-text-muted)", height: "12px", lineHeight: "12px" }}>
-                  {label}
+          <div style={{ display: "inline-flex", flexDirection: "column", gap: "0.25rem" }}>
+            <div style={{ display: "flex" }}>
+              <div style={{ width: `${COLUMN_WIDTH_PX + 4}px` }} aria-hidden="true" />
+              <div
+                style={{
+                  position: "relative",
+                  height: "0.85rem",
+                  width: `${weekColumns.length * COLUMN_WIDTH_PX}px`,
+                }}
+              >
+                {monthLabels.map((label) => (
+                  <span
+                    key={`${label.text}-${label.columnIndex}`}
+                    data-testid="home-activity-month-label"
+                    style={{
+                      position: "absolute",
+                      left: `${label.columnIndex * COLUMN_WIDTH_PX}px`,
+                      top: 0,
+                      fontSize: "0.625rem",
+                      color: "var(--color-text-muted)",
+                      lineHeight: "0.85rem",
+                    }}
+                  >
+                    {label.text}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: `${CELL_GAP_PX}px` }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: `${CELL_GAP_PX}px`, marginRight: "0.25rem", justifyContent: "space-around" }}>
+                {WEEKDAY_LABELS.map((label) => (
+                  <div
+                    key={label}
+                    data-testid="home-activity-weekday-label"
+                    style={{ fontSize: "0.625rem", color: "var(--color-text-muted)", height: `${CELL_SIZE_PX}px`, lineHeight: `${CELL_SIZE_PX}px` }}
+                  >
+                    {label}
+                  </div>
+                ))}
+              </div>
+              {weekColumns.map((column, colIndex) => (
+                <div
+                  key={colIndex}
+                  data-testid="home-activity-week-column"
+                  style={{ display: "flex", flexDirection: "column", gap: `${CELL_GAP_PX}px` }}
+                >
+                  {column.map((day, rowIndex) => {
+                    const intensity = day ? cellIntensity(day.count, maxCount) : 0;
+                    const background =
+                      day && day.count > 0
+                        ? `color-mix(in srgb, var(--color-primary) ${Math.round(intensity * 100)}%, transparent)`
+                        : "var(--color-surface-muted)";
+                    return (
+                      <div
+                        key={rowIndex}
+                        data-testid="home-activity-cell"
+                        data-date={day?.date ?? ""}
+                        data-count={day?.count ?? 0}
+                        title={day ? `${day.date}: ${day.count} event${day.count === 1 ? "" : "s"}` : ""}
+                        style={{
+                          width: `${CELL_SIZE_PX}px`,
+                          height: `${CELL_SIZE_PX}px`,
+                          borderRadius: "2px",
+                          backgroundColor: background,
+                        }}
+                      />
+                    );
+                  })}
                 </div>
               ))}
             </div>
-            {weekColumns.map((column, colIndex) => (
-              <div key={colIndex} style={{ display: "flex", flexDirection: "column", gap: "0.125rem" }}>
-                {column.map((day, rowIndex) => {
-                  const intensity = day ? cellIntensity(day.count, maxCount) : 0;
-                  const background =
-                    day && day.count > 0
-                      ? `color-mix(in srgb, var(--color-primary) ${Math.round(intensity * 100)}%, transparent)`
-                      : "var(--color-surface-muted)";
-                  return (
-                    <div
-                      key={rowIndex}
-                      data-testid="home-activity-cell"
-                      data-date={day?.date ?? ""}
-                      data-count={day?.count ?? 0}
-                      title={day ? `${day.date}: ${day.count} event${day.count === 1 ? "" : "s"}` : ""}
-                      style={{
-                        width: "12px",
-                        height: "12px",
-                        borderRadius: "2px",
-                        backgroundColor: background,
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            ))}
           </div>
         </div>
       </section>

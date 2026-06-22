@@ -193,4 +193,74 @@ describe("HomePage", () => {
     expect(highPct).toBeGreaterThan(lowPct);
     expect(zeroBg).toBe("var(--color-surface-muted)");
   });
+
+  it("renders a bounded one-year week-column grid for a 365-day response", async () => {
+    const days = buildDayRange("2025-06-22", 365);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+    const columns = screen.getAllByTestId("home-activity-week-column");
+    expect(columns.length).toBeGreaterThanOrEqual(52);
+    expect(columns.length).toBeLessThanOrEqual(54);
+
+    // 365 cells should be present (no extra empty columns inflating the chart).
+    const cells = screen.getAllByTestId("home-activity-cell");
+    const realCells = cells.filter((c) => (c.getAttribute("data-date") ?? "") !== "");
+    expect(realCells.length).toBe(365);
+  });
+
+  it("renders month labels for months in the visible range", async () => {
+    const days = buildDayRange("2025-06-22", 365);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+    const labels = screen.getAllByTestId("home-activity-month-label");
+    const texts = labels.map((l) => l.textContent?.trim()).filter(Boolean);
+    expect(texts).toEqual(expect.arrayContaining(["Jul", "Oct", "Jan"]));
+    // Every label corresponds to a real month abbreviation.
+    const allMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    for (const t of texts) {
+      expect(allMonths).toContain(t as string);
+    }
+    // A 365-day range crosses ~12-13 month transitions.
+    expect(texts.length).toBeGreaterThanOrEqual(12);
+    expect(texts.length).toBeLessThanOrEqual(13);
+  });
+
+  it("renders weekday labels Monday through Sunday", async () => {
+    const days = buildDayRange("2025-06-22", 365);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+    const weekdayLabels = screen.getAllByTestId("home-activity-weekday-label");
+    expect(weekdayLabels.map((l) => l.textContent)).toEqual([
+      "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+    ]);
+  });
 });
+
+function buildDayRange(startDate: string, count: number): { date: string; count: number }[] {
+  const out: { date: string; count: number }[] = [];
+  const start = new Date(`${startDate}T00:00:00Z`);
+  for (let i = 0; i < count; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    out.push({ date: d.toISOString().slice(0, 10), count: 0 });
+  }
+  return out;
+}
