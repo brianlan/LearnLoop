@@ -70,6 +70,7 @@ describe("App", () => {
       ok: true,
       json: async () => ({
         coverage: { totalProblems: 0, triedProblems: 0, percentage: 0 },
+        conquest: { totalProblems: 0, masteredProblems: 0, percentage: 0 },
         activity: { startDate: "2024-01-01", endDate: "2024-12-31", days: [{ date: "2024-01-01", count: 0 }] },
       }),
     });
