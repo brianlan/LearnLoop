@@ -8,6 +8,12 @@ interface HomeCoverage {
   percentage: number;
 }
 
+interface HomeConquest {
+  totalProblems: number;
+  masteredProblems: number;
+  percentage: number;
+}
+
 interface HomeActivityDay {
   date: string;
   count: number;
@@ -21,6 +27,7 @@ interface HomeActivity {
 
 interface HomeSummaryResponse {
   coverage: HomeCoverage;
+  conquest: HomeConquest;
   activity: HomeActivity;
 }
 
@@ -94,10 +101,20 @@ export function HomePage() {
     return null;
   }
 
-  const { coverage, activity } = data;
+  const { coverage, conquest, activity } = data;
   const maxCount = activity.days.reduce((max, day) => Math.max(max, day.count), 0);
   const weekColumns = buildWeekColumns(activity.days);
   const zeroProblems = coverage.totalProblems === 0;
+
+  const statCardStyle = {
+    flex: "1 1 0",
+    minWidth: "240px",
+    padding: "1.5rem",
+    backgroundColor: "var(--color-surface)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-lg)",
+    boxShadow: "var(--shadow-sm)",
+  } as const;
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "1100px", margin: "0 auto" }}>
@@ -105,32 +122,43 @@ export function HomePage() {
         Home
       </h1>
 
-      <section
-        style={{
-          padding: "1.5rem",
-          marginBottom: "1.5rem",
-          backgroundColor: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-sm)",
-        }}
-      >
-        <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
-          Problem Coverage
-        </div>
-        <div data-testid="home-coverage-percentage" style={{ fontSize: "3.5rem", fontWeight: 800, lineHeight: 1, color: "var(--color-primary)" }}>
-          {coverage.percentage}%
-        </div>
-        <div data-testid="home-coverage-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
-          {zeroProblems ? (
-            "No problems yet. Add problems to start tracking coverage."
-          ) : (
-            <>
-              {coverage.triedProblems} of {coverage.totalProblems} problems tried
-            </>
-          )}
-        </div>
-      </section>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
+        <section style={statCardStyle}>
+          <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            Problem Coverage
+          </div>
+          <div data-testid="home-coverage-percentage" style={{ fontSize: "3.5rem", fontWeight: 800, lineHeight: 1, color: "var(--color-primary)" }}>
+            {coverage.percentage}%
+          </div>
+          <div data-testid="home-coverage-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+            {zeroProblems ? (
+              "No problems yet. Add problems to start tracking coverage."
+            ) : (
+              <>
+                {coverage.triedProblems} of {coverage.totalProblems} problems tried
+              </>
+            )}
+          </div>
+        </section>
+
+        <section style={statCardStyle}>
+          <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            Conquest Rate
+          </div>
+          <div data-testid="home-conquest-percentage" style={{ fontSize: "3.5rem", fontWeight: 800, lineHeight: 1, color: "var(--color-primary)" }}>
+            {conquest.percentage}%
+          </div>
+          <div data-testid="home-conquest-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+            {zeroProblems ? (
+              "No problems yet. Add problems to start tracking conquest."
+            ) : (
+              <>
+                {conquest.masteredProblems} of {conquest.totalProblems} problems mastered
+              </>
+            )}
+          </div>
+        </section>
+      </div>
 
       <section
         style={{

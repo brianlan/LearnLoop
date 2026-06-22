@@ -33,6 +33,8 @@ function summaryResponse(overrides: Partial<{
   totalProblems: number;
   triedProblems: number;
   percentage: number;
+  masteredProblems: number;
+  conquestPercentage: number;
   days: { date: string; count: number }[];
 }> = {}) {
   const today = new Date();
@@ -42,11 +44,17 @@ function summaryResponse(overrides: Partial<{
     d.setUTCDate(d.getUTCDate() - i);
     days.push({ date: d.toISOString().slice(0, 10), count: 0 });
   }
+  const totalProblems = overrides.totalProblems ?? 2;
   return {
     coverage: {
-      totalProblems: overrides.totalProblems ?? 2,
+      totalProblems,
       triedProblems: overrides.triedProblems ?? 1,
       percentage: overrides.percentage ?? 50,
+    },
+    conquest: {
+      totalProblems,
+      masteredProblems: overrides.masteredProblems ?? 0,
+      percentage: overrides.conquestPercentage ?? 0,
     },
     activity: {
       startDate: days[0].date,
@@ -82,13 +90,15 @@ describe("HomePage", () => {
   it("renders zero-problem state with 0% and note", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => summaryResponse({ totalProblems: 0, triedProblems: 0, percentage: 0 }),
+      json: async () => summaryResponse({ totalProblems: 0, triedProblems: 0, percentage: 0, masteredProblems: 0, conquestPercentage: 0 }),
     });
     renderHomePage();
     await waitFor(() => {
       expect(screen.getByTestId("home-coverage-percentage").textContent).toBe("0%");
     });
     expect(screen.getByTestId("home-coverage-text").textContent).toContain("No problems yet");
+    expect(screen.getByTestId("home-conquest-percentage").textContent).toBe("0%");
+    expect(screen.getByTestId("home-conquest-text").textContent).toContain("No problems yet");
   });
 
   it("renders coverage percentage and supporting text in normal state", async () => {
@@ -101,6 +111,24 @@ describe("HomePage", () => {
       expect(screen.getByTestId("home-coverage-percentage").textContent).toBe("50%");
     });
     expect(screen.getByTestId("home-coverage-text").textContent).toContain("2 of 4 problems tried");
+  });
+
+  it("renders conquest percentage and supporting text in normal state", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        totalProblems: 4,
+        triedProblems: 3,
+        percentage: 75,
+        masteredProblems: 2,
+        conquestPercentage: 50,
+      }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-conquest-percentage").textContent).toBe("50%");
+    });
+    expect(screen.getByTestId("home-conquest-text").textContent).toContain("2 of 4 problems mastered");
   });
 
   it("renders activity grid cells with returned counts", async () => {
