@@ -59,3 +59,58 @@ def test_matches_query_combined_in_and_ne():
     # We're testing our fake implementation
     assert matches_query(doc, {"status": {"$in": ["active", "pending"], "$ne": "deleted"}})
     assert not matches_query(doc, {"status": {"$in": ["active", "pending"], "$ne": "active"}})
+
+
+def test_matches_query_or_operator():
+    doc = {"status": "active", "value": 10}
+    assert matches_query(doc, {"$or": [{"status": "active"}, {"value": 5}]})
+    assert matches_query(doc, {"$or": [{"status": "other"}, {"value": 10}]})
+    assert not matches_query(doc, {"$or": [{"status": "other"}, {"value": 5}]})
+
+
+def test_matches_query_regex_operator():
+    doc = {"name": "LearnLoopProject"}
+    assert matches_query(doc, {"name": {"$regex": "learn", "$options": "i"}})
+    assert not matches_query(doc, {"name": {"$regex": "learn"}})
+
+
+def test_matches_query_list_contains():
+    doc = {"tags": ["math", "algebra"]}
+    assert matches_query(doc, {"tags": "math"})
+    assert matches_query(doc, {"tags": {"$in": ["math"]}})
+    assert not matches_query(doc, {"tags": "geometry"})
+
+
+def test_matches_query_nested_list_of_dicts():
+    doc = {"items": [{"problemId": "123"}, {"problemId": "456"}]}
+    assert matches_query(doc, {"items.problemId": "123"})
+    assert matches_query(doc, {"items.problemId": "456"})
+    assert not matches_query(doc, {"items.problemId": "789"})
+
+
+async def test_fake_cursor_operations():
+    from tests.api.conftest import FakeCursor
+    docs = [{"val": 3}, {"val": 1}, {"val": 2}]
+    cursor = FakeCursor(docs)
+    cursor.sort("val", 1)
+    sorted_docs = await cursor.to_list()
+    assert sorted_docs == [{"val": 1}, {"val": 2}, {"val": 3}]
+
+    cursor = FakeCursor(docs)
+    cursor.sort("val", -1)
+    sorted_docs = await cursor.to_list()
+    assert sorted_docs == [{"val": 3}, {"val": 2}, {"val": 1}]
+
+    cursor = FakeCursor(docs)
+    cursor.sort("val", 1).skip(1).limit(1)
+    sorted_docs = await cursor.to_list()
+    assert sorted_docs == [{"val": 2}]
+
+    # Test async iteration
+    cursor = FakeCursor(docs)
+    cursor.sort("val", 1)
+    iterated = []
+    async for d in cursor:
+        iterated.append(d)
+    assert iterated == [{"val": 1}, {"val": 2}, {"val": 3}]
+
