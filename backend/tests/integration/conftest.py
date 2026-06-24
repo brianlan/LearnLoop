@@ -18,13 +18,13 @@ from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import ClassificationResult, ExtractionResult
 from app.main import create_app
 from app.presentation import ingestion as ingestion_presentation
-from app.presentation.deps import get_app_settings, get_database
-from app.presentation.exams import (
-    get_exam_mongo_adapter,
-    get_exam_storage,
-    get_exam_vlm_client,
+from app.infrastructure.storage.mongo import get_mongo_adapter
+from app.presentation.deps import (
+    get_app_settings,
+    get_database,
+    get_grading_vlm_client,
+    get_s3_storage,
 )
-from app.presentation.media import get_problem_storage
 
 
 class FakeInsertOneResult:
@@ -451,9 +451,9 @@ async def exams_app() -> AsyncIterator[FastAPI]:
     application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_settings] = lambda: settings
     application.dependency_overrides[get_current_user] = lambda: primary_user
-    application.dependency_overrides[get_exam_storage] = lambda: storage
-    application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
-    application.dependency_overrides[get_exam_vlm_client] = lambda: vlm
+    application.dependency_overrides[get_s3_storage] = lambda: storage
+    application.dependency_overrides[get_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_grading_vlm_client] = lambda: vlm
 
     yield application
 
@@ -497,10 +497,9 @@ async def app() -> AsyncIterator[FastAPI]:
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_settings] = lambda: settings
-    application.dependency_overrides[get_problem_storage] = lambda: storage
-    application.dependency_overrides[get_exam_storage] = lambda: storage
-    application.dependency_overrides[get_exam_mongo_adapter] = lambda: adapter
-    application.dependency_overrides[get_exam_vlm_client] = lambda: grading_vlm
+    application.dependency_overrides[get_s3_storage] = lambda: storage
+    application.dependency_overrides[get_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_grading_vlm_client] = lambda: grading_vlm
     application.dependency_overrides[ingestion_presentation.get_s3_storage] = lambda: storage
     application.dependency_overrides[ingestion_presentation.create_helper_vlm_client] = lambda: helper_vlm
     application.dependency_overrides[ingestion_presentation.create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm

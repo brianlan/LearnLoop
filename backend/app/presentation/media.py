@@ -7,13 +7,11 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-from app.presentation.deps import DatabaseDependency, StorageDependency, get_current_user, get_s3_storage
+from app.presentation.deps import DatabaseDependency, StorageDependency, get_current_user
 from app.presentation.errors import ApiError
 from app.presentation.helpers import get_owned_problem
 
 router = APIRouter(tags=["media"])
-
-get_problem_storage = get_s3_storage
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 

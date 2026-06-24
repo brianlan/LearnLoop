@@ -13,9 +13,8 @@ from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.main import create_app
-from app.presentation.deps import get_current_user, get_database
+from app.presentation.deps import get_current_user, get_database, get_s3_storage
 from app.presentation.errors import ApiError
-from app.presentation.media import get_problem_storage
 
 
 class FakeInsertOneResult:
@@ -313,7 +312,7 @@ async def problems_app() -> FastAPI:
     application.state.secondary_user = secondary_user
 
     application.dependency_overrides[get_database] = lambda: database
-    application.dependency_overrides[get_problem_storage] = lambda: storage
+    application.dependency_overrides[get_s3_storage] = lambda: storage
     application.dependency_overrides[get_current_user] = lambda: deepcopy(primary_user)
     return application
 
