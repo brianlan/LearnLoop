@@ -52,30 +52,18 @@ async function handleResponse<T>(response: Response): Promise<T> {
  * Uses cookie-based auth with credentials: 'include'.
  */
 export const api = {
-  /**
-   * Get the coaching conversation for a problem
-   */
   async getCoachingConversation(problemId: string): Promise<CoachingConversation> {
     return this.get<CoachingConversation>(`/coaching/${problemId}/conversation`);
   },
 
-  /**
-   * Send a coaching message for a problem
-   */
   async sendCoachingMessage(problemId: string, message: string): Promise<CoachingConversation> {
     return this.post<CoachingConversation>(`/coaching/${problemId}/messages`, { message });
   },
 
-  /**
-   * Clear the coaching conversation for a problem
-   */
   async clearCoachingConversation(problemId: string): Promise<void> {
     return this.delete<void>(`/coaching/${problemId}/conversation`);
   },
 
-  /**
-   * Get the current authenticated user session
-   */
   async getMe(): Promise<MeResponse> {
     const response = await fetch(`${API_BASE}/auth/me`, {
       credentials: "include",
@@ -83,9 +71,6 @@ export const api = {
     return handleResponse<MeResponse>(response);
   },
 
-  /**
-   * Login with username and password
-   */
   async login(username: string, password: string): Promise<AuthResponse> {
     const response = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
@@ -98,9 +83,6 @@ export const api = {
     return handleResponse<AuthResponse>(response);
   },
 
-  /**
-   * Register a new user
-   */
   async register(username: string, password: string): Promise<AuthResponse> {
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
@@ -113,9 +95,6 @@ export const api = {
     return handleResponse<AuthResponse>(response);
   },
 
-  /**
-   * Logout the current user
-   */
   async logout(): Promise<{ ok: boolean }> {
     const response = await fetch(`${API_BASE}/auth/logout`, {
       method: "POST",
@@ -124,9 +103,6 @@ export const api = {
     return handleResponse<{ ok: boolean }>(response);
   },
 
-  /**
-   * Verify teacher password
-   */
   async verifyTeacherPassword(password: string): Promise<{ ok: boolean }> {
     const response = await fetch(`${API_BASE}/teacher-password/verify`, {
       method: "POST",
@@ -139,9 +115,6 @@ export const api = {
     return handleResponse<{ ok: boolean }>(response);
   },
 
-  /**
-   * Change teacher password
-   */
   async changeTeacherPassword(
     currentPassword: string,
     newPassword: string,
@@ -169,9 +142,6 @@ export const api = {
     return this.get<{ status: string }>(`/problems/${problemId}/solution-status`);
   },
 
-  /**
-   * Generic GET request
-   */
   async get<T>(path: string): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
@@ -179,9 +149,6 @@ export const api = {
     return handleResponse<T>(response);
   },
 
-  /**
-   * Generic POST request
-   */
   async post<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
@@ -194,9 +161,6 @@ export const api = {
     return handleResponse<T>(response);
   },
 
-  /**
-   * Generic PUT request
-   */
   async put<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "PUT",
@@ -209,9 +173,6 @@ export const api = {
     return handleResponse<T>(response);
   },
 
-  /**
-   * Generic PATCH request
-   */
   async patch<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "PATCH",
@@ -224,9 +185,6 @@ export const api = {
     return handleResponse<T>(response);
   },
 
-  /**
-   * Generic DELETE request
-   */
   async delete<T>(path: string): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "DELETE",
@@ -235,9 +193,6 @@ export const api = {
     return handleResponse<T>(response);
   },
 
-  /**
-   * Generic POST request with FormData
-   */
   async postFormData<T>(path: string, formData: FormData): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
