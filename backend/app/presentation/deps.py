@@ -13,7 +13,12 @@ from app.infrastructure.auth.session import (
     utc_now,
 )
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.storage.mongo import Document, get_database as get_mongo_database
+from app.infrastructure.storage.mongo import (
+    Document,
+    MongoClientAdapter,
+    get_database as get_mongo_database,
+    get_mongo_adapter as get_mongo_adapter_infra,
+)
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient
 from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
@@ -25,6 +30,13 @@ def get_database() -> AsyncDatabase[Document]:
 
 
 DatabaseDependency = Annotated[AsyncDatabase[Document], Depends(get_database)]
+
+
+def get_mongo_adapter() -> MongoClientAdapter:
+    return get_mongo_adapter_infra()
+
+
+AdapterDependency = Annotated[MongoClientAdapter, Depends(get_mongo_adapter)]
 
 
 def get_app_settings() -> Settings:

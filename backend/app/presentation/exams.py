@@ -12,7 +12,6 @@ from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPo
 from app.domain.selection import ProblemSelectionConfig, select_problems
 from app.domain.state import transition_exam_state
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.storage.mongo import Document, MongoClientAdapter, get_mongo_adapter
 from app.presentation.exam_grading import build_tracking_update, grade_item
 from app.presentation.exam_helpers import (
     build_exam_summary,
@@ -22,12 +21,11 @@ from app.presentation.exam_helpers import (
     problem_document_to_model,
 )
 from app.presentation.deps import (
+    AdapterDependency,
     DatabaseDependency,
     GradingVLMDependency,
     StorageDependency,
     get_current_user,
-    get_grading_vlm_client,
-    get_s3_storage,
 )
 from app.presentation.errors import ApiError
 from app.presentation.exam_serialization import (
@@ -50,16 +48,6 @@ router = APIRouter(prefix="/exams", tags=["exams"])
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 SettingsDependency = Annotated[Settings, Depends(get_settings)]
-
-
-def get_exam_mongo_adapter() -> MongoClientAdapter:
-    return get_mongo_adapter()
-
-
-AdapterDependency = Annotated[MongoClientAdapter, Depends(get_exam_mongo_adapter)]
-get_exam_storage = get_s3_storage
-VLMDependency = GradingVLMDependency
-get_exam_vlm_client = get_grading_vlm_client
 
 
 @router.post("", response_model=CreateExamResponse, status_code=201)
@@ -222,7 +210,7 @@ async def submit_exam(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
     adapter: AdapterDependency,
-    vlm_client: VLMDependency,
+    vlm_client: GradingVLMDependency,
     storage: StorageDependency,
 ) -> ExamResponse:
     exam = await get_owned_exam(database, exam_id, current_user["_id"])
