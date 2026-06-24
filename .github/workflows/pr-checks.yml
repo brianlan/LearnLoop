@@ -32,7 +32,7 @@ jobs:
 
       - name: Run backend test suite
         working-directory: backend
-        run: uv run --frozen pytest
+        run: uv run --frozen --extra dev pytest
 
   frontend-tests:
     name: Frontend Tests
