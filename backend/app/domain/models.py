@@ -112,11 +112,6 @@ class Tracking(BaseModel):
     lastAttemptCorrect: Optional[bool] = None
 
 
-class ClientMeta(BaseModel):
-    ip: Optional[str] = None
-    userAgent: Optional[str] = None
-
-
 class SelectionPolicyConfig(BaseModel):
     cooldownDays: int = 7
     lastWrongWeight: float = 1.0
@@ -178,35 +173,6 @@ class ExamSummary(BaseModel):
 
 
 # Main Domain Models
-class User(BaseModel):
-    id: Optional[str] = None
-    username: str
-    passwordHash: str
-    teacherPasswordHash: Optional[str] = None
-    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    lastLoginAt: Optional[datetime] = None
-    status: str = "active"
-
-
-class Session(BaseModel):
-    id: Optional[str] = None
-    userId: str
-    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    expiresAt: datetime
-    lastSeenAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    invalidatedAt: Optional[datetime] = None
-    clientMeta: ClientMeta = Field(default_factory=ClientMeta)
-
-
-class Tag(BaseModel):
-    id: Optional[str] = None
-    userId: str
-    name: str
-    createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
 class IngestionPreview(BaseModel):
     id: Optional[str] = None
     userId: str
