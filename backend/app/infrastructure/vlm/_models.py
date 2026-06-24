@@ -23,3 +23,18 @@ class _ChatMessage(BaseModel):
 class _ChatCompletionRequest(BaseModel):
     model: str
     messages: list[_ChatMessage]
+
+
+class _ChatCompletionMessage(BaseModel):
+    role: str
+    content: str | None = None
+    reasoning_content: str | None = None
+
+
+class _ChatCompletionChoice(BaseModel):
+    index: int
+    message: _ChatCompletionMessage
+
+
+class _ChatCompletionResponse(BaseModel):
+    choices: list[_ChatCompletionChoice]

@@ -377,10 +377,10 @@ def test_strip_json_code_fences_strips_plain_fence() -> None:
     assert VLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
 
 
-def test_strip_json_code_fences_preserves_non_json_fence_language() -> None:
+def test_strip_json_code_fences_strips_non_json_fence_language() -> None:
     fenced = '```python\n{"text":"hello"}\n```'
 
-    assert VLMClient._strip_json_code_fences(fenced) == fenced
+    assert VLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
 
 
 def test_strip_json_code_fences_preserves_incomplete_opening_fence() -> None:
