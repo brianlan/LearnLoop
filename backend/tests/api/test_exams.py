@@ -22,100 +22,7 @@ from app.presentation.deps import (
     get_grading_vlm_client,
     get_s3_storage,
 )
-
-
-class FakeInsertOneResult:
-    def __init__(self, inserted_id: Any) -> None:
-        self.inserted_id = inserted_id
-
-
-class FakeUpdateResult:
-    def __init__(self, modified_count: int) -> None:
-        self.modified_count = modified_count
-
-
-class FakeCursor:
-    def __init__(self, documents: list[dict[str, Any]]) -> None:
-        self._documents = [deepcopy(document) for document in documents]
-        self._skip = 0
-        self._limit: int | None = None
-
-    def sort(self, field: str, direction: int) -> FakeCursor:
-        reverse = direction < 0
-        self._documents.sort(
-            key=lambda document: cast(Any, document.get(field)),
-            reverse=reverse,
-        )
-        return self
-
-    def skip(self, amount: int) -> FakeCursor:
-        self._skip = amount
-        return self
-
-    def limit(self, amount: int) -> FakeCursor:
-        self._limit = amount
-        return self
-
-    async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
-        documents = self._documents[self._skip :]
-        effective_limit = self._limit if self._limit is not None else length
-        if effective_limit is not None:
-            documents = documents[:effective_limit]
-        return [deepcopy(document) for document in documents]
-
-
-class FakeCollection:
-    def __init__(self) -> None:
-        self._documents: list[dict[str, Any]] = []
-
-    def seed(self, *documents: dict[str, Any]) -> None:
-        self._documents.extend(deepcopy(list(documents)))
-
-    async def find_one(self, query: dict[str, Any], session: Any | None = None) -> dict[str, Any] | None:
-        for document in self._documents:
-            if _matches(document, query):
-                return deepcopy(document)
-        return None
-
-    async def insert_one(self, document: dict[str, Any], session: Any | None = None) -> FakeInsertOneResult:
-        stored = deepcopy(document)
-        if "_id" not in stored:
-            stored["_id"] = ObjectId()
-        self._documents.append(stored)
-        return FakeInsertOneResult(stored["_id"])
-
-    async def update_one(
-        self,
-        query: dict[str, Any],
-        update: dict[str, Any],
-        session: Any | None = None,
-    ) -> FakeUpdateResult:
-        for document in self._documents:
-            if not _matches(document, query):
-                continue
-            for key, value in update.get("$set", {}).items():
-                document[key] = deepcopy(value)
-            return FakeUpdateResult(1)
-        return FakeUpdateResult(0)
-
-    async def count_documents(self, query: dict[str, Any], session: Any | None = None) -> int:
-        return sum(1 for document in self._documents if _matches(document, query))
-
-    def find(self, query: dict[str, Any], session: Any | None = None) -> FakeCursor:
-        return FakeCursor([document for document in self._documents if _matches(document, query)])
-
-
-class FakeDatabase:
-    def __init__(self) -> None:
-        self._collections = {
-            "exams": FakeCollection(),
-            "problems": FakeCollection(),
-            "users": FakeCollection(),
-            "sessions": FakeCollection(),
-        }
-
-    def __getitem__(self, name: str) -> FakeCollection:
-        return self._collections[name]
+from tests.api.conftest import FakeDatabase
 
 
 class FakeSession:
@@ -179,14 +86,7 @@ class FakeVLMClient:
         return response
 
 
-def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
-    for key, value in query.items():
-        if isinstance(value, dict) and "$in" in value:
-            if document.get(key) not in value["$in"]:
-                return False
-        elif document.get(key) != value:
-            return False
-    return True
+
 
 
 def make_user(username: str = "student1") -> dict[str, Any]:
@@ -272,7 +172,13 @@ async def exams_app() -> FastAPI:
     application.state.fake_vlm = vlm
     application.state.primary_user = user
 
-    settings = Settings(problem_selection_min_age_days=0)
+    settings = Settings(
+        problem_selection_min_age_days=0,
+        problem_selection_cooldown_days=7,
+        problem_selection_last_wrong_weight=1.0,
+        problem_selection_failure_rate_weight=1.0,
+        problem_selection_recency_weight=1.0,
+    )
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
     application.dependency_overrides[get_settings] = lambda: settings
@@ -677,7 +583,13 @@ async def exams_app_with_min_age() -> FastAPI:
     vlm = FakeVLMClient()
     user = make_user()
 
-    settings = Settings(problem_selection_min_age_days=3)
+    settings = Settings(
+        problem_selection_min_age_days=3,
+        problem_selection_cooldown_days=7,
+        problem_selection_last_wrong_weight=1.0,
+        problem_selection_failure_rate_weight=1.0,
+        problem_selection_recency_weight=1.0,
+    )
 
     application.state.fake_database = database
     application.state.fake_adapter = adapter

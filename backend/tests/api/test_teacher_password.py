@@ -14,65 +14,7 @@ from app.infrastructure.auth.password import hash_password
 from app.infrastructure.config.settings import Settings
 from app.main import create_app
 from app.presentation.deps import get_app_settings, get_current_user, get_database
-
-
-class FakeInsertOneResult:
-    def __init__(self, inserted_id: Any) -> None:
-        self.inserted_id = inserted_id
-
-
-class FakeUpdateResult:
-    def __init__(self, modified_count: int) -> None:
-        self.modified_count = modified_count
-
-
-class FakeDeleteResult:
-    def __init__(self, deleted_count: int) -> None:
-        self.deleted_count = deleted_count
-
-
-class FakeCollection:
-    def __init__(self) -> None:
-        self._documents: list[dict[str, Any]] = []
-
-    async def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
-        for document in self._documents:
-            if all(document.get(key) == value for key, value in query.items()):
-                return deepcopy(document)
-        return None
-
-    async def insert_one(self, document: dict[str, Any]) -> FakeInsertOneResult:
-        stored_document = deepcopy(document)
-        if "_id" not in stored_document:
-            stored_document["_id"] = ObjectId()
-        self._documents.append(stored_document)
-        return FakeInsertOneResult(stored_document["_id"])
-
-    async def update_one(self, query: dict[str, Any], update: dict[str, Any]) -> FakeUpdateResult:
-        for document in self._documents:
-            if all(document.get(key) == value for key, value in query.items()):
-                for key, value in update.get("$set", {}).items():
-                    document[key] = value
-                return FakeUpdateResult(1)
-        return FakeUpdateResult(0)
-
-    async def delete_one(self, query: dict[str, Any]) -> FakeDeleteResult:
-        for index, document in enumerate(self._documents):
-            if all(document.get(key) == value for key, value in query.items()):
-                del self._documents[index]
-                return FakeDeleteResult(1)
-        return FakeDeleteResult(0)
-
-
-class FakeDatabase:
-    def __init__(self) -> None:
-        self._collections = {
-            "users": FakeCollection(),
-            "sessions": FakeCollection(),
-        }
-
-    def __getitem__(self, name: str) -> FakeCollection:
-        return self._collections[name]
+from tests.api.conftest import FakeDatabase
 
 
 @pytest_asyncio.fixture
