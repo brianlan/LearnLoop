@@ -16,12 +16,14 @@ from app.infrastructure.vlm.base_client import (
     FAILURE_CODE_PROVIDER_REJECTED,
     FAILURE_CODE_TIMEOUT,
     BaseVLMClient,
+    BaseVLMError,
 )
 from app.infrastructure.vlm._models import (
     _ChatCompletionRequest,
     _ChatMessage,
     _ChatMessageContentImageUrl,
     _ChatMessageContentText,
+    _ChatCompletionResponse,
 )
 from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
@@ -38,21 +40,8 @@ ProblemType = Literal["single-choice", "multi-choice", "fill-in-the-blank", "sho
 FAILURE_CODE_STALE_PREVIEW = "vlm-stale-preview-timeout"
 
 
-class VLMError(Exception):
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str,
-        retryable: bool,
-        status_code: int | None = None,
-        raw_provider_response: Any | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
-        self.status_code = status_code
-        self.raw_provider_response = raw_provider_response
+class VLMError(BaseVLMError):
+    pass
 
 
 class _RequestBase(BaseModel):
@@ -126,18 +115,7 @@ class _GradingProviderPayload(BaseModel):
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
 
 
-class _ChatCompletionMessage(BaseModel):
-    role: str
-    content: str | None = None
-
-
-class _ChatCompletionChoice(BaseModel):
-    index: int
-    message: _ChatCompletionMessage
-
-
-class _ChatCompletionResponse(BaseModel):
-    choices: list[_ChatCompletionChoice]
+# Response models moved to _models.py
 
 
 class ExtractionResult(BaseModel):
@@ -307,24 +285,7 @@ class VLMClient(BaseVLMClient):
         raw_body = await self._send_chat_completion(payload)
         return self._parse_chat_completion_response(raw_body)
 
-    @staticmethod
-    def _strip_json_code_fences(content: str) -> str:
-        stripped = content.strip()
-        if not stripped.startswith("```"):
-            return stripped
-
-        lines = stripped.splitlines()
-        if not lines:
-            return stripped
-
-        first_line = lines[0].strip()
-        if first_line not in {"```", "```json"}:
-            return stripped
-
-        if len(lines) < 2 or lines[-1].strip() != "```":
-            return stripped
-
-        return "\n".join(lines[1:-1]).strip()
+    # _strip_json_code_fences inherited from BaseVLMClient
 
     @staticmethod
     def _validate_response(
@@ -385,8 +346,7 @@ class VLMClient(BaseVLMClient):
         )
         return chat_request.model_dump(exclude_none=True)
 
-    @staticmethod
-    def _parse_chat_completion_response(raw_body: dict[str, Any]) -> dict[str, Any]:
+    def _parse_chat_completion_response(self, raw_body: dict[str, Any]) -> dict[str, Any]:
         try:
             completion = _ChatCompletionResponse.model_validate(raw_body)
         except ValidationError as exc:
@@ -414,22 +374,4 @@ class VLMClient(BaseVLMClient):
                 raw_provider_response=raw_body,
             )
 
-        try:
-            parsed = json.loads(VLMClient._strip_json_code_fences(content))
-        except json.JSONDecodeError as exc:
-            raise VLMError(
-                "VLM provider content was not valid JSON",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            ) from exc
-
-        if not isinstance(parsed, dict):
-            raise VLMError(
-                "VLM provider content must decode to a JSON object",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            )
-
-        return parsed
+        return self._load_json_content(content)

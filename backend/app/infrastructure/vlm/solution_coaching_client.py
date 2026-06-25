@@ -15,12 +15,14 @@ from app.infrastructure.vlm.base_client import (
     FAILURE_CODE_PROVIDER_REJECTED,
     FAILURE_CODE_TIMEOUT,
     BaseVLMClient,
+    BaseVLMError,
 )
 from app.infrastructure.vlm._models import (
     _ChatCompletionRequest,
     _ChatMessage,
     _ChatMessageContentImageUrl,
     _ChatMessageContentText,
+    _ChatCompletionResponse,
 )
 
 from app.infrastructure.vlm.solution_coaching_prompts import (
@@ -96,36 +98,11 @@ _BLOCKED_DSL_TOKENS = {
 }
 
 
-class SolutionCoachingVLMError(Exception):
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str,
-        retryable: bool,
-        status_code: int | None = None,
-        raw_provider_response: Any | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
-        self.status_code = status_code
-        self.raw_provider_response = raw_provider_response
+class SolutionCoachingVLMError(BaseVLMError):
+    pass
 
 
-class _ChatCompletionMessage(BaseModel):
-    role: str
-    content: str | None = None
-    reasoning_content: str | None = None
-
-
-class _ChatCompletionChoice(BaseModel):
-    index: int
-    message: _ChatCompletionMessage
-
-
-class _ChatCompletionResponse(BaseModel):
-    choices: list[_ChatCompletionChoice]
+# Response models moved to _models.py
 
 
 class SolutionVLMRequest(BaseModel):
@@ -215,54 +192,7 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
         raw_body = await super()._send_chat_completion(payload)
         return self._parse_chat_completion_response(raw_body)
 
-    @staticmethod
-    def _decode_raw_response(response: httpx.Response) -> Any:
-        try:
-            return response.json()
-        except ValueError:
-            return response.text
-
-    @staticmethod
-    def _strip_json_code_fences(content: str) -> str:
-        stripped = content.strip()
-        if not stripped.startswith("```"):
-            return stripped
-
-        lines = stripped.splitlines()
-        if len(lines) < 2:
-            return stripped
-
-        if not lines[0].strip().startswith("```") or lines[-1].strip() != "```":
-            return stripped
-
-        return "\n".join(lines[1:-1]).strip()
-
-    @classmethod
-    def _load_json_content(cls, content: str) -> dict[str, Any]:
-        candidates = [cls._strip_json_code_fences(content), content.strip()]
-        raw = content.strip()
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            candidates.append(raw[start : end + 1])
-
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-
-        raise SolutionCoachingVLMError(
-            "VLM provider response content was not valid JSON",
-            code=FAILURE_CODE_INVALID_RESPONSE,
-            retryable=False,
-            raw_provider_response=content,
-        )
-
-    @classmethod
-    def _parse_chat_completion_response(cls, raw_body: dict[str, Any]) -> dict[str, Any]:
+    def _parse_chat_completion_response(self, raw_body: dict[str, Any]) -> dict[str, Any]:
         try:
             completion = _ChatCompletionResponse.model_validate(raw_body)
         except ValidationError as exc:
@@ -291,7 +221,7 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
                 raw_provider_response=raw_body,
             )
 
-        parsed = cls._load_json_content(content)
+        parsed = self._load_json_content(content)
         if message.reasoning_content is not None:
             parsed["reasoning_content"] = message.reasoning_content
         return parsed

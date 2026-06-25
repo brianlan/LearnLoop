@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 import httpx
@@ -134,4 +135,42 @@ class BaseVLMClient:
             retryable=retryable,
             status_code=status_code,
             raw_provider_response=raw_provider_response,
+        )
+
+    @staticmethod
+    def _strip_json_code_fences(content: str) -> str:
+        stripped = content.strip()
+        if not stripped.startswith("```"):
+            return stripped
+
+        lines = stripped.splitlines()
+        if len(lines) < 2:
+            return stripped
+
+        if not lines[0].strip().startswith("```") or lines[-1].strip() != "```":
+            return stripped
+
+        return "\n".join(lines[1:-1]).strip()
+
+    def _load_json_content(self, content: str) -> dict[str, Any]:
+        candidates = [self._strip_json_code_fences(content), content.strip()]
+        raw = content.strip()
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidates.append(raw[start : end + 1])
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+
+        raise self._make_error(
+            "VLM provider response content was not valid JSON",
+            code=FAILURE_CODE_INVALID_RESPONSE,
+            retryable=False,
+            raw_provider_response=content,
         )
