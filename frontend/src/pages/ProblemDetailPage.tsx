@@ -456,8 +456,8 @@ export function ProblemDetailPage() {
                 style={{ width: "100%", minHeight: "100px", marginTop: "0.25rem", fontFamily: "monospace", fontSize: "0.875rem" }}
               />
             ) : (
-              <div style={{ marginTop: "0.5rem", maxWidth: "400px" }}>
-                <GraphSandbox dsl={problem.graphDsl ?? ""} />
+              <div style={{ marginTop: "0.5rem" }}>
+                <GraphSandbox dsl={problem.graphDsl ?? ""} height={300} />
               </div>
             )}
           </div>

@@ -20,6 +20,14 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
+vi.mock("@/components/GraphSandbox", () => ({
+  GraphSandbox: ({ dsl, height }: { dsl: string; height?: number }) => (
+    <div data-testid="graph-sandbox" data-dsl={dsl} data-height={height}>
+      GraphSandbox
+    </div>
+  ),
+}));
+
 import { api } from "@/api/client";
 
 const mockNavigate = vi.fn();
@@ -132,6 +140,21 @@ describe("ProblemDetailPage", () => {
       expect(screen.getByRole("button", { name: "Hide Answer" })).toBeInTheDocument();
     });
     expect(screen.getByText("42")).toBeInTheDocument();
+  });
+
+  it("renders graph DSL with 300px height and no 400px max-width wrapper", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, graphDsl: "board.create('point', [0, 0]);" } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    const sandbox = await screen.findByTestId("graph-sandbox");
+    expect(sandbox).toHaveAttribute("data-dsl", "board.create('point', [0, 0]);");
+    expect(sandbox).toHaveAttribute("data-height", "300");
+
+    const wrapper = sandbox.parentElement;
+    expect(wrapper).not.toHaveStyle({ maxWidth: "400px" });
   });
 
   it("enters edit mode when clicking edit", async () => {
