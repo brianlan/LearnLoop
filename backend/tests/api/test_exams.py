@@ -220,7 +220,7 @@ async def test_create_exam_snapshots_selected_problems(exams_app: FastAPI, clien
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("max_problem_count", [1, 20])
+@pytest.mark.parametrize("max_problem_count", [1, 30])
 async def test_create_exam_accepts_problem_count_boundaries(
     exams_app: FastAPI,
     client: AsyncClient,
@@ -251,7 +251,7 @@ async def test_create_exam_accepts_problem_count_boundaries(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("max_problem_count", [0, 21])
+@pytest.mark.parametrize("max_problem_count", [0, 31])
 async def test_create_exam_rejects_problem_count_outside_product_limit(
     client: AsyncClient,
     max_problem_count: int,

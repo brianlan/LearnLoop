@@ -9,7 +9,7 @@ import Pagination from "@/components/Pagination";
 import { Modal } from "@/components/Modal";
 
 const EXAM_PROBLEM_COUNT_MIN = 1;
-const EXAM_PROBLEM_COUNT_MAX = 20;
+const EXAM_PROBLEM_COUNT_MAX = 30;
 const EXAM_PROBLEM_COUNT_DEFAULT = 5;
 
 function getStateStyleClass(state: string) {

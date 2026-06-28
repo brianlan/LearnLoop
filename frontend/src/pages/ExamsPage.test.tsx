@@ -144,11 +144,11 @@ describe("ExamsPage", () => {
     const slider = screen.getByLabelText("Problem count slider");
     expect(input).toHaveValue(5);
     expect(input).toHaveAttribute("min", "1");
-    expect(input).toHaveAttribute("max", "20");
+    expect(input).toHaveAttribute("max", "30");
     expect(input).toHaveAttribute("step", "1");
     expect(slider).toHaveValue("5");
     expect(slider).toHaveAttribute("min", "1");
-    expect(slider).toHaveAttribute("max", "20");
+    expect(slider).toHaveAttribute("max", "30");
     expect(slider).toHaveAttribute("step", "1");
   });
 
@@ -167,7 +167,7 @@ describe("ExamsPage", () => {
     expect(input).toHaveValue(7);
   });
 
-  it.each(["", "1.5", "0", "-1", "21"])(
+  it.each(["", "1.5", "0", "-1", "31"])(
     "shows validation and disables creation for invalid value %s",
     async (value) => {
       const user = userEvent.setup();
@@ -180,7 +180,7 @@ describe("ExamsPage", () => {
         await user.type(input, value);
       }
 
-      expect(screen.getByRole("alert")).toHaveTextContent("Enter a whole number from 1 to 20.");
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a whole number from 1 to 30.");
       expect(screen.getByRole("button", { name: "Create Exam" })).toBeDisabled();
     },
   );
@@ -196,7 +196,7 @@ describe("ExamsPage", () => {
 
     const input = screen.getByLabelText("Problem count");
     await user.clear(input);
-    await user.type(input, "21");
+    await user.type(input, "31");
     expect(screen.getByRole("button", { name: "Create Exam" })).toBeDisabled();
 
     await user.clear(input);
