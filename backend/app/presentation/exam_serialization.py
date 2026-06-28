@@ -12,7 +12,7 @@ from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload
 
 
 class CreateExamRequest(BaseModel):
-    maxProblemCount: int = Field(ge=1, le=20)
+    maxProblemCount: int = Field(ge=1, le=30)
 
 
 class SaveAnswerRequest(BaseModel):
