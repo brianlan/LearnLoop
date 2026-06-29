@@ -365,7 +365,8 @@ class VLMClient(BaseVLMClient):
                 raw_provider_response=raw_body,
             )
 
-        content = completion.choices[0].message.content
+        message = completion.choices[0].message
+        content = message.content
         if not content:
             raise VLMError(
                 "VLM provider response content was empty",
@@ -374,4 +375,11 @@ class VLMClient(BaseVLMClient):
                 raw_provider_response=raw_body,
             )
 
-        return self._load_json_content(content)
+        stripped_content, extracted_reasoning = self._strip_thinking_content(content)
+        parsed = self._load_json_content(stripped_content)
+        reasoning_content = message.reasoning_content
+        if reasoning_content is None:
+            reasoning_content = extracted_reasoning
+        if reasoning_content is not None:
+            parsed["reasoning_content"] = reasoning_content
+        return parsed

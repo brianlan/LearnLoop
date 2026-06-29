@@ -721,3 +721,101 @@ async def test_solution_vlm_client_preserves_reasoning_content_in_raw_response()
     await client.aclose()
 
     assert result.raw_provider_response["reasoning_content"] == "推理过程"
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_normalizes_leading_think_block() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "<think>internal reasoning</think>\n"
+                            + json.dumps(
+                                {"steps_markdown": "步骤", "final_answer": "42", "level_classification": "primary"}
+                            ),
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_solution_client(handler)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+    )
+    await client.aclose()
+
+    assert result.steps_markdown == "步骤"
+    assert result.raw_provider_response["reasoning_content"] == "internal reasoning"
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_normalizes_leading_think_block() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "<think>internal reasoning</think>"
+                            + json.dumps({"text": "先看等式两边同时减 3。"}),
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_coaching_client(handler)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="x + 3 = 5",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            new_message="怎么做？",
+        )
+    )
+    await client.aclose()
+
+    assert result.text == "先看等式两边同时减 3。"
+    assert result.reasoning_content == "internal reasoning"
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_explicit_reasoning_wins_over_think_block() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "<think>think reasoning</think>"
+                            + json.dumps(
+                                {"steps_markdown": "步骤", "final_answer": "42", "level_classification": "primary"}
+                            ),
+                            "reasoning_content": "explicit reasoning",
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = _build_solution_client(handler)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+    )
+    await client.aclose()
+
+    assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
