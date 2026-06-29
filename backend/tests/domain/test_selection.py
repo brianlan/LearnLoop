@@ -150,39 +150,52 @@ def test_recency_uses_created_at_when_not_tested():
     assert breakdown.recency == 2.5
 
 
-def test_failure_score_zero_percent():
-    now = datetime.now(timezone.utc)
-    problem = create_test_problem("p1", exposure_count=10, failed_count=0, correct_count=10)
-    config = ProblemSelectionConfig(failure_rate_weight=1.0)
-    breakdown = compute_score_breakdown(problem, config, now)
-    # failure_rate = 0/10 = 0, failure_score = 1.0 + (0 - 0.5)/0.5 = 0.0
-    assert breakdown.failure == 0.0
-
-
-def test_failure_score_fifty_percent():
-    now = datetime.now(timezone.utc)
-    problem = create_test_problem("p1", exposure_count=10, failed_count=5, correct_count=5)
-    config = ProblemSelectionConfig(failure_rate_weight=1.0)
-    breakdown = compute_score_breakdown(problem, config, now)
-    # failure_rate = 5/10 = 0.5, failure_score = 1.0 + (0.5 - 0.5)/0.5 = 1.0
-    assert breakdown.failure == 1.0
-
-
-def test_failure_score_hundred_percent():
-    now = datetime.now(timezone.utc)
-    problem = create_test_problem("p1", exposure_count=10, failed_count=10, correct_count=0)
-    config = ProblemSelectionConfig(failure_rate_weight=1.0)
-    breakdown = compute_score_breakdown(problem, config, now)
-    # failure_rate = 10/10 = 1.0, failure_score = 1.0 + (1.0 - 0.5)/0.5 = 2.0
-    assert breakdown.failure == 2.0
-
-
 def test_failure_score_no_attempts():
     now = datetime.now(timezone.utc)
     problem = create_test_problem("p1", exposure_count=0, failed_count=0, correct_count=0)
     config = ProblemSelectionConfig(failure_rate_weight=1.0)
     breakdown = compute_score_breakdown(problem, config, now)
-    assert breakdown.failure == 1.0
+    assert breakdown.failure == 0.0
+
+
+def test_failure_score_more_correct_than_failed():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=4, failed_count=0, correct_count=4)
+    config = ProblemSelectionConfig(failure_rate_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == -2.0
+
+
+def test_failure_score_more_failed_than_correct():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=4, failed_count=4, correct_count=0)
+    config = ProblemSelectionConfig(failure_rate_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 2.0
+
+
+def test_failure_score_equal_failed_and_correct():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=10, failed_count=5, correct_count=5)
+    config = ProblemSelectionConfig(failure_rate_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 0.0
+
+
+def test_failure_score_large_difference():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=9, failed_count=9, correct_count=0)
+    config = ProblemSelectionConfig(failure_rate_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 3.0
+
+
+def test_failure_score_weighted_multiplier():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=4, failed_count=4, correct_count=0)
+    config = ProblemSelectionConfig(failure_rate_weight=2.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 4.0
 
 
 def test_last_wrong_never_tested():
@@ -225,8 +238,8 @@ def test_weighted_total_equals_component_sum():
         last_tested_at=last_tested,
         last_attempt_correct=False,
         exposure_count=10,
-        failed_count=5,
-        correct_count=5,
+        failed_count=7,
+        correct_count=3,
     )
     config = ProblemSelectionConfig(
         recency_weight=1.0,
@@ -236,12 +249,31 @@ def test_weighted_total_equals_component_sum():
     breakdown = compute_score_breakdown(problem, config, now)
     # recency_score = 1.0 + 30/30 = 2.0, recency = 2.0 * 1.0 = 2.0
     assert breakdown.recency == 2.0
-    # failure_rate = 5/10 = 0.5, failure_score = 1.0 + (0.5 - 0.5)/0.5 = 1.0, failure = 1.0 * 2.0 = 2.0
-    assert breakdown.failure == 2.0
+    # diff = 7 - 3 = 4, failure_score = sqrt(4) = 2.0, failure = 2.0 * 2.0 = 4.0
+    assert breakdown.failure == 4.0
     # last_wrong_score = 2.0, last_wrong = 2.0 * 1.5 = 3.0
     assert breakdown.last_wrong == 3.0
-    assert breakdown.total == 7.0
+    assert breakdown.total == 9.0
     assert breakdown.total == breakdown.recency + breakdown.failure + breakdown.last_wrong
+
+
+def test_total_score_capped_at_zero():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem(
+        "p1",
+        exposure_count=10,
+        failed_count=0,
+        correct_count=10,
+        last_attempt_correct=True,
+    )
+    config = ProblemSelectionConfig(
+        recency_weight=0.0,
+        failure_rate_weight=1.0,
+        last_wrong_weight=1.0,
+    )
+    breakdown = compute_score_breakdown(problem, config, now)
+    # failure = -sqrt(10) ≈ -3.162, last_wrong = 0.5, recency = 0
+    assert breakdown.total == 0.0
 
 
 def test_cooldown_excludes_recent():
@@ -257,7 +289,7 @@ def test_cooldown_excludes_recent():
     assert "recent" not in ids
 
 
-def test_zero_total_weights_fallback_uniform():
+def test_zero_total_weights_excludes_all_candidates():
     now = datetime.now(timezone.utc)
     problems = [
         create_test_problem("a"),
@@ -271,8 +303,25 @@ def test_zero_total_weights_fallback_uniform():
     import random
     rng = random.Random(42)
     selected = select_problems(problems, 1, config, now=now, rng=rng)
+    assert selected == []
+
+
+def test_zero_score_candidates_excluded_from_selection():
+    now = datetime.now(timezone.utc)
+    problems = [
+        create_test_problem("zero", exposure_count=10, failed_count=0, correct_count=10, last_attempt_correct=True),
+        create_test_problem("positive", exposure_count=10, failed_count=4, correct_count=0),
+    ]
+    config = ProblemSelectionConfig(
+        recency_weight=0.0,
+        failure_rate_weight=1.0,
+        last_wrong_weight=0.0,
+    )
+    import random
+    rng = random.Random(42)
+    selected = select_problems(problems, 10, config, now=now, rng=rng)
     assert len(selected) == 1
-    assert selected[0].id in ("a", "b")
+    assert selected[0].id == "positive"
 
 
 def test_multi_selection_no_duplicates():
