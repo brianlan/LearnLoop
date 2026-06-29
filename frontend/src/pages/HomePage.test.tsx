@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { HomePage } from "./HomePage";
 import { ThemeProvider } from "@/contexts/ThemeContext";
@@ -67,6 +68,10 @@ function summaryResponse(overrides: Partial<{
 describe("HomePage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders loading state initially", () => {
@@ -251,6 +256,189 @@ describe("HomePage", () => {
     expect(weekdayLabels.map((l) => l.textContent)).toEqual([
       "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
     ]);
+  });
+
+  it("shows a custom tooltip when clicking a real activity cell", async () => {
+    const user = userEvent.setup();
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const days: { date: string; count: number }[] = [];
+    for (let i = 364; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - i);
+      const dateStr = d.toISOString().slice(0, 10);
+      days.push({ date: dateStr, count: dateStr === todayStr ? 5 : 0 });
+    }
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    const activeCell = screen.getAllByTestId("home-activity-cell").find((c) => c.getAttribute("data-date") === todayStr);
+    expect(activeCell).toBeDefined();
+    await user.click(activeCell as HTMLElement);
+
+    const tooltip = screen.getByTestId("home-activity-tooltip");
+    expect(tooltip.textContent).toBe(`${todayStr}: 5 events`);
+  });
+
+  it("uses singular event text for count of 1", async () => {
+    const user = userEvent.setup();
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const days = [{ date: todayStr, count: 1 }];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    const activeCell = screen.getByLabelText(`${todayStr}: 1 event`);
+    await user.click(activeCell);
+
+    expect(screen.getByTestId("home-activity-tooltip").textContent).toBe(`${todayStr}: 1 event`);
+  });
+
+  it("hides the tooltip after 3 seconds", async () => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const days = [{ date: todayStr, count: 2 }];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    const activeCell = screen.getByLabelText(`${todayStr}: 2 events`);
+    await user.click(activeCell);
+    expect(screen.getByTestId("home-activity-tooltip")).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(screen.queryByTestId("home-activity-tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("replaces tooltip and restarts timer when clicking a different cell", async () => {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const todayStr = today.toISOString().slice(0, 10);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const days = [
+      { date: yesterdayStr, count: 1 },
+      { date: todayStr, count: 2 },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    const yesterdayCell = screen.getByLabelText(`${yesterdayStr}: 1 event`);
+    const todayCell = screen.getByLabelText(`${todayStr}: 2 events`);
+
+    await user.click(yesterdayCell);
+    expect(screen.getByTestId("home-activity-tooltip").textContent).toBe(`${yesterdayStr}: 1 event`);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await user.click(todayCell);
+    expect(screen.getByTestId("home-activity-tooltip").textContent).toBe(`${todayStr}: 2 events`);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(screen.getByTestId("home-activity-tooltip")).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(screen.queryByTestId("home-activity-tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("no longer renders native title attribute on real cells", async () => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const days = [{ date: todayStr, count: 2 }];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    const activeCell = screen.getByLabelText(`${todayStr}: 2 events`);
+    expect(activeCell).not.toHaveAttribute("title");
+  });
+
+  it("keeps padding cells inert and without tooltip", async () => {
+    const user = userEvent.setup();
+    const days = buildDayRange("2025-06-22", 365);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    const paddingCell = screen.getAllByTestId("home-activity-cell").find((c) => c.getAttribute("data-date") === "");
+    expect(paddingCell).toBeDefined();
+    expect(paddingCell).toHaveAttribute("aria-hidden", "true");
+    expect(paddingCell).not.toHaveAttribute("tabindex");
+
+    await user.click(paddingCell as HTMLElement);
+    expect(screen.queryByTestId("home-activity-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("activates tooltip with Enter and Space on real cells", async () => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const days = [{ date: todayStr, count: 3 }];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    const activeCell = screen.getByLabelText(`${todayStr}: 3 events`);
+    activeCell.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("home-activity-tooltip").textContent).toBe(`${todayStr}: 3 events`);
+
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(screen.queryByTestId("home-activity-tooltip")).not.toBeInTheDocument();
+
+    await user.keyboard(" ");
+    expect(screen.getByTestId("home-activity-tooltip").textContent).toBe(`${todayStr}: 3 events`);
+
+    vi.useRealTimers();
   });
 });
 
