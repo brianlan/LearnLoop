@@ -695,3 +695,124 @@ async def test_vlm_classification_rejects_confidence_above_one() -> None:
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_extract_normalizes_leading_think_block() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "<think>internal reasoning</think>\n"
+                            + json.dumps(
+                                {
+                                    "text": "Solve x + 1 = 2",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.text == "Solve x + 1 = 2"
+    assert result.raw_provider_response["reasoning_content"] == "internal reasoning"
+
+
+@pytest.mark.asyncio
+async def test_vlm_extract_preserves_explicit_reasoning_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Find x",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                            "reasoning_content": "explicit reasoning",
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
+
+
+@pytest.mark.asyncio
+async def test_vlm_extract_explicit_reasoning_wins_over_think_block() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "<think>think reasoning</think>"
+                            + json.dumps(
+                                {
+                                    "text": "Find x",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                            "reasoning_content": "explicit reasoning",
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
+
+
+def test_strip_thinking_content_extracts_leading_block() -> None:
+    content, reasoning = VLMClient._strip_thinking_content(
+        "  <think>reasoning</think>{\"text\":\"hello\"}"
+    )
+
+    assert content == '{"text":"hello"}'
+    assert reasoning == "reasoning"
+
+
+def test_strip_thinking_content_leaves_content_unchanged_when_no_block() -> None:
+    content, reasoning = VLMClient._strip_thinking_content('{"text":"hello"}')
+
+    assert content == '{"text":"hello"}'
+    assert reasoning is None
+
+
+def test_strip_thinking_content_leaves_incomplete_block_unchanged() -> None:
+    content, reasoning = VLMClient._strip_thinking_content("<think>incomplete")
+
+    assert content == "<think>incomplete"
+    assert reasoning is None

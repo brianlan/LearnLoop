@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 import httpx
@@ -151,6 +152,20 @@ class BaseVLMClient:
             return stripped
 
         return "\n".join(lines[1:-1]).strip()
+
+    @staticmethod
+    def _strip_thinking_content(content: str) -> tuple[str, str | None]:
+        """Strip a single leading <think>...</think> block and return the rest plus reasoning.
+
+        Only a complete leading block (allowing leading whitespace) is removed.
+        Returns (content_with_block_removed, extracted_reasoning_or_none).
+        """
+        match = re.match(r"^\s*<think>(.*?)</think>", content, re.DOTALL)
+        if not match:
+            return content, None
+        reasoning = match.group(1).strip()
+        remaining = content[match.end() :].strip()
+        return remaining, reasoning or None
 
     def _load_json_content(self, content: str) -> dict[str, Any]:
         candidates = [self._strip_json_code_fences(content), content.strip()]

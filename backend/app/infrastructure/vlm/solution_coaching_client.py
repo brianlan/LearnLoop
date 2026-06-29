@@ -221,9 +221,13 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
                 raw_provider_response=raw_body,
             )
 
-        parsed = self._load_json_content(content)
-        if message.reasoning_content is not None:
-            parsed["reasoning_content"] = message.reasoning_content
+        stripped_content, extracted_reasoning = self._strip_thinking_content(content)
+        parsed = self._load_json_content(stripped_content)
+        reasoning_content = message.reasoning_content
+        if reasoning_content is None:
+            reasoning_content = extracted_reasoning
+        if reasoning_content is not None:
+            parsed["reasoning_content"] = reasoning_content
         return parsed
 
 
