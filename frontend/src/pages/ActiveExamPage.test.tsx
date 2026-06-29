@@ -75,6 +75,11 @@ describe("ActiveExamPage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
     mockNavigate.mockReset();
+    vi.stubGlobal("print", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("shows loading state initially", () => {
@@ -346,5 +351,205 @@ describe("ActiveExamPage", () => {
     expect(discardCall[1].method).toBe("POST");
 
     expect(mockNavigate).toHaveBeenCalledWith("/exams");
+  });
+
+  it("renders a Print button when an active exam is loaded", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: baseExam }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument();
+  });
+
+  it("opens print preview with all problem texts in order when Print is clicked", async () => {
+    const user = userEvent.setup();
+    const examWithTwoItems = {
+      ...baseExam,
+      items: [
+        { ...baseExamItem, itemId: "item1", order: 1, problem: { ...baseExamItem.problem, text: "First question?" } },
+        { ...baseExamItem, itemId: "item2", order: 2, problem: { ...baseExamItem.problem, text: "Second question?" } },
+      ],
+      summary: { ...baseExam.summary, totalProblems: 2 },
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: examWithTwoItems }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    const previewItems = screen.getAllByTestId("print-preview-item");
+    expect(previewItems).toHaveLength(2);
+    expect(previewItems[0]).toHaveTextContent("First question?");
+    expect(previewItems[1]).toHaveTextContent("Second question?");
+  });
+
+  it("renders a graph preview for problems with graphDsl and full-width text for problems without", async () => {
+    const user = userEvent.setup();
+    const examWithMixedProblems = {
+      ...baseExam,
+      items: [
+        {
+          ...baseExamItem,
+          itemId: "item1",
+          problem: { ...baseExamItem.problem, text: "Graph problem?", graphDsl: "graph LR; A-->B" },
+        },
+        {
+          ...baseExamItem,
+          itemId: "item2",
+          problem: { ...baseExamItem.problem, text: "Text only problem?" },
+        },
+      ],
+      summary: { ...baseExam.summary, totalProblems: 2 },
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: examWithMixedProblems }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("print-preview-graph")).toBeInTheDocument();
+    expect(screen.getByTestId("print-preview-text-full")).toBeInTheDocument();
+  });
+
+  it("closes the preview and does not call window.print when Cancel is clicked", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: baseExam }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Exam Paper")).not.toBeInTheDocument();
+    });
+
+    expect(window.print).not.toHaveBeenCalled();
+  });
+
+  it("calls window.print exactly once when preview Print is clicked", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: baseExam }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("print-preview-print-button"));
+
+    expect(window.print).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call the save-answer endpoint when opening preview or clicking preview Print", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: baseExam }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("print-preview-print-button"));
+
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/exams/exam123/items/item1/answer"),
+      expect.anything(),
+    );
+  });
+
+  it("does not render uploaded images in the print preview", async () => {
+    const user = userEvent.setup();
+    const examWithImage = {
+      ...baseExam,
+      items: [
+        {
+          ...baseExamItem,
+          problem: { ...baseExamItem.problem, imageUrl: "https://example.com/image.png" },
+        },
+      ],
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: examWithImage }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 });

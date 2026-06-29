@@ -48,6 +48,7 @@ export function ActiveExamPage() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
 
   const {
     data: examData,
@@ -165,6 +166,18 @@ export function ActiveExamPage() {
   const handleCreateExam = useCallback(() => {
     createExamMutation.mutate({ maxProblemCount: 10 });
   }, [createExamMutation]);
+
+  const handleOpenPrintPreview = useCallback(() => {
+    setShowPrintPreview(true);
+  }, []);
+
+  const handleClosePrintPreview = useCallback(() => {
+    setShowPrintPreview(false);
+  }, []);
+
+  const handlePrint = useCallback(() => {
+    window.print();
+  }, []);
 
   const pageCanvasStyle: React.CSSProperties = {
     minHeight: "calc(100vh - 60px)",
@@ -285,6 +298,16 @@ export function ActiveExamPage() {
           </button>
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button
+            onClick={handleOpenPrintPreview}
+            disabled={isMutating}
+            style={{
+              padding: "0.5rem 1rem",
+              cursor: isMutating ? "not-allowed" : "pointer",
+            }}
+          >
+            Print
+          </button>
           <button
             onClick={handleDiscard}
             disabled={isMutating}
@@ -429,6 +452,79 @@ export function ActiveExamPage() {
             >
               {discardExamMutation.isPending ? "Discarding..." : "Discard Exam"}
             </button>
+          </div>
+        </Modal>
+      )}
+
+      {showPrintPreview && (
+        <Modal
+          isOpen={true}
+          onClose={handleClosePrintPreview}
+          overlayTestId="print-preview-overlay"
+          cardStyle={{
+            padding: "1.5rem",
+            borderRadius: "0.5rem",
+            maxWidth: "900px",
+            width: "95vw",
+            maxHeight: "90vh",
+            overflow: "auto",
+          }}
+        >
+          <div className="print-preview-modal">
+            <div
+              className="print-preview-controls"
+              style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginBottom: "1rem" }}
+            >
+              <button
+                onClick={handleClosePrintPreview}
+                style={{ padding: "0.5rem 1rem" }}
+              >
+                Cancel
+              </button>
+              <button
+                data-testid="print-preview-print-button"
+                onClick={handlePrint}
+                style={{
+                  padding: "0.5rem 1rem",
+                  backgroundColor: "var(--color-primary)",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.25rem",
+                  cursor: "pointer",
+                }}
+              >
+                Print
+              </button>
+            </div>
+            <div className="print-preview-content">
+              <h2 style={{ marginTop: 0, textAlign: "center" }}>Exam Paper</h2>
+              {items.map((item, index) => (
+                <div
+                  key={item.itemId}
+                  className="print-preview-item"
+                  data-testid="print-preview-item"
+                  style={{ marginBottom: "1.5rem", breakInside: "avoid" }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>
+                    Question {index + 1}
+                  </div>
+                  {item.problem.graphDsl ? (
+                    <div style={{ display: "flex", gap: "1rem" }}>
+                      <div style={{ flex: 1 }}>
+                        <LatexText text={item.problem.text} />
+                      </div>
+                      <div style={{ flex: 1 }} data-testid="print-preview-graph">
+                        <GraphSandbox dsl={item.problem.graphDsl} height={250} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div data-testid="print-preview-text-full">
+                      <LatexText text={item.problem.text} />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </Modal>
       )}

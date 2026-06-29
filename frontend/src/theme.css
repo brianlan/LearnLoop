@@ -382,3 +382,35 @@ select:disabled {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
+/* Print preview: only the paper content should be printed */
+@media print {
+  [data-testid="print-preview-overlay"] {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    background-color: white !important;
+    padding: 1rem !important;
+  }
+
+  [data-testid="print-preview-overlay"] > div {
+    background: white !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    color: black !important;
+  }
+
+  .print-preview-controls {
+    display: none !important;
+  }
+}
