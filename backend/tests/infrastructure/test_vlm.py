@@ -91,7 +91,7 @@ async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
         assert payload["messages"][1]["role"] == "user"
         prompt = payload["messages"][0]["content"]
         assert "Use `$...$` for inline math" in prompt
-        assert "Put whitespace around inline `$...$`" in prompt
+        assert "Put one ASCII space before and after every inline `$...$`" in prompt
         return httpx.Response(
             200,
             json={
@@ -521,18 +521,19 @@ def test_english_extraction_prompt_allows_diagram_dsl() -> None:
     assert "JSXGraph" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "graphDsl: nullable string" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "English problems do not use geometric diagrams" not in ENGLISH_EXTRACTION_SYSTEM_PROMPT
-    assert "diagram, chart" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "geometry or coordinate-style diagrams" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "bar charts" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_english_extraction_prompt_contains_english_guidance() -> None:
-    assert "multiple-choice" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "multi-choice" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "passage" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "text" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower()
 
 
 def test_math_extraction_prompt_scopes_javascript_to_graph_dsl_field() -> None:
-    assert "graphDsl JSON field" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "`graphDsl` JSON field" in MATH_EXTRACTION_SYSTEM_PROMPT
     assert "Output ONLY the JavaScript code" not in MATH_EXTRACTION_SYSTEM_PROMPT
-    assert "Return only JSON" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "Return only valid JSON" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_math_extraction_prompt_instructs_options_on_own_line() -> None:
@@ -540,10 +541,11 @@ def test_math_extraction_prompt_instructs_options_on_own_line() -> None:
     assert "own line" in MATH_EXTRACTION_SYSTEM_PROMPT.lower() or "own line" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
-def test_math_extraction_prompt_preserves_cjk_punctuation_next_to_inline_latex() -> None:
-    assert "Do not add spaces between inline `$...$` and Chinese/Japanese-style punctuation" in MATH_EXTRACTION_SYSTEM_PROMPT
-    assert "$A$、$B$、$C$" in MATH_EXTRACTION_SYSTEM_PROMPT
-    assert "$80\\text{km}/\\text{h}$，$70\\text{km}/\\text{h}$" in MATH_EXTRACTION_SYSTEM_PROMPT
+def test_math_extraction_prompt_spaces_cjk_punctuation_next_to_inline_latex() -> None:
+    assert "Put one ASCII space before and after every inline `$...$`" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "Chinese-style punctuation" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "已知 $x+1=2$ ，求 $x$ 的值。" in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert "已知$x+1=2$，求$x$的值。" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_english_extraction_prompt_instructs_options_on_own_line() -> None:
