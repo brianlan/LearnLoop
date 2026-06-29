@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import List, Optional
+import math
 import random
 
 from .models import Problem
@@ -68,12 +69,11 @@ def compute_score_breakdown(
         recency_score = 1.0
 
     # Failure score
-    attempt_count = problem.tracking.correctCount + problem.tracking.failedCount
-    if attempt_count == 0:
-        failure_score = 1.0
+    diff = problem.tracking.failedCount - problem.tracking.correctCount
+    if diff == 0:
+        failure_score = 0.0
     else:
-        failure_rate = problem.tracking.failedCount / attempt_count
-        failure_score = 1.0 + (failure_rate - 0.5) / 0.5
+        failure_score = math.copysign(math.sqrt(abs(diff)), diff)
 
     # Last wrong score
     if problem.tracking.lastTestedAt is None:
@@ -89,11 +89,13 @@ def compute_score_breakdown(
     failure = failure_score * config.failure_rate_weight
     last_wrong = last_wrong_score * config.last_wrong_weight
 
+    total = max(0.0, recency + failure + last_wrong)
+
     return ScoreBreakdown(
         recency=recency,
         failure=failure,
         last_wrong=last_wrong,
-        total=last_wrong + failure + recency,
+        total=total,
     )
 
 
@@ -102,24 +104,27 @@ def _weighted_sample_without_replacement(
     count: int,
     rng: random.Random,
 ) -> list[Problem]:
-    """Select up to `count` unique problems using weighted random sampling."""
+    """Select up to `count` unique problems using weighted random sampling.
+
+    Candidates are expected to have positive weights; zero or negative weights
+    are filtered out by ``select_problems`` before this function is called.
+    """
     selected: list[Problem] = []
     remaining = list(candidates)
 
     while len(selected) < count and remaining:
         total_weight = sum(weight for _, weight in remaining)
         if total_weight <= 0:
-            # Uniform fallback when all weights are zero
-            chosen_idx = rng.randrange(len(remaining))
-        else:
-            r = rng.random() * total_weight
-            cumulative = 0.0
-            chosen_idx = 0
-            for idx, (_, weight) in enumerate(remaining):
-                cumulative += weight
-                if r <= cumulative:
-                    chosen_idx = idx
-                    break
+            break
+
+        r = rng.random() * total_weight
+        cumulative = 0.0
+        chosen_idx = 0
+        for idx, (_, weight) in enumerate(remaining):
+            cumulative += weight
+            if r <= cumulative:
+                chosen_idx = idx
+                break
 
         problem, _ = remaining.pop(chosen_idx)
         selected.append(problem)
@@ -142,7 +147,11 @@ def select_problems(
     weighted = []
     for problem in eligible:
         breakdown = compute_score_breakdown(problem, config, now)
-        weighted.append((problem, breakdown.total))
+        if breakdown.total > 0:
+            weighted.append((problem, breakdown.total))
+
+    if not weighted:
+        return []
 
     if rng is None:
         rng = random.Random()

@@ -383,7 +383,8 @@ def test_compute_problem_weight_breakdown_all_components():
         "p1",
         last_attempt_correct=False,
         exposure_count=10,
-        failed_count=5,
+        failed_count=7,
+        correct_count=3,
         last_tested_at=last_tested,
     )
     config = PracticeSelectionConfig(
@@ -397,15 +398,14 @@ def test_compute_problem_weight_breakdown_all_components():
     # lastWrong = 2.0 * 1.5 = 3.0
     assert breakdown.lastWrong == 3.0
 
-    # failure_rate = 5 / 10 = 0.5, failure_score = 1.0 + (0.5 - 0.5)/0.5 = 1.0
-    # failure = 1.0 * 2.0 = 2.0
-    assert breakdown.failure == 2.0
+    # diff = 7 - 3 = 4, failure_score = sqrt(4) = 2.0, failure = 2.0 * 2.0 = 4.0
+    assert breakdown.failure == 4.0
 
     # days_since = 30, recency_score = 1.0 + 30/30 = 2.0
     # recency = 2.0 * 1.0 = 2.0
     assert breakdown.recency == 2.0
 
-    assert breakdown.total == 7.0
+    assert breakdown.total == 9.0
     assert breakdown.total == breakdown.lastWrong + breakdown.failure + breakdown.recency
 
 
@@ -416,10 +416,10 @@ def test_compute_problem_weight_breakdown_never_tested():
     breakdown = compute_problem_weight_breakdown(problem, config, now)
 
     assert breakdown.lastWrong == 1.0
-    assert breakdown.failure == 1.0
+    assert breakdown.failure == 0.0
     # Recency falls back to createdAt (30 days ago): score = 1.0 + 30/30 = 2.0
     assert breakdown.recency == 2.0
-    assert breakdown.total == 4.0
+    assert breakdown.total == 3.0
 
 
 def test_compute_problem_weight_breakdown_zero_attempts():
@@ -429,10 +429,10 @@ def test_compute_problem_weight_breakdown_zero_attempts():
     breakdown = compute_problem_weight_breakdown(problem, config, now)
 
     assert breakdown.lastWrong == 1.0
-    assert breakdown.failure == 1.0
+    assert breakdown.failure == 0.0
     # Recency falls back to createdAt (30 days ago): score = 1.0 + 30/30 = 2.0
     assert breakdown.recency == 2.0
-    assert breakdown.total == 4.0
+    assert breakdown.total == 3.0
 
 
 def test_compute_problem_weight_breakdown_uses_same_total_as_selection():

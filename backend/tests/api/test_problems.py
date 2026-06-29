@@ -346,9 +346,9 @@ async def test_problem_tracking_includes_practice_weight_with_exact_values(
     assert body["problemId"] == str(problem["_id"])
     assert body["practiceWeight"] == {
         "lastWrong": 1.5,
-        "failure": 2.0,
+        "failure": 0.0,
         "recency": 1.0,
-        "total": 4.5,
+        "total": 2.5,
     }
 
 
