@@ -219,6 +219,37 @@ describe("HomePage", () => {
     expect(realCells.length).toBe(365);
   });
 
+  it("renders uniform fixed-size slots for real and padding cells", async () => {
+    const days = buildDayRange("2025-06-22", 365);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ days }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+
+    const columns = screen.getAllByTestId("home-activity-week-column");
+    const slots = columns.flatMap((column) => Array.from(column.children));
+    expect(slots.length).toBe(columns.length * 7);
+
+    const firstSlot = slots[0] as HTMLElement;
+    for (const slot of slots) {
+      const el = slot as HTMLElement;
+      expect(el.style.position).toBe("relative");
+      expect(el.style.width).toBe(firstSlot.style.width);
+      expect(el.style.height).toBe(firstSlot.style.height);
+    }
+
+    const cells = screen.getAllByTestId("home-activity-cell");
+    const realCell = cells.find((c) => c.getAttribute("data-date") !== "");
+    const paddingCell = cells.find((c) => c.getAttribute("data-date") === "");
+    expect(realCell?.tagName).toBe("BUTTON");
+    expect(paddingCell?.tagName).toBe("DIV");
+    expect(paddingCell).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("renders month labels for months in the visible range", async () => {
     const days = buildDayRange("2025-06-22", 365);
     mockFetch.mockResolvedValueOnce({

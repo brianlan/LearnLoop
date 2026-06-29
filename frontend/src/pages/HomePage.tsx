@@ -286,45 +286,51 @@ export function HomePage() {
                       day && day.count > 0
                         ? `color-mix(in srgb, var(--color-primary) ${Math.round(intensity * 100)}%, transparent)`
                         : "var(--color-surface-muted)";
-                    if (!day) {
-                      return (
-                        <div
-                          key={rowIndex}
-                          data-testid="home-activity-cell"
-                          data-date=""
-                          data-count={0}
-                          aria-hidden="true"
-                          style={{
-                            width: `${CELL_SIZE_PX}px`,
-                            height: `${CELL_SIZE_PX}px`,
-                            borderRadius: "2px",
-                            backgroundColor: background,
-                          }}
-                        />
-                      );
-                    }
+                    const tooltipText = day ? `${day.date}: ${day.count} event${day.count === 1 ? "" : "s"}` : "";
+                    const isActive = day ? activeTooltip?.date === day.date : false;
 
-                    const tooltipText = `${day.date}: ${day.count} event${day.count === 1 ? "" : "s"}`;
-                    const isActive = activeTooltip?.date === day.date;
                     return (
-                      <div key={rowIndex} style={{ position: "relative" }}>
-                        <button
-                          data-testid="home-activity-cell"
-                          data-date={day.date}
-                          data-count={day.count}
-                          type="button"
-                          aria-label={tooltipText}
-                          onClick={() => showTooltip(day.date, tooltipText)}
-                          style={{
-                            width: `${CELL_SIZE_PX}px`,
-                            height: `${CELL_SIZE_PX}px`,
-                            borderRadius: "2px",
-                            backgroundColor: background,
-                            border: "none",
-                            padding: 0,
-                            cursor: "default",
-                          }}
-                        />
+                      <div
+                        key={rowIndex}
+                        style={{
+                          position: "relative",
+                          width: `${CELL_SIZE_PX}px`,
+                          height: `${CELL_SIZE_PX}px`,
+                        }}
+                      >
+                        {day ? (
+                          <button
+                            data-testid="home-activity-cell"
+                            data-date={day.date}
+                            data-count={day.count}
+                            type="button"
+                            aria-label={tooltipText}
+                            onClick={() => showTooltip(day.date, tooltipText)}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              borderRadius: "2px",
+                              backgroundColor: background,
+                              border: "none",
+                              padding: 0,
+                              display: "block",
+                              cursor: "default",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            data-testid="home-activity-cell"
+                            data-date=""
+                            data-count={0}
+                            aria-hidden="true"
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              borderRadius: "2px",
+                              backgroundColor: background,
+                            }}
+                          />
+                        )}
                         {isActive && (
                           <span
                             data-testid="home-activity-tooltip"
