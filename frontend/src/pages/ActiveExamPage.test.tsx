@@ -521,6 +521,28 @@ describe("ActiveExamPage", () => {
     );
   });
 
+  it("renders the printable paper wrapper when print preview is open", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: baseExam }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("print-preview-paper")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("print-preview-paper")).toHaveTextContent("Exam Paper");
+    expect(screen.getByTestId("print-preview-paper")).toHaveTextContent("What is 2+2?");
+  });
+
   it("does not render uploaded images in the print preview", async () => {
     const user = userEvent.setup();
     const examWithImage = {

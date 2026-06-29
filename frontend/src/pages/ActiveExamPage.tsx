@@ -496,7 +496,10 @@ export function ActiveExamPage() {
                 Print
               </button>
             </div>
-            <div className="print-preview-content">
+            <div
+              className="print-preview-content print-preview-paper"
+              data-testid="print-preview-paper"
+            >
               <h2 style={{ marginTop: 0, textAlign: "center" }}>Exam Paper</h2>
               {items.map((item, index) => (
                 <div

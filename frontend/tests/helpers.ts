@@ -136,3 +136,21 @@ export async function submitPracticeAttempt(
   await expectOk(response, "submit practice attempt");
   return response.json();
 }
+
+export async function seedActiveExam(
+  request: APIRequestContext,
+  session: AuthSession,
+  problemInput: ProblemSeedInput,
+) {
+  const problem = await seedProblem(request, session, problemInput);
+
+  const createResponse = await request.post(`${API_BASE}/exams`, {
+    headers: { Cookie: session.cookieHeader },
+    data: { maxProblemCount: 1 },
+  });
+  await expectOk(createResponse, "create active exam");
+
+  const createPayload = await createResponse.json();
+  expect(createPayload.exam?.id, "created exam id should be present").toBeTruthy();
+  return createPayload.exam;
+}
