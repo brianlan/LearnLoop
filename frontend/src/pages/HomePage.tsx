@@ -315,12 +315,6 @@ export function HomePage() {
                           type="button"
                           aria-label={tooltipText}
                           onClick={() => showTooltip(day.date, tooltipText)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              showTooltip(day.date, tooltipText);
-                            }
-                          }}
                           style={{
                             width: `${CELL_SIZE_PX}px`,
                             height: `${CELL_SIZE_PX}px`,
