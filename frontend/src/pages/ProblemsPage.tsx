@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { formatProblemReference } from "@/utils/format";
@@ -29,6 +29,31 @@ const SORT_ORDER_OPTIONS: Array<{ value: ProblemSortOrder; label: string }> = [
   { value: "desc", label: "Descending" },
   { value: "asc", label: "Ascending" },
 ];
+
+type ProblemsPagePreferences = {
+  selectedFolderId: string;
+  selectedTag: string;
+  selectedProblemType: string;
+  searchQuery: string;
+  sortBy: ProblemSortBy;
+  sortOrder: ProblemSortOrder;
+};
+
+const DEFAULT_PREFERENCES: ProblemsPagePreferences = {
+  selectedFolderId: "",
+  selectedTag: "",
+  selectedProblemType: "",
+  searchQuery: "",
+  sortBy: "",
+  sortOrder: "desc",
+};
+
+let problemsPagePreferences: ProblemsPagePreferences = { ...DEFAULT_PREFERENCES };
+
+// Test-only helper to reset the in-memory preferences between test runs.
+export function _resetProblemsPagePreferencesForTests() {
+  problemsPagePreferences = { ...DEFAULT_PREFERENCES };
+}
 
 function flattenFolders(folders: FolderNode[], depth = 0): Array<FolderNode & { depth: number }> {
   return folders.flatMap((folder) => [
@@ -71,14 +96,14 @@ function getErrorMessage(error: unknown) {
 
 export function ProblemsPage() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [selectedTag, setSelectedTag] = useState<string>("");
-  const [selectedProblemType, setSelectedProblemType] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [sortBy, setSortBy] = useState<ProblemSortBy>("");
-  const [sortOrder, setSortOrder] = useState<ProblemSortOrder>("desc");
+  const [selectedFolderId, setSelectedFolderId] = useState<string>(problemsPagePreferences.selectedFolderId);
+  const [selectedTag, setSelectedTag] = useState<string>(problemsPagePreferences.selectedTag);
+  const [selectedProblemType, setSelectedProblemType] = useState<string>(problemsPagePreferences.selectedProblemType);
+  const [searchQuery, setSearchQuery] = useState<string>(problemsPagePreferences.searchQuery);
+  const [sortBy, setSortBy] = useState<ProblemSortBy>(problemsPagePreferences.sortBy);
+  const [sortOrder, setSortOrder] = useState<ProblemSortOrder>(problemsPagePreferences.sortOrder);
   const [selectedProblemIds, setSelectedProblemIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [bulkTarget, setBulkTarget] = useState<string>(UNFILED_FOLDER_ID);
@@ -93,7 +118,6 @@ export function ProblemsPage() {
     return window.sessionStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
   });
   const pageSize = 20;
-  const selectedFolderId = searchParams.get("folderId") ?? "";
 
   const { data: problemsData, isLoading: isLoadingProblems } = useQuery({
     queryKey: ["problems", page, selectedTag, selectedProblemType, searchQuery, selectedFolderId, sortBy, sortOrder],
@@ -186,22 +210,22 @@ export function ProblemsPage() {
 
   const updateFolderFilter = (folderId: string) => {
     setOpenFolderActionsId(null);
-    const next = new URLSearchParams(searchParams);
-    if (folderId) next.set("folderId", folderId);
-    else next.delete("folderId");
-    setSearchParams(next);
+    setSelectedFolderId(folderId);
+    problemsPagePreferences.selectedFolderId = folderId;
     setPage(1);
     exitSelectionMode();
   };
 
   const updateSortBy = (value: ProblemSortBy) => {
     setSortBy(value);
+    problemsPagePreferences.sortBy = value;
     setPage(1);
     exitSelectionMode();
   };
 
   const updateSortOrder = (value: ProblemSortOrder) => {
     setSortOrder(value);
+    problemsPagePreferences.sortOrder = value;
     setPage(1);
     exitSelectionMode();
   };
@@ -551,6 +575,7 @@ export function ProblemsPage() {
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
+                problemsPagePreferences.searchQuery = e.target.value;
                 setPage(1);
                 exitSelectionMode();
               }}
@@ -574,6 +599,7 @@ export function ProblemsPage() {
               value={selectedTag}
               onChange={(e) => {
                 setSelectedTag(e.target.value);
+                problemsPagePreferences.selectedTag = e.target.value;
                 setPage(1);
                 exitSelectionMode();
               }}
@@ -603,6 +629,7 @@ export function ProblemsPage() {
               value={selectedProblemType}
               onChange={(e) => {
                 setSelectedProblemType(e.target.value);
+                problemsPagePreferences.selectedProblemType = e.target.value;
                 setPage(1);
                 exitSelectionMode();
               }}

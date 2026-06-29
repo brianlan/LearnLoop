@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { ProblemsPage } from "./ProblemsPage";
+import { ProblemsPage, _resetProblemsPagePreferencesForTests } from "./ProblemsPage";
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -158,6 +158,7 @@ describe("ProblemsPage", () => {
     mockNavigate.mockReset();
     window.sessionStorage.clear();
     vi.restoreAllMocks();
+    _resetProblemsPagePreferencesForTests();
   });
 
   it("defaults to All Problems without a folderId query param", async () => {
@@ -224,6 +225,104 @@ describe("ProblemsPage", () => {
       expect(lastUrl).toContain("q=proof");
       expect(lastUrl).toContain("page=1");
     });
+  });
+
+  it("remembers all list controls across remounts", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    const { unmount } = renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
+    await user.selectOptions(screen.getByLabelText("Filter by Type:"), "short-answer");
+    await user.type(screen.getByLabelText("Search problems:"), "proof");
+    await user.selectOptions(screen.getByLabelText("Sort by:"), "selectionScore");
+    await user.selectOptions(screen.getByLabelText("Order:"), "asc");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=section-1");
+      expect(lastUrl).toContain("tag=algebra");
+      expect(lastUrl).toContain("type=short-answer");
+      expect(lastUrl).toContain("q=proof");
+      expect(lastUrl).toContain("sortBy=selectionScore");
+      expect(lastUrl).toContain("sortOrder=asc");
+    });
+
+    unmount();
+    renderProblemsPage();
+
+    await screen.findByText("What is 2+2?");
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=section-1");
+      expect(lastUrl).toContain("tag=algebra");
+      expect(lastUrl).toContain("type=short-answer");
+      expect(lastUrl).toContain("q=proof");
+      expect(lastUrl).toContain("sortBy=selectionScore");
+      expect(lastUrl).toContain("sortOrder=asc");
+    });
+
+    // Controls should render the remembered values.
+    expect(screen.getByLabelText("Filter by Tag:")).toHaveValue("algebra");
+    expect(screen.getByLabelText("Filter by Type:")).toHaveValue("short-answer");
+    expect(screen.getByLabelText("Search problems:")).toHaveValue("proof");
+    expect(screen.getByLabelText("Sort by:")).toHaveValue("selectionScore");
+    expect(screen.getByLabelText("Order:")).toHaveValue("asc");
+  });
+
+  it("does not write folderId to URL search params", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=section-1");
+    });
+    expect(window.location.search).not.toContain("folderId=");
+  });
+
+  it("resets list controls to defaults when preferences are cleared", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    const { unmount } = renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
+    await user.type(screen.getByLabelText("Search problems:"), "proof");
+    await user.selectOptions(screen.getByLabelText("Sort by:"), "selectionScore");
+    await user.selectOptions(screen.getByLabelText("Order:"), "asc");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("folderId=section-1");
+    });
+
+    unmount();
+    _resetProblemsPagePreferencesForTests();
+    renderProblemsPage();
+
+    await screen.findByText("What is 2+2?");
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).not.toContain("folderId=");
+      expect(lastUrl).not.toContain("tag=");
+      expect(lastUrl).not.toContain("q=");
+      expect(lastUrl).not.toContain("sortBy=");
+    });
+    expect(screen.getByLabelText("Filter by Tag:")).toHaveValue("");
+    expect(screen.getByLabelText("Search problems:")).toHaveValue("");
+    expect(screen.getByLabelText("Sort by:")).toHaveValue("");
+    expect(screen.getByLabelText("Order:")).toHaveValue("desc");
   });
 
   it("sends sort parameters with existing filters", async () => {
@@ -293,15 +392,24 @@ describe("ProblemsPage", () => {
     expect(screen.getByText("Folder: Chapter 1")).toBeInTheDocument();
   });
 
-  it("expands ancestors of the selected folder on load", async () => {
+  it("expands ancestors of the selected folder after remount", async () => {
+    const user = userEvent.setup();
     installApiMock();
 
-    renderProblemsPage(["/problems?folderId=section-1"]);
+    const { unmount } = renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await waitFor(() => {
+      expect(problemRequestUrls().at(-1) ?? "").toContain("folderId=section-1");
+    });
+
+    unmount();
+    renderProblemsPage();
 
     await screen.findByRole("button", { name: "Select folder Section 1" });
     expect(screen.getByRole("button", { name: "Collapse Chapter 1" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(problemRequestUrls()[0]).toContain("folderId=section-1");
+      expect(problemRequestUrls().at(-1) ?? "").toContain("folderId=section-1");
     });
   });
 
@@ -420,10 +528,19 @@ describe("ProblemsPage", () => {
     });
   });
 
-  it("uses folder-aware empty state copy", async () => {
+  it("uses folder-aware empty state copy after remount", async () => {
+    const user = userEvent.setup();
     installApiMock({ problems: [], total: 0 });
 
-    renderProblemsPage(["/problems?folderId=unfiled"]);
+    const { unmount } = renderProblemsPage();
+    await screen.findByRole("button", { name: "Show Unfiled" });
+    await user.click(screen.getByRole("button", { name: "Show Unfiled" }));
+    await waitFor(() => {
+      expect(problemRequestUrls().at(-1) ?? "").toContain("folderId=unfiled");
+    });
+
+    unmount();
+    renderProblemsPage();
 
     await screen.findAllByText("No problems found in Unfiled");
   });
