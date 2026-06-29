@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { api, ApiError } from "@/api/client";
 
@@ -99,6 +100,27 @@ export function HomePage() {
     queryFn: () => api.get<HomeSummaryResponse>("/home/summary"),
   });
 
+  const [activeTooltip, setActiveTooltip] = useState<{ date: string; text: string } | null>(null);
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showTooltip = (date: string, text: string) => {
+    if (tooltipTimerRef.current) {
+      clearTimeout(tooltipTimerRef.current);
+    }
+    setActiveTooltip({ date, text });
+    tooltipTimerRef.current = setTimeout(() => {
+      setActiveTooltip(null);
+    }, 3000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (tooltipTimerRef.current) {
+        clearTimeout(tooltipTimerRef.current);
+      }
+    };
+  }, []);
+
   const pageCanvasStyle = {
     minHeight: "calc(100vh - 60px)",
     backgroundColor: "var(--color-bg)",
@@ -150,6 +172,12 @@ export function HomePage() {
 
   return (
     <main style={pageCanvasStyle}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes home-tooltip-fade-in {
+          from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+      ` }} />
       <div style={contentStyle}>
         <h1 style={{ fontSize: "1.75rem", fontWeight: 800, marginBottom: "1.5rem", color: "var(--color-text)" }}>
           Home
@@ -258,20 +286,69 @@ export function HomePage() {
                       day && day.count > 0
                         ? `color-mix(in srgb, var(--color-primary) ${Math.round(intensity * 100)}%, transparent)`
                         : "var(--color-surface-muted)";
+                    if (!day) {
+                      return (
+                        <div
+                          key={rowIndex}
+                          data-testid="home-activity-cell"
+                          data-date=""
+                          data-count={0}
+                          aria-hidden="true"
+                          style={{
+                            width: `${CELL_SIZE_PX}px`,
+                            height: `${CELL_SIZE_PX}px`,
+                            borderRadius: "2px",
+                            backgroundColor: background,
+                          }}
+                        />
+                      );
+                    }
+
+                    const tooltipText = `${day.date}: ${day.count} event${day.count === 1 ? "" : "s"}`;
+                    const isActive = activeTooltip?.date === day.date;
                     return (
-                      <div
-                        key={rowIndex}
-                        data-testid="home-activity-cell"
-                        data-date={day?.date ?? ""}
-                        data-count={day?.count ?? 0}
-                        title={day ? `${day.date}: ${day.count} event${day.count === 1 ? "" : "s"}` : ""}
-                        style={{
-                          width: `${CELL_SIZE_PX}px`,
-                          height: `${CELL_SIZE_PX}px`,
-                          borderRadius: "2px",
-                          backgroundColor: background,
-                        }}
-                      />
+                      <div key={rowIndex} style={{ position: "relative" }}>
+                        <button
+                          data-testid="home-activity-cell"
+                          data-date={day.date}
+                          data-count={day.count}
+                          type="button"
+                          aria-label={tooltipText}
+                          onClick={() => showTooltip(day.date, tooltipText)}
+                          style={{
+                            width: `${CELL_SIZE_PX}px`,
+                            height: `${CELL_SIZE_PX}px`,
+                            borderRadius: "2px",
+                            backgroundColor: background,
+                            border: "none",
+                            padding: 0,
+                            cursor: "default",
+                          }}
+                        />
+                        {isActive && (
+                          <span
+                            data-testid="home-activity-tooltip"
+                            style={{
+                              position: "absolute",
+                              bottom: "calc(100% + 4px)",
+                              left: "50%",
+                              transform: "translateX(-50%)",
+                              whiteSpace: "nowrap",
+                              padding: "0.25rem 0.5rem",
+                              backgroundColor: "var(--color-surface)",
+                              color: "var(--color-text)",
+                              border: "1px solid var(--color-border)",
+                              borderRadius: "var(--radius-md)",
+                              fontSize: "0.75rem",
+                              boxShadow: "var(--shadow-md)",
+                              zIndex: 10,
+                              animation: "home-tooltip-fade-in 150ms ease-out",
+                            }}
+                          >
+                            {tooltipText}
+                          </span>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
