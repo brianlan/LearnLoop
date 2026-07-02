@@ -163,7 +163,7 @@ async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode())
         prompt = payload["messages"][0]["content"]
-        assert "keepaspectratio: true" in prompt
+        assert "setBoundingBox([xMin, yMax, xMax, yMin], true)" in prompt
         assert "preserve the source diagram" in prompt
         assert "JXG.JSXGraph.initBoard" in prompt
         return httpx.Response(
