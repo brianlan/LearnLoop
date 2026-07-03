@@ -1,18 +1,29 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
   commitImage,
   createBatch,
+  deleteBatchItem,
   deleteImage,
   detectImageBoxes,
   getActiveBatch,
   getBatch,
+  retryItem,
   saveImageBoxes,
+  startBatchExtraction,
+  undoDeleteBatchItem,
+  updateItemDraft,
   uploadBatchImages,
 } from "@/api/bulkIngestion";
-import type { BulkBatch, BulkImageBox, BulkWizardStep } from "@/types/bulkIngestion";
+import type {
+  BulkBatch,
+  BulkDraft,
+  BulkImageBox,
+  BulkWizardStep,
+} from "@/types/bulkIngestion";
 import { BulkUploadStep } from "./BulkUploadStep";
 import { BulkDetectStep } from "./BulkDetectStep";
+import { BulkReviewStep } from "./BulkReviewStep";
 
 export type { BulkWizardStep };
 
@@ -62,6 +73,7 @@ export function BulkIngestionWizard({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
+  const extractionStartedForBatch = useRef<Set<string>>(new Set());
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
     setBatch(nextBatch);
@@ -190,6 +202,103 @@ export function BulkIngestionWizard({
     },
     [batch, setBatchAndStep],
   );
+
+  const handleRefreshBatch = useCallback(
+    async (batchId: string) => {
+      try {
+        const response = await getBatch(batchId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to refresh batch");
+      }
+    },
+    [setBatchAndStep],
+  );
+
+  const handleUpdateItemDraft = useCallback(
+    async (itemId: string, draft: Partial<BulkDraft>) => {
+      if (!batch) return;
+      try {
+        const response = await updateItemDraft(batch.id, itemId, draft);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save draft");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  const handleRetryItem = useCallback(
+    async (itemId: string) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await retryItem(batch.id, itemId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to retry item");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  const handleDeleteItem = useCallback(
+    async (itemId: string) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await deleteBatchItem(batch.id, itemId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete item");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  const handleUndoDeleteItem = useCallback(
+    async (itemId: string) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await undoDeleteBatchItem(batch.id, itemId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to restore item",
+        );
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  useEffect(() => {
+    if (step !== "review" || !batch || batch.status !== "active") return;
+    const batchId = batch.id;
+    if (extractionStartedForBatch.current.has(batchId)) return;
+    extractionStartedForBatch.current.add(batchId);
+
+    let cancelled = false;
+    async function kickoff() {
+      try {
+        await startBatchExtraction(batchId);
+        if (!cancelled) {
+          const response = await getBatch(batchId);
+          if (!cancelled) setBatchAndStep(response.batch);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Failed to start extraction",
+          );
+        }
+      }
+    }
+    kickoff();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, batch?.id]);
 
   if (isLoading) {
     return (
@@ -340,11 +449,16 @@ export function BulkIngestionWizard({
           />
         )}
 
-        {step === "review" && (
-          <div data-testid="bulk-wizard-review-step">
-            <h2>Review extracted items</h2>
-            <p>Item review UI will be added in a later step.</p>
-          </div>
+        {step === "review" && batch && (
+          <BulkReviewStep
+            batch={batch}
+            isLoading={isLoading}
+            onRefresh={handleRefreshBatch}
+            onUpdateDraft={handleUpdateItemDraft}
+            onRetry={handleRetryItem}
+            onDelete={handleDeleteItem}
+            onUndoDelete={handleUndoDeleteItem}
+          />
         )}
 
         {step === "submit" && (

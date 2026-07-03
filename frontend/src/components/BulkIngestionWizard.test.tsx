@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { BulkIngestionWizard } from "./BulkIngestionWizard";
 import { ApiError } from "@/api/client";
 import type { BatchResponse, BulkBatch } from "@/types/bulkIngestion";
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   saveImageBoxes: vi.fn<() => Promise<BatchResponse>>(),
   commitImage: vi.fn<() => Promise<BatchResponse>>(),
   deleteImage: vi.fn<() => Promise<BatchResponse>>(),
+  startBatchExtraction: vi.fn<() => Promise<BatchResponse>>(),
 }));
 
 vi.mock("@/api/bulkIngestion", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/api/bulkIngestion", () => ({
   saveImageBoxes: mocks.saveImageBoxes,
   commitImage: mocks.commitImage,
   deleteImage: mocks.deleteImage,
+  startBatchExtraction: mocks.startBatchExtraction,
 }));
 
 function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
@@ -190,6 +192,124 @@ describe("BulkIngestionWizard", () => {
     await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
     });
+  });
+
+  it("starts extraction once when entering the review step and not again on poll refresh", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "queued",
+            order: 0,
+            draft: {},
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.startBatchExtraction.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "queued",
+            order: 0,
+            draft: {},
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "extracting",
+            order: 0,
+            draft: {},
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    expect(mocks.startBatchExtraction).toHaveBeenCalledTimes(1);
+    expect(mocks.startBatchExtraction).toHaveBeenCalledWith("batch-1");
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    await waitFor(() => {
+      expect(mocks.getBatch).toHaveBeenCalledWith("batch-1");
+    });
+    expect(mocks.startBatchExtraction).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
   });
 
   it("does not persist batch state in localStorage", async () => {
