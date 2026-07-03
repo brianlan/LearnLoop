@@ -28,10 +28,12 @@ from app.infrastructure.vlm._models import (
 from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
     GRADING_SYSTEM_PROMPT,
+    HELPER_PROBLEM_DETECTION_SYSTEM_PROMPT,
     HELPER_SUBJECT_CLASSIFICATION_SYSTEM_PROMPT,
     MATH_EXTRACTION_SYSTEM_PROMPT,
     build_extraction_user_prompt,
     build_grading_user_prompt,
+    build_problem_detection_user_prompt,
     build_subject_classification_user_prompt,
 )
 
@@ -85,6 +87,14 @@ class ClassificationRequest(_RequestBase):
     expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
 
 
+class DetectionRequest(_RequestBase):
+    request_type: Literal["problem-box-detection"] = Field(
+        default="problem-box-detection",
+        alias="requestType",
+    )
+    expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
+
+
 class _ProviderMetadataModel(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -104,6 +114,21 @@ class _ClassificationProviderPayload(BaseModel):
     subject: Literal["math", "english"]
     confidence: float = Field(ge=0, le=1)
     reason: str
+    provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
+
+
+class ProblemBox(BaseModel):
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    width: float = Field(gt=0)
+    height: float = Field(gt=0)
+
+
+class _DetectionProviderPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    subject: Literal["math", "english"]
+    boxes: list[ProblemBox]
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
 
 
@@ -134,6 +159,15 @@ class ClassificationResult(BaseModel):
     subject: Literal["math", "english"]
     confidence: float = Field(ge=0, le=1)
     reason: str
+    provider_metadata: dict[str, Any]
+    raw_provider_response: dict[str, Any]
+
+
+class DetectionResult(BaseModel):
+    request_type: Literal["problem-box-detection"]
+    model: str
+    subject: Literal["math", "english"]
+    boxes: list[ProblemBox]
     provider_metadata: dict[str, Any]
     raw_provider_response: dict[str, Any]
 
@@ -240,6 +274,50 @@ class VLMClient(BaseVLMClient):
             raw_provider_response=raw_provider_response,
         )
 
+    async def detect_problem_boxes(
+        self,
+        *,
+        image_url: str | None = None,
+        image_base64: str | None = None,
+    ) -> DetectionResult:
+        request = DetectionRequest(
+            model=self._model,
+            prompt=HELPER_PROBLEM_DETECTION_SYSTEM_PROMPT,
+            imageUrl=image_url,
+            imageBase64=image_base64,
+            expectedResponseSchema={
+                "type": "object",
+                "required": ["subject", "boxes"],
+                "properties": {
+                    "subject": {"type": "string", "enum": ["math", "english"]},
+                    "boxes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["x", "y", "width", "height"],
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                                "width": {"type": "number"},
+                                "height": {"type": "number"},
+                            },
+                        },
+                    },
+                    "providerMetadata": {"type": "object"},
+                },
+            },
+        )
+        raw_provider_response = await self._send_request(request)
+        payload = self._validate_response(raw_provider_response, _DetectionProviderPayload)
+        return DetectionResult(
+            request_type=request.request_type,
+            model=request.model,
+            subject=payload.subject,
+            boxes=payload.boxes,
+            provider_metadata=payload.provider_metadata,
+            raw_provider_response=raw_provider_response,
+        )
+
     async def grade_short_answer(
         self,
         *,
@@ -290,8 +368,8 @@ class VLMClient(BaseVLMClient):
     @staticmethod
     def _validate_response(
         raw_provider_response: dict[str, Any],
-        model_class: type[_ExtractionProviderPayload | _GradingProviderPayload],
-    ) -> _ExtractionProviderPayload | _GradingProviderPayload:
+        model_class: type[BaseModel],
+    ) -> BaseModel:
         try:
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
@@ -314,6 +392,10 @@ class VLMClient(BaseVLMClient):
             )
         elif isinstance(request, ClassificationRequest):
             user_prompt = build_subject_classification_user_prompt(
+                expected_response_schema=request.expected_response_schema,
+            )
+        elif isinstance(request, DetectionRequest):
+            user_prompt = build_problem_detection_user_prompt(
                 expected_response_schema=request.expected_response_schema,
             )
         else:

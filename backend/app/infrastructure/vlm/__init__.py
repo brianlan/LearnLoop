@@ -9,8 +9,11 @@ from app.infrastructure.vlm.base_client import (
 )
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_STALE_PREVIEW,
+    ClassificationResult,
+    DetectionResult,
     ExtractionResult,
     GradingResult,
+    ProblemBox,
     VLMClient,
     VLMError,
 )
@@ -36,8 +39,11 @@ __all__ = [
     "CoachingVLMClient",
     "CoachingVLMRequest",
     "CoachingVLMResult",
+    "ClassificationResult",
+    "DetectionResult",
     "ExtractionResult",
     "GradingResult",
+    "ProblemBox",
     "SolutionCoachingVLMError",
     "SolutionVLMClient",
     "SolutionVLMRequest",

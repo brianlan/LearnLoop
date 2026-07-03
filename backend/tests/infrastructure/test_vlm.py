@@ -14,6 +14,7 @@ from app.infrastructure.vlm.client import (
     FAILURE_CODE_STALE_PREVIEW,
     FAILURE_CODE_TIMEOUT,
     ClassificationResult,
+    DetectionResult,
     ExtractionResult,
     GradingResult,
     VLMClient,
@@ -511,6 +512,34 @@ def _classification_handler(subject: str, confidence: float) -> VLMClient:
     return _build_client(handler)
 
 
+def _detection_handler(subject: str, boxes: list[dict[str, Any]]) -> VLMClient:
+    """Build a mock VLM client that returns a problem-box detection response."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "subject": subject,
+                                    "boxes": boxes,
+                                    "providerMetadata": {"provider": "demo"},
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    return _build_client(handler)
+
+
 def test_math_extraction_prompt_contains_math_guidance() -> None:
     assert "JSXGraph" in MATH_EXTRACTION_SYSTEM_PROMPT
     assert "LaTeX" in MATH_EXTRACTION_SYSTEM_PROMPT
@@ -816,3 +845,124 @@ def test_strip_thinking_content_leaves_incomplete_block_unchanged() -> None:
 
     assert content == "<think>incomplete"
     assert reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_happy_path_with_multiple_boxes() -> None:
+    client = _detection_handler(
+        "math",
+        [
+            {"x": 10, "y": 20, "width": 100, "height": 50},
+            {"x": 10, "y": 80, "width": 100, "height": 50},
+        ],
+    )
+
+    result = await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert isinstance(result, DetectionResult)
+    assert result.request_type == "problem-box-detection"
+    assert result.subject == "math"
+    assert len(result.boxes) == 2
+    assert result.boxes[0].x == 10
+    assert result.boxes[0].y == 20
+    assert result.boxes[0].width == 100
+    assert result.boxes[0].height == 50
+    assert result.raw_provider_response["boxes"] == [
+        {"x": 10, "y": 20, "width": 100, "height": 50},
+        {"x": 10, "y": 80, "width": 100, "height": 50},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_accepts_zero_boxes() -> None:
+    client = _detection_handler("english", [])
+
+    result = await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.subject == "english"
+    assert result.boxes == []
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_rejects_invalid_subject() -> None:
+    client = _detection_handler("science", [{"x": 0, "y": 0, "width": 10, "height": 10}])
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.raw_provider_response is not None
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_rejects_missing_box_coordinate() -> None:
+    client = _detection_handler("math", [{"x": 0, "y": 0, "width": 10}])
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_rejects_negative_box_coordinate() -> None:
+    client = _detection_handler("math", [{"x": -1, "y": 0, "width": 10, "height": 10}])
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_rejects_zero_box_area() -> None:
+    client = _detection_handler("math", [{"x": 0, "y": 0, "width": 0, "height": 10}])
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_vlm_detection_prompt_includes_subject_and_boxes_schema() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        system_prompt = payload["messages"][0]["content"]
+        user_prompt = payload["messages"][1]["content"][0]["text"]
+        assert "boxes" in system_prompt
+        assert "subject" in system_prompt
+        assert "natural-image pixel coordinates" in user_prompt
+        assert '"subject": {"type": "string", "enum": ["math", "english"]}' in user_prompt
+        assert '"boxes":' in user_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "subject": "math",
+                                    "boxes": [{"x": 0, "y": 0, "width": 10, "height": 10}],
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    result = await client.detect_problem_boxes(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.subject == "math"
