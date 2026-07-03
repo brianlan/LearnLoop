@@ -96,11 +96,17 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
     except AttributeError:
         existing_collections = set()
 
+    from app.infrastructure.ingestion.repository import (
+        INGESTION_BATCHES_COLLECTION,
+        ensure_batch_indexes,
+    )
+
     for collection_name in (
         SOLUTION_GENERATION_TASKS_COLLECTION,
         CANONICAL_SOLUTIONS_COLLECTION,
         COACHING_CONVERSATIONS_COLLECTION,
         FOLDERS_COLLECTION,
+        INGESTION_BATCHES_COLLECTION,
     ):
         if collection_name not in existing_collections and hasattr(database, "create_collection"):
             await database.create_collection(collection_name)
@@ -130,6 +136,8 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
             name="user_parent_folder_unique",
             collation={"locale": "en", "strength": 2},  # case-insensitive
         )
+
+    await ensure_batch_indexes(database)
 
 
 @asynccontextmanager

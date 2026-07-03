@@ -7,6 +7,10 @@ from typing import Any, cast
 import pytest
 
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.ingestion.repository import (
+    BATCH_INDEXES,
+    INGESTION_BATCHES_COLLECTION,
+)
 from app.infrastructure.storage.mongo import (
     AsyncMongoClientFactory,
     CANONICAL_SOLUTIONS_COLLECTION,
@@ -138,6 +142,7 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
         CANONICAL_SOLUTIONS_COLLECTION,
         COACHING_CONVERSATIONS_COLLECTION,
         FOLDERS_COLLECTION,
+        INGESTION_BATCHES_COLLECTION,
     ]
     assert database[TAGS_COLLECTION].index_calls == [
         {
@@ -160,4 +165,8 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
                 "collation": {"locale": "en", "strength": 2},
             },
         }
+    ]
+    assert database[INGESTION_BATCHES_COLLECTION].index_calls == [
+        {"keys": list(index["keys"]), "kwargs": {"name": index["name"]}}
+        for index in BATCH_INDEXES
     ]
