@@ -27,6 +27,14 @@ def build_problem_image_url(problem_id: Any) -> str:
     return f"/api/v1/problems/{problem_id}/image"
 
 
+def build_ingestion_source_image_url(batch_id: Any, image_id: str) -> str:
+    return f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
+
+
+def build_ingestion_crop_url(batch_id: Any, item_id: str) -> str:
+    return f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
+
+
 def parse_object_id(raw_id: str, *, resource_name: str) -> ObjectId:
     if not ObjectId.is_valid(raw_id):
         raise ApiError(404, "NOT_FOUND", f"{resource_name} not found")

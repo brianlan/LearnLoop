@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import base64
+from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ from app.domain.ingestion import (
     transition_image_state,
     validate_boxes,
 )
+from app.domain.models import ProblemSubject, ProblemType
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.documents import build_source_image
 from app.infrastructure.ingestion.image_size import get_image_size
@@ -33,14 +36,17 @@ from app.infrastructure.ingestion.repository import (
     get_active_batch_for_user,
     get_batch,
     is_batch_expired,
+    mark_item_deleted,
     reset_item_for_retry,
     save_image_boxes_and_subject,
     save_image_detection_failure,
     save_image_detection_success,
     start_image_detection,
+    undo_item_deletion,
+    update_item_draft,
 )
 from app.infrastructure.storage.mongo import Document
-from app.infrastructure.storage.s3 import S3StorageAdapter
+from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
 from app.infrastructure.vlm.base_client import BaseVLMError
 from app.presentation.deps import (
     DatabaseDependency,
@@ -50,7 +56,12 @@ from app.presentation.deps import (
     get_s3_storage,
 )
 from app.presentation.errors import ApiError
-from app.presentation.helpers import parse_object_id
+from app.presentation.helpers import (
+    build_ingestion_crop_url,
+    build_ingestion_source_image_url,
+    normalize_tags,
+    parse_object_id,
+)
 from app.presentation.schemas import SourceImagePayload
 
 router = APIRouter(prefix="/ingestion-batches", tags=["bulk-ingestion"])
@@ -124,8 +135,12 @@ def _guess_extension(upload: UploadFile) -> str:
     return ".bin"
 
 
-def _serialize_source_image(source_image: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _serialize_source_image(
+    source_image: dict[str, Any],
+    batch_id: str | None = None,
+    image_id: str | None = None,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
         "bucket": source_image["bucket"],
         "objectKey": source_image["objectKey"],
         "contentType": source_image.get("contentType"),
@@ -135,15 +150,20 @@ def _serialize_source_image(source_image: dict[str, Any]) -> dict[str, Any]:
         "height": source_image.get("height"),
         "uploadedAt": source_image.get("uploadedAt"),
     }
+    if batch_id and image_id:
+        data["mediaUrl"] = build_ingestion_source_image_url(batch_id, image_id)
+    return data
 
 
-def _serialize_image(image: dict[str, Any]) -> dict[str, Any]:
+def _serialize_image(image: dict[str, Any], batch_id: str | None = None) -> dict[str, Any]:
     detection = image.get("detection") or {}
     return {
         "imageId": image["imageId"],
         "status": image["status"],
         "order": image["order"],
-        "sourceImage": _serialize_source_image(image.get("sourceImage") or {}),
+        "sourceImage": _serialize_source_image(
+            image.get("sourceImage") or {}, batch_id=batch_id, image_id=image.get("imageId")
+        ),
         "subject": image.get("subject"),
         "boxes": list(image.get("boxes", [])),
         "detection": {
@@ -158,7 +178,11 @@ def _serialize_image(image: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _serialize_item(item: dict[str, Any]) -> dict[str, Any]:
+def _serialize_item(item: dict[str, Any], batch_id: str | None = None) -> dict[str, Any]:
+    crop = item.get("crop")
+    if crop and batch_id:
+        crop = dict(crop)
+        crop["mediaUrl"] = build_ingestion_crop_url(batch_id, item["itemId"])
     return {
         "itemId": item["itemId"],
         "imageId": item["imageId"],
@@ -170,29 +194,34 @@ def _serialize_item(item: dict[str, Any]) -> dict[str, Any]:
         "retryCount": item.get("retryCount", 0),
         "submit": dict(item.get("submit", {})),
         "origin": dict(item.get("origin", {})),
-        "crop": item.get("crop"),
+        "crop": crop,
         "leaseUntil": item.get("leaseUntil"),
         "createdAt": item["createdAt"],
         "updatedAt": item["updatedAt"],
     }
 
 
-def serialize_batch(batch: Document) -> dict[str, Any]:
-    images = [
-        image for image in batch.get("images", [])
-        if image.get("status") != ImageState.DELETED.value
-    ]
-    items = [
-        item for item in batch.get("items", [])
-        if item.get("status") != ItemState.DELETED.value
-    ]
+def serialize_batch(batch: Document, *, include_deleted: bool = False) -> dict[str, Any]:
+    batch_id = str(batch["_id"])
+    if include_deleted:
+        images = list(batch.get("images", []))
+        items = list(batch.get("items", []))
+    else:
+        images = [
+            image for image in batch.get("images", [])
+            if image.get("status") != ImageState.DELETED.value
+        ]
+        items = [
+            item for item in batch.get("items", [])
+            if item.get("status") != ItemState.DELETED.value
+        ]
     return {
         "batch": {
-            "id": str(batch["_id"]),
+            "id": batch_id,
             "userId": str(batch["userId"]),
             "status": batch["status"],
-            "images": [_serialize_image(image) for image in images],
-            "items": [_serialize_item(item) for item in items],
+            "images": [_serialize_image(image, batch_id=batch_id) for image in images],
+            "items": [_serialize_item(item, batch_id=batch_id) for item in items],
             "createdAt": batch["createdAt"],
             "updatedAt": batch["updatedAt"],
             "expiresAt": batch["expiresAt"],
@@ -225,6 +254,18 @@ async def _load_owned_batch(
         raise ApiError(409, "BATCH_EXPIRED", "Batch has expired")
     if batch["status"] != BatchState.ACTIVE.value:
         raise ApiError(409, "INVALID_BATCH_STATE", "Batch is not active")
+    return batch
+
+
+async def _load_owned_batch_for_read(
+    database: Any,
+    batch_id: str,
+    user_id: Any,
+) -> Document:
+    parse_object_id(batch_id, resource_name="Batch")
+    batch = await get_batch(database, batch_id, user_id)
+    if batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
     return batch
 
 
@@ -555,3 +596,157 @@ async def retry_item(
     if updated_batch is None:
         raise ApiError(404, "NOT_FOUND", "Batch not found")
     return BatchResponse(**serialize_batch(updated_batch))
+
+
+class UpdateItemDraftRequest(BaseModel):
+    text: str | None = None
+    problemType: ProblemType | None = None
+    graphDsl: str | None = None
+    correctAnswer: str | None = None
+    tags: list[str] | None = None
+    subject: ProblemSubject | None = None
+
+
+@router.get("/{batch_id}", response_model=BatchResponse)
+async def get_batch_detail(
+    batch_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch_for_read(database, batch_id, user["_id"])
+    return BatchResponse(**serialize_batch(batch, include_deleted=True))
+
+
+@router.patch("/{batch_id}/items/{item_id}", response_model=BatchResponse)
+async def update_item_draft_endpoint(
+    batch_id: str,
+    item_id: str,
+    request: UpdateItemDraftRequest,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    await _load_owned_batch(database, batch_id, user["_id"])
+
+    draft_update = request.model_dump(exclude_unset=True)
+    if "tags" in draft_update:
+        draft_update["tags"] = normalize_tags(draft_update["tags"])
+
+    updated = await update_item_draft(
+        database,
+        batch_id,
+        user["_id"],
+        item_id,
+        draft_update=draft_update,
+        now=datetime.now(UTC),
+    )
+    if updated is None:
+        raise ApiError(404, "NOT_FOUND", "Item not found")
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+@router.delete("/{batch_id}/items/{item_id}", response_model=BatchResponse)
+async def delete_item(
+    batch_id: str,
+    item_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    await _load_owned_batch(database, batch_id, user["_id"])
+    await mark_item_deleted(
+        database,
+        batch_id,
+        user["_id"],
+        item_id,
+        now=datetime.now(UTC),
+    )
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+@router.post("/{batch_id}/items/{item_id}/undo-delete", response_model=BatchResponse)
+async def undo_delete_item_endpoint(
+    batch_id: str,
+    item_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    await _load_owned_batch(database, batch_id, user["_id"])
+    restored = await undo_item_deletion(
+        database,
+        batch_id,
+        user["_id"],
+        item_id,
+        now=datetime.now(UTC),
+    )
+    if not restored:
+        raise ApiError(
+            409,
+            "ITEM_NOT_DELETED",
+            "Item is not deleted or has no restorable state",
+        )
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+@router.get("/{batch_id}/images/{image_id}/source")
+async def stream_source_image(
+    batch_id: str,
+    image_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+    storage: StorageDependency,
+) -> StreamingResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    image = _find_image_or_404(batch, image_id)
+    source_image = dict(image.get("sourceImage") or {})
+    bucket = source_image.get("bucket")
+    object_key = source_image.get("objectKey")
+    if not bucket or not object_key:
+        raise ApiError(404, "NOT_FOUND", "Source image not found")
+
+    try:
+        image_bytes = storage.get_object(str(bucket), str(object_key))
+    except StorageObjectNotFoundError as exc:
+        raise ApiError(404, "NOT_FOUND", "Source image not found") from exc
+
+    return StreamingResponse(
+        BytesIO(image_bytes),
+        media_type=str(source_image.get("contentType") or "application/octet-stream"),
+    )
+
+
+@router.get("/{batch_id}/items/{item_id}/crop")
+async def stream_item_crop(
+    batch_id: str,
+    item_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+    storage: StorageDependency,
+) -> StreamingResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    item = _find_item_or_404(batch, item_id)
+    crop = dict(item.get("crop") or {})
+    bucket = crop.get("bucket")
+    object_key = crop.get("objectKey")
+    if not bucket or not object_key:
+        raise ApiError(404, "NOT_FOUND", "Crop image not found")
+
+    try:
+        image_bytes = storage.get_object(str(bucket), str(object_key))
+    except StorageObjectNotFoundError as exc:
+        raise ApiError(404, "NOT_FOUND", "Crop image not found") from exc
+
+    return StreamingResponse(
+        BytesIO(image_bytes),
+        media_type=str(crop.get("contentType") or "application/octet-stream"),
+    )

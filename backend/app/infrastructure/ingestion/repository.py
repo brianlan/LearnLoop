@@ -564,6 +564,125 @@ async def reset_item_for_retry(
     return True
 
 
+async def update_item_draft(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    draft_update: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any] | None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    items = list(batch.get("items", []))
+    updated_item: dict[str, Any] | None = None
+    for item in items:
+        if item.get("itemId") != item_id:
+            continue
+        draft = dict(item.get("draft", {}))
+        allowed = {"text", "problemType", "graphDsl", "correctAnswer", "tags", "subject"}
+        for key, value in draft_update.items():
+            if key in allowed:
+                draft[key] = value
+        item["draft"] = draft
+        item["updatedAt"] = now
+        updated_item = item
+        break
+
+    if updated_item is None:
+        return None
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"items": items, "updatedAt": now}},
+    )
+    return updated_item
+
+
+async def mark_item_deleted(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    items = list(batch.get("items", []))
+    changed = False
+    for item in items:
+        if item.get("itemId") != item_id:
+            continue
+        status = item.get("status")
+        if status in {ItemState.DELETED.value, ItemState.SUBMITTED.value}:
+            return True
+        item["previousStatus"] = status
+        item["status"] = ItemState.DELETED.value
+        item["deletedAt"] = now
+        item["updatedAt"] = now
+        changed = True
+        break
+
+    if not changed:
+        return False
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"items": items, "updatedAt": now}},
+    )
+    return True
+
+
+async def undo_item_deletion(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    items = list(batch.get("items", []))
+    changed = False
+    for item in items:
+        if item.get("itemId") != item_id:
+            continue
+        if item.get("status") != ItemState.DELETED.value:
+            return False
+        previous_status = item.pop("previousStatus", None)
+        if previous_status is None:
+            return False
+        item["status"] = previous_status
+        item.pop("deletedAt", None)
+        item["updatedAt"] = now
+        changed = True
+        break
+
+    if not changed:
+        return False
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"items": items, "updatedAt": now}},
+    )
+    return True
+
+
 async def find_cleanup_candidates(
     database: Any,
     *,

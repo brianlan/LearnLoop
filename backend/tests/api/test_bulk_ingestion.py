@@ -1076,3 +1076,413 @@ async def test_retry_requires_authentication(
         f"/api/v1/ingestion-batches/{ObjectId()}/items/item-1/retry"
     )
     assert response.status_code == 401
+
+
+async def create_ready_item(
+    client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+    *,
+    subject: str = "math",
+) -> tuple[str, str, str]:
+    batch_id, image_id, item_id = await create_committed_item(
+        client, helper_vlm, subject=subject
+    )
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    storage: FakeStorage = bulk_app.state.fake_storage
+    batch = await database["ingestion_batches"].find_one({"_id": ObjectId(batch_id)})
+    assert batch is not None
+
+    math_ingestion_vlm.responses.append(
+        make_extraction_result(text=f"Extracted {subject} text", model="math-model")
+    )
+
+    from app.infrastructure.worker.extraction_worker import process_item
+    from app.infrastructure.config.settings import Settings as AppSettings
+
+    settings = AppSettings(s3_bucket="learnloop-media")
+    await process_item(
+        batch["items"][0],
+        batch,
+        database,
+        storage,
+        math_ingestion_vlm,
+        bulk_app.state.fake_english_ingestion_vlm,
+        settings,
+    )
+    return batch_id, image_id, item_id
+
+
+@pytest.mark.asyncio
+async def test_get_batch_detail_returns_review_state_with_media_urls(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    assert response.status_code == 200
+    batch = response.json()["batch"]
+    assert batch["id"] == batch_id
+    assert len(batch["images"]) == 1
+    assert batch["images"][0]["sourceImage"]["mediaUrl"] == (
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
+    )
+    assert len(batch["items"]) == 1
+    item = batch["items"][0]
+    assert item["itemId"] == item_id
+    assert item["status"] == "ready"
+    assert item["draft"]["text"] == "Extracted math text"
+    assert item["crop"]["mediaUrl"] == (
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_batch_detail_includes_deleted_items(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, image_id, _item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    await authenticated_bulk_client.delete(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}"
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    assert response.status_code == 200
+    batch = response.json()["batch"]
+    assert len(batch["images"]) == 1
+    assert batch["images"][0]["status"] == "deleted"
+    assert len(batch["items"]) == 1
+    assert batch["items"][0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_update_item_draft_persists_all_editable_fields(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={
+            "text": "New text",
+            "problemType": "single-choice",
+            "graphDsl": "graph",
+            "correctAnswer": "A",
+            "tags": ["tag-a", " tag-b ", "tag-a"],
+            "subject": "english",
+        },
+    )
+    assert response.status_code == 200
+    item = response.json()["batch"]["items"][0]
+    assert item["draft"]["text"] == "New text"
+    assert item["draft"]["problemType"] == "single-choice"
+    assert item["draft"]["graphDsl"] == "graph"
+    assert item["draft"]["correctAnswer"] == "A"
+    assert item["draft"]["tags"] == ["tag-a", "tag-b"]
+    assert item["draft"]["subject"] == "english"
+
+
+@pytest.mark.asyncio
+async def test_update_item_draft_omitted_fields_preserved(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"text": "First"},
+    )
+    await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": "Second"},
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    item = response.json()["batch"]["items"][0]
+    assert item["draft"]["text"] == "First"
+    assert item["draft"]["correctAnswer"] == "Second"
+
+
+@pytest.mark.asyncio
+async def test_update_item_draft_rejects_invalid_problem_type(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"problemType": "invalid"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_item_draft_rejects_expired_batch(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    await database["ingestion_batches"].update_one(
+        {"_id": ObjectId(batch_id)},
+        {"$set": {"expiresAt": datetime.now(UTC) - timedelta(seconds=1)}},
+    )
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"text": "New"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "BATCH_EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_delete_item_marks_deleted_and_keeps_in_review_state(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.delete(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}"
+    )
+    assert response.status_code == 200
+    item = response.json()["batch"]["items"][0]
+    assert item["itemId"] == item_id
+    assert item["status"] == "deleted"
+
+    detail = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    assert detail.json()["batch"]["items"][0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_undo_delete_item_restores_previous_status(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    await authenticated_bulk_client.delete(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}"
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/undo-delete"
+    )
+    assert response.status_code == 200
+    item = response.json()["batch"]["items"][0]
+    assert item["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_undo_delete_item_rejects_non_deleted(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/undo-delete"
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "ITEM_NOT_DELETED"
+
+
+@pytest.mark.asyncio
+async def test_stream_source_image_returns_owned_image(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, image_id, _item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert len(response.content) > 0
+
+
+@pytest.mark.asyncio
+async def test_stream_item_crop_returns_owned_crop(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert len(response.content) > 0
+
+
+@pytest.mark.asyncio
+async def test_stream_source_image_rejects_cross_user(
+    bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    await register_and_login(bulk_client, bulk_app, username="owner")
+    batch_id, image_id, _item_id = await create_ready_item(
+        bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    await register_and_login(bulk_client, bulk_app, username="other")
+    response = await bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_stream_crop_rejects_missing_crop(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_review_routes_require_authentication(
+    bulk_client: AsyncClient,
+) -> None:
+    batch_id = str(ObjectId())
+    item_id = "item-1"
+    image_id = "image-1"
+
+    assert (
+        await bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    ).status_code == 401
+    assert (
+        await bulk_client.patch(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}", json={}
+        )
+    ).status_code == 401
+    assert (
+        await bulk_client.delete(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}"
+        )
+    ).status_code == 401
+    assert (
+        await bulk_client.post(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/undo-delete"
+        )
+    ).status_code == 401
+    assert (
+        await bulk_client.get(
+            f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
+        )
+    ).status_code == 401
+    assert (
+        await bulk_client.get(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
+        )
+    ).status_code == 401

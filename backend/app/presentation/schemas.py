@@ -21,3 +21,4 @@ class SourceImagePayload(BaseModel):
     width: int | None = None
     height: int | None = None
     uploadedAt: datetime | None = None
+    mediaUrl: str | None = None
