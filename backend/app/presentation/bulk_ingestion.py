@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import mimetypes
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,8 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel
 
 import base64
+
+logger = logging.getLogger(__name__)
 
 from app.domain.ingestion import (
     BatchState,
@@ -352,6 +355,7 @@ async def detect_image_boxes(
             source_image["bucket"], source_image["objectKey"]
         )
     except Exception as exc:
+        logger.exception("Unexpected storage read failure during detection")
         await save_image_detection_failure(
             database,
             batch_id,
@@ -392,6 +396,7 @@ async def detect_image_boxes(
             now=datetime.now(UTC),
         )
     except Exception as exc:
+        logger.exception("Unexpected error during box detection")
         await save_image_detection_failure(
             database,
             batch_id,
