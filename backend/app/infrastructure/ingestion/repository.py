@@ -6,7 +6,7 @@ from typing import Any
 from bson import ObjectId
 from pymongo import ASCENDING
 
-from app.domain.ingestion import BatchState, ImageState
+from app.domain.ingestion import BatchState, ImageState, ItemState
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 
@@ -180,6 +180,233 @@ async def add_items_for_image(
     await _collection(database).update_one(
         {"_id": _object_id(batch_id), "userId": user_id},
         {"$set": {"images": images, "items": items, "updatedAt": current}},
+    )
+    return new_items
+
+
+async def start_image_detection(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    image_id: str,
+    *,
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    images = list(batch.get("images", []))
+    for image in images:
+        if image.get("imageId") == image_id:
+            image["status"] = ImageState.DETECTING.value
+            image["updatedAt"] = now
+            break
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"images": images, "updatedAt": now}},
+    )
+
+
+async def save_image_detection_success(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    image_id: str,
+    *,
+    subject: str,
+    boxes: list[dict[str, Any]],
+    model: str,
+    raw_provider_response: dict[str, Any] | None,
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    images = list(batch.get("images", []))
+    for image in images:
+        if image.get("imageId") == image_id:
+            image["status"] = ImageState.READY.value
+            image["subject"] = subject
+            image["boxes"] = list(boxes)
+            image["detection"] = {
+                "model": model,
+                "rawProviderResponse": raw_provider_response,
+                "failureCode": None,
+                "failureMessage": None,
+            }
+            image["updatedAt"] = now
+            break
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"images": images, "updatedAt": now}},
+    )
+
+
+async def save_image_detection_failure(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    image_id: str,
+    *,
+    failure_code: str,
+    failure_message: str,
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    images = list(batch.get("images", []))
+    for image in images:
+        if image.get("imageId") == image_id:
+            image["status"] = ImageState.DETECT_FAILED.value
+            image["detection"] = {
+                "model": None,
+                "rawProviderResponse": None,
+                "failureCode": failure_code,
+                "failureMessage": failure_message,
+            }
+            image["updatedAt"] = now
+            break
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"images": images, "updatedAt": now}},
+    )
+
+
+async def save_image_boxes_and_subject(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    image_id: str,
+    *,
+    subject: str | None,
+    boxes: list[dict[str, Any]],
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    images = list(batch.get("images", []))
+    for image in images:
+        if image.get("imageId") == image_id:
+            image["status"] = ImageState.READY.value
+            if subject is not None:
+                image["subject"] = subject
+            image["boxes"] = list(boxes)
+            image["updatedAt"] = now
+            break
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"images": images, "updatedAt": now}},
+    )
+
+
+async def delete_batch_image(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    image_id: str,
+    *,
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    images = list(batch.get("images", []))
+    for image in images:
+        if image.get("imageId") == image_id:
+            image["status"] = ImageState.DELETED.value
+            image["updatedAt"] = now
+            break
+
+    items = list(batch.get("items", []))
+    for item in items:
+        if item.get("imageId") == image_id:
+            item["status"] = ItemState.DELETED.value
+            item["updatedAt"] = now
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"images": images, "items": items, "updatedAt": now}},
+    )
+
+
+async def commit_image_boxes(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    image_id: str,
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    images = list(batch.get("images", []))
+    target_image = None
+    for image in images:
+        if image.get("imageId") == image_id:
+            target_image = image
+            break
+    if target_image is None:
+        raise ValueError("Image not found")
+
+    if target_image["status"] == ImageState.COMMITTED.value:
+        return [
+            item for item in batch.get("items", [])
+            if item.get("imageId") == image_id and item.get("status") != ItemState.DELETED.value
+        ]
+
+    existing_items = [
+        item for item in batch.get("items", [])
+        if item.get("status") != ItemState.DELETED.value
+    ]
+    next_order = max((item["order"] for item in existing_items), default=-1) + 1
+
+    new_items: list[dict[str, Any]] = []
+    for offset, _box in enumerate(target_image.get("boxes", [])):
+        item_id = new_item_id()
+        item_document = build_item_document(
+            item_id=item_id,
+            batch_id=batch["_id"],
+            image_id=image_id,
+            order=next_order + offset,
+            now=now,
+        )
+        new_items.append(item_document)
+
+    items = list(batch.get("items", []))
+    items.extend(new_items)
+
+    target_image["status"] = ImageState.COMMITTED.value
+    target_image["committedAt"] = now
+    target_image["updatedAt"] = now
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"images": images, "items": items, "updatedAt": now}},
     )
     return new_items
 

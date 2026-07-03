@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import mimetypes
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,20 +10,40 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel
 
-from app.domain.ingestion import BatchState
+import base64
+
+logger = logging.getLogger(__name__)
+
+from app.domain.ingestion import (
+    BatchState,
+    ImageState,
+    InvalidBoxError,
+    ItemState,
+    transition_image_state,
+    validate_boxes,
+)
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.documents import build_source_image
+from app.infrastructure.ingestion.image_size import get_image_size
 from app.infrastructure.ingestion.repository import (
     add_source_image,
+    commit_image_boxes,
     create_batch as create_batch_repo,
+    delete_batch_image,
     get_active_batch_for_user,
     get_batch,
     is_batch_expired,
+    save_image_boxes_and_subject,
+    save_image_detection_failure,
+    save_image_detection_success,
+    start_image_detection,
 )
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import S3StorageAdapter
+from app.infrastructure.vlm.base_client import BaseVLMError
 from app.presentation.deps import (
     DatabaseDependency,
+    HelperVLMDependency,
     get_app_settings,
     get_current_user,
     get_s3_storage,
@@ -109,6 +130,8 @@ def _serialize_source_image(source_image: dict[str, Any]) -> dict[str, Any]:
         "contentType": source_image.get("contentType"),
         "sizeBytes": source_image.get("sizeBytes"),
         "sha256": source_image.get("sha256"),
+        "width": source_image.get("width"),
+        "height": source_image.get("height"),
         "uploadedAt": source_image.get("uploadedAt"),
     }
 
@@ -154,18 +177,38 @@ def _serialize_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def serialize_batch(batch: Document) -> dict[str, Any]:
+    images = [
+        image for image in batch.get("images", [])
+        if image.get("status") != ImageState.DELETED.value
+    ]
+    items = [
+        item for item in batch.get("items", [])
+        if item.get("status") != ItemState.DELETED.value
+    ]
     return {
         "batch": {
             "id": str(batch["_id"]),
             "userId": str(batch["userId"]),
             "status": batch["status"],
-            "images": [_serialize_image(image) for image in batch.get("images", [])],
-            "items": [_serialize_item(item) for item in batch.get("items", [])],
+            "images": [_serialize_image(image) for image in images],
+            "items": [_serialize_item(item) for item in items],
             "createdAt": batch["createdAt"],
             "updatedAt": batch["updatedAt"],
             "expiresAt": batch["expiresAt"],
         }
     }
+
+
+def _find_image_or_404(batch: Document, image_id: str) -> dict[str, Any]:
+    for image in batch.get("images", []):
+        if image.get("imageId") == image_id:
+            return image
+    raise ApiError(404, "NOT_FOUND", "Image not found")
+
+
+class SaveBoxesRequest(BaseModel):
+    subject: str | None = None
+    boxes: list[dict[str, Any]]
 
 
 async def _load_owned_batch(
@@ -257,6 +300,7 @@ async def upload_batch_images(
         )
         s3_storage.put_object(settings.s3_bucket, object_key, image_bytes, content_type)
 
+        width, height = get_image_size(image_bytes) or (None, None)
         source_image = build_source_image(
             bucket=settings.s3_bucket,
             object_key=object_key,
@@ -264,6 +308,8 @@ async def upload_batch_images(
             size_bytes=len(image_bytes),
             sha256=hashlib.sha256(image_bytes).hexdigest(),
             uploaded_at=now,
+            width=width,
+            height=height,
         )
         await add_source_image(
             database,
@@ -273,6 +319,189 @@ async def upload_batch_images(
             order=existing_count + offset,
             now=now,
         )
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch))
+
+
+@router.post("/{batch_id}/images/{image_id}/detect", response_model=BatchResponse)
+async def detect_image_boxes(
+    batch_id: str,
+    image_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+    s3_storage: StorageDependency,
+    vlm: HelperVLMDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    image = _find_image_or_404(batch, image_id)
+
+    current_state = ImageState(image["status"])
+    try:
+        transition_image_state(current_state, ImageState.DETECTING)
+    except Exception as exc:
+        raise ApiError(
+            409, "INVALID_IMAGE_STATE", f"Image cannot be detected: {exc}"
+        ) from exc
+    await start_image_detection(
+        database, batch_id, user["_id"], image_id, now=datetime.now(UTC)
+    )
+
+    source_image = image.get("sourceImage") or {}
+    try:
+        image_bytes = s3_storage.get_object(
+            source_image["bucket"], source_image["objectKey"]
+        )
+    except Exception as exc:
+        logger.exception("Unexpected storage read failure during detection")
+        await save_image_detection_failure(
+            database,
+            batch_id,
+            user["_id"],
+            image_id,
+            failure_code="storage-read-failed",
+            failure_message=str(exc),
+            now=datetime.now(UTC),
+        )
+        updated_batch = await get_batch(database, batch_id, user["_id"])
+        if updated_batch is None:
+            raise ApiError(404, "NOT_FOUND", "Batch not found")
+        return BatchResponse(**serialize_batch(updated_batch))
+
+    try:
+        result = await vlm.detect_problem_boxes(
+            image_base64=base64.b64encode(image_bytes).decode()
+        )
+        await save_image_detection_success(
+            database,
+            batch_id,
+            user["_id"],
+            image_id,
+            subject=result.subject,
+            boxes=[box.model_dump() for box in result.boxes],
+            model=result.model,
+            raw_provider_response=result.raw_provider_response,
+            now=datetime.now(UTC),
+        )
+    except BaseVLMError as exc:
+        await save_image_detection_failure(
+            database,
+            batch_id,
+            user["_id"],
+            image_id,
+            failure_code=exc.code,
+            failure_message=exc.args[0],
+            now=datetime.now(UTC),
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error during box detection")
+        await save_image_detection_failure(
+            database,
+            batch_id,
+            user["_id"],
+            image_id,
+            failure_code="detection-failed",
+            failure_message=str(exc),
+            now=datetime.now(UTC),
+        )
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch))
+
+
+@router.patch("/{batch_id}/images/{image_id}", response_model=BatchResponse)
+async def save_image_boxes(
+    batch_id: str,
+    image_id: str,
+    request: SaveBoxesRequest,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    image = _find_image_or_404(batch, image_id)
+
+    if image["status"] == ImageState.COMMITTED.value:
+        raise ApiError(409, "IMAGE_ALREADY_COMMITTED", "Image has already been committed")
+    if image["status"] == ImageState.DELETED.value:
+        raise ApiError(409, "IMAGE_DELETED", "Image has been deleted")
+
+    source_image = image.get("sourceImage") or {}
+    try:
+        validated_boxes = validate_boxes(
+            request.boxes,
+            source_image.get("width"),
+            source_image.get("height"),
+        )
+    except InvalidBoxError as exc:
+        raise ApiError(400, "INVALID_BOXES", str(exc)) from exc
+
+    await save_image_boxes_and_subject(
+        database,
+        batch_id,
+        user["_id"],
+        image_id,
+        subject=request.subject,
+        boxes=validated_boxes,
+        now=datetime.now(UTC),
+    )
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch))
+
+
+@router.delete("/{batch_id}/images/{image_id}", response_model=BatchResponse)
+async def delete_image(
+    batch_id: str,
+    image_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    await _load_owned_batch(database, batch_id, user["_id"])
+    await delete_batch_image(
+        database,
+        batch_id,
+        user["_id"],
+        image_id,
+        now=datetime.now(UTC),
+    )
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch))
+
+
+@router.post("/{batch_id}/images/{image_id}/commit", response_model=BatchResponse)
+async def commit_image(
+    batch_id: str,
+    image_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    image = _find_image_or_404(batch, image_id)
+
+    if image["status"] == ImageState.COMMITTED.value:
+        return BatchResponse(**serialize_batch(batch))
+    if image["status"] != ImageState.READY.value:
+        raise ApiError(
+            409,
+            "IMAGE_NOT_READY",
+            "Image must be ready before committing",
+        )
+
+    await commit_image_boxes(
+        database,
+        batch_id,
+        user["_id"],
+        image_id,
+        now=datetime.now(UTC),
+    )
 
     updated_batch = await get_batch(database, batch_id, user["_id"])
     if updated_batch is None:

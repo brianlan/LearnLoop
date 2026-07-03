@@ -181,4 +181,5 @@ async def get_grading_vlm_client(
 
 
 StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
+HelperVLMDependency = Annotated[VLMClient, Depends(create_helper_vlm_client)]
 GradingVLMDependency = Annotated[VLMClient, Depends(get_grading_vlm_client)]
