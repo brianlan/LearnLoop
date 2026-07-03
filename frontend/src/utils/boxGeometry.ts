@@ -17,18 +17,6 @@ export interface RenderedImageDimensions {
   renderedHeight: number;
 }
 
-export function renderPointToNatural(
-  point: Point,
-  dims: RenderedImageDimensions,
-): Point {
-  const scaleX = dims.naturalWidth / dims.renderedWidth;
-  const scaleY = dims.naturalHeight / dims.renderedHeight;
-  return {
-    x: point.x * scaleX,
-    y: point.y * scaleY,
-  };
-}
-
 export function naturalPointToRender(
   point: Point,
   dims: RenderedImageDimensions,
@@ -47,24 +35,6 @@ export function naturalBoxToRender(
 ): BulkImageBox {
   const topLeft = naturalPointToRender({ x: box.x, y: box.y }, dims);
   const bottomRight = naturalPointToRender(
-    { x: box.x + box.width, y: box.y + box.height },
-    dims,
-  );
-  return {
-    ...box,
-    x: topLeft.x,
-    y: topLeft.y,
-    width: bottomRight.x - topLeft.x,
-    height: bottomRight.y - topLeft.y,
-  };
-}
-
-export function renderBoxToNatural(
-  box: BulkImageBox,
-  dims: RenderedImageDimensions,
-): BulkImageBox {
-  const topLeft = renderPointToNatural({ x: box.x, y: box.y }, dims);
-  const bottomRight = renderPointToNatural(
     { x: box.x + box.width, y: box.y + box.height },
     dims,
   );
@@ -119,7 +89,7 @@ let boxIdCounter = 0;
 
 export function generateBoxId(): string {
   boxIdCounter += 1;
-  return `box-${boxIdCounter}`;
+  return `client-box-${boxIdCounter}`;
 }
 
 export function resetBoxIdCounter(): void {

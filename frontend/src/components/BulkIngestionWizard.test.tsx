@@ -360,4 +360,174 @@ describe("BulkIngestionWizard", () => {
       expect(mocks.commitImage).toHaveBeenCalledWith("batch-1", "img-1");
     });
   });
+
+  it("surfaces upload validation failures", async () => {
+    mocks.getActiveBatch.mockRejectedValue(
+      new ApiError("No active batch found", 404, "NOT_FOUND"),
+    );
+    mocks.createBatch.mockResolvedValue({ batch: makeBatch({ id: "batch-new" }) });
+    mocks.uploadBatchImages.mockRejectedValue(new Error("Unsupported image type"));
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-create-batch")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-create-batch"));
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-upload-input")).toBeInTheDocument();
+    });
+
+    const file = new File(["image"], "test.bmp", { type: "image/bmp" });
+    fireEvent.change(screen.getByTestId("bulk-wizard-upload-input"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-upload-error")).toHaveTextContent(
+        "Unsupported image type",
+      );
+    });
+    expect(mocks.uploadBatchImages).toHaveBeenCalledWith("batch-new", [file]);
+  });
+
+  it("renders detection failure state with retry and manual box entry", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "detect-failed",
+            order: 0,
+            sourceImage: {
+              bucket: "b",
+              objectKey: "k",
+              width: 100,
+              height: 100,
+              mediaUrl: "http://example.com/img.png",
+            },
+            boxes: [],
+            detection: { failureMessage: "Vision model error" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-failure-img-1")).toHaveTextContent(
+        "Vision model error",
+      );
+    });
+    expect(screen.getByTestId("box-editor")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-detect-run-img-1")).toBeInTheDocument();
+  });
+
+  it("renders a ready image with no boxes for manual box entry", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: {
+              bucket: "b",
+              objectKey: "k",
+              width: 100,
+              height: 100,
+              mediaUrl: "http://example.com/img.png",
+            },
+            boxes: [],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("box-editor")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("bulk-detect-status-img-1")).toHaveTextContent(
+      "Review boxes",
+    );
+  });
+
+  it("persists subject override through the save API", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: {
+              bucket: "b",
+              objectKey: "k",
+              width: 100,
+              height: 100,
+              mediaUrl: "http://example.com/img.png",
+            },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.saveImageBoxes.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: {
+              bucket: "b",
+              objectKey: "k",
+              width: 100,
+              height: 100,
+              mediaUrl: "http://example.com/img.png",
+            },
+            subject: "english",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-subject-img-1")).toHaveValue("math");
+    });
+
+    fireEvent.change(screen.getByTestId("bulk-detect-subject-img-1"), {
+      target: { value: "english" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-save-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-detect-save-img-1"));
+
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledWith(
+        "batch-1",
+        "img-1",
+        [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+        "english",
+      );
+    });
+  });
 });

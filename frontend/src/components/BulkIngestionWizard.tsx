@@ -61,6 +61,7 @@ export function BulkIngestionWizard({
   const [step, setStep] = useState<BulkWizardStep>("upload");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
+  const [uploadError, setUploadError] = useState<string>("");
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
     setBatch(nextBatch);
@@ -102,6 +103,7 @@ export function BulkIngestionWizard({
   const handleCreateBatch = useCallback(async () => {
     setIsLoading(true);
     setError("");
+    setUploadError("");
     try {
       const response = await createBatch();
       setBatchAndStep(response.batch);
@@ -118,12 +120,14 @@ export function BulkIngestionWizard({
       if (fileArray.length === 0 || !batch) return;
 
       setIsLoading(true);
-      setError("");
+      setUploadError("");
       try {
         const response = await uploadBatchImages(batch.id, fileArray);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to upload images");
+        setUploadError(
+          err instanceof Error ? err.message : "Failed to upload images",
+        );
       } finally {
         setIsLoading(false);
       }
@@ -319,7 +323,7 @@ export function BulkIngestionWizard({
           <BulkUploadStep
             batch={batch}
             isLoading={isLoading}
-            error={error}
+            error={uploadError}
             onCreateBatch={handleCreateBatch}
             onUpload={handleUploadFiles}
           />

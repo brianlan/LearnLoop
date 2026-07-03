@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { BulkBatch } from "@/types/bulkIngestion";
 
 export interface BulkUploadStepProps {
@@ -15,6 +16,8 @@ export function BulkUploadStep({
   onCreateBatch,
   onUpload,
 }: BulkUploadStepProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
   return (
     <div data-testid="bulk-wizard-upload-step">
       <h2>Upload images</h2>
@@ -37,28 +40,25 @@ export function BulkUploadStep({
             </ul>
           )}
           <input
+            ref={inputRef}
             type="file"
             accept="image/*"
             multiple
             data-testid="bulk-wizard-upload-input"
-            onChange={(event) => onUpload(event.target.files)}
+            onChange={(event) => {
+              onUpload(event.target.files);
+              event.target.value = "";
+            }}
             style={{ display: "none" }}
           />
-          <label>
-            <button
-              type="button"
-              data-testid="bulk-wizard-upload-button"
-              onClick={() => {
-                const input = document.querySelector<HTMLInputElement>(
-                  '[data-testid="bulk-wizard-upload-input"]',
-                );
-                input?.click();
-              }}
-              disabled={isLoading}
-            >
-              Choose image files
-            </button>
-          </label>
+          <button
+            type="button"
+            data-testid="bulk-wizard-upload-button"
+            onClick={() => inputRef.current?.click()}
+            disabled={isLoading}
+          >
+            Choose image files
+          </button>
         </>
       ) : (
         <>

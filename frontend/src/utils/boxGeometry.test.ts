@@ -5,8 +5,6 @@ import {
   createBox,
   naturalBoxToRender,
   naturalPointToRender,
-  renderBoxToNatural,
-  renderPointToNatural,
   resetBoxIdCounter,
 } from "./boxGeometry";
 
@@ -20,13 +18,6 @@ const dims = {
 describe("boxGeometry", () => {
   beforeEach(() => {
     resetBoxIdCounter();
-  });
-
-  it("converts a rendered point to natural coordinates", () => {
-    expect(renderPointToNatural({ x: 50, y: 25 }, dims)).toEqual({
-      x: 100,
-      y: 50,
-    });
   });
 
   it("converts a natural point to rendered coordinates", () => {
@@ -53,23 +44,6 @@ describe("boxGeometry", () => {
     });
   });
 
-  it("converts a rendered box to natural coordinates", () => {
-    const box: BulkImageBox = {
-      boxId: "a",
-      x: 20,
-      y: 10,
-      width: 30,
-      height: 15,
-    };
-    expect(renderBoxToNatural(box, dims)).toEqual({
-      boxId: "a",
-      x: 40,
-      y: 20,
-      width: 60,
-      height: 30,
-    });
-  });
-
   it("clamps boxes inside image bounds and enforces a minimum size", () => {
     const box: BulkImageBox = {
       boxId: "a",
@@ -90,7 +64,7 @@ describe("boxGeometry", () => {
   it("creates a box from two natural points", () => {
     const box = createBox({ x: 100, y: 80 }, { x: 50, y: 40 }, 200, 100);
     expect(box).toMatchObject({
-      boxId: "box-1",
+      boxId: "client-box-1",
       x: 50,
       y: 40,
       width: 50,

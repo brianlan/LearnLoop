@@ -3,7 +3,6 @@ import type { BulkImageBox } from "@/types/bulkIngestion";
 import {
   createBox,
   naturalBoxToRender,
-  renderBoxToNatural,
   type Point,
   clampBox,
 } from "@/utils/boxGeometry";

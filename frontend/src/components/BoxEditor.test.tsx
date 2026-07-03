@@ -113,4 +113,36 @@ describe("BoxEditor", () => {
     expect(screen.getByTestId("handle-nw-b1")).toBeInTheDocument();
     expect(screen.getByTestId("handle-se-b1")).toBeInTheDocument();
   });
+
+  it("moves a box by dragging its body", () => {
+    const onChange = vi.fn();
+    const { editor } = renderEditor([{ boxId: "b1", x: 10, y: 10, width: 50, height: 30 }], onChange);
+
+    fireEvent.mouseDown(editor, { clientX: 35, clientY: 25 });
+    fireEvent.mouseMove(editor, { clientX: 45, clientY: 35 });
+    fireEvent.mouseUp(editor);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const box = onChange.mock.calls[0][0][0];
+    expect(box.x).toBe(20);
+    expect(box.y).toBe(20);
+    expect(box.width).toBe(50);
+    expect(box.height).toBe(30);
+  });
+
+  it("resizes a box by dragging a handle", () => {
+    const onChange = vi.fn();
+    const { editor } = renderEditor([{ boxId: "b1", x: 10, y: 10, width: 50, height: 30 }], onChange);
+
+    fireEvent.mouseDown(editor, { clientX: 60, clientY: 40 });
+    fireEvent.mouseMove(editor, { clientX: 80, clientY: 60 });
+    fireEvent.mouseUp(editor);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const box = onChange.mock.calls[0][0][0];
+    expect(box.x).toBe(10);
+    expect(box.y).toBe(10);
+    expect(box.width).toBe(70);
+    expect(box.height).toBe(50);
+  });
 });

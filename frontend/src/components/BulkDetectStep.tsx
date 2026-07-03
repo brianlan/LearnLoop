@@ -59,6 +59,23 @@ export function BulkDetectStep({
     [],
   );
 
+  const handleSave = useCallback(
+    async (imageId: string, boxes: BulkImageBox[], subject: string) => {
+      await onSaveBoxes(imageId, boxes, subject);
+      setPendingBoxes((prev) => {
+        const next = { ...prev };
+        delete next[imageId];
+        return next;
+      });
+      setPendingSubjects((prev) => {
+        const next = { ...prev };
+        delete next[imageId];
+        return next;
+      });
+    },
+    [onSaveBoxes],
+  );
+
   const actionableImages = batch.images.filter(
     (image) => image.status !== "committed" && image.status !== "deleted",
   );
@@ -78,8 +95,12 @@ export function BulkDetectStep({
         >
           {actionableImages.map((image) => {
             const boxes = pendingBoxes[image.imageId] ?? image.boxes;
-            const subject = pendingSubjects[image.imageId] ?? image.subject ?? "math";
+            const currentSubject = image.subject ?? "math";
+            const subject = pendingSubjects[image.imageId] ?? currentSubject;
             const isWorking = isLoading || workingImageId === image.imageId;
+            const boxesChanged =
+              JSON.stringify(boxes) !== JSON.stringify(image.boxes);
+            const subjectChanged = subject !== currentSubject;
             const canDetect =
               image.status === "uploaded" || image.status === "detect-failed";
             const isReady = image.status === "ready";
@@ -183,19 +204,19 @@ export function BulkDetectStep({
                   readOnly={isWorking}
                 />
 
-                {JSON.stringify(boxes) !== JSON.stringify(image.boxes) && (
+                {(boxesChanged || subjectChanged) && (
                   <div style={{ marginTop: "12px" }}>
                     <button
                       type="button"
                       data-testid={`bulk-detect-save-${image.imageId}`}
                       onClick={() =>
                         withImageLoader(image.imageId, () =>
-                          onSaveBoxes(image.imageId, boxes, subject),
+                          handleSave(image.imageId, boxes, subject),
                         )
                       }
                       disabled={isWorking}
                     >
-                      Save boxes
+                      Save
                     </button>
                   </div>
                 )}
