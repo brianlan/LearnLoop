@@ -383,6 +383,18 @@ def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
                                 break
                     if not matched:
                         return False
+                elif op == "$gt":
+                    if not any(c is not None and c > op_val for c in candidates):
+                        return False
+                elif op == "$gte":
+                    if not any(c is not None and c >= op_val for c in candidates):
+                        return False
+                elif op == "$lt":
+                    if not any(c is not None and c < op_val for c in candidates):
+                        return False
+                elif op == "$lte":
+                    if not any(c is not None and c <= op_val for c in candidates):
+                        return False
                 else:
                     return False
         else:
