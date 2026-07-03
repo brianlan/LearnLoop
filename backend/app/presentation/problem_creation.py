@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId
+
+logger = logging.getLogger(__name__)
 
 from app.domain import ProblemSubject, ProblemType, normalize_answer
 from app.presentation.errors import ApiError
@@ -102,6 +105,7 @@ async def create_problem_from_draft(
         )
         await _register_tags(database, user_id, tags)
     except Exception:
+        logger.exception("Problem creation failed")
         delete_problem = getattr(database["problems"], "delete_one", None)
         if callable(delete_problem):
             try:
