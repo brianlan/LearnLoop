@@ -90,7 +90,10 @@ class FakeCollection:
 
     def seed(self, *documents: dict[str, Any]) -> None:
         for doc in documents:
-            self._documents.append(deepcopy(doc))
+            stored = deepcopy(doc)
+            if "_id" not in stored:
+                stored["_id"] = ObjectId()
+            self._documents.append(stored)
 
     def find(
         self,
@@ -210,6 +213,9 @@ class FakeCollection:
         query: dict[str, Any],
         update: dict[str, Any],
         session: Any | None = None,
+        sort: Any | None = None,
+        return_document: Any | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any] | None:
         for document in self._documents:
             if matches_query(document, query):

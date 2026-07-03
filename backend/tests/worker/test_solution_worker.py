@@ -1,7 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
@@ -10,74 +9,11 @@ from bson import ObjectId
 from app.domain.models import SolutionGenerationStatus
 from app.infrastructure.vlm.solution_coaching_client import SolutionCoachingVLMError, SolutionVLMResult
 from app.infrastructure.worker.solution_worker import run_solution_worker, process_task
-
-class FakeCollection:
-    def __init__(self):
-        self._documents = []
-
-    def seed(self, document):
-        self._documents.append(document)
-
-    async def find_one(self, query):
-        for doc in self._documents:
-            if _matches(doc, query):
-                return deepcopy(doc)
-        return None
-
-    async def update_one(self, query, update):
-        for doc in self._documents:
-            if _matches(doc, query):
-                for k, v in update.get("$set", {}).items():
-                    doc[k] = v
-                return
-
-    async def update_many(self, query, update):
-        for doc in self._documents:
-            if _matches(doc, query):
-                for k, v in update.get("$set", {}).items():
-                    doc[k] = v
-
-    async def find_one_and_update(self, query, update, sort=None, return_document=None):
-        docs = [d for d in self._documents if _matches(d, query)]
-        if not docs:
-            return None
-        if sort:
-            docs.sort(key=lambda x: x.get(sort[0][0], 0))
-        
-        doc = docs[0]
-        for k, v in update.get("$set", {}).items():
-            doc[k] = v
-        return deepcopy(doc)
-
-    async def insert_one(self, doc):
-        d = deepcopy(doc)
-        if "_id" not in d: d["_id"] = ObjectId()
-        self._documents.append(d)
+from tests.conftest import FakeCollection, FakeDatabase, FakeStorage
 
 
-def _matches(document, query):
-    for key, value in query.items():
-        if key == "$or":
-            if not any(_matches(document, clause) for clause in value):
-                return False
-            continue
-
-        actual = document.get(key)
-        if isinstance(value, dict):
-            if "$in" in value and actual not in value["$in"]:
-                return False
-            if "$lt" in value and (actual is None or not (actual < value["$lt"])):
-                return False
-            if "$lte" in value and (actual is None or not (actual <= value["$lte"])):
-                return False
-            if "$exists" in value and (key in document) != value["$exists"]:
-                return False
-            continue
-
-        if actual != value:
-            return False
-    return True
-
+# VLM-specific test double; kept local because it models SolutionVLMClient behavior,
+# not Mongo/S3 storage shapes.
 class FakeSolutionVLMClient:
     def __init__(self):
         self.error_to_raise = None
@@ -100,9 +36,6 @@ class FakeSolutionVLMClient:
     async def aclose(self):
         self.closed = True
 
-class FakeStorage:
-    def get_object(self, bucket, key):
-        return b"image"
 
 @pytest.mark.asyncio
 async def test_process_task_success():
@@ -111,15 +44,16 @@ async def test_process_task_success():
     tasks_col = FakeCollection()
     solutions_col = FakeCollection()
     problems_col = FakeCollection()
-    
+
     problem_id = str(ObjectId())
     user_id = str(ObjectId())
     task_id = ObjectId()
-    
+
     problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    storage.seed("b", "k", b"image")
     task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
     tasks_col.seed(task)
-    
+
     await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
 
     updated_task = await tasks_col.find_one({"_id": task_id})
@@ -127,6 +61,7 @@ async def test_process_task_success():
     assert len(solutions_col._documents) == 1
     assert len(client.calls) == 1
     assert not client.closed  # injected client must not be closed
+
 
 @pytest.mark.asyncio
 async def test_process_task_retry_and_fail():
@@ -136,12 +71,13 @@ async def test_process_task_retry_and_fail():
     tasks_col = FakeCollection()
     solutions_col = FakeCollection()
     problems_col = FakeCollection()
-    
+
     problem_id = str(ObjectId())
     task_id = ObjectId()
-    
+
     problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
-    
+    storage.seed("b", "k", b"image")
+
     # 1. First failure -> pending
     task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending", "retry_count": 0}
     tasks_col.seed(task)
@@ -151,7 +87,7 @@ async def test_process_task_retry_and_fail():
     assert updated["retry_count"] == 1
     assert updated["updated_at"] <= updated["process_after"]
     assert updated["process_after"] - updated["updated_at"] == timedelta(seconds=30)
-    
+
     # 2. Fourth failure -> failed
     task["retry_count"] = 3
     await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
@@ -160,8 +96,9 @@ async def test_process_task_retry_and_fail():
     assert updated["retry_count"] == 4
     assert not client.closed  # injected client must not be closed
 
+
 @pytest.mark.asyncio
-async def test_run_worker_stuck_task_recovery():
+async def test_run_worker_stuck_task_recovery(monkeypatch):
     class FakeSettings:
         solution_worker_poll_interval_seconds = 0.01
         solution_task_timeout_minutes = 10
@@ -181,21 +118,13 @@ async def test_run_worker_stuck_task_recovery():
         s3_secret_key = "s"
 
     from app.infrastructure.config import settings
-    settings.get_settings = lambda: FakeSettings()
-
-    class FakeDatabase:
-        def __init__(self):
-            self.cols = {"solution_generation_tasks": FakeCollection(), "canonical_solutions": FakeCollection(), "problems": FakeCollection()}
-        def __getitem__(self, k):
-            return self.cols[k]
-        def get_collection(self, k):
-            return self.cols[k]
+    monkeypatch.setattr(settings, "get_settings", lambda: FakeSettings())
 
     db = FakeDatabase()
     now = datetime.now(UTC)
 
     stuck_task = {"_id": ObjectId(), "problem_id": str(ObjectId()), "user_id": str(ObjectId()), "status": "generating", "updated_at": now - timedelta(minutes=15)}
-    db.cols["solution_generation_tasks"].seed(stuck_task)
+    db["solution_generation_tasks"].seed(stuck_task)
 
     stop_event = asyncio.Event()
 
@@ -208,12 +137,12 @@ async def test_run_worker_stuck_task_recovery():
 
     # After one loop, stuck task should be recovered to generating and then maybe processed if problem exists.
     # But since problem doesn't exist, it will be marked failed.
-    updated = await db.cols["solution_generation_tasks"].find_one({"_id": stuck_task["_id"]})
-    assert updated["status"] == "failed" # because it found the task, couldn't find problem
+    updated = await db["solution_generation_tasks"].find_one({"_id": stuck_task["_id"]})
+    assert updated["status"] == "failed"  # because it found the task, couldn't find problem
 
 
 @pytest.mark.asyncio
-async def test_run_worker_skips_pending_task_until_process_after() -> None:
+async def test_run_worker_skips_pending_task_until_process_after(monkeypatch) -> None:
     class FakeSettings:
         solution_worker_poll_interval_seconds = 0.01
         solution_task_timeout_minutes = 10
@@ -233,15 +162,7 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
         s3_secret_key = "s"
 
     from app.infrastructure.config import settings
-    settings.get_settings = lambda: FakeSettings()
-
-    class FakeDatabase:
-        def __init__(self):
-            self.cols = {"solution_generation_tasks": FakeCollection(), "canonical_solutions": FakeCollection(), "problems": FakeCollection()}
-        def __getitem__(self, k):
-            return self.cols[k]
-        def get_collection(self, k):
-            return self.cols[k]
+    monkeypatch.setattr(settings, "get_settings", lambda: FakeSettings())
 
     db = FakeDatabase()
     now = datetime.now(UTC)
@@ -253,7 +174,7 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
         "updated_at": now,
         "process_after": now + timedelta(minutes=1),
     }
-    db.cols["solution_generation_tasks"].seed(pending_task)
+    db["solution_generation_tasks"].seed(pending_task)
 
     stop_event = asyncio.Event()
 
@@ -263,8 +184,9 @@ async def test_run_worker_skips_pending_task_until_process_after() -> None:
 
     await asyncio.gather(run_solution_worker(db, stop_event), stop_soon())
 
-    updated = await db.cols["solution_generation_tasks"].find_one({"_id": pending_task["_id"]})
+    updated = await db["solution_generation_tasks"].find_one({"_id": pending_task["_id"]})
     assert updated["status"] == "pending"
+
 
 @pytest.mark.asyncio
 async def test_process_task_no_image():
@@ -273,17 +195,17 @@ async def test_process_task_no_image():
     tasks_col = FakeCollection()
     solutions_col = FakeCollection()
     problems_col = FakeCollection()
-    
+
     problem_id = str(ObjectId())
     user_id = str(ObjectId())
     task_id = ObjectId()
-    
+
     problems_col.seed({"_id": ObjectId(problem_id), "text": "prob no image", "correctAnswer": {"display": "ans"}})
     task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
     tasks_col.seed(task)
-    
+
     await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
-    
+
     updated_task = await tasks_col.find_one({"_id": task_id})
     assert updated_task["status"] == "ready"
     assert len(solutions_col._documents) == 1
@@ -306,6 +228,7 @@ async def test_process_task_closes_internal_client_on_success():
     task_id = ObjectId()
 
     problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    storage.seed("b", "k", b"image")
     task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
     tasks_col.seed(task)
 
@@ -334,6 +257,7 @@ async def test_process_task_closes_internal_client_on_vlm_failure():
     task_id = ObjectId()
 
     problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    storage.seed("b", "k", b"image")
     task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending", "retry_count": 3}
     tasks_col.seed(task)
 
@@ -362,6 +286,7 @@ async def test_process_task_closes_internal_client_on_unexpected_failure():
     task_id = ObjectId()
 
     problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    storage.seed("b", "k", b"image")
     task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending"}
     tasks_col.seed(task)
 
