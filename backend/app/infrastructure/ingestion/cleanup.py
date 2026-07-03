@@ -17,8 +17,11 @@ def _delete_media(storage: Any, bucket: str | None, key: str | None) -> None:
         storage.delete_object(bucket, key)
     except StorageObjectNotFoundError:
         return
-    except ClientError:
-        return
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in {"404", "NoSuchKey", "NotFound"}:
+            return
+        raise
 
 
 async def cleanup_batch_media(storage: Any, batch: Document) -> None:

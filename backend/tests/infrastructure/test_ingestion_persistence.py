@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from bson import ObjectId
+from botocore.exceptions import ClientError
 
 from app.domain.ingestion import BatchState, ImageState, ItemState
 from app.infrastructure.config.settings import Settings
@@ -153,6 +154,16 @@ class StrictStorage(FakeStorage):
         if (bucket, key) not in self._objects:
             raise StorageObjectNotFoundError(key)
         super().delete_object(bucket, key)
+
+
+class AccessDeniedStorage(FakeStorage):
+    """Simulates a non-missing object-store failure so cleanup does not swallow real errors."""
+
+    def delete_object(self, bucket: str, key: str) -> None:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "Access denied"}},
+            "DeleteObject",
+        )
 
 
 @pytest.fixture
@@ -408,6 +419,37 @@ async def test_cleanup_ignores_missing_media(
     loaded = await get_batch(database, batch["_id"], user_id)
     assert loaded is not None
     assert loaded["status"] == BatchState.DELETED.value
+
+
+@pytest.mark.asyncio
+async def test_cleanup_re_raises_non_missing_object_store_errors(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    user_id: ObjectId,
+    settings: Settings,
+) -> None:
+    storage = AccessDeniedStorage()
+    batch = await create_batch(database, user_id, settings)
+    source_image = build_source_image(
+        bucket="media",
+        object_key="users/u/denied.png",
+        content_type="image/png",
+        size_bytes=10,
+        sha256="sha",
+        uploaded_at=datetime.now(UTC),
+    )
+    await add_source_image(database, batch["_id"], user_id, source_image, order=0)
+    await database["ingestion_batches"].update_one(
+        {"_id": batch["_id"]},
+        {"$set": {"status": BatchState.EXPIRED.value}},
+    )
+
+    with pytest.raises(ClientError):
+        await run_batch_cleanup(database, storage)
+
+    loaded = await get_batch(database, batch["_id"], user_id)
+    assert loaded is not None
+    assert loaded["status"] == BatchState.EXPIRED.value
 
 
 @pytest.mark.asyncio
