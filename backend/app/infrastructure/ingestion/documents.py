@@ -40,6 +40,27 @@ def build_source_image(
     }
 
 
+def build_crop_image(
+    *,
+    bucket: str,
+    object_key: str,
+    content_type: str,
+    size_bytes: int,
+    width: int,
+    height: int,
+    uploaded_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "bucket": bucket,
+        "objectKey": object_key,
+        "contentType": content_type,
+        "sizeBytes": size_bytes,
+        "width": width,
+        "height": height,
+        "uploadedAt": uploaded_at,
+    }
+
+
 def build_image_document(
     *,
     image_id: str,
@@ -73,6 +94,7 @@ def build_item_document(
     image_id: str,
     order: int,
     now: datetime,
+    box: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "itemId": item_id,
@@ -80,6 +102,7 @@ def build_item_document(
         "batchId": batch_id,
         "status": ItemState.QUEUED.value,
         "order": order,
+        "box": box,
         "draft": {
             "text": None,
             "problemType": None,

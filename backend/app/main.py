@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -9,7 +9,11 @@ from starlette.types import ExceptionHandler
 
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.storage.mongo import ensure_database_setup, get_database
+from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.observability import configure_logging
+from app.infrastructure.vlm.client import VLMClient
+from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
+from app.infrastructure.worker.extraction_worker import run_extraction_worker
 from app.infrastructure.worker.solution_worker import run_solution_worker
 from app.presentation.solution_generation import backfill_solution_generation_tasks
 from app.presentation.auth import router as auth_router
@@ -38,25 +42,75 @@ async def _run_worker_with_logging(database, stop_event):
         raise
 
 
+async def _run_extraction_worker_with_logging(database, storage, settings, stop_event):
+    math_client: VLMClient | None = None
+    english_client: VLMClient | None = None
+    try:
+        math_client = VLMClient(
+            endpoint=settings.math_ingestion_vlm_endpoint,
+            model=settings.math_ingestion_vlm_model,
+            api_key=settings.math_ingestion_vlm_api_key,
+            timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
+        )
+        english_client = VLMClient(
+            endpoint=settings.english_ingestion_vlm_endpoint,
+            model=settings.english_ingestion_vlm_model,
+            api_key=settings.english_ingestion_vlm_api_key,
+            timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
+            extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
+        )
+        await run_extraction_worker(
+            database,
+            storage,
+            settings,
+            math_client,
+            english_client,
+            stop_event,
+        )
+    except Exception:
+        logger.exception("Extraction worker crashed")
+        raise
+    finally:
+        if math_client is not None:
+            await math_client.aclose()
+        if english_client is not None:
+            await english_client.aclose()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database = get_database()
     await ensure_database_setup(database)
     await backfill_solution_generation_tasks(database)
     
-    # Start worker
+    settings = get_settings()
+    storage = S3StorageAdapter(settings=settings)
+
+    # Start workers
     stop_event = asyncio.Event()
-    worker_task = asyncio.create_task(_run_worker_with_logging(database, stop_event))
+    worker_tasks: list[asyncio.Task[Any]] = [
+        asyncio.create_task(_run_worker_with_logging(database, stop_event)),
+    ]
+    if settings.bulk_ingestion_extraction_worker_enabled:
+        worker_tasks.append(
+            asyncio.create_task(
+                _run_extraction_worker_with_logging(database, storage, settings, stop_event)
+            )
+        )
     
     yield
     
-    # Stop worker
+    # Stop workers
     stop_event.set()
-    try:
-        # Give it a short time to shut down
-        await asyncio.wait_for(worker_task, timeout=5.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
+    for task in worker_tasks:
+        try:
+            await asyncio.wait_for(task, timeout=5.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app() -> FastAPI:

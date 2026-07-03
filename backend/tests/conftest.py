@@ -166,10 +166,18 @@ class FakeCollection:
             if isinstance(update, list):
                 for stage in update:
                     for key, expr in stage.get("$set", {}).items():
-                        target_doc[key] = _eval_pipeline_expr(expr, target_doc)
+                        resolved_key = self._resolve_positional_key(
+                            target_doc, query, key
+                        )
+                        _set_nested(
+                            target_doc, resolved_key, _eval_pipeline_expr(expr, target_doc)
+                        )
             else:
                 for key, value in update.get("$set", {}).items():
-                    _set_nested(target_doc, key, deepcopy(value))
+                    resolved_key = self._resolve_positional_key(
+                        target_doc, query, key
+                    )
+                    _set_nested(target_doc, resolved_key, deepcopy(value))
             return FakeUpdateResult(1)
 
         if upsert:
@@ -221,9 +229,60 @@ class FakeCollection:
             if matches_query(document, query):
                 original_document = deepcopy(document)
                 for key, value in update.get("$set", {}).items():
-                    _set_nested(document, key, deepcopy(value))
+                    resolved_key = self._resolve_positional_key(document, query, key)
+                    _set_nested(document, resolved_key, deepcopy(value))
+                for key, value in update.get("$inc", {}).items():
+                    resolved_key = self._resolve_positional_key(document, query, key)
+                    _inc_nested(document, resolved_key, value)
+                if return_document:
+                    return deepcopy(document)
                 return original_document
         return None
+
+    def _resolve_positional_key(
+        self,
+        document: dict[str, Any],
+        query: dict[str, Any],
+        key: str,
+    ) -> str:
+        if ".$." not in key:
+            return key
+        array_path = key.split(".$.")[0]
+        index = self._resolve_array_index(document, query, array_path)
+        return key.replace(".$.", f".{index}.", 1)
+
+    def _resolve_array_index(
+        self,
+        document: dict[str, Any],
+        query: dict[str, Any],
+        array_path: str,
+    ) -> int:
+        spec = query.get(array_path)
+        if isinstance(spec, dict) and "$elemMatch" in spec:
+            elem_match = spec["$elemMatch"]
+            array_values = get_nested_values(document, array_path.split("."))
+            for arr in array_values:
+                if isinstance(arr, list):
+                    for index, item in enumerate(arr):
+                        if matches_query(item, elem_match):
+                            return index
+            return 0
+
+        elem_query: dict[str, Any] = {}
+        prefix = f"{array_path}."
+        for query_key, query_value in query.items():
+            if query_key.startswith(prefix):
+                field = query_key[len(prefix) :]
+                elem_query[field] = query_value
+        if not elem_query:
+            return 0
+        array_values = get_nested_values(document, array_path.split("."))
+        for arr in array_values:
+            if isinstance(arr, list):
+                for index, item in enumerate(arr):
+                    if matches_query(item, elem_query):
+                        return index
+        return 0
 
     async def delete_one(self, query: dict[str, Any], session: Any | None = None) -> FakeDeleteResult:
         if self._delete_one_error is not None:
@@ -327,9 +386,11 @@ class FakeStorage:
         self.delete_calls: list[tuple[str, str]] = []
         self._counter = 0
 
-    def build_object_key(self, user_id: str, extension: str) -> str:
+    def build_object_key(
+        self, user_id: str, extension: str, *, category: str = "images"
+    ) -> str:
         self._counter += 1
-        return f"users/{user_id}/ingestion/preview-{self._counter}{extension}"
+        return f"users/{user_id}/{category}/preview-{self._counter}{extension}"
 
     def put_object(self, bucket: str, object_key: str, payload: bytes, content_type: str | None) -> None:
         self._objects[(bucket, object_key)] = payload
@@ -380,6 +441,18 @@ def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
         candidates = get_nested_values(document, parts)
 
         if isinstance(value, dict) and any(k.startswith("$") for k in value.keys()):
+            if "$elemMatch" in value:
+                matched = False
+                for candidate in candidates:
+                    if isinstance(candidate, list) and any(
+                        matches_query(item, value["$elemMatch"]) for item in candidate
+                    ):
+                        matched = True
+                        break
+                if not matched:
+                    return False
+                continue
+
             for op, op_val in value.items():
                 if op == "$options":
                     continue
@@ -460,10 +533,28 @@ def _set_nested(document: dict[str, Any], path: str, value: Any) -> None:
     parts = path.split(".")
     target = document
     for part in parts[:-1]:
-        if part not in target or not isinstance(target[part], dict):
+        if part.isdigit():
+            target = target[int(part)]
+        elif part in target and isinstance(target[part], list):
+            target = target[part]
+        elif part not in target or not isinstance(target[part], dict):
             target[part] = {}
-        target = target[part]
+            target = target[part]
+        else:
+            target = target[part]
     target[parts[-1]] = value
+
+
+def _inc_nested(document: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.split(".")
+    target = document
+    for part in parts[:-1]:
+        if part.isdigit():
+            target = target[int(part)]
+        else:
+            target = target[part]
+    current = target.get(parts[-1], 0)
+    target[parts[-1]] = current + value
 
 
 def _eval_pipeline_expr(expr: Any, doc: dict[str, Any]) -> Any:

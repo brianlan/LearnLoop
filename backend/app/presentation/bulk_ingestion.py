@@ -33,6 +33,7 @@ from app.infrastructure.ingestion.repository import (
     get_active_batch_for_user,
     get_batch,
     is_batch_expired,
+    reset_item_for_retry,
     save_image_boxes_and_subject,
     save_image_detection_failure,
     save_image_detection_success,
@@ -502,6 +503,53 @@ async def commit_image(
         image_id,
         now=datetime.now(UTC),
     )
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch))
+
+
+def _find_item_or_404(batch: Document, item_id: str) -> dict[str, Any]:
+    for item in batch.get("items", []):
+        if item.get("itemId") == item_id:
+            return item
+    raise ApiError(404, "NOT_FOUND", "Item not found")
+
+
+@router.post("/{batch_id}/extract", status_code=202)
+async def start_extraction(
+    batch_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> dict[str, Any]:
+    # The global worker polls the database for queued items; this endpoint only
+    # confirms the batch is actionable and tells the client to start polling.
+    await _load_owned_batch(database, batch_id, user["_id"])
+    return {"batchId": batch_id, "status": "extracting"}
+
+
+@router.post("/{batch_id}/items/{item_id}/retry", response_model=BatchResponse)
+async def retry_item(
+    batch_id: str,
+    item_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    await _load_owned_batch(database, batch_id, user["_id"])
+    retried = await reset_item_for_retry(
+        database,
+        batch_id,
+        user["_id"],
+        item_id,
+        now=datetime.now(UTC),
+    )
+    if not retried:
+        raise ApiError(
+            409,
+            "ITEM_NOT_RETRYABLE",
+            "Item is not in a failed or stalled state",
+        )
 
     updated_batch = await get_batch(database, batch_id, user["_id"])
     if updated_batch is None:
