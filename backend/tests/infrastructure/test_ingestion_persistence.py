@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -24,127 +23,7 @@ from app.infrastructure.ingestion import (
     run_batch_cleanup,
 )
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-
-
-class FakeInsertOneResult:
-    def __init__(self, inserted_id: ObjectId) -> None:
-        self.inserted_id = inserted_id
-
-
-class FakeUpdateResult:
-    def __init__(self, modified_count: int) -> None:
-        self.modified_count = modified_count
-
-
-class FakeCursor:
-    def __init__(self, documents: list[dict[str, Any]]) -> None:
-        self._documents = [deepcopy(document) for document in documents]
-
-    async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
-        documents = self._documents
-        if length is not None:
-            documents = documents[:length]
-        return [deepcopy(document) for document in documents]
-
-
-def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
-    for key, expected in query.items():
-        if key == "$or":
-            return any(_matches(document, subquery) for subquery in expected)
-        actual = document.get(key)
-        if isinstance(expected, dict):
-            for op, value in expected.items():
-                if op == "$in":
-                    if actual not in value:
-                        return False
-                elif op == "$gt":
-                    if actual is None or actual <= value:
-                        return False
-                elif op == "$gte":
-                    if actual is None or actual < value:
-                        return False
-                elif op == "$lt":
-                    if actual is None or actual >= value:
-                        return False
-                elif op == "$lte":
-                    if actual is None or actual > value:
-                        return False
-            continue
-        if isinstance(actual, list):
-            if expected not in actual:
-                return False
-            continue
-        if actual != expected:
-            return False
-    return True
-
-
-class FakeCollection:
-    def __init__(self) -> None:
-        self._documents: list[dict[str, Any]] = []
-
-    async def insert_one(self, document: dict[str, Any]) -> FakeInsertOneResult:
-        stored = deepcopy(document)
-        if "_id" not in stored:
-            stored["_id"] = ObjectId()
-        self._documents.append(stored)
-        return FakeInsertOneResult(stored["_id"])
-
-    async def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
-        for document in self._documents:
-            if _matches(document, query):
-                return deepcopy(document)
-        return None
-
-    def find(self, query: dict[str, Any]) -> FakeCursor:
-        return FakeCursor([document for document in self._documents if _matches(document, query)])
-
-    async def update_one(
-        self,
-        query: dict[str, Any],
-        update: dict[str, Any],
-    ) -> FakeUpdateResult:
-        for document in self._documents:
-            if not _matches(document, query):
-                continue
-            for key, value in update.get("$set", {}).items():
-                document[key] = deepcopy(value)
-            return FakeUpdateResult(1)
-        return FakeUpdateResult(0)
-
-
-class FakeDatabase:
-    def __init__(self) -> None:
-        self._collections: dict[str, FakeCollection] = {}
-
-    def __getitem__(self, name: str) -> FakeCollection:
-        return self._collections.setdefault(name, FakeCollection())
-
-
-class FakeStorage:
-    def __init__(self) -> None:
-        self._objects: dict[tuple[str, str], bytes] = {}
-
-    def seed(self, bucket: str, key: str, payload: bytes) -> None:
-        self._objects[(bucket, key)] = payload
-
-    def put_object(
-        self,
-        bucket: str,
-        key: str,
-        payload: bytes,
-        content_type: str | None = None,
-    ) -> None:
-        self._objects[(bucket, key)] = payload
-
-    def get_object(self, bucket: str, key: str) -> bytes:
-        payload = self._objects.get((bucket, key))
-        if payload is None:
-            raise StorageObjectNotFoundError(key)
-        return payload
-
-    def delete_object(self, bucket: str, key: str) -> None:
-        self._objects.pop((bucket, key), None)
+from tests.conftest import FakeDatabase, FakeStorage
 
 
 class StrictStorage(FakeStorage):
