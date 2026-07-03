@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
   commitImage,
@@ -73,6 +73,7 @@ export function BulkIngestionWizard({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
+  const extractionStartedForBatch = useRef<Set<string>>(new Set());
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
     setBatch(nextBatch);
@@ -273,12 +274,16 @@ export function BulkIngestionWizard({
 
   useEffect(() => {
     if (step !== "review" || !batch || batch.status !== "active") return;
+    const batchId = batch.id;
+    if (extractionStartedForBatch.current.has(batchId)) return;
+    extractionStartedForBatch.current.add(batchId);
+
     let cancelled = false;
     async function kickoff() {
       try {
-        await startBatchExtraction(batch!.id);
+        await startBatchExtraction(batchId);
         if (!cancelled) {
-          const response = await getBatch(batch!.id);
+          const response = await getBatch(batchId);
           if (!cancelled) setBatchAndStep(response.batch);
         }
       } catch (err) {
@@ -293,7 +298,7 @@ export function BulkIngestionWizard({
     return () => {
       cancelled = true;
     };
-  }, [step, batch, setBatchAndStep]);
+  }, [step, batch?.id]);
 
   if (isLoading) {
     return (

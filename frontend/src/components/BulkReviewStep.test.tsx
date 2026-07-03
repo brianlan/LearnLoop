@@ -120,6 +120,58 @@ describe("BulkReviewStep", () => {
     expect(screen.getByTestId("bulk-review-next")).toBeDisabled();
   });
 
+  it("edits every draft field and routes the correct key to onUpdateDraft", async () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "New question text" },
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-type"), {
+      target: { value: "single-choice" },
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-subject"), {
+      target: { value: "english" },
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "B" },
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "y = x" },
+    });
+
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "geometry" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({
+        text: "New question text",
+        problemType: "single-choice",
+        subject: "english",
+        correctAnswer: "B",
+        graphDsl: "y = x",
+        tags: ["math", "geometry"],
+      }),
+    );
+  });
+
   it("debounces draft updates and sends the latest value", async () => {
     render(
       <BulkReviewStep

@@ -17,6 +17,17 @@ const SUBJECTS = [
   { value: "english", label: "English" },
 ];
 
+function defaultDraft(item: BulkItem): BulkDraft {
+  return {
+    text: item.draft.text ?? "",
+    problemType: item.draft.problemType ?? "short-answer",
+    graphDsl: item.draft.graphDsl ?? "",
+    correctAnswer: item.draft.correctAnswer ?? "",
+    tags: item.draft.tags ?? [],
+    subject: item.draft.subject ?? "math",
+  };
+}
+
 function statusLabel(status: string): string {
   switch (status) {
     case "queued":
@@ -81,16 +92,7 @@ export function BulkReviewStep({
 
   const getItemDraft = useCallback(
     (item: BulkItem): BulkDraft => {
-      return (
-        localDrafts[item.itemId] ?? {
-          text: item.draft.text ?? "",
-          problemType: item.draft.problemType ?? "short-answer",
-          graphDsl: item.draft.graphDsl ?? "",
-          correctAnswer: item.draft.correctAnswer ?? "",
-          tags: item.draft.tags ?? [],
-          subject: item.draft.subject ?? "math",
-        }
-      );
+      return localDrafts[item.itemId] ?? defaultDraft(item);
     },
     [localDrafts],
   );
@@ -117,14 +119,7 @@ export function BulkReviewStep({
     if (!selectedItem) return;
     setLocalDrafts((prev) => {
       if (prev[selectedItem.itemId] !== undefined) return prev;
-      const initial = {
-        text: selectedItem.draft.text ?? "",
-        problemType: selectedItem.draft.problemType ?? "short-answer",
-        graphDsl: selectedItem.draft.graphDsl ?? "",
-        correctAnswer: selectedItem.draft.correctAnswer ?? "",
-        tags: selectedItem.draft.tags ?? [],
-        subject: selectedItem.draft.subject ?? "math",
-      };
+      const initial = defaultDraft(selectedItem);
       const merged = { ...prev, [selectedItem.itemId]: initial };
       draftRefs.current = merged;
       return merged;
@@ -204,13 +199,6 @@ export function BulkReviewStep({
       }
     },
     [items, selectedIndex],
-  );
-
-  const withItemLoader = useCallback(
-    async (action: () => void | Promise<void>) => {
-      await action();
-    },
-    [],
   );
 
   if (!selectedItem) {
@@ -319,7 +307,7 @@ export function BulkReviewStep({
                 <button
                   type="button"
                   data-testid="bulk-review-retry"
-                  onClick={() => withItemLoader(() => onRetry(selectedItem.itemId))}
+                  onClick={() => onRetry(selectedItem.itemId)}
                   disabled={isWorking}
                 >
                   Retry extraction
@@ -329,9 +317,7 @@ export function BulkReviewStep({
                 <button
                   type="button"
                   data-testid="bulk-review-undo"
-                  onClick={() =>
-                    withItemLoader(() => onUndoDelete(selectedItem.itemId))
-                  }
+                  onClick={() => onUndoDelete(selectedItem.itemId)}
                   disabled={isWorking}
                 >
                   Undo delete
@@ -340,9 +326,7 @@ export function BulkReviewStep({
                 <button
                   type="button"
                   data-testid="bulk-review-delete"
-                  onClick={() =>
-                    withItemLoader(() => onDelete(selectedItem.itemId))
-                  }
+                  onClick={() => onDelete(selectedItem.itemId)}
                   disabled={isWorking}
                 >
                   Delete
