@@ -25,6 +25,9 @@ from app.infrastructure.storage.mongo import (
 )
 
 
+# These fakes stay local because they model database-level administration
+# (list_collection_names/create_collection) and index-call tracking, which are
+# shape-divergent from the shared Mongo/S3 fakes in tests/conftest.py.
 class FakeDatabase:
     def __init__(self, name: str) -> None:
         self.name = name

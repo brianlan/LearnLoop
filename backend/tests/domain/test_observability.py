@@ -125,7 +125,7 @@ async def test_send_message_logs_observability(caplog):
     prob_id = ObjectId()
     user_id = ObjectId()
 
-    db.cols["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
+    db["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
 
     with caplog.at_level(logging.INFO):
         conv = await service.send_message(str(prob_id), str(user_id), "help me")
