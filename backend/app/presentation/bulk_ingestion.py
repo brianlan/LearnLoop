@@ -739,7 +739,7 @@ async def stream_item_crop(
     bucket = crop.get("bucket")
     object_key = crop.get("objectKey")
     if not bucket or not object_key:
-        raise ApiError(404, "NOT_FOUND", "Crop image not found")
+        raise ApiError(404, "CROP_NOT_FOUND", "Crop image not found")
 
     try:
         image_bytes = storage.get_object(str(bucket), str(object_key))

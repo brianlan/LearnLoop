@@ -1447,7 +1447,7 @@ async def test_stream_crop_rejects_missing_crop(
         f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
     )
     assert response.status_code == 404
-    assert response.json()["error"]["code"] == "NOT_FOUND"
+    assert response.json()["error"]["code"] == "CROP_NOT_FOUND"
 
 
 @pytest.mark.asyncio
