@@ -5,11 +5,6 @@ export interface Point {
   y: number;
 }
 
-export interface Size {
-  width: number;
-  height: number;
-}
-
 export interface RenderedImageDimensions {
   naturalWidth: number;
   naturalHeight: number;
