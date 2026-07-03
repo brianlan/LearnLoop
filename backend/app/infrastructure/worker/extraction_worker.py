@@ -27,6 +27,28 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _failed_extraction(
+    code: str,
+    message: str,
+    started_at: datetime,
+    finished_at: datetime,
+    *,
+    raw_provider_response: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "success": False,
+        "model": None,
+        "rawText": None,
+        "rawProblemType": None,
+        "rawGraphDsl": None,
+        "rawProviderResponse": raw_provider_response,
+        "failureCode": code,
+        "failureMessage": message,
+        "requestStartedAt": started_at,
+        "requestFinishedAt": finished_at,
+    }
+
+
 def _find_image(batch: dict[str, Any], image_id: str) -> dict[str, Any] | None:
     for image in batch.get("images", []):
         if image.get("imageId") == image_id:
@@ -88,18 +110,12 @@ async def process_item(
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": None,
-                "failureCode": "source-image-missing",
-                "failureMessage": "Source image not found in batch",
-                "requestStartedAt": current,
-                "requestFinishedAt": current,
-            },
+            extraction=_failed_extraction(
+                "source-image-missing",
+                "Source image not found in batch",
+                current,
+                current,
+            ),
             now=current,
         )
         return
@@ -112,18 +128,12 @@ async def process_item(
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": None,
-                "failureCode": "missing-subject",
-                "failureMessage": "Image subject is not set",
-                "requestStartedAt": current,
-                "requestFinishedAt": current,
-            },
+            extraction=_failed_extraction(
+                "missing-subject",
+                "Image subject is not set",
+                current,
+                current,
+            ),
             now=current,
         )
         return
@@ -135,18 +145,12 @@ async def process_item(
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": None,
-                "failureCode": "missing-box",
-                "failureMessage": "Item has no crop box",
-                "requestStartedAt": current,
-                "requestFinishedAt": current,
-            },
+            extraction=_failed_extraction(
+                "missing-box",
+                "Item has no crop box",
+                current,
+                current,
+            ),
             now=current,
         )
         return
@@ -160,18 +164,12 @@ async def process_item(
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": None,
-                "failureCode": "storage-read-failed",
-                "failureMessage": str(exc),
-                "requestStartedAt": current,
-                "requestFinishedAt": current,
-            },
+            extraction=_failed_extraction(
+                "storage-read-failed",
+                str(exc),
+                current,
+                current,
+            ),
             now=current,
         )
         return
@@ -185,18 +183,12 @@ async def process_item(
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": None,
-                "failureCode": "crop-failed",
-                "failureMessage": str(exc),
-                "requestStartedAt": current,
-                "requestFinishedAt": current,
-            },
+            extraction=_failed_extraction(
+                "crop-failed",
+                str(exc),
+                current,
+                current,
+            ),
             now=current,
         )
         return
@@ -220,46 +212,37 @@ async def process_item(
         client = await _select_client(subject, math_client, english_client)
         result = await client.extract(image_base64=base64.b64encode(crop_bytes).decode())
     except BaseVLMError as exc:
+        finished_at = _utc_now()
         await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": exc.raw_provider_response,
-                "failureCode": exc.code,
-                "failureMessage": exc.args[0],
-                "requestStartedAt": current,
-                "requestFinishedAt": _utc_now(),
-            },
-            now=_utc_now(),
+            extraction=_failed_extraction(
+                exc.code,
+                exc.args[0],
+                current,
+                finished_at,
+                raw_provider_response=exc.raw_provider_response,
+            ),
+            now=finished_at,
         )
         return
     except Exception as exc:
         logger.exception("Unexpected extraction failure")
+        finished_at = _utc_now()
         await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
             item_id,
-            extraction={
-                "success": False,
-                "model": None,
-                "rawText": None,
-                "rawProblemType": None,
-                "rawGraphDsl": None,
-                "rawProviderResponse": None,
-                "failureCode": "extraction-failed",
-                "failureMessage": str(exc),
-                "requestStartedAt": current,
-                "requestFinishedAt": _utc_now(),
-            },
-            now=_utc_now(),
+            extraction=_failed_extraction(
+                "extraction-failed",
+                str(exc),
+                current,
+                finished_at,
+            ),
+            now=finished_at,
         )
         return
 
@@ -364,14 +347,15 @@ async def run_extraction_worker(
             tasks.append(task)
 
         if not tasks:
-            try:
-                await asyncio.wait_for(
-                    stop_event.wait() if stop_event else asyncio.sleep(poll_interval),
-                    timeout=poll_interval,
-                )
-            except asyncio.TimeoutError:
-                continue
-            break
+            # No work available: sleep for the poll interval, or exit when asked.
+            if stop_event:
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=poll_interval)
+                except asyncio.TimeoutError:
+                    continue
+                break
+            await asyncio.sleep(poll_interval)
+            continue
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:

@@ -523,6 +523,8 @@ async def start_extraction(
     database: DatabaseDependency,
     user: CurrentUserDependency,
 ) -> dict[str, Any]:
+    # The global worker polls the database for queued items; this endpoint only
+    # confirms the batch is actionable and tells the client to start polling.
     await _load_owned_batch(database, batch_id, user["_id"])
     return {"batchId": batch_id, "status": "extracting"}
 
