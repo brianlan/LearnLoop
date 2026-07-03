@@ -4,7 +4,6 @@ import asyncio
 import base64
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -14,7 +13,6 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import ClassificationResult, ExtractionResult
 from app.main import create_app
 from app.presentation import ingestion as ingestion_presentation
@@ -25,189 +23,7 @@ from app.presentation.deps import (
     get_grading_vlm_client,
     get_s3_storage,
 )
-
-
-class FakeInsertOneResult:
-    def __init__(self, inserted_id: Any) -> None:
-        self.inserted_id = inserted_id
-
-
-class FakeUpdateResult:
-    def __init__(self, modified_count: int) -> None:
-        self.modified_count = modified_count
-
-
-class FakeDeleteResult:
-    def __init__(self, deleted_count: int) -> None:
-        self.deleted_count = deleted_count
-
-
-class FakeCursor:
-    def __init__(self, documents: list[dict[str, Any]]) -> None:
-        self._documents = [deepcopy(document) for document in documents]
-        self._skip = 0
-        self._limit: int | None = None
-
-    def sort(self, field: str, direction: int) -> FakeCursor:
-        reverse = direction < 0
-        self._documents.sort(key=lambda document: cast(Any, document.get(field)), reverse=reverse)
-        return self
-
-    def skip(self, amount: int) -> FakeCursor:
-        self._skip = amount
-        return self
-
-    def limit(self, amount: int) -> FakeCursor:
-        self._limit = amount
-        return self
-
-    async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
-        documents = self._documents[self._skip :]
-        effective_limit = self._limit if self._limit is not None else length
-        if effective_limit is not None:
-            documents = documents[:effective_limit]
-        return [deepcopy(document) for document in documents]
-
-
-def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
-    for key, value in query.items():
-        actual = document.get(key)
-        if isinstance(value, dict) and "$in" in value:
-            if actual not in value["$in"]:
-                return False
-            continue
-        if isinstance(actual, list):
-            if value not in actual:
-                return False
-            continue
-        if actual != value:
-            return False
-    return True
-
-
-class FakeCollection:
-    def __init__(self) -> None:
-        self._documents: list[dict[str, Any]] = []
-
-    def seed(self, *documents: dict[str, Any]) -> None:
-        self._documents.extend(deepcopy(list(documents)))
-
-    async def find_one(
-        self,
-        query: dict[str, Any],
-        session: Any | None = None,
-    ) -> dict[str, Any] | None:
-        del session
-        for document in self._documents:
-            if _matches(document, query):
-                return deepcopy(document)
-        return None
-
-    async def insert_one(
-        self,
-        document: dict[str, Any],
-        session: Any | None = None,
-    ) -> FakeInsertOneResult:
-        del session
-        stored_document = deepcopy(document)
-        if "_id" not in stored_document:
-            stored_document["_id"] = ObjectId()
-        self._documents.append(stored_document)
-        return FakeInsertOneResult(stored_document["_id"])
-
-    async def insert_many(
-        self,
-        documents: list[dict[str, Any]],
-        ordered: bool = True,
-        session: Any | None = None,
-    ) -> None:
-        del session
-        for document in documents:
-            stored_document = deepcopy(document)
-            if "_id" not in stored_document:
-                stored_document["_id"] = ObjectId()
-            self._documents.append(stored_document)
-
-    async def update_one(
-        self,
-        query: dict[str, Any],
-        update: dict[str, Any],
-        session: Any | None = None,
-    ) -> FakeUpdateResult:
-        del session
-        for document in self._documents:
-            if not _matches(document, query):
-                continue
-            for key, value in update.get("$set", {}).items():
-                document[key] = deepcopy(value)
-            return FakeUpdateResult(1)
-        return FakeUpdateResult(0)
-
-    async def delete_one(
-        self,
-        query: dict[str, Any],
-        session: Any | None = None,
-    ) -> FakeDeleteResult:
-        del session
-        for index, document in enumerate(self._documents):
-            if _matches(document, query):
-                del self._documents[index]
-                return FakeDeleteResult(1)
-        return FakeDeleteResult(0)
-
-    async def count_documents(
-        self,
-        query: dict[str, Any],
-        session: Any | None = None,
-    ) -> int:
-        del session
-        return sum(1 for document in self._documents if _matches(document, query))
-
-    def find(
-        self,
-        query: dict[str, Any],
-        session: Any | None = None,
-    ) -> FakeCursor:
-        del session
-        return FakeCursor([document for document in self._documents if _matches(document, query)])
-
-    async def distinct(
-        self,
-        field: str,
-        query: dict[str, Any],
-        session: Any | None = None,
-    ) -> list[Any]:
-        del session
-        values: list[Any] = []
-        seen: set[Any] = set()
-        for document in self._documents:
-            if not _matches(document, query):
-                continue
-            current = document.get(field, [])
-            iterable = current if isinstance(current, list) else [current]
-            for value in iterable:
-                if value in seen:
-                    continue
-                seen.add(value)
-                values.append(value)
-        return values
-
-
-class FakeDatabase:
-    def __init__(self) -> None:
-        self._collections = {
-            "users": FakeCollection(),
-            "sessions": FakeCollection(),
-            "ingestion_previews": FakeCollection(),
-            "problems": FakeCollection(),
-            "exams": FakeCollection(),
-            "tags": FakeCollection(),
-            "solution_generation_tasks": FakeCollection(),
-            "canonical_solutions": FakeCollection(),
-        }
-
-    def __getitem__(self, name: str) -> FakeCollection:
-        return self._collections[name]
+from tests.conftest import FakeDatabase, FakeStorage
 
 
 class FakeSession:
@@ -219,32 +35,6 @@ class FakeMongoAdapter:
     @asynccontextmanager
     async def start_session(self) -> AsyncIterator[FakeSession]:
         yield FakeSession()
-
-
-class FakeStorage:
-    def __init__(self) -> None:
-        self._objects: dict[tuple[str, str], bytes] = {}
-        self.put_calls: list[tuple[str, str, str | None, bytes]] = []
-        self.get_calls: list[tuple[str, str]] = []
-        self._counter = 0
-
-    def build_object_key(self, user_id: str, extension: str) -> str:
-        self._counter += 1
-        return f"users/{user_id}/ingestion/preview-{self._counter}{extension}"
-
-    def put_object(self, bucket: str, key: str, payload: bytes, content_type: str | None) -> None:
-        self._objects[(bucket, key)] = payload
-        self.put_calls.append((bucket, key, content_type, payload))
-
-    def seed(self, bucket: str, key: str, payload: bytes) -> None:
-        self._objects[(bucket, key)] = payload
-
-    def get_object(self, bucket: str, key: str) -> bytes:
-        self.get_calls.append((bucket, key))
-        payload = self._objects.get((bucket, key))
-        if payload is None:
-            raise StorageObjectNotFoundError(key)
-        return payload
 
 
 class FakeGradingResult:
