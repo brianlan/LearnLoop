@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from bson import ObjectId
-from pymongo import ASCENDING
+from pymongo import ASCENDING, ReturnDocument
 
 from app.domain.ingestion import BatchState, ImageState, ItemState
 from app.infrastructure.config.settings import Settings
@@ -386,7 +386,7 @@ async def commit_image_boxes(
     next_order = max((item["order"] for item in existing_items), default=-1) + 1
 
     new_items: list[dict[str, Any]] = []
-    for offset, _box in enumerate(target_image.get("boxes", [])):
+    for offset, box in enumerate(target_image.get("boxes", [])):
         item_id = new_item_id()
         item_document = build_item_document(
             item_id=item_id,
@@ -394,6 +394,7 @@ async def commit_image_boxes(
             image_id=image_id,
             order=next_order + offset,
             now=now,
+            box=box,
         )
         new_items.append(item_document)
 
@@ -409,6 +410,158 @@ async def commit_image_boxes(
         {"$set": {"images": images, "items": items, "updatedAt": now}},
     )
     return new_items
+
+
+async def claim_item(
+    database: Any,
+    batch_id: str | ObjectId,
+    item_id: str,
+    user_id: Any,
+    *,
+    lease_timeout_seconds: int,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Atomically claim an item for extraction. Returns the updated item or None."""
+    lease_until = now + timedelta(seconds=lease_timeout_seconds)
+    result = await _collection(database).find_one_and_update(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "status": {"$in": [ItemState.QUEUED.value, ItemState.EXTRACTING.value]},
+                    "$or": [
+                        {"leaseUntil": None},
+                        {"leaseUntil": {"$lte": now}},
+                    ],
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.status": ItemState.EXTRACTING.value,
+                "items.$.leaseUntil": lease_until,
+                "items.$.updatedAt": now,
+                "items.$.extraction.requestStartedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"items.$.retryCount": 1},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    if result is None:
+        return None
+    for item in result.get("items", []):
+        if item.get("itemId") == item_id:
+            return item
+    return None
+
+
+async def save_item_extraction_success(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    crop: dict[str, Any],
+    draft: dict[str, Any],
+    extraction: dict[str, Any],
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    items = list(batch.get("items", []))
+    for item in items:
+        if item.get("itemId") == item_id:
+            item["status"] = ItemState.READY.value
+            item["crop"] = crop
+            item["draft"] = draft
+            item["extraction"] = extraction
+            item["leaseUntil"] = None
+            item["updatedAt"] = now
+            break
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"items": items, "updatedAt": now}},
+    )
+
+
+async def save_item_extraction_failure(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    extraction: dict[str, Any],
+    now: datetime,
+) -> None:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    items = list(batch.get("items", []))
+    for item in items:
+        if item.get("itemId") == item_id:
+            item["status"] = ItemState.FAILED.value
+            item["extraction"] = extraction
+            item["leaseUntil"] = None
+            item["updatedAt"] = now
+            break
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"items": items, "updatedAt": now}},
+    )
+
+
+async def reset_item_for_retry(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    items = list(batch.get("items", []))
+    changed = False
+    for item in items:
+        if item.get("itemId") != item_id:
+            continue
+        status = item.get("status")
+        lease_until = item.get("leaseUntil")
+        if status == ItemState.FAILED.value or (
+            status == ItemState.EXTRACTING.value
+            and isinstance(lease_until, datetime)
+            and lease_until <= now
+        ):
+            item["status"] = ItemState.QUEUED.value
+            item["leaseUntil"] = None
+            item["updatedAt"] = now
+            changed = True
+        break
+
+    if not changed:
+        return False
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": {"items": items, "updatedAt": now}},
+    )
+    return True
 
 
 async def find_cleanup_candidates(

@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     bulk_ingestion_batch_ttl_seconds: int = Field(default=86400, ge=1)
     bulk_ingestion_extraction_concurrency: int = Field(default=3, ge=1)
     bulk_ingestion_item_lease_timeout_seconds: int = Field(default=120, ge=1)
+    bulk_ingestion_extraction_poll_interval_seconds: float = Field(default=5.0, gt=0)
+    bulk_ingestion_extraction_worker_enabled: bool = Field(default=True)
 
     # Teacher password configuration
     teacher_password_default: str = Field(default="default-teacher-password")

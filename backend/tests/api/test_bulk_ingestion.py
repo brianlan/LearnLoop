@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-from app.infrastructure.vlm.client import DetectionResult, ProblemBox
+from app.infrastructure.vlm.client import DetectionResult, ExtractionResult, ProblemBox
 from app.main import create_app
 from app.presentation.deps import (
     create_helper_vlm_client,
@@ -76,6 +76,33 @@ class FakeHelperVLMClient:
         return response
 
 
+class FakeIngestionVLMClient:
+    def __init__(self, model: str = "fake-ingestion-vlm") -> None:
+        self._model = model
+        self.responses: list[Any] = []
+        self.calls: list[dict[str, Any]] = []
+        self.closed = False
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    async def extract(
+        self,
+        *,
+        image_url: str | None = None,
+        image_base64: str | None = None,
+    ) -> ExtractionResult:
+        self.calls.append({"image_url": image_url, "image_base64": image_base64})
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def make_png_bytes() -> bytes:
     payload = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9l9iAAAAAASUVORK5CYII="
@@ -85,6 +112,37 @@ def make_png_bytes() -> bytes:
 
 def make_oversize_png_bytes(size: int) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + b"\x00" * size
+
+
+def make_valid_png_bytes(*, width: int = 10, height: int = 10) -> bytes:
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), color="black").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def make_extraction_result(
+    *,
+    text: str = "What is 2+2?",
+    problem_type: str = "short-answer",
+    graph_dsl: str | None = None,
+    model: str = "fake-ingestion-vlm",
+) -> ExtractionResult:
+    raw = {
+        "text": text,
+        "problemType": problem_type,
+        "graphDsl": graph_dsl,
+        "providerMetadata": {"provider": "fake"},
+    }
+    return ExtractionResult(
+        request_type="ingestion",
+        model=model,
+        text=text,
+        problem_type=problem_type,
+        graph_dsl=graph_dsl,
+        provider_metadata=raw["providerMetadata"],
+        raw_provider_response=raw,
+    )
 
 
 def make_detection_result(
@@ -134,6 +192,32 @@ async def register_and_login(
     return user
 
 
+async def create_committed_item(
+    client: AsyncClient,
+    helper_vlm: FakeHelperVLMClient,
+    *,
+    subject: str = "math",
+) -> tuple[str, str, str]:
+    batch_id, image_id = await create_batch_with_image(client, image_bytes=make_valid_png_bytes())
+    helper_vlm.responses.append(
+        make_detection_result(
+            subject=subject,
+            boxes=[ProblemBox(x=0, y=0, width=1, height=1)],
+        )
+    )
+    detect_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/detect"
+    )
+    assert detect_response.status_code == 200
+
+    commit_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/commit"
+    )
+    assert commit_response.status_code == 200
+    item_id = commit_response.json()["batch"]["items"][0]["itemId"]
+    return batch_id, image_id, item_id
+
+
 async def create_batch_with_image(
     client: AsyncClient,
     image_bytes: bytes | None = None,
@@ -167,13 +251,19 @@ async def bulk_app() -> AsyncIterator[FastAPI]:
         bulk_ingestion_max_images=3,
         bulk_ingestion_max_image_bytes=200,
         bulk_ingestion_batch_ttl_seconds=3600,
+        bulk_ingestion_extraction_worker_enabled=False,
+        bulk_ingestion_extraction_poll_interval_seconds=3600,
     )
 
     helper_vlm = FakeHelperVLMClient(model=settings.helper_vlm_model)
+    math_vlm = FakeIngestionVLMClient(model=settings.math_ingestion_vlm_model)
+    english_vlm = FakeIngestionVLMClient(model=settings.english_ingestion_vlm_model)
 
     application.state.fake_database = database
     application.state.fake_storage = storage
     application.state.fake_helper_vlm = helper_vlm
+    application.state.fake_math_ingestion_vlm = math_vlm
+    application.state.fake_english_ingestion_vlm = english_vlm
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
@@ -202,6 +292,16 @@ async def authenticated_bulk_client(
 @pytest_asyncio.fixture
 async def helper_vlm(bulk_app: FastAPI) -> FakeHelperVLMClient:
     return bulk_app.state.fake_helper_vlm
+
+
+@pytest_asyncio.fixture
+async def math_ingestion_vlm(bulk_app: FastAPI) -> FakeIngestionVLMClient:
+    return bulk_app.state.fake_math_ingestion_vlm
+
+
+@pytest_asyncio.fixture
+async def english_ingestion_vlm(bulk_app: FastAPI) -> FakeIngestionVLMClient:
+    return bulk_app.state.fake_english_ingestion_vlm
 
 
 @pytest.mark.asyncio
@@ -830,5 +930,149 @@ async def test_delete_requires_authentication(
 ) -> None:
     response = await bulk_client.delete(
         f"/api/v1/ingestion-batches/{ObjectId()}/images/image-1"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_start_extraction_returns_202(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _image_id, _item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/extract"
+    )
+
+    assert response.status_code == 202
+    assert response.json()["batchId"] == batch_id
+
+
+@pytest.mark.asyncio
+async def test_extraction_populates_draft_after_worker_runs(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm, subject="math"
+    )
+
+    extract_response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/extract"
+    )
+    assert extract_response.status_code == 202
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    storage: FakeStorage = bulk_app.state.fake_storage
+    batch = await database["ingestion_batches"].find_one({"_id": ObjectId(batch_id)})
+    assert batch is not None
+    item = batch["items"][0]
+
+    math_ingestion_vlm.responses.append(
+        make_extraction_result(text="Extracted math text", model="math-model")
+    )
+
+    from app.infrastructure.worker.extraction_worker import process_item
+    from app.infrastructure.config.settings import Settings as AppSettings
+
+    settings = AppSettings(s3_bucket="learnloop-media")
+    await process_item(
+        item,
+        batch,
+        database,
+        storage,
+        math_ingestion_vlm,
+        bulk_app.state.fake_english_ingestion_vlm,
+        settings,
+    )
+
+    active_response = await authenticated_bulk_client.get("/api/v1/ingestion-batches/active")
+    assert active_response.status_code == 200
+    items = active_response.json()["batch"]["items"]
+    assert len(items) == 1
+    assert items[0]["itemId"] == item_id
+    assert items[0]["status"] == "ready"
+    assert items[0]["draft"]["text"] == "Extracted math text"
+    assert items[0]["extraction"]["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_retry_item_resets_failed_item(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+    database: FakeDatabase = bulk_app.state.fake_database
+    await database["ingestion_batches"].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.status": "failed",
+                "items.$.leaseUntil": None,
+            }
+        },
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/retry"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["batch"]["items"][0]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_retry_item_rejects_active_item(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+    database: FakeDatabase = bulk_app.state.fake_database
+    await database["ingestion_batches"].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.status": "extracting",
+                "items.$.leaseUntil": datetime.now(UTC) + timedelta(seconds=60),
+            }
+        },
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/retry"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "ITEM_NOT_RETRYABLE"
+
+
+@pytest.mark.asyncio
+async def test_extract_requires_authentication(
+    bulk_client: AsyncClient,
+) -> None:
+    response = await bulk_client.post(
+        f"/api/v1/ingestion-batches/{ObjectId()}/extract"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_retry_requires_authentication(
+    bulk_client: AsyncClient,
+) -> None:
+    response = await bulk_client.post(
+        f"/api/v1/ingestion-batches/{ObjectId()}/items/item-1/retry"
     )
     assert response.status_code == 401
