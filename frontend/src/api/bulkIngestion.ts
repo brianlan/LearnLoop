@@ -1,5 +1,9 @@
 import { api } from "./client";
-import type { BatchResponse, BulkImageBox } from "@/types/bulkIngestion";
+import type {
+  BatchResponse,
+  BulkDraft,
+  BulkImageBox,
+} from "@/types/bulkIngestion";
 
 export async function createBatch(): Promise<BatchResponse> {
   return api.post<BatchResponse>("/ingestion-batches", undefined);
@@ -65,5 +69,54 @@ export async function deleteImage(
 ): Promise<BatchResponse> {
   return api.delete<BatchResponse>(
     `/ingestion-batches/${batchId}/images/${imageId}`,
+  );
+}
+
+export async function startBatchExtraction(
+  batchId: string,
+): Promise<{ batchId: string; status: string }> {
+  return api.post<{ batchId: string; status: string }>(
+    `/ingestion-batches/${batchId}/extract`,
+    undefined,
+  );
+}
+
+export async function updateItemDraft(
+  batchId: string,
+  itemId: string,
+  draft: Partial<BulkDraft>,
+): Promise<BatchResponse> {
+  return api.patch<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}`,
+    draft,
+  );
+}
+
+export async function retryItem(
+  batchId: string,
+  itemId: string,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}/retry`,
+    undefined,
+  );
+}
+
+export async function deleteBatchItem(
+  batchId: string,
+  itemId: string,
+): Promise<BatchResponse> {
+  return api.delete<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}`,
+  );
+}
+
+export async function undoDeleteBatchItem(
+  batchId: string,
+  itemId: string,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}/undo-delete`,
+    undefined,
   );
 }

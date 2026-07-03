@@ -2,11 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   commitImage,
   createBatch,
+  deleteBatchItem,
   deleteImage,
   detectImageBoxes,
   getActiveBatch,
   getBatch,
+  retryItem,
   saveImageBoxes,
+  startBatchExtraction,
+  undoDeleteBatchItem,
+  updateItemDraft,
   uploadBatchImages,
 } from "./bulkIngestion";
 import type { BatchResponse } from "@/types/bulkIngestion";
@@ -214,6 +219,124 @@ describe("bulk ingestion API client", () => {
         {
           method: "DELETE",
           credentials: "include",
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("startBatchExtraction", () => {
+    it("posts to the extract endpoint", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ batchId: "batch-1", status: "extracting" }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await startBatchExtraction("batch-1");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/extract",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: undefined,
+        },
+      );
+      expect(result).toEqual({ batchId: "batch-1", status: "extracting" });
+    });
+  });
+
+  describe("updateItemDraft", () => {
+    it("patches item draft fields", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const draft = { text: "updated", correctAnswer: "5" };
+      const result = await updateItemDraft("batch-1", "item-1", draft);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(draft),
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("retryItem", () => {
+    it("posts to the item retry endpoint", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await retryItem("batch-1", "item-1");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1/retry",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: undefined,
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("deleteBatchItem", () => {
+    it("deletes the item", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await deleteBatchItem("batch-1", "item-1");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1",
+        {
+          method: "DELETE",
+          credentials: "include",
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("undoDeleteBatchItem", () => {
+    it("posts to the undo-delete endpoint", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await undoDeleteBatchItem("batch-1", "item-1");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1/undo-delete",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: undefined,
         },
       );
       expect(result).toEqual(response);
