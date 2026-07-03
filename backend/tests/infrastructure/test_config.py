@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.infrastructure.config.settings import Settings
 from pydantic_settings import SettingsConfigDict
 
@@ -58,6 +61,12 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("SESSION_COOKIE_NAME", "cookie")
     monkeypatch.setenv("SESSION_SECURE", "true")
     monkeypatch.setenv("SESSION_SAMESITE", "strict")
+    monkeypatch.setenv("BULK_INGESTION_MAX_IMAGES", "10")
+    monkeypatch.setenv("BULK_INGESTION_MAX_IMAGE_BYTES", "5242880")
+    monkeypatch.setenv("BULK_INGESTION_MAX_ITEMS", "50")
+    monkeypatch.setenv("BULK_INGESTION_BATCH_TTL_SECONDS", "7200")
+    monkeypatch.setenv("BULK_INGESTION_EXTRACTION_CONCURRENCY", "2")
+    monkeypatch.setenv("BULK_INGESTION_ITEM_LEASE_TIMEOUT_SECONDS", "60")
 
     settings = _IsolatedSettings()
 
@@ -112,6 +121,12 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.session_cookie_name == "cookie"
     assert settings.session_secure is True
     assert settings.session_samesite == "strict"
+    assert settings.bulk_ingestion_max_images == 10
+    assert settings.bulk_ingestion_max_image_bytes == 5242880
+    assert settings.bulk_ingestion_max_items == 50
+    assert settings.bulk_ingestion_batch_ttl_seconds == 7200
+    assert settings.bulk_ingestion_extraction_concurrency == 2
+    assert settings.bulk_ingestion_item_lease_timeout_seconds == 60
 
 
 def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
@@ -167,6 +182,12 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
         "SESSION_COOKIE_NAME",
         "SESSION_SECURE",
         "SESSION_SAMESITE",
+        "BULK_INGESTION_MAX_IMAGES",
+        "BULK_INGESTION_MAX_IMAGE_BYTES",
+        "BULK_INGESTION_MAX_ITEMS",
+        "BULK_INGESTION_BATCH_TTL_SECONDS",
+        "BULK_INGESTION_EXTRACTION_CONCURRENCY",
+        "BULK_INGESTION_ITEM_LEASE_TIMEOUT_SECONDS",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -211,3 +232,15 @@ def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
     assert settings.solution_task_timeout_minutes == 10
     assert settings.solution_max_retries == 3
     assert settings.session_samesite == "lax"
+    assert settings.bulk_ingestion_max_images == 50
+    assert settings.bulk_ingestion_max_image_bytes == 10 * 1024 * 1024
+    assert settings.bulk_ingestion_max_items == 200
+    assert settings.bulk_ingestion_batch_ttl_seconds == 86400
+    assert settings.bulk_ingestion_extraction_concurrency == 3
+    assert settings.bulk_ingestion_item_lease_timeout_seconds == 120
+
+
+def test_settings_reject_invalid_bulk_ingestion_values(monkeypatch) -> None:
+    monkeypatch.setenv("BULK_INGESTION_MAX_IMAGES", "0")
+    with pytest.raises(ValidationError):
+        _IsolatedSettings()

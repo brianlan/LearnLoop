@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     problem_selection_recency_weight: float = Field(default=1.0, ge=0)
     problem_selection_min_age_days: int = Field(default=3, ge=0)
 
+    # Bulk ingestion configuration
+    bulk_ingestion_max_images: int = Field(default=50, ge=1)
+    bulk_ingestion_max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
+    bulk_ingestion_max_items: int = Field(default=200, ge=1)
+    bulk_ingestion_batch_ttl_seconds: int = Field(default=86400, ge=1)
+    bulk_ingestion_extraction_concurrency: int = Field(default=3, ge=1)
+    bulk_ingestion_item_lease_timeout_seconds: int = Field(default=120, ge=1)
+
     # Teacher password configuration
     teacher_password_default: str = Field(default="default-teacher-password")
 
