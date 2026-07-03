@@ -683,6 +683,60 @@ async def undo_item_deletion(
     return True
 
 
+async def submit_items_and_complete_batch(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    *,
+    item_results: list[dict[str, Any]],
+    now: datetime,
+) -> Document | None:
+    """Persist per-item submit outcomes and mark the batch completed if appropriate.
+
+    The batch is marked ``completed`` when every non-deleted item has status
+    ``submitted``. Items in other states (including ``submit-failed``) keep the
+    batch active so they can be retried or deleted.
+    """
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+
+    result_by_item = {result["itemId"]: result for result in item_results}
+    items = list(batch.get("items", []))
+    for item in items:
+        result = result_by_item.get(item.get("itemId"))
+        if result is None:
+            continue
+        item["status"] = result["status"]
+        item["submit"] = result["submit"]
+        item["updatedAt"] = now
+
+    all_submitted = True
+    has_submitted = False
+    for item in items:
+        status = item.get("status")
+        if status == ItemState.DELETED.value:
+            continue
+        if status == ItemState.SUBMITTED.value:
+            has_submitted = True
+        else:
+            all_submitted = False
+
+    update: dict[str, Any] = {"items": items, "updatedAt": now}
+    if all_submitted and has_submitted:
+        update["status"] = BatchState.COMPLETED.value
+
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": update},
+    )
+    return await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+
+
 async def find_cleanup_candidates(
     database: Any,
     *,

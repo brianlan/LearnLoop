@@ -1450,6 +1450,346 @@ async def test_stream_crop_rejects_missing_crop(
     assert response.json()["error"]["code"] == "CROP_NOT_FOUND"
 
 
+async def create_ready_item_with_draft(
+    client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+    *,
+    correct_answer: str = "4",
+    subject: str = "math",
+) -> tuple[str, str, str]:
+    batch_id, image_id, item_id = await create_ready_item(
+        client, bulk_app, helper_vlm, math_ingestion_vlm, subject=subject
+    )
+    response = await client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": correct_answer},
+    )
+    assert response.status_code == 200
+    return batch_id, image_id, item_id
+
+
+async def create_two_ready_items(
+    client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> tuple[str, list[str]]:
+    create_response = await client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    image_bytes = make_valid_png_bytes()
+    upload_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("test.png", image_bytes, "image/png")},
+    )
+    assert upload_response.status_code == 201
+    image_id = upload_response.json()["batch"]["images"][0]["imageId"]
+
+    helper_vlm.responses.append(
+        make_detection_result(
+            subject="math",
+            boxes=[
+                ProblemBox(x=0, y=0, width=1, height=1),
+                ProblemBox(x=0, y=0, width=1, height=1),
+            ],
+        )
+    )
+    detect_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/detect"
+    )
+    assert detect_response.status_code == 200
+
+    commit_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/commit"
+    )
+    assert commit_response.status_code == 200
+    item_ids = [item["itemId"] for item in commit_response.json()["batch"]["items"]]
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    storage: FakeStorage = bulk_app.state.fake_storage
+    batch = await database["ingestion_batches"].find_one({"_id": ObjectId(batch_id)})
+    assert batch is not None
+
+    from app.infrastructure.worker.extraction_worker import process_item
+    from app.infrastructure.config.settings import Settings as AppSettings
+
+    settings = AppSettings(s3_bucket="learnloop-media")
+    for _ in item_ids:
+        math_ingestion_vlm.responses.append(
+            make_extraction_result(text="Extracted text", model="math-model")
+        )
+
+    for item in batch["items"]:
+        await process_item(
+            item,
+            batch,
+            database,
+            storage,
+            math_ingestion_vlm,
+            bulk_app.state.fake_english_ingestion_vlm,
+            settings,
+        )
+
+    return batch_id, item_ids
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_creates_problems_and_solution_tasks(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item_with_draft(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["batchId"] == batch_id
+    assert summary["status"] == "completed"
+    assert len(summary["items"]) == 1
+    assert summary["items"][0]["itemId"] == item_id
+    assert summary["items"][0]["status"] == "submitted"
+    assert summary["items"][0]["submittedProblemId"] is not None
+    assert summary["items"][0]["failureCode"] is None
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    problems = database["problems"]._documents
+    assert len(problems) == 1
+    assert problems[0]["origin"] == {
+        "batchId": batch_id,
+        "imageId": _image_id,
+        "itemId": item_id,
+    }
+
+    tasks = database["solution_generation_tasks"]._documents
+    assert len(tasks) == 1
+    assert tasks[0]["problem_id"] == str(problems[0]["_id"])
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_gate_blocks_missing_fields(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item(
+        authenticated_bulk_client, bulk_app, helper_vlm, math_ingestion_vlm
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "active"
+    assert summary["items"][0]["status"] == "submit-failed"
+    assert summary["items"][0]["failureCode"] == "MISSING_REQUIRED_FIELD"
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    assert len(database["problems"]._documents) == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_gate_skips_non_ready_items(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _image_id, _item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "active"
+    assert summary["items"] == []
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    assert len(database["problems"]._documents) == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_best_effort_partial_failure(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, item_ids = await create_two_ready_items(
+        authenticated_bulk_client, bulk_app, helper_vlm, math_ingestion_vlm
+    )
+
+    await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_ids[0]}",
+        json={"correctAnswer": "A"},
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "active"
+    assert len(summary["items"]) == 2
+
+    by_item = {item["itemId"]: item for item in summary["items"]}
+    assert by_item[item_ids[0]]["status"] == "submitted"
+    assert by_item[item_ids[0]]["submittedProblemId"] is not None
+    assert by_item[item_ids[1]]["status"] == "submit-failed"
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    assert len(database["problems"]._documents) == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_is_idempotent(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item_with_draft(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    first = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert first.status_code == 200
+    first_problem_id = first.json()["submitSummary"]["items"][0]["submittedProblemId"]
+
+    second = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert second.status_code == 200
+    second_problem_id = second.json()["submitSummary"]["items"][0]["submittedProblemId"]
+
+    assert first_problem_id == second_problem_id
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    assert len(database["problems"]._documents) == 1
+    assert len(database["solution_generation_tasks"]._documents) == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_marks_batch_completed_when_all_submitted(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, item_ids = await create_two_ready_items(
+        authenticated_bulk_client, bulk_app, helper_vlm, math_ingestion_vlm
+    )
+
+    for item_id in item_ids:
+        response = await authenticated_bulk_client.patch(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+            json={"correctAnswer": "4"},
+        )
+        assert response.status_code == 200
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "completed"
+    assert all(item["status"] == "submitted" for item in summary["items"])
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_completes_after_remaining_items_deleted(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, item_ids = await create_two_ready_items(
+        authenticated_bulk_client, bulk_app, helper_vlm, math_ingestion_vlm
+    )
+
+    await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_ids[0]}",
+        json={"correctAnswer": "4"},
+    )
+    await authenticated_bulk_client.delete(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_ids[1]}"
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_full_batch_lifecycle_through_completion(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item_with_draft(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+        correct_answer="A",
+    )
+
+    submit_response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["submitSummary"]["status"] == "completed"
+
+    detail_response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    assert detail_response.status_code == 200
+    batch = detail_response.json()["batch"]
+    assert batch["status"] == "completed"
+    assert batch["items"][0]["status"] == "submitted"
+    assert batch["items"][0]["submit"]["submittedProblemId"] is not None
+
+
+@pytest.mark.asyncio
+async def test_submit_requires_authentication(
+    bulk_client: AsyncClient,
+) -> None:
+    response = await bulk_client.post(
+        f"/api/v1/ingestion-batches/{ObjectId()}/submit"
+    )
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
 @pytest.mark.asyncio
 async def test_review_routes_require_authentication(
     bulk_client: AsyncClient,

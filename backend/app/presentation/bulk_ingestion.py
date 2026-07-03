@@ -24,6 +24,7 @@ from app.domain.ingestion import (
     transition_image_state,
     validate_boxes,
 )
+
 from app.domain.models import ProblemSubject, ProblemType
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.documents import build_source_image
@@ -42,6 +43,7 @@ from app.infrastructure.ingestion.repository import (
     save_image_detection_failure,
     save_image_detection_success,
     start_image_detection,
+    submit_items_and_complete_batch,
     undo_item_deletion,
     update_item_draft,
 )
@@ -62,6 +64,7 @@ from app.presentation.helpers import (
     normalize_tags,
     parse_object_id,
 )
+from app.presentation.problem_creation import create_problem_from_draft
 from app.presentation.schemas import SourceImagePayload
 
 router = APIRouter(prefix="/ingestion-batches", tags=["bulk-ingestion"])
@@ -121,6 +124,24 @@ class BatchPayload(BaseModel):
 
 class BatchResponse(BaseModel):
     batch: BatchPayload
+
+
+class SubmitItemResult(BaseModel):
+    itemId: str
+    status: str
+    submittedProblemId: str | None = None
+    failureCode: str | None = None
+    failureMessage: str | None = None
+
+
+class SubmitSummaryPayload(BaseModel):
+    batchId: str
+    status: str
+    items: list[SubmitItemResult]
+
+
+class SubmitSummaryResponse(BaseModel):
+    submitSummary: SubmitSummaryPayload
 
 
 def _guess_extension(upload: UploadFile) -> str:
@@ -696,6 +717,120 @@ async def undo_delete_item_endpoint(
     if updated_batch is None:
         raise ApiError(404, "NOT_FOUND", "Batch not found")
     return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+def _build_submit_result(item: dict[str, Any]) -> SubmitItemResult:
+    submit = dict(item.get("submit") or {})
+    return SubmitItemResult(
+        itemId=item["itemId"],
+        status=item["status"],
+        submittedProblemId=submit.get("submittedProblemId"),
+        failureCode=submit.get("failureCode"),
+        failureMessage=submit.get("failureMessage"),
+    )
+
+
+@router.post("/{batch_id}/submit", response_model=SubmitSummaryResponse)
+async def submit_batch(
+    batch_id: str,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> SubmitSummaryResponse:
+    batch = await _load_owned_batch_for_read(database, batch_id, user["_id"])
+    if is_batch_expired(batch):
+        raise ApiError(409, "BATCH_EXPIRED", "Batch has expired")
+    if batch["status"] not in {
+        BatchState.ACTIVE.value,
+        BatchState.COMPLETED.value,
+    }:
+        raise ApiError(
+            409,
+            "INVALID_BATCH_STATE",
+            "Batch is not active",
+        )
+
+    if batch["status"] == BatchState.COMPLETED.value:
+        results = [
+            _build_submit_result(item)
+            for item in batch.get("items", [])
+            if item.get("status") != ItemState.DELETED.value
+        ]
+        return SubmitSummaryResponse(
+            submitSummary=SubmitSummaryPayload(
+                batchId=batch_id,
+                status=batch["status"],
+                items=results,
+            )
+        )
+
+    now = datetime.now(UTC)
+    item_results: list[dict[str, Any]] = []
+    for item in batch.get("items", []):
+        if item.get("status") != ItemState.READY.value:
+            continue
+
+        try:
+            problem = await create_problem_from_draft(
+                database,
+                user["_id"],
+                draft=item.get("draft"),
+                source_image=item.get("crop"),
+                origin=item.get("origin"),
+                now=now,
+            )
+            item_results.append(
+                {
+                    "itemId": item["itemId"],
+                    "status": ItemState.SUBMITTED.value,
+                    "submit": {
+                        "submittedProblemId": str(problem["_id"]),
+                        "success": True,
+                        "failureCode": None,
+                        "failureMessage": None,
+                    },
+                }
+            )
+        except ApiError as exc:
+            item_results.append(
+                {
+                    "itemId": item["itemId"],
+                    "status": ItemState.SUBMIT_FAILED.value,
+                    "submit": {
+                        "submittedProblemId": None,
+                        "success": False,
+                        "failureCode": exc.code,
+                        "failureMessage": exc.message,
+                    },
+                }
+            )
+
+    updated_batch = await submit_items_and_complete_batch(
+        database,
+        batch_id,
+        user["_id"],
+        item_results=item_results,
+        now=now,
+    )
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+
+    results = [
+        SubmitItemResult(
+            itemId=r["itemId"],
+            status=r["status"],
+            submittedProblemId=r["submit"]["submittedProblemId"],
+            failureCode=r["submit"]["failureCode"],
+            failureMessage=r["submit"]["failureMessage"],
+        )
+        for r in item_results
+    ]
+    return SubmitSummaryResponse(
+        submitSummary=SubmitSummaryPayload(
+            batchId=batch_id,
+            status=updated_batch["status"],
+            items=results,
+        )
+    )
 
 
 @router.get("/{batch_id}/images/{image_id}/source")

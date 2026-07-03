@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType, normalize_answer
+from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
@@ -31,8 +31,7 @@ from app.presentation.deps import (
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags, parse_object_id
 from app.presentation.ingestion_serialization import ProblemResponse, PreviewResponse, serialize_preview, serialize_problem, _enum_value
-from app.presentation.tags import _register_tags
-from app.presentation.solution_generation import enqueue_solution_generation_task_for_problem
+from app.presentation.problem_creation import create_problem_from_draft
 from app.presentation.ingestion_workflow import (
     DEFAULT_SYNC_WAIT_SECONDS,
     clean_optional_text,
@@ -393,66 +392,35 @@ async def confirm_preview(
         )
 
     draft = dict(claimed_preview.get("editableDraft", {}))
-    text = clean_optional_text(draft.get("text"))
-    problem_type_value = draft.get("problemType")
-    correct_answer = clean_optional_text(draft.get("correctAnswer"))
-    if text is None or problem_type_value is None or correct_answer is None:
-        await previews.update_one(
-            {"_id": preview_oid},
-            {"$set": {"status": claimed_preview["status"], "updatedAt": now}},
-        )
-        raise ApiError(400, "INVALID_PREVIEW", "Preview draft is missing required fields")
-
-    problem_type = ProblemType(problem_type_value)
-    subject_value = draft.get("subject", ProblemSubject.MATH.value)
-    normalized_answer = normalize_answer(correct_answer, problem_type)
-    problem: Document = {
-        "_id": ObjectId(),
-        "userId": user["_id"],
-        "text": text,
-        "problemType": problem_type.value,
-        "subject": str(subject_value),
-        "graphDsl": draft.get("graphDsl"),
-        "correctAnswer": normalized_answer.model_dump(),
-        "tags": normalize_tags(list(draft.get("tags", []))),
-        "sourceImage": dict(claimed_preview.get("sourceImage", {})),
-        "origin": {
-            "previewId": str(claimed_preview["_id"]),
-            "vlmModel": dict(claimed_preview.get("extraction", {})).get("requestModel"),
-            "rawExtractedText": dict(claimed_preview.get("extraction", {})).get("rawText"),
-            "rawExtractedProblemType": _enum_value(
-                dict(claimed_preview.get("extraction", {})).get("rawProblemType")
-            ),
-            "rawExtractedGraphDsl": dict(claimed_preview.get("extraction", {})).get("rawGraphDsl"),
-        },
-        "tracking": {
-            "exposureCount": 0,
-            "correctCount": 0,
-            "failedCount": 0,
-            "lastTestedAt": None,
-            "lastAttemptCorrect": None,
-        },
-        "isDeleted": False,
-        "deletedAt": None,
-        "createdAt": now,
-        "updatedAt": now,
-    }
     try:
-        await database["problems"].insert_one(problem)
-        await enqueue_solution_generation_task_for_problem(database, problem, now=now)
-    except Exception:
-        delete_problem = getattr(database["problems"], "delete_one", None)
-        if callable(delete_problem):
-            try:
-                await delete_problem({"_id": problem["_id"]})
-            except Exception:
-                pass
+        problem = await create_problem_from_draft(
+            database,
+            user["_id"],
+            draft=draft,
+            source_image=claimed_preview.get("sourceImage"),
+            origin={
+                "previewId": str(claimed_preview["_id"]),
+                "vlmModel": dict(claimed_preview.get("extraction", {})).get("requestModel"),
+                "rawExtractedText": dict(claimed_preview.get("extraction", {})).get("rawText"),
+                "rawExtractedProblemType": _enum_value(
+                    dict(claimed_preview.get("extraction", {})).get("rawProblemType")
+                ),
+                "rawExtractedGraphDsl": dict(claimed_preview.get("extraction", {})).get("rawGraphDsl"),
+            },
+            now=now,
+        )
+    except ApiError as exc:
         await previews.update_one(
             {"_id": preview_oid},
             {"$set": {"status": claimed_preview["status"], "updatedAt": now}},
         )
-        raise ApiError(500, "PROBLEM_CREATION_FAILED", "Failed to create problem. Please retry confirmation.")
-    await _register_tags(database, user["_id"], list(draft.get("tags", [])))
+        if exc.code == "MISSING_REQUIRED_FIELD":
+            raise ApiError(
+                400,
+                "INVALID_PREVIEW",
+                "Preview draft is missing required fields",
+            ) from exc
+        raise
     return ProblemResponse(problem=serialize_problem(problem))
 
 
