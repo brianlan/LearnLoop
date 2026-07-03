@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
+  commitImage,
   createBatch,
+  deleteImage,
+  detectImageBoxes,
   getActiveBatch,
   getBatch,
+  saveImageBoxes,
   uploadBatchImages,
 } from "@/api/bulkIngestion";
-import type { BulkBatch, BulkWizardStep } from "@/types/bulkIngestion";
+import type { BulkBatch, BulkImageBox, BulkWizardStep } from "@/types/bulkIngestion";
+import { BulkUploadStep } from "./BulkUploadStep";
+import { BulkDetectStep } from "./BulkDetectStep";
 
 export type { BulkWizardStep };
 
@@ -56,7 +61,6 @@ export function BulkIngestionWizard({
   const [step, setStep] = useState<BulkWizardStep>("upload");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
     setBatch(nextBatch);
@@ -108,16 +112,15 @@ export function BulkIngestionWizard({
     }
   }, [setBatchAndStep]);
 
-  const handleFileSelection = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      event.target.value = "";
-      if (files.length === 0 || !batch) return;
+  const handleUploadFiles = useCallback(
+    async (files: FileList | null) => {
+      const fileArray = Array.from(files ?? []);
+      if (fileArray.length === 0 || !batch) return;
 
       setIsLoading(true);
       setError("");
       try {
-        const response = await uploadBatchImages(batch.id, files);
+        const response = await uploadBatchImages(batch.id, fileArray);
         setBatchAndStep(response.batch);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to upload images");
@@ -128,9 +131,61 @@ export function BulkIngestionWizard({
     [batch, setBatchAndStep],
   );
 
-  const handleStartUpload = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  const handleDetect = useCallback(
+    async (imageId: string) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await detectImageBoxes(batch.id, imageId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to detect boxes");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  const handleSaveBoxes = useCallback(
+    async (imageId: string, boxes: BulkImageBox[], subject?: string | null) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await saveImageBoxes(batch.id, imageId, boxes, subject);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save boxes");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  const handleCommit = useCallback(
+    async (imageId: string) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await commitImage(batch.id, imageId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to commit image");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
+
+  const handleDeleteImage = useCallback(
+    async (imageId: string) => {
+      if (!batch) return;
+      setError("");
+      try {
+        const response = await deleteImage(batch.id, imageId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete image");
+      }
+    },
+    [batch, setBatchAndStep],
+  );
 
   if (isLoading) {
     return (
@@ -261,40 +316,24 @@ export function BulkIngestionWizard({
         }}
       >
         {step === "upload" && (
-          <div data-testid="bulk-wizard-upload-step">
-            <h2>Upload images</h2>
-            {batch ? (
-              <>
-                <p>Add images to your batch.</p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleFileSelection}
-                  data-testid="bulk-wizard-upload-input"
-                  style={{ display: "none" }}
-                />
-                <button type="button" onClick={handleStartUpload}>
-                  Choose image files
-                </button>
-              </>
-            ) : (
-              <>
-                <p>No active batch found. Create one to get started.</p>
-                <button type="button" onClick={handleCreateBatch} data-testid="bulk-wizard-create-batch">
-                  Create batch
-                </button>
-              </>
-            )}
-          </div>
+          <BulkUploadStep
+            batch={batch}
+            isLoading={isLoading}
+            error={error}
+            onCreateBatch={handleCreateBatch}
+            onUpload={handleUploadFiles}
+          />
         )}
 
-        {step === "detect" && (
-          <div data-testid="bulk-wizard-detect-step">
-            <h2>Review detected boxes</h2>
-            <p>Box editor will be added in a later step.</p>
-          </div>
+        {step === "detect" && batch && (
+          <BulkDetectStep
+            batch={batch}
+            isLoading={isLoading}
+            onDetect={handleDetect}
+            onSaveBoxes={handleSaveBoxes}
+            onCommit={handleCommit}
+            onDelete={handleDeleteImage}
+          />
         )}
 
         {step === "review" && (

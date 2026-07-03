@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   getBatch: vi.fn<() => Promise<BatchResponse>>(),
   createBatch: vi.fn<() => Promise<BatchResponse>>(),
   uploadBatchImages: vi.fn<() => Promise<BatchResponse>>(),
+  detectImageBoxes: vi.fn<() => Promise<BatchResponse>>(),
+  saveImageBoxes: vi.fn<() => Promise<BatchResponse>>(),
+  commitImage: vi.fn<() => Promise<BatchResponse>>(),
+  deleteImage: vi.fn<() => Promise<BatchResponse>>(),
 }));
 
 vi.mock("@/api/bulkIngestion", () => ({
@@ -16,6 +20,10 @@ vi.mock("@/api/bulkIngestion", () => ({
   getBatch: mocks.getBatch,
   createBatch: mocks.createBatch,
   uploadBatchImages: mocks.uploadBatchImages,
+  detectImageBoxes: mocks.detectImageBoxes,
+  saveImageBoxes: mocks.saveImageBoxes,
+  commitImage: mocks.commitImage,
+  deleteImage: mocks.deleteImage,
 }));
 
 function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
@@ -199,5 +207,157 @@ describe("BulkIngestionWizard", () => {
 
     expect(getItemSpy).not.toHaveBeenCalledWith(expect.stringContaining("batch"));
     expect(setItemSpy).not.toHaveBeenCalledWith(expect.stringContaining("batch"), expect.anything());
+  });
+
+  it("uploads images and advances to the detect step", async () => {
+    mocks.getActiveBatch.mockRejectedValue(
+      new ApiError("No active batch found", 404, "NOT_FOUND"),
+    );
+    mocks.createBatch.mockResolvedValue({ batch: makeBatch({ id: "batch-new" }) });
+    mocks.uploadBatchImages.mockResolvedValue({
+      batch: makeBatch({
+        id: "batch-new",
+        images: [
+          {
+            imageId: "img-1",
+            status: "uploaded",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-create-batch")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-create-batch"));
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-upload-input")).toBeInTheDocument();
+    });
+
+    const file = new File(["image"], "test.png", { type: "image/png" });
+    fireEvent.change(screen.getByTestId("bulk-wizard-upload-input"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-detect-step")).toBeInTheDocument();
+    });
+    expect(mocks.uploadBatchImages).toHaveBeenCalledWith("batch-new", [file]);
+  });
+
+  it("runs detection for an uploaded image", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "uploaded",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.detectImageBoxes.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-detect-run-img-1"));
+
+    await waitFor(() => {
+      expect(mocks.detectImageBoxes).toHaveBeenCalledWith("batch-1", "img-1");
+    });
+  });
+
+  it("commits an image after reviewing boxes", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.commitImage.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "queued",
+            order: 0,
+            draft: {},
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-commit-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-detect-commit-img-1"));
+
+    await waitFor(() => {
+      expect(mocks.commitImage).toHaveBeenCalledWith("batch-1", "img-1");
+    });
   });
 });
