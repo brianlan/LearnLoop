@@ -128,7 +128,7 @@ describe("BulkIngestionWizard", () => {
     expect(mocks.createBatch).toHaveBeenCalledTimes(1);
   });
 
-  it("uploads images and advances the step", async () => {
+  it("advances to review step when batch has committed images and queued items", async () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         images: [
