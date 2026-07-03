@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { BatchResponse } from "@/types/bulkIngestion";
+import type { BatchResponse, BulkImageBox } from "@/types/bulkIngestion";
 
 export async function createBatch(): Promise<BatchResponse> {
   return api.post<BatchResponse>("/ingestion-batches", undefined);
@@ -24,5 +24,46 @@ export async function uploadBatchImages(
   return api.postFormData<BatchResponse>(
     `/ingestion-batches/${batchId}/images`,
     formData,
+  );
+}
+
+export async function detectImageBoxes(
+  batchId: string,
+  imageId: string,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/images/${imageId}/detect`,
+    undefined,
+  );
+}
+
+export async function saveImageBoxes(
+  batchId: string,
+  imageId: string,
+  boxes: BulkImageBox[],
+  subject?: string | null,
+): Promise<BatchResponse> {
+  return api.patch<BatchResponse>(
+    `/ingestion-batches/${batchId}/images/${imageId}`,
+    { boxes, subject },
+  );
+}
+
+export async function commitImage(
+  batchId: string,
+  imageId: string,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/images/${imageId}/commit`,
+    undefined,
+  );
+}
+
+export async function deleteImage(
+  batchId: string,
+  imageId: string,
+): Promise<BatchResponse> {
+  return api.delete<BatchResponse>(
+    `/ingestion-batches/${batchId}/images/${imageId}`,
   );
 }
