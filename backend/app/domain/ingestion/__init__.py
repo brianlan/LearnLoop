@@ -1,5 +1,6 @@
 """Ingestion domain namespace."""
 
+from .boxes import InvalidBoxError, validate_boxes
 from .state import (
     BatchState,
     ImageState,
@@ -34,4 +35,6 @@ __all__ = [
     "is_batch_terminal",
     "is_image_terminal",
     "is_item_terminal",
+    "InvalidBoxError",
+    "validate_boxes",
 ]

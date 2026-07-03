@@ -18,4 +18,6 @@ class SourceImagePayload(BaseModel):
     contentType: str | None = None
     sizeBytes: int | None = None
     sha256: str | None = None
+    width: int | None = None
+    height: int | None = None
     uploadedAt: datetime | None = None

@@ -25,6 +25,8 @@ def build_source_image(
     size_bytes: int,
     sha256: str,
     uploaded_at: datetime,
+    width: int | None = None,
+    height: int | None = None,
 ) -> dict[str, Any]:
     return {
         "bucket": bucket,
@@ -33,6 +35,8 @@ def build_source_image(
         "sizeBytes": size_bytes,
         "sha256": sha256,
         "uploadedAt": uploaded_at,
+        "width": width,
+        "height": height,
     }
 
 
