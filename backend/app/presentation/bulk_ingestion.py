@@ -5,7 +5,6 @@ import mimetypes
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel
@@ -101,11 +100,6 @@ def _guess_extension(upload: UploadFile) -> str:
         if guessed:
             return guessed
     return ".bin"
-
-
-def _build_batch_image_key(user_id: str, extension: str) -> str:
-    suffix = extension.lstrip(".") or "bin"
-    return f"users/{user_id}/ingestion/batches/{uuid4()}.{suffix}"
 
 
 def _serialize_source_image(source_image: dict[str, Any]) -> dict[str, Any]:
@@ -258,7 +252,9 @@ async def upload_batch_images(
         image_bytes, content_type = await _validate_image_upload(
             image, settings.bulk_ingestion_max_image_bytes
         )
-        object_key = _build_batch_image_key(str(user["_id"]), _guess_extension(image))
+        object_key = s3_storage.build_object_key(
+            str(user["_id"]), _guess_extension(image), category="ingestion/batches"
+        )
         s3_storage.put_object(settings.s3_bucket, object_key, image_bytes, content_type)
 
         source_image = build_source_image(

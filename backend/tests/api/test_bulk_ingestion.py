@@ -26,9 +26,11 @@ class FakeStorage:
         self.get_calls: list[tuple[str, str]] = []
         self._counter = 0
 
-    def build_object_key(self, user_id: str, extension: str) -> str:
+    def build_object_key(
+        self, user_id: str, extension: str, *, category: str = "images"
+    ) -> str:
         self._counter += 1
-        return f"users/{user_id}/ingestion/preview-{self._counter}{extension}"
+        return f"users/{user_id}/{category}/preview-{self._counter}{extension}"
 
     def put_object(self, bucket: str, object_key: str, payload: bytes, content_type: str | None) -> None:
         self.objects[(bucket, object_key)] = payload
