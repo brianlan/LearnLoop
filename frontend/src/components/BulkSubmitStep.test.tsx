@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { BulkSubmitStep } from "./BulkSubmitStep";
 import type { BulkBatch, BulkItem } from "@/types/bulkIngestion";
@@ -417,6 +417,61 @@ describe("BulkSubmitStep", () => {
         "Network error",
       );
     });
+  });
+
+  it("polls onRefresh while the batch is active", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onRefresh = vi.fn();
+
+    render(
+      <BulkSubmitStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        onRefresh={onRefresh}
+        {...handlers}
+      />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledWith("batch-1");
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("does not poll onRefresh when the batch is completed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onRefresh = vi.fn();
+
+    render(
+      <BulkSubmitStep
+        batch={makeBatch({
+          status: "completed",
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              status: "submitted",
+              submit: { submittedProblemId: "problem-1" },
+            }),
+          ],
+        })}
+        isLoading={false}
+        onRefresh={onRefresh}
+        {...handlers}
+      />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 
   it("shows disabled reasons when there are no items", () => {
