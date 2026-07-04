@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router-dom";
-import { IngestionWizard } from "@/components/IngestionWizard";
+import { BulkIngestionWizard } from "@/components/BulkIngestionWizard";
 
 export function IngestPage() {
   const navigate = useNavigate();
 
-  const handleConfirm = (problemId: string) => {
-    navigate(`/problems/${problemId}`);
+  const handleComplete = () => {
+    navigate("/problems");
   };
 
   const handleCancel = () => {
@@ -23,9 +23,9 @@ export function IngestPage() {
           textAlign: "center",
         }}
       >
-        Ingest New Problem
+        Ingest New Problems
       </h1>
-      <IngestionWizard onConfirm={handleConfirm} onCancel={handleCancel} />
+      <BulkIngestionWizard onComplete={handleComplete} onCancel={handleCancel} />
     </main>
   );
 }

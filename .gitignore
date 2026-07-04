@@ -242,3 +242,7 @@ drafts
 .vscode
 volume-backups
 .claude/scheduled_tasks.json
+
+# E2E fixtures (re-include from global image ignore)
+!frontend/tests/fixtures/
+!frontend/tests/fixtures/*.png
