@@ -3,7 +3,12 @@ import type { BulkBatch, BulkDraft, BulkItem } from "@/types/bulkIngestion";
 import { TagInput } from "./TagInput";
 
 const POLL_INTERVAL_MS = 2500;
-const DEBOUNCE_MS = 500;
+const BASE_RETRY_MS = 500;
+const MAX_RETRY_MS = 4000;
+
+function retryDelayMs(failureCount: number): number {
+  return Math.min(BASE_RETRY_MS * 2 ** failureCount, MAX_RETRY_MS);
+}
 
 const PROBLEM_TYPES = [
   { value: "single-choice", label: "Single choice" },
@@ -82,8 +87,10 @@ export function BulkReviewStep({
   const [localDrafts, setLocalDrafts] = useState<Record<string, BulkDraft>>({});
   const [dirtyItems, setDirtyItems] = useState<Set<string>>(new Set());
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
+  const [saveFailures, setSaveFailures] = useState<Record<string, number>>({});
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
+  const saveFailuresRef = useRef<Record<string, number>>({});
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
@@ -131,6 +138,7 @@ export function BulkReviewStep({
 
     const scheduleSave = (itemId: string) => {
       window.clearTimeout(timeoutIds[itemId]);
+      const failures = saveFailuresRef.current[itemId] ?? 0;
       timeoutIds[itemId] = window.setTimeout(() => {
         const draft = draftRefs.current[itemId];
         if (!draft) return;
@@ -141,8 +149,13 @@ export function BulkReviewStep({
           return next;
         });
         Promise.resolve(onUpdateDraft(itemId, draft))
-          .catch(() => undefined)
-          .finally(() => {
+          .then(() => {
+            setSaveFailures((prev) => {
+              const next = { ...prev };
+              delete next[itemId];
+              saveFailuresRef.current = next;
+              return next;
+            });
             setSavingItems((prev) => {
               const next = new Set(prev);
               next.delete(itemId);
@@ -159,8 +172,20 @@ export function BulkReviewStep({
               dirtyRefs.current = nextDirty;
               return nextDirty;
             });
+          })
+          .catch(() => {
+            setSaveFailures((prev) => {
+              const next = { ...prev, [itemId]: (prev[itemId] ?? 0) + 1 };
+              saveFailuresRef.current = next;
+              return next;
+            });
+            setSavingItems((prev) => {
+              const next = new Set(prev);
+              next.delete(itemId);
+              return next;
+            });
           });
-      }, DEBOUNCE_MS);
+      }, retryDelayMs(failures));
     };
 
     dirtyItems.forEach((itemId) => {
@@ -222,6 +247,8 @@ export function BulkReviewStep({
     selectedItem.status !== "submitted";
   const currentDraft = getItemDraft(selectedItem);
   const isWorking = isLoading || savingItems.has(selectedItem.itemId);
+  const saveFailureCount = saveFailures[selectedItem.itemId] ?? 0;
+  const hasSaveFailed = saveFailureCount > 0;
 
   return (
     <div data-testid="bulk-wizard-review-step">
@@ -284,6 +311,12 @@ export function BulkReviewStep({
                   }}
                 >
                   {item.order + 1}. {statusLabel(item.status)}
+                  {saveFailures[item.itemId] !== undefined && (
+                    <span style={{ fontSize: "0.85em", opacity: 0.8 }}>
+                      {" "}
+                      (save failed)
+                    </span>
+                  )}
                 </button>
               </li>
             ))}
@@ -299,9 +332,19 @@ export function BulkReviewStep({
               marginBottom: "12px",
             }}
           >
-            <span data-testid="bulk-review-status">
-              {statusLabel(selectedItem.status)}
-            </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span data-testid="bulk-review-status">
+                {statusLabel(selectedItem.status)}
+              </span>
+              {hasSaveFailed && (
+                <span
+                  data-testid="bulk-review-save-status"
+                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
+                >
+                  Save failed, retrying...
+                </span>
+              )}
+            </div>
             <div style={{ display: "flex", gap: "8px" }}>
               {selectedItem.status === "failed" && (
                 <button

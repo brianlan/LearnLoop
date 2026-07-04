@@ -344,4 +344,158 @@ describe("BulkReviewStep", () => {
     fireEvent.click(screen.getByTestId("bulk-review-delete"));
     expect(handlers.onDelete).toHaveBeenCalledWith("item-1");
   });
+
+  it("retries a failed draft save after a bounded backoff delay", async () => {
+    handlers.onUpdateDraft.mockRejectedValueOnce(new Error("network error"));
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "A" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("increases retry backoff up to a cap", async () => {
+    handlers.onUpdateDraft.mockRejectedValue(new Error("persistent error"));
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "A" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(4);
+
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(5);
+  });
+
+  it("clears the failure state and stops retrying after a successful save", async () => {
+    handlers.onUpdateDraft
+      .mockRejectedValueOnce(new Error("network error"))
+      .mockResolvedValueOnce(undefined);
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "A" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-save-status")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("bulk-review-save-status"),
+      ).not.toBeInTheDocument();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a save-failed indicator that disappears on success", async () => {
+    handlers.onUpdateDraft
+      .mockRejectedValueOnce(new Error("network error"))
+      .mockResolvedValueOnce(undefined);
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "A" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByTestId("bulk-review-save-status")).toHaveTextContent(
+      "Save failed, retrying...",
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("bulk-review-save-status"),
+      ).not.toBeInTheDocument();
+    });
+  });
 });
