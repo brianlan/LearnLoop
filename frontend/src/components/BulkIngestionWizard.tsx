@@ -11,6 +11,7 @@ import {
   retryItem,
   saveImageBoxes,
   startBatchExtraction,
+  submitBatch,
   undoDeleteBatchItem,
   updateItemDraft,
   uploadBatchImages,
@@ -24,6 +25,7 @@ import type {
 import { BulkUploadStep } from "./BulkUploadStep";
 import { BulkDetectStep } from "./BulkDetectStep";
 import { BulkReviewStep } from "./BulkReviewStep";
+import { BulkSubmitStep } from "./BulkSubmitStep";
 
 export type { BulkWizardStep };
 
@@ -51,13 +53,16 @@ function deriveStep(batch: BulkBatch): BulkWizardStep {
       (item) =>
         item.status === "queued" ||
         item.status === "extracting" ||
-        item.status === "failed" ||
-        item.status === "submit-failed",
+        item.status === "failed",
     )
   ) {
     return "review";
   }
-  if (batch.items.some((item) => item.status === "ready")) {
+  if (
+    batch.items.some(
+      (item) => item.status === "ready" || item.status === "submit-failed",
+    )
+  ) {
     return "submit";
   }
   return "complete";
@@ -272,6 +277,21 @@ export function BulkIngestionWizard({
     [batch, setBatchAndStep],
   );
 
+  const handleSubmit = useCallback(
+    async (batchId: string) => {
+      setError("");
+      try {
+        await submitBatch(batchId);
+        const response = await getBatch(batchId);
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to submit batch");
+        throw err;
+      }
+    },
+    [setBatchAndStep],
+  );
+
   useEffect(() => {
     if (step !== "review" || !batch || batch.status !== "active") return;
     const batchId = batch.id;
@@ -461,11 +481,14 @@ export function BulkIngestionWizard({
           />
         )}
 
-        {step === "submit" && (
-          <div data-testid="bulk-wizard-submit-step">
-            <h2>Submit items</h2>
-            <p>Submit UI will be added in a later step.</p>
-          </div>
+        {step === "submit" && batch && (
+          <BulkSubmitStep
+            batch={batch}
+            isLoading={isLoading}
+            onSubmit={handleSubmit}
+            onRetry={handleRetryItem}
+            onDelete={handleDeleteItem}
+          />
         )}
       </div>
 

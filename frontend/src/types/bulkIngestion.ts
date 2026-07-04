@@ -127,12 +127,22 @@ export interface BatchResponse {
   batch: BulkBatch;
 }
 
-export interface SubmitSummary {
-  total: number;
-  submitted: number;
-  failed: number;
-  deleted: number;
-  pending: number;
+export interface BulkSubmitItemResult {
+  itemId: string;
+  status: string;
+  submittedProblemId?: string | null;
+  failureCode?: string | null;
+  failureMessage?: string | null;
+}
+
+export interface BulkSubmitSummary {
+  batchId: string;
+  status: string;
+  items: BulkSubmitItemResult[];
+}
+
+export interface SubmitSummaryResponse {
+  submitSummary: BulkSubmitSummary;
 }
 
 export type BulkWizardStep =

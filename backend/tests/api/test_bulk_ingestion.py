@@ -1031,6 +1031,34 @@ async def test_retry_item_resets_failed_item(
 
 
 @pytest.mark.asyncio
+async def test_retry_item_resets_submit_failed_item(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+    database: FakeDatabase = bulk_app.state.fake_database
+    await database["ingestion_batches"].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.status": "submit-failed",
+                "items.$.leaseUntil": None,
+            }
+        },
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/retry"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["batch"]["items"][0]["status"] == "queued"
+
+
+@pytest.mark.asyncio
 async def test_retry_item_rejects_active_item(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,

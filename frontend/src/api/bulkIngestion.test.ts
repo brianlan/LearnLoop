@@ -10,6 +10,7 @@ import {
   retryItem,
   saveImageBoxes,
   startBatchExtraction,
+  submitBatch,
   undoDeleteBatchItem,
   updateItemDraft,
   uploadBatchImages,
@@ -332,6 +333,44 @@ describe("bulk ingestion API client", () => {
 
       expect(mockFetch).toHaveBeenCalledWith(
         "/api/v1/ingestion-batches/batch-1/items/item-1/undo-delete",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: undefined,
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("submitBatch", () => {
+    it("posts to the submit endpoint", async () => {
+      const response = {
+        submitSummary: {
+          batchId: "batch-1",
+          status: "completed",
+          items: [
+            {
+              itemId: "item-1",
+              status: "submitted",
+              submittedProblemId: "problem-1",
+              failureCode: null,
+              failureMessage: null,
+            },
+          ],
+        },
+      };
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await submitBatch("batch-1");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/submit",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
