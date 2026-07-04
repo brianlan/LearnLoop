@@ -280,14 +280,9 @@ export function BulkIngestionWizard({
   const handleSubmit = useCallback(
     async (batchId: string) => {
       setError("");
-      try {
-        await submitBatch(batchId);
-        const response = await getBatch(batchId);
-        setBatchAndStep(response.batch);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to submit batch");
-        throw err;
-      }
+      await submitBatch(batchId);
+      const response = await getBatch(batchId);
+      setBatchAndStep(response.batch);
     },
     [setBatchAndStep],
   );

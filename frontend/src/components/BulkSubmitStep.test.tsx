@@ -161,6 +161,40 @@ describe("BulkSubmitStep", () => {
     ).toHaveTextContent("Item is not ready");
   });
 
+  it("disables submit when an item failed extraction", () => {
+    render(
+      <BulkSubmitStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { status: "failed" })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-submit-button")).toBeDisabled();
+    expect(
+      screen.getByTestId("bulk-submit-item-reasons-item-1"),
+    ).toHaveTextContent("Item is not ready");
+  });
+
+  it("disables submit when an item failed submission", () => {
+    render(
+      <BulkSubmitStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { status: "submit-failed" })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-submit-button")).toBeDisabled();
+    expect(
+      screen.getByTestId("bulk-submit-item-reasons-item-1"),
+    ).toHaveTextContent("Item is not ready");
+  });
+
   it("ignores deleted items when computing the submit gate", () => {
     render(
       <BulkSubmitStep
@@ -309,6 +343,39 @@ describe("BulkSubmitStep", () => {
 
     fireEvent.click(screen.getByTestId("bulk-submit-retry-item-1"));
     expect(handlers.onRetry).toHaveBeenCalledWith("item-1");
+  });
+
+  it("keeps submitted items visible when retrying a submit-failed sibling", () => {
+    render(
+      <BulkSubmitStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              status: "submitted",
+              submit: { submittedProblemId: "problem-1" },
+            }),
+            makeItem("item-2", {
+              order: 1,
+              status: "submit-failed",
+              submit: { failureMessage: "Validation error" },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-submit-retry-item-2"));
+
+    expect(handlers.onRetry).toHaveBeenCalledWith("item-2");
+    expect(
+      screen.getByTestId("bulk-submit-item-problem-item-1"),
+    ).toHaveTextContent("problem-1");
+    expect(
+      screen.getByTestId("bulk-submit-item-status-item-1"),
+    ).toHaveTextContent("Submitted");
   });
 
   it("calls onDelete for submit-failed items", () => {
