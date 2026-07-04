@@ -3,7 +3,6 @@ import type { BulkBatch, BulkDraft, BulkItem } from "@/types/bulkIngestion";
 import { TagInput } from "./TagInput";
 
 const POLL_INTERVAL_MS = 2500;
-const DEBOUNCE_MS = 500;
 const BASE_RETRY_MS = 500;
 const MAX_RETRY_MS = 4000;
 
