@@ -3,6 +3,7 @@ import type {
   BatchResponse,
   BulkDraft,
   BulkImageBox,
+  SubmitSummaryResponse,
 } from "@/types/bulkIngestion";
 
 export async function createBatch(): Promise<BatchResponse> {
@@ -117,6 +118,15 @@ export async function undoDeleteBatchItem(
 ): Promise<BatchResponse> {
   return api.post<BatchResponse>(
     `/ingestion-batches/${batchId}/items/${itemId}/undo-delete`,
+    undefined,
+  );
+}
+
+export async function submitBatch(
+  batchId: string,
+): Promise<SubmitSummaryResponse> {
+  return api.post<SubmitSummaryResponse>(
+    `/ingestion-batches/${batchId}/submit`,
     undefined,
   );
 }

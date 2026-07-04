@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   commitImage: vi.fn<() => Promise<BatchResponse>>(),
   deleteImage: vi.fn<() => Promise<BatchResponse>>(),
   startBatchExtraction: vi.fn<() => Promise<BatchResponse>>(),
+  submitBatch: vi.fn<() => Promise<{ submitSummary: { batchId: string; status: string; items: unknown[] } }>>(),
+  retryItem: vi.fn<() => Promise<BatchResponse>>(),
+  deleteBatchItem: vi.fn<() => Promise<BatchResponse>>(),
+  undoDeleteBatchItem: vi.fn<() => Promise<BatchResponse>>(),
+  updateItemDraft: vi.fn<() => Promise<BatchResponse>>(),
 }));
 
 vi.mock("@/api/bulkIngestion", () => ({
@@ -26,6 +31,11 @@ vi.mock("@/api/bulkIngestion", () => ({
   commitImage: mocks.commitImage,
   deleteImage: mocks.deleteImage,
   startBatchExtraction: mocks.startBatchExtraction,
+  submitBatch: mocks.submitBatch,
+  retryItem: mocks.retryItem,
+  deleteBatchItem: mocks.deleteBatchItem,
+  undoDeleteBatchItem: mocks.undoDeleteBatchItem,
+  updateItemDraft: mocks.updateItemDraft,
 }));
 
 function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
@@ -649,5 +659,305 @@ describe("BulkIngestionWizard", () => {
         "english",
       );
     });
+  });
+
+  it("advances to submit step when all items are ready", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "ready",
+            order: 0,
+            draft: {
+              text: "What is 2+2?",
+              problemType: "short-answer",
+              correctAnswer: "4",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("bulk-submit-button")).not.toBeDisabled();
+  });
+
+  it("submits the batch and refreshes to show results", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "ready",
+            order: 0,
+            draft: {
+              text: "What is 2+2?",
+              problemType: "short-answer",
+              correctAnswer: "4",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.submitBatch.mockResolvedValue({
+      submitSummary: {
+        batchId: "batch-1",
+        status: "completed",
+        items: [
+          {
+            itemId: "item-1",
+            status: "submitted",
+            submittedProblemId: "problem-1",
+            failureCode: null,
+            failureMessage: null,
+          },
+        ],
+      },
+    });
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        status: "completed",
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "submitted",
+            order: 0,
+            draft: {
+              text: "What is 2+2?",
+              problemType: "short-answer",
+              correctAnswer: "4",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: { submittedProblemId: "problem-1" },
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-submit-button"));
+
+    await waitFor(() => {
+      expect(mocks.submitBatch).toHaveBeenCalledWith("batch-1");
+    });
+    await waitFor(() => {
+      expect(mocks.getBatch).toHaveBeenCalledWith("batch-1");
+    });
+  });
+
+  it("stays on submit step when submission has partial failures", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "ready",
+            order: 0,
+            draft: {
+              text: "What is 2+2?",
+              problemType: "short-answer",
+              correctAnswer: "4",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+          {
+            itemId: "item-2",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "ready",
+            order: 1,
+            draft: {
+              text: "What is 3+3?",
+              problemType: "short-answer",
+              correctAnswer: "6",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: {},
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.submitBatch.mockResolvedValue({
+      submitSummary: {
+        batchId: "batch-1",
+        status: "active",
+        items: [
+          {
+            itemId: "item-1",
+            status: "submitted",
+            submittedProblemId: "problem-1",
+            failureCode: null,
+            failureMessage: null,
+          },
+          {
+            itemId: "item-2",
+            status: "submit-failed",
+            submittedProblemId: null,
+            failureCode: "VALIDATION_ERROR",
+            failureMessage: "Invalid draft",
+          },
+        ],
+      },
+    });
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "committed",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+        items: [
+          {
+            itemId: "item-1",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "submitted",
+            order: 0,
+            draft: {
+              text: "What is 2+2?",
+              problemType: "short-answer",
+              correctAnswer: "4",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: { submittedProblemId: "problem-1" },
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+          {
+            itemId: "item-2",
+            imageId: "img-1",
+            batchId: "batch-1",
+            status: "submit-failed",
+            order: 1,
+            draft: {
+              text: "What is 3+3?",
+              problemType: "short-answer",
+              correctAnswer: "6",
+            },
+            extraction: {},
+            retryCount: 0,
+            submit: { failureMessage: "Invalid draft" },
+            origin: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-submit-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-submit-summary")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId("bulk-submit-retry-item-2"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("bulk-submit-delete-item-2"),
+    ).toBeInTheDocument();
   });
 });

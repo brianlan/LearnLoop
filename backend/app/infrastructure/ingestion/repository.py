@@ -543,10 +543,14 @@ async def reset_item_for_retry(
             continue
         status = item.get("status")
         lease_until = item.get("leaseUntil")
-        if status == ItemState.FAILED.value or (
-            status == ItemState.EXTRACTING.value
-            and isinstance(lease_until, datetime)
-            and lease_until <= now
+        if (
+            status == ItemState.FAILED.value
+            or status == ItemState.SUBMIT_FAILED.value
+            or (
+                status == ItemState.EXTRACTING.value
+                and isinstance(lease_until, datetime)
+                and lease_until <= now
+            )
         ):
             item["status"] = ItemState.QUEUED.value
             item["leaseUntil"] = None
