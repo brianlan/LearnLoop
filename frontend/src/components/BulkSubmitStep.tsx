@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BulkBatch, BulkItem } from "@/types/bulkIngestion";
+
+const POLL_INTERVAL_MS = 2500;
 
 export interface BulkSubmitStepProps {
   batch: BulkBatch;
   isLoading: boolean;
   onSubmit: (batchId: string) => void | Promise<void>;
+  onRefresh?: (batchId: string) => void | Promise<void>;
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
 }
@@ -55,11 +58,22 @@ export function BulkSubmitStep({
   batch,
   isLoading,
   onSubmit,
+  onRefresh,
   onRetry,
   onDelete,
 }: BulkSubmitStepProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>("");
+
+  useEffect(() => {
+    if (batch.status !== "active" || !onRefresh) return;
+
+    const id = window.setInterval(() => {
+      onRefresh(batch.id);
+    }, POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(id);
+  }, [batch.id, batch.status, onRefresh]);
 
   const items = useMemo(
     () => [...batch.items].sort((a, b) => a.order - b.order),

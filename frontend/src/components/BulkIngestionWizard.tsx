@@ -29,6 +29,17 @@ import { BulkSubmitStep } from "./BulkSubmitStep";
 
 export type { BulkWizardStep };
 
+const BATCH_EXPIRED_STATUS = 409;
+const BATCH_EXPIRED_CODE = "BATCH_EXPIRED";
+
+function isBatchExpiredError(err: unknown): err is ApiError {
+  return (
+    err instanceof ApiError &&
+    err.status === BATCH_EXPIRED_STATUS &&
+    err.code === BATCH_EXPIRED_CODE
+  );
+}
+
 interface BulkIngestionWizardProps {
   initialBatchId?: string;
   onComplete?: () => void;
@@ -84,6 +95,20 @@ export function BulkIngestionWizard({
     setBatch(nextBatch);
     setStep(deriveStep(nextBatch));
   }, []);
+
+  const handleExpiredBatch = useCallback(async () => {
+    if (!batch) {
+      setError("This batch has expired.");
+      return;
+    }
+    try {
+      const response = await getBatch(batch.id);
+      setBatchAndStep(response.batch);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "This batch has expired.");
+    }
+  }, [batch, setBatchAndStep]);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,9 +167,13 @@ export function BulkIngestionWizard({
         const response = await uploadBatchImages(batch.id, fileArray);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setUploadError(
-          err instanceof Error ? err.message : "Failed to upload images",
-        );
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setUploadError(
+            err instanceof Error ? err.message : "Failed to upload images",
+          );
+        }
       } finally {
         setIsLoading(false);
       }
@@ -160,10 +189,14 @@ export function BulkIngestionWizard({
         const response = await detectImageBoxes(batch.id, imageId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to detect boxes");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to detect boxes");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleSaveBoxes = useCallback(
@@ -174,10 +207,14 @@ export function BulkIngestionWizard({
         const response = await saveImageBoxes(batch.id, imageId, boxes, subject);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to save boxes");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to save boxes");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleCommit = useCallback(
@@ -188,10 +225,14 @@ export function BulkIngestionWizard({
         const response = await commitImage(batch.id, imageId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to commit image");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to commit image");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleDeleteImage = useCallback(
@@ -202,10 +243,14 @@ export function BulkIngestionWizard({
         const response = await deleteImage(batch.id, imageId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete image");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to delete image");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleRefreshBatch = useCallback(
@@ -214,10 +259,13 @@ export function BulkIngestionWizard({
         const response = await getBatch(batchId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to refresh batch");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        }
+        // Polling failures are intentionally not surfaced as blocking errors.
       }
     },
-    [setBatchAndStep],
+    [handleExpiredBatch, setBatchAndStep],
   );
 
   const handleUpdateItemDraft = useCallback(
@@ -227,10 +275,14 @@ export function BulkIngestionWizard({
         const response = await updateItemDraft(batch.id, itemId, draft);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to save draft");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to save draft");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleRetryItem = useCallback(
@@ -241,10 +293,14 @@ export function BulkIngestionWizard({
         const response = await retryItem(batch.id, itemId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to retry item");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to retry item");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleDeleteItem = useCallback(
@@ -255,10 +311,14 @@ export function BulkIngestionWizard({
         const response = await deleteBatchItem(batch.id, itemId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete item");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to delete item");
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleUndoDeleteItem = useCallback(
@@ -269,18 +329,31 @@ export function BulkIngestionWizard({
         const response = await undoDeleteBatchItem(batch.id, itemId);
         setBatchAndStep(response.batch);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to restore item",
-        );
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        } else {
+          setError(
+            err instanceof Error ? err.message : "Failed to restore item",
+          );
+        }
       }
     },
-    [batch, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleSubmit = useCallback(
     async (batchId: string) => {
       setError("");
-      await submitBatch(batchId);
+      try {
+        await submitBatch(batchId);
+      } catch (err) {
+        if (isBatchExpiredError(err)) {
+          const response = await getBatch(batchId);
+          setBatchAndStep(response.batch);
+          return;
+        }
+        throw err;
+      }
       const response = await getBatch(batchId);
       setBatchAndStep(response.batch);
     },
@@ -302,18 +375,21 @@ export function BulkIngestionWizard({
           if (!cancelled) setBatchAndStep(response.batch);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to start extraction",
-          );
+        if (cancelled) return;
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+          return;
         }
+        setError(
+          err instanceof Error ? err.message : "Failed to start extraction",
+        );
       }
     }
     kickoff();
     return () => {
       cancelled = true;
     };
-  }, [step, batch?.id]);
+  }, [step, batch?.id, handleExpiredBatch]);
 
   if (isLoading) {
     return (
@@ -349,6 +425,9 @@ export function BulkIngestionWizard({
     return (
       <div data-testid="bulk-wizard-expired" style={{ padding: "24px", textAlign: "center" }}>
         <p>This batch has expired.</p>
+        <p style={{ fontSize: "0.9em", color: "var(--color-text-muted)" }}>
+          Your work could not be saved. Start a new ingestion session.
+        </p>
         <button type="button" onClick={handleCreateBatch} style={{ marginTop: "16px" }}>
           Start a new batch
         </button>
@@ -357,14 +436,27 @@ export function BulkIngestionWizard({
   }
 
   if (batch?.status === "completed" || step === "complete") {
+    const submittedCount =
+      batch?.items.filter((item) => item.status === "submitted").length ?? 0;
     return (
       <div data-testid="bulk-wizard-complete" style={{ padding: "24px", textAlign: "center" }}>
-        <p>All done.</p>
-        {onComplete && (
-          <button type="button" onClick={onComplete} style={{ marginTop: "16px" }}>
-            Finish
+        <p>{batch?.status === "completed" ? "Batch completed." : "All items submitted."}</p>
+        <p
+          data-testid="bulk-wizard-complete-count"
+          style={{ fontSize: "0.9em", color: "var(--color-text-muted)" }}
+        >
+          {submittedCount} problem(s) created
+        </p>
+        <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginTop: "16px" }}>
+          <button type="button" onClick={handleCreateBatch} data-testid="bulk-wizard-start-new">
+            Start a new batch
           </button>
-        )}
+          {onComplete && (
+            <button type="button" onClick={onComplete} data-testid="bulk-wizard-finish">
+              Finish
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -481,6 +573,7 @@ export function BulkIngestionWizard({
             batch={batch}
             isLoading={isLoading}
             onSubmit={handleSubmit}
+            onRefresh={handleRefreshBatch}
             onRetry={handleRetryItem}
             onDelete={handleDeleteItem}
           />

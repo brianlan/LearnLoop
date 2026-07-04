@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { BulkIngestionWizard } from "./BulkIngestionWizard";
 import { ApiError } from "@/api/client";
-import type { BatchResponse, BulkBatch } from "@/types/bulkIngestion";
+import type { BatchResponse, BulkBatch, BulkImage, BulkItem } from "@/types/bulkIngestion";
 
 const mocks = vi.hoisted(() => ({
   getActiveBatch: vi.fn<() => Promise<BatchResponse>>(),
@@ -48,6 +48,82 @@ function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
     createdAt: "2026-07-03T00:00:00Z",
     updatedAt: "2026-07-03T00:00:00Z",
     expiresAt: "2026-07-04T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function committedImage(overrides: Partial<BulkImage> = {}): BulkImage {
+  return {
+    imageId: "img-1",
+    status: "committed",
+    order: 0,
+    sourceImage: { bucket: "b", objectKey: "k" },
+    boxes: [],
+    detection: {},
+    createdAt: "2026-07-03T00:00:00Z",
+    updatedAt: "2026-07-03T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function queuedItem(overrides: Partial<BulkItem> = {}): BulkItem {
+  return {
+    itemId: "item-1",
+    imageId: "img-1",
+    batchId: "batch-1",
+    status: "queued",
+    order: 0,
+    draft: {},
+    extraction: {},
+    retryCount: 0,
+    submit: {},
+    origin: {},
+    createdAt: "2026-07-03T00:00:00Z",
+    updatedAt: "2026-07-03T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function readyItem(overrides: Partial<BulkItem> = {}): BulkItem {
+  return {
+    itemId: "item-1",
+    imageId: "img-1",
+    batchId: "batch-1",
+    status: "ready",
+    order: 0,
+    draft: {
+      text: "What is 2+2?",
+      problemType: "short-answer",
+      correctAnswer: "4",
+    },
+    extraction: {},
+    retryCount: 0,
+    submit: {},
+    origin: {},
+    createdAt: "2026-07-03T00:00:00Z",
+    updatedAt: "2026-07-03T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function submittedItem(overrides: Partial<BulkItem> = {}): BulkItem {
+  return {
+    itemId: "item-1",
+    imageId: "img-1",
+    batchId: "batch-1",
+    status: "submitted",
+    order: 0,
+    draft: {
+      text: "What is 2+2?",
+      problemType: "short-answer",
+      correctAnswer: "4",
+    },
+    extraction: {},
+    retryCount: 0,
+    submit: { submittedProblemId: "problem-1" },
+    origin: {},
+    createdAt: "2026-07-03T00:00:00Z",
+    updatedAt: "2026-07-03T00:00:00Z",
     ...overrides,
   };
 }
@@ -959,5 +1035,216 @@ describe("BulkIngestionWizard", () => {
     expect(
       screen.getByTestId("bulk-submit-delete-item-2"),
     ).toBeInTheDocument();
+  });
+
+  it("resumes an unexpired batch at the review step via initialBatchId", async () => {
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        id: "batch-resume",
+        images: [committedImage()],
+        items: [queuedItem()],
+      }),
+    });
+    mocks.startBatchExtraction.mockResolvedValue({
+      batch: makeBatch({
+        id: "batch-resume",
+        images: [committedImage()],
+        items: [queuedItem()],
+      }),
+    });
+
+    render(<BulkIngestionWizard initialBatchId="batch-resume" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    expect(mocks.getBatch).toHaveBeenCalledWith("batch-resume");
+  });
+
+  it("restores the submit step from a server-backed ready batch", async () => {
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        id: "batch-resume",
+        images: [committedImage()],
+        items: [readyItem()],
+      }),
+    });
+
+    render(<BulkIngestionWizard initialBatchId="batch-resume" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+  });
+
+  it("transitions to expired UX when a review poll returns BATCH_EXPIRED", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [committedImage()],
+        items: [queuedItem()],
+      }),
+    });
+    mocks.startBatchExtraction.mockResolvedValue({
+      batch: makeBatch({
+        images: [committedImage()],
+        items: [queuedItem()],
+      }),
+    });
+    let getBatchCalls = 0;
+    mocks.getBatch.mockImplementation(() => {
+      getBatchCalls++;
+      if (getBatchCalls === 1) {
+        return Promise.reject(
+          new ApiError("Batch has expired", 409, "BATCH_EXPIRED"),
+        );
+      }
+      return Promise.resolve({ batch: makeBatch({ status: "expired" }) });
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-expired")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/has expired/i)).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("transitions to expired UX when a submit-step poll returns BATCH_EXPIRED", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [committedImage()],
+        items: [readyItem()],
+      }),
+    });
+    let getBatchCalls = 0;
+    mocks.getBatch.mockImplementation(() => {
+      getBatchCalls++;
+      if (getBatchCalls === 1) {
+        return Promise.reject(
+          new ApiError("Batch has expired", 409, "BATCH_EXPIRED"),
+        );
+      }
+      return Promise.resolve({ batch: makeBatch({ status: "expired" }) });
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-expired")).toBeInTheDocument();
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("transitions to expired UX when a mutation returns BATCH_EXPIRED", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [committedImage()],
+        items: [readyItem()],
+      }),
+    });
+    mocks.submitBatch.mockRejectedValue(
+      new ApiError("Batch has expired", 409, "BATCH_EXPIRED"),
+    );
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({ status: "expired" }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-submit-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-expired")).toBeInTheDocument();
+    });
+  });
+
+  it("renders completed batch state with summary and start-new-batch control", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        status: "completed",
+        images: [committedImage()],
+        items: [submittedItem()],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-complete")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Batch completed/i)).toBeInTheDocument();
+    expect(
+      screen.getByTestId("bulk-wizard-complete-count"),
+    ).toHaveTextContent("1 problem(s) created");
+    expect(
+      screen.getByTestId("bulk-wizard-start-new"),
+    ).toBeInTheDocument();
+  });
+
+  it("calls onComplete when the finish button is clicked", async () => {
+    const onComplete = vi.fn();
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        status: "completed",
+        images: [committedImage()],
+        items: [submittedItem()],
+      }),
+    });
+
+    render(<BulkIngestionWizard onComplete={onComplete} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-complete")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-finish"));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a new batch from the completed state", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        status: "completed",
+        images: [committedImage()],
+        items: [submittedItem()],
+      }),
+    });
+    mocks.createBatch.mockResolvedValue({
+      batch: makeBatch({ id: "batch-new", status: "active" }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-complete")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-start-new"));
+
+    await waitFor(() => {
+      expect(mocks.createBatch).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-upload-input")).toBeInTheDocument();
+    });
   });
 });
