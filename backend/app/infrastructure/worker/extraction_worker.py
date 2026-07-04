@@ -68,8 +68,12 @@ def _is_item_claimable(item: dict[str, Any], now: datetime) -> bool:
         return True
     if status == ItemState.EXTRACTING.value:
         lease_until = item.get("leaseUntil")
-        if lease_until is None or (isinstance(lease_until, datetime) and lease_until <= now):
+        if lease_until is None:
             return True
+        if isinstance(lease_until, datetime):
+            if lease_until.tzinfo is None:
+                lease_until = lease_until.replace(tzinfo=UTC)
+            return lease_until <= now
     return False
 
 

@@ -3,10 +3,6 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { IngestPage } from "./IngestPage";
 
-vi.mock("@/hooks/useTagSuggestions", () => ({
-  useTagSuggestions: () => [],
-}));
-
 const mockNavigate = vi.fn();
 
 vi.mock("react-router-dom", async () => {
@@ -16,6 +12,10 @@ vi.mock("react-router-dom", async () => {
     useNavigate: () => mockNavigate,
   };
 });
+
+vi.mock("@/components/BulkIngestionWizard", () => ({
+  BulkIngestionWizard: () => <div data-testid="bulk-ingestion-wizard" />,
+}));
 
 describe("IngestPage", () => {
   beforeEach(() => {
@@ -28,16 +28,16 @@ describe("IngestPage", () => {
         <IngestPage />
       </MemoryRouter>
     );
-    expect(screen.getByText("Ingest New Problem")).toBeInTheDocument();
+    expect(screen.getByText("Ingest New Problems")).toBeInTheDocument();
   });
 
-  it("renders the IngestionWizard component", () => {
+  it("renders the BulkIngestionWizard component", () => {
     render(
       <MemoryRouter>
         <IngestPage />
       </MemoryRouter>
     );
-    expect(screen.getByTestId("ingestion-wizard")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-ingestion-wizard")).toBeInTheDocument();
   });
 
   it("renders wizard in the main content area", () => {
@@ -57,6 +57,6 @@ describe("IngestPage", () => {
       </MemoryRouter>
     );
     const heading = screen.getByRole("heading", { level: 1 });
-    expect(heading).toHaveTextContent("Ingest New Problem");
+    expect(heading).toHaveTextContent("Ingest New Problems");
   });
 });

@@ -56,6 +56,8 @@ def is_batch_expired(batch: Document, *, now: datetime | None = None) -> bool:
     expires_at = batch.get("expiresAt")
     if not isinstance(expires_at, datetime):
         return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
     return expires_at < (now or _now())
 
 
