@@ -7,6 +7,7 @@ import { LatexText } from "./LatexText";
 const POLL_INTERVAL_MS = 2500;
 const BASE_RETRY_MS = 500;
 const MAX_RETRY_MS = 4000;
+const ACTION_REQUIRED_BORDER = "2px solid var(--color-error, #dc2626)";
 
 function retryDelayMs(failureCount: number): number {
   return Math.min(BASE_RETRY_MS * 2 ** failureCount, MAX_RETRY_MS);
@@ -58,6 +59,14 @@ function statusLabel(status: string): string {
     default:
       return status;
   }
+}
+
+function getRequiredFieldGaps(draft: BulkDraft) {
+  return {
+    text: !draft.text || draft.text.trim() === "",
+    problemType: !draft.problemType,
+    correctAnswer: !draft.correctAnswer || draft.correctAnswer.trim() === "",
+  };
 }
 
 export interface BulkReviewStepProps {
@@ -287,13 +296,15 @@ export function BulkReviewStep({
     selectedItem.status !== "extracting" &&
     selectedItem.status !== "submitted";
   const currentDraft = getItemDraft(selectedItem);
-  const isWorking = isLoading || savingItems.has(selectedItem.itemId);
+  const isActionWorking = isLoading || savingItems.has(selectedItem.itemId);
+  const isFieldDisabled = !isEditable || isLoading;
   const saveFailureCount = saveFailures[selectedItem.itemId] ?? 0;
   const hasSaveFailed = saveFailureCount > 0;
   const activeItems = items.filter((item) => item.status !== "deleted");
-  const continueDisabledReasons = activeItems.flatMap((item) => {
+  const itemValidation = activeItems.map((item) => {
     const reasons: string[] = [];
     const draft = getItemDraft(item);
+    const requiredFieldGaps = getRequiredFieldGaps(draft);
     if (item.status === "queued" || item.status === "extracting") {
       reasons.push(`Item ${item.order + 1}: Extraction is still running`);
     } else if (item.status === "failed") {
@@ -310,8 +321,17 @@ export function BulkReviewStep({
     if (!draft.correctAnswer || draft.correctAnswer.trim() === "") {
       reasons.push(`Item ${item.order + 1}: Correct answer is required`);
     }
-    return reasons;
+    return { itemId: item.itemId, reasons, requiredFieldGaps };
   });
+  const itemValidationById = new Map(
+    itemValidation.map((validation) => [validation.itemId, validation]),
+  );
+  const selectedValidation = itemValidationById.get(selectedItem.itemId);
+  const selectedRequiredFieldGaps =
+    selectedValidation?.requiredFieldGaps ?? getRequiredFieldGaps(currentDraft);
+  const continueDisabledReasons = itemValidation.flatMap(
+    (validation) => validation.reasons,
+  );
   if (activeItems.length === 0) {
     continueDisabledReasons.push("No items to submit");
   }
@@ -371,11 +391,21 @@ export function BulkReviewStep({
                 <button
                   type="button"
                   data-testid={`bulk-review-item-${item.itemId}`}
+                  data-action-required={
+                    (itemValidationById.get(item.itemId)?.reasons.length ?? 0) > 0
+                      ? "true"
+                      : "false"
+                  }
                   onClick={() => setSelectedItemId(item.itemId)}
                   disabled={item.itemId === selectedItem.itemId}
                   style={{
                     width: "100%",
                     textAlign: "left",
+                    border:
+                      (itemValidationById.get(item.itemId)?.reasons.length ?? 0) > 0
+                        ? ACTION_REQUIRED_BORDER
+                        : "2px solid transparent",
+                    borderRadius: "6px",
                     background:
                       item.itemId === selectedItem.itemId
                         ? "var(--color-primary)"
@@ -425,7 +455,7 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-retry"
                   onClick={() => onRetry(selectedItem.itemId)}
-                  disabled={isWorking}
+                  disabled={isActionWorking}
                 >
                   Retry extraction
                 </button>
@@ -435,7 +465,7 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-undo"
                   onClick={() => onUndoDelete(selectedItem.itemId)}
-                  disabled={isWorking}
+                  disabled={isActionWorking}
                 >
                   Undo delete
                 </button>
@@ -444,7 +474,7 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-delete"
                   onClick={() => onDelete(selectedItem.itemId)}
-                  disabled={isWorking}
+                  disabled={isActionWorking}
                 >
                   Delete
                 </button>
@@ -484,9 +514,14 @@ export function BulkReviewStep({
                 onChange={(event) =>
                   updateDraft(selectedItem.itemId, { text: event.target.value })
                 }
-                disabled={!isEditable || isWorking}
+                disabled={isFieldDisabled}
                 rows={4}
-                style={{ width: "100%" }}
+                style={{
+                  width: "100%",
+                  border: selectedRequiredFieldGaps.text
+                    ? ACTION_REQUIRED_BORDER
+                    : undefined,
+                }}
               />
             </label>
 
@@ -528,8 +563,13 @@ export function BulkReviewStep({
                       problemType: event.target.value,
                     })
                   }
-                  disabled={!isEditable || isWorking}
-                  style={{ width: "100%" }}
+                  disabled={isFieldDisabled}
+                  style={{
+                    width: "100%",
+                    border: selectedRequiredFieldGaps.problemType
+                      ? ACTION_REQUIRED_BORDER
+                      : undefined,
+                  }}
                 >
                   {PROBLEM_TYPES.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -549,7 +589,7 @@ export function BulkReviewStep({
                       subject: event.target.value,
                     })
                   }
-                  disabled={!isEditable || isWorking}
+                  disabled={isFieldDisabled}
                   style={{ width: "100%" }}
                 >
                   {SUBJECTS.map((option) => (
@@ -572,8 +612,13 @@ export function BulkReviewStep({
                     correctAnswer: event.target.value,
                   })
                 }
-                disabled={!isEditable || isWorking}
-                style={{ width: "100%" }}
+                disabled={isFieldDisabled}
+                style={{
+                  width: "100%",
+                  border: selectedRequiredFieldGaps.correctAnswer
+                    ? ACTION_REQUIRED_BORDER
+                    : undefined,
+                }}
               />
             </label>
 
@@ -587,7 +632,7 @@ export function BulkReviewStep({
                     graphDsl: event.target.value,
                   })
                 }
-                disabled={!isEditable || isWorking}
+                disabled={isFieldDisabled}
                 rows={10}
                 style={{
                   width: "100%",
@@ -622,26 +667,13 @@ export function BulkReviewStep({
               }
               suggestions={tagSuggestions}
               placeholder="Add a tag..."
-              disabled={!isEditable || isWorking}
+              disabled={isFieldDisabled}
               label="Tags"
               testId="bulk-review-tags"
             />
           </div>
         </div>
       </div>
-
-      {continueDisabledReasons.length > 0 && (
-        <div
-          data-testid="bulk-review-continue-reasons"
-          style={{ marginTop: "16px", fontSize: "0.9em" }}
-        >
-          {continueDisabledReasons.map((reason) => (
-            <div key={reason} data-testid="bulk-review-continue-reason">
-              {reason}
-            </div>
-          ))}
-        </div>
-      )}
 
       <div style={{ marginTop: "16px", textAlign: "right" }}>
         <button

@@ -291,8 +291,13 @@ describe("BulkReviewStep", () => {
     );
 
     expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
-    expect(screen.getByTestId("bulk-review-continue-reasons")).toHaveTextContent(
-      "Correct answer is required",
+    expect(screen.queryByTestId("bulk-review-continue-reasons")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-item-item-1")).toHaveAttribute(
+      "data-action-required",
+      "true",
+    );
+    expect(screen.getByTestId("bulk-review-answer").style.border).toBe(
+      "2px solid var(--color-error, #dc2626)",
     );
   });
 
@@ -461,6 +466,44 @@ describe("BulkReviewStep", () => {
       "item-1",
       expect.objectContaining({ correctAnswer: "second" }),
     );
+  });
+
+  it("keeps focused fields enabled while autosaving", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const answerInput = screen.getByTestId("bulk-review-answer");
+    answerInput.focus();
+    fireEvent.change(answerInput, { target: { value: "focused answer" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+    expect(answerInput).not.toBeDisabled();
+    expect(answerInput).toHaveFocus();
+
+    await act(async () => {
+      resolveSave(undefined);
+    });
   });
 
   it("disables fields and shows undo for deleted items", () => {

@@ -231,6 +231,46 @@ test.describe("Bulk ingestion E2E", () => {
     await submitBatchAndVerifyCount(page, 1);
   });
 
+  test("keeps review editors focused while autosaving", async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(60000);
+
+    const session = await createSession(request);
+    await addAuthenticatedSession(page, session);
+
+    await uploadImages(page, ["problem-a.png"]);
+    await detectAndCommitAll(page);
+
+    const batchId = await getActiveBatchId(request, session);
+    await waitForAllItemsReady(request, session, batchId);
+
+    await page.reload();
+    await waitForStep(page, "review");
+
+    const answerInput = page.getByTestId("bulk-review-answer");
+    await answerInput.fill("focus answer");
+    await expect(answerInput).toBeFocused();
+    await page.waitForTimeout(700);
+    await expect(answerInput).toBeFocused();
+
+    const graphDslInput = page.getByTestId("bulk-review-graphdsl");
+    await graphDslInput.fill("board.create('point', [0, 0]);");
+    await expect(graphDslInput).toBeFocused();
+    await page.waitForTimeout(700);
+    await expect(graphDslInput).toBeFocused();
+
+    const tagInput = page.getByTestId("bulk-review-tags-field");
+    await tagInput.fill("focus-tag");
+    await tagInput.press("Enter");
+    await expect(tagInput).toBeFocused();
+    await page.waitForTimeout(700);
+    await expect(tagInput).toBeFocused();
+    await tagInput.fill("second-tag");
+    await expect(tagInput).toHaveValue("second-tag");
+  });
+
   test("recovers from detection failure after retry", async ({
     page,
     request,
