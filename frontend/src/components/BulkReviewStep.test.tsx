@@ -268,6 +268,34 @@ describe("BulkReviewStep", () => {
     expect(screen.getByTestId("bulk-review-tags-suggestion-algebra")).toBeInTheDocument();
   });
 
+  it("uses tags added to one bulk item as suggestions for another item", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const firstTagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(firstTagInput, { target: { value: "calculus-new" } });
+    fireEvent.keyDown(firstTagInput, { key: "Enter", code: "Enter" });
+
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+
+    const secondTagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(secondTagInput, { target: { value: "cal" } });
+
+    expect(
+      screen.getByTestId("bulk-review-tags-suggestion-calculus-new"),
+    ).toBeInTheDocument();
+  });
+
   it("requires complete draft fields before continuing to submit", () => {
     render(
       <BulkReviewStep

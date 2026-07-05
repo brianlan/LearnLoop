@@ -124,6 +124,29 @@ export function BulkReviewStep({
     [localDrafts],
   );
 
+  const reviewTagSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+
+    const addTag = (tag: string) => {
+      const trimmed = tag.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      merged.push(trimmed);
+    };
+
+    for (const tag of tagSuggestions) {
+      addTag(tag);
+    }
+    for (const item of items) {
+      for (const tag of getItemDraft(item).tags ?? []) {
+        addTag(tag);
+      }
+    }
+
+    return merged;
+  }, [getItemDraft, items, tagSuggestions]);
+
   const updateDraft = useCallback(
     (itemId: string, next: Partial<BulkDraft>) => {
       setLocalDrafts((prev) => {
@@ -665,7 +688,7 @@ export function BulkReviewStep({
               onChange={(tags) =>
                 updateDraft(selectedItem.itemId, { tags })
               }
-              suggestions={tagSuggestions}
+              suggestions={reviewTagSuggestions}
               placeholder="Add a tag..."
               disabled={isFieldDisabled}
               label="Tags"
