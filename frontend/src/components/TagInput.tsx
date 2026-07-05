@@ -24,6 +24,7 @@ export function TagInput({
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [hoveredRemoveTag, setHoveredRemoveTag] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const filteredSuggestions = useMemo(() => {
     const trimmedInput = inputValue.trim().toLowerCase();
@@ -71,12 +72,22 @@ export function TagInput({
     setHighlightedIndex(0);
   };
 
+  const refocusInput = () => {
+    const scheduleFocus =
+      window.requestAnimationFrame ??
+      ((callback: FrameRequestCallback) => window.setTimeout(callback, 0));
+    scheduleFocus(() => {
+      inputRef.current?.focus();
+    });
+  };
+
   const addTag = (value: string) => {
     const segments = value.split(/[,;]/).map((s) => s.trim()).filter((s) => s.length > 0);
 
     if (segments.length === 0) {
       setInputValue("");
       closeSuggestions();
+      refocusInput();
       return;
     }
 
@@ -91,6 +102,7 @@ export function TagInput({
 
     setInputValue("");
     closeSuggestions();
+    refocusInput();
   };
 
   const removeTag = (tagToRemove: string) => {
@@ -225,6 +237,7 @@ export function TagInput({
         ))}
 
         <input
+          ref={inputRef}
           type="text"
           role="combobox"
           aria-expanded={showSuggestions}

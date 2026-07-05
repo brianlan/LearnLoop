@@ -34,5 +34,8 @@ def validate_boxes(
             if x < 0 or y < 0 or x + width > image_width or y + height > image_height:
                 raise InvalidBoxError(f"Box {index} exceeds image bounds")
 
-        validated.append({"x": x, "y": y, "width": width, "height": height})
+        box_id = str(box.get("boxId") or f"box-{index + 1}")
+        validated.append(
+            {"boxId": box_id, "x": x, "y": y, "width": width, "height": height}
+        )
     return validated

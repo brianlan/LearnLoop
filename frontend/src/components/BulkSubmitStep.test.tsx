@@ -47,6 +47,7 @@ describe("BulkSubmitStep", () => {
     onSubmit: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
+    onBackToReview: vi.fn(),
   };
 
   beforeEach(() => {
@@ -66,6 +67,20 @@ describe("BulkSubmitStep", () => {
     expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
     expect(screen.getByTestId("bulk-submit-queue")).toBeInTheDocument();
     expect(screen.getByTestId("bulk-submit-item-item-1")).toBeInTheDocument();
+  });
+
+  it("calls onBackToReview from the back button", () => {
+    render(
+      <BulkSubmitStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-submit-back-review"));
+
+    expect(handlers.onBackToReview).toHaveBeenCalledTimes(1);
   });
 
   it("enables submit when all active items are ready with required fields", () => {

@@ -10,6 +10,7 @@ export interface BulkSubmitStepProps {
   onRefresh?: (batchId: string) => void | Promise<void>;
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
+  onBackToReview?: () => void;
 }
 
 function statusLabel(status: string): string {
@@ -61,6 +62,7 @@ export function BulkSubmitStep({
   onRefresh,
   onRetry,
   onDelete,
+  onBackToReview,
 }: BulkSubmitStepProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>("");
@@ -132,7 +134,27 @@ export function BulkSubmitStep({
 
   return (
     <div data-testid="bulk-wizard-submit-step">
-      <h2>Submit items</h2>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "12px",
+          marginBottom: "16px",
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Submit items</h2>
+        {onBackToReview && (
+          <button
+            type="button"
+            data-testid="bulk-submit-back-review"
+            onClick={onBackToReview}
+            disabled={isLoading || isSubmitting}
+          >
+            Back to review
+          </button>
+        )}
+      </div>
 
       {submitError && (
         <div

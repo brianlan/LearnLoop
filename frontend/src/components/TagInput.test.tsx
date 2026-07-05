@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TagInput } from "./TagInput";
 
@@ -32,6 +32,19 @@ describe("TagInput", () => {
     await user.type(screen.getByTestId("tags-input-field"), "geometry{enter}");
 
     expect(onChange).toHaveBeenCalledWith(["math", "geometry"]);
+  });
+
+  it("keeps focus on the input after adding a tag", async () => {
+    const user = userEvent.setup();
+
+    render(<TagInput tags={[]} onChange={vi.fn()} testId="tags-input" />);
+
+    const input = screen.getByTestId("tags-input-field");
+    await user.type(input, "geometry{enter}");
+
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
   });
 
   it("does not add duplicate tags", async () => {

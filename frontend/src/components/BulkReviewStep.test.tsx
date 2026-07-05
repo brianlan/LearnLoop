@@ -67,6 +67,7 @@ describe("BulkReviewStep", () => {
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
+    onContinue: vi.fn(),
   };
 
   beforeEach(() => {
@@ -95,6 +96,117 @@ describe("BulkReviewStep", () => {
       "src",
       "http://example.com/crop-item-1.png",
     );
+  });
+
+  it("uses a narrow item list column", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-layout")).toHaveStyle({
+      gridTemplateColumns: "120px 1fr",
+    });
+  });
+
+  it("renders text and graph previews and a resizable Graph DSL editor", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              draft: {
+                text: "Compute $x^2$",
+                problemType: "short-answer",
+                graphDsl: "board.create('point', [0, 0]);",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text-preview")).toHaveTextContent(
+      "Compute",
+    );
+    expect(screen.getByTestId("graph-sandbox")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-graphdsl")).toHaveStyle({
+      resize: "vertical",
+      minHeight: "180px",
+    });
+  });
+
+  it("shows tag autocomplete suggestions from existing tags", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        tagSuggestions={["algebra", "geometry"]}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), {
+      target: { value: "a" },
+    });
+
+    expect(screen.getByTestId("bulk-review-tags-suggestion-algebra")).toBeInTheDocument();
+  });
+
+  it("requires complete draft fields before continuing to submit", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              draft: {
+                text: "What is 2+2?",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
+    expect(screen.getByTestId("bulk-review-continue-reasons")).toHaveTextContent(
+      "Correct answer is required",
+    );
+  });
+
+  it("continues to submit after all active items are ready and valid", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+
+    expect(handlers.onContinue).toHaveBeenCalledTimes(1);
   });
 
   it("disables Previous at the first item and Next at the last item", () => {

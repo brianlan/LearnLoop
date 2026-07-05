@@ -44,6 +44,7 @@ interface BulkIngestionWizardProps {
   initialBatchId?: string;
   onComplete?: () => void;
   onCancel?: () => void;
+  tagSuggestions?: string[];
 }
 
 function deriveStep(batch: BulkBatch): BulkWizardStep {
@@ -64,14 +65,15 @@ function deriveStep(batch: BulkBatch): BulkWizardStep {
       (item) =>
         item.status === "queued" ||
         item.status === "extracting" ||
-        item.status === "failed",
+        item.status === "failed" ||
+        item.status === "ready",
     )
   ) {
     return "review";
   }
   if (
     batch.items.some(
-      (item) => item.status === "ready" || item.status === "submit-failed",
+      (item) => item.status === "submit-failed",
     )
   ) {
     return "submit";
@@ -79,10 +81,30 @@ function deriveStep(batch: BulkBatch): BulkWizardStep {
   return "complete";
 }
 
+function canPreserveSubmitStep(batch: BulkBatch): boolean {
+  if (batch.status !== "active") return false;
+  if (batch.images.some((image) => image.status !== "committed")) return false;
+  return batch.items.some(
+    (item) =>
+      item.status === "ready" ||
+      item.status === "submit-failed" ||
+      item.status === "submitted",
+  );
+}
+
+function canPreserveReviewStep(batch: BulkBatch): boolean {
+  if (batch.status !== "active") return false;
+  if (batch.images.some((image) => image.status !== "committed")) return false;
+  return batch.items.some(
+    (item) => item.status !== "deleted" && item.status !== "submitted",
+  );
+}
+
 export function BulkIngestionWizard({
   initialBatchId,
   onComplete,
   onCancel,
+  tagSuggestions = [],
 }: BulkIngestionWizardProps) {
   const [batch, setBatch] = useState<BulkBatch | null>(null);
   const [step, setStep] = useState<BulkWizardStep>("upload");
@@ -93,7 +115,23 @@ export function BulkIngestionWizard({
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
     setBatch(nextBatch);
-    setStep(deriveStep(nextBatch));
+    setStep((currentStep) => {
+      if (currentStep === "submit" && canPreserveSubmitStep(nextBatch)) {
+        return "submit";
+      }
+      if (currentStep === "review" && canPreserveReviewStep(nextBatch)) {
+        return "review";
+      }
+      return deriveStep(nextBatch);
+    });
+  }, []);
+
+  const handleContinueToSubmit = useCallback(() => {
+    setStep("submit");
+  }, []);
+
+  const handleBackToReview = useCallback(() => {
+    setStep("review");
   }, []);
 
   const handleExpiredBatch = useCallback(async () => {
@@ -362,6 +400,7 @@ export function BulkIngestionWizard({
 
   useEffect(() => {
     if (step !== "review" || !batch || batch.status !== "active") return;
+    if (!batch.items.some((item) => item.status === "queued")) return;
     const batchId = batch.id;
     if (extractionStartedForBatch.current.has(batchId)) return;
     extractionStartedForBatch.current.add(batchId);
@@ -565,6 +604,8 @@ export function BulkIngestionWizard({
             onRetry={handleRetryItem}
             onDelete={handleDeleteItem}
             onUndoDelete={handleUndoDeleteItem}
+            onContinue={handleContinueToSubmit}
+            tagSuggestions={tagSuggestions}
           />
         )}
 
@@ -576,6 +617,7 @@ export function BulkIngestionWizard({
             onRefresh={handleRefreshBatch}
             onRetry={handleRetryItem}
             onDelete={handleDeleteItem}
+            onBackToReview={handleBackToReview}
           />
         )}
       </div>
