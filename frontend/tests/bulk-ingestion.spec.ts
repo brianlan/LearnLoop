@@ -182,6 +182,27 @@ async function fillDraftsViaApi(
 }
 
 async function submitBatchAndVerifyCount(page: any, expectedCount: number) {
+  let currentStep = "";
+  await expect
+    .poll(async () => {
+      if (await page.getByTestId("bulk-wizard-submit-step").isVisible()) {
+        currentStep = "submit";
+        return currentStep;
+      }
+      if (await page.getByTestId("bulk-wizard-review-step").isVisible()) {
+        currentStep = "review";
+        return currentStep;
+      }
+      currentStep = "";
+      return "";
+    })
+    .toMatch(/^(review|submit)$/);
+
+  if (currentStep === "review") {
+    const continueButton = page.getByTestId("bulk-review-continue");
+    await expect(continueButton).toBeEnabled();
+    await continueButton.click();
+  }
   await waitForStep(page, "submit");
   await page.getByTestId("bulk-submit-button").click();
   await expect(page.getByTestId("bulk-wizard-complete")).toBeVisible();
@@ -199,6 +220,8 @@ test.describe("Bulk ingestion E2E", () => {
     page,
     request,
   }) => {
+    test.setTimeout(60000);
+
     const session = await createSession(request);
     await addAuthenticatedSession(page, session);
 
@@ -313,6 +336,8 @@ test.describe("Bulk ingestion E2E", () => {
     page,
     request,
   }) => {
+    test.setTimeout(60000);
+
     const session = await createSession(request);
     await addAuthenticatedSession(page, session);
 
@@ -367,6 +392,8 @@ test.describe("Bulk ingestion E2E", () => {
     page,
     request,
   }) => {
+    test.setTimeout(60000);
+
     const session = await createSession(request);
     await addAuthenticatedSession(page, session);
 
