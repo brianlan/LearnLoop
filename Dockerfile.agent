@@ -1,0 +1,84 @@
+# Stage 1: Extract external binaries
+FROM rustfs/rustfs:1.0.0-beta.4 AS rustfs-bin
+FROM minio/mc:RELEASE.2025-08-13T08-35-41Z AS mc-bin
+
+# Stage 2: Unified agent image build
+FROM ubuntu:20.04
+
+# Avoid interactive prompts during apt installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential system utilities
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    gnupg \
+    ca-certificates \
+    build-essential \
+    libssl-dev \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv (astral)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv
+
+# Install Python 3.11 via uv and symlink it as default python/python3
+RUN uv python install 3.11 && \
+    ln -sf $(uv python find 3.11) /usr/local/bin/python3 && \
+    ln -sf /usr/local/bin/python3 /usr/local/bin/python
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install MongoDB 4.4
+RUN curl -fsSL https://www.mongodb.org/static/pgp/server-4.4.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-4.4.gpg && \
+    echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-4.4.gpg ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-4.4.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    mongodb-org \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binaries from Stage 1
+COPY --from=rustfs-bin /usr/bin/rustfs /usr/local/bin/rustfs
+COPY --from=mc-bin /usr/bin/mc /usr/local/bin/mc
+
+# Setup workspace directory
+WORKDIR /workspace
+
+# Copy backend dependencies structure and install them globally/cached
+COPY backend/pyproject.toml backend/uv.lock backend/README.md ./backend/
+RUN cd backend && uv sync --frozen --no-install-project
+
+# Copy frontend dependencies structure and install them (including Playwright system dependencies)
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci
+
+# Pre-install Playwright browsers and system dependencies inside the image
+RUN cd frontend && npx playwright install --with-deps chromium
+
+# Copy the rest of the application files
+COPY . .
+
+# Setup entrypoint script
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Default environment configuration (matching docker-compose.yml values)
+ENV APP_ENV=development \
+    MONGODB_URI="mongodb://127.0.0.1:27017/learnloop?replicaSet=rs0&directConnection=true" \
+    MONGODB_DATABASE=learnloop \
+    S3_ENDPOINT=http://127.0.0.1:9000 \
+    S3_ACCESS_KEY=learnloop-local \
+    S3_SECRET_KEY=learnloop-secret \
+    S3_BUCKET=learnloop-media \
+    S3_REGION=us-east-1 \
+    S3_FORCE_PATH_STYLE=true
+
+# Expose ports if running interactive dev servers
+EXPOSE 8000 8080 9000 9001 27017
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]

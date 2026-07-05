@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { BoxEditor } from "./BoxEditor";
 import type { BulkImageBox } from "@/types/bulkIngestion";
 import { resetBoxIdCounter } from "@/utils/boxGeometry";
@@ -45,6 +45,41 @@ describe("BoxEditor", () => {
     renderEditor([{ boxId: "b1", x: 10, y: 10, width: 50, height: 30 }]);
     expect(screen.getByTestId("box-editor-image")).toBeInTheDocument();
     expect(screen.getByTestId("box-b1")).toBeInTheDocument();
+  });
+
+  it("remeasures after the image loads", async () => {
+    render(
+      <BoxEditor
+        imageUrl="review.png"
+        naturalWidth={NATURAL_W}
+        naturalHeight={NATURAL_H}
+        boxes={[{ boxId: "b1", x: 10, y: 10, width: 50, height: 30 }]}
+        onChange={vi.fn()}
+      />,
+    );
+    const editor = screen.getByTestId("box-editor");
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 100,
+      top: 0,
+      left: 0,
+      right: 200,
+      bottom: 100,
+      toJSON: () => "",
+    });
+
+    fireEvent.load(screen.getByTestId("box-editor-image"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("box-b1")).toHaveStyle({
+        left: "10px",
+        top: "10px",
+        width: "50px",
+        height: "30px",
+      });
+    });
   });
 
   it("creates a new box by dragging on the image", () => {

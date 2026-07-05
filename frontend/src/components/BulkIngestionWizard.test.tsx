@@ -737,7 +737,7 @@ describe("BulkIngestionWizard", () => {
     });
   });
 
-  it("advances to submit step when all items are ready", async () => {
+  it("keeps ready items in review until the user continues to submit", async () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         images: [
@@ -777,9 +777,22 @@ describe("BulkIngestionWizard", () => {
 
     render(<BulkIngestionWizard />);
     await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("bulk-review-continue")).not.toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+
+    await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
     });
     expect(screen.getByTestId("bulk-submit-button")).not.toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("bulk-submit-back-review"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
   });
 
   it("submits the batch and refreshes to show results", async () => {
@@ -873,6 +886,10 @@ describe("BulkIngestionWizard", () => {
     });
 
     render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
     await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
     });
@@ -1021,6 +1038,10 @@ describe("BulkIngestionWizard", () => {
 
     render(<BulkIngestionWizard />);
     await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+    await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
     });
 
@@ -1061,7 +1082,7 @@ describe("BulkIngestionWizard", () => {
     expect(mocks.getBatch).toHaveBeenCalledWith("batch-resume");
   });
 
-  it("restores the submit step from a server-backed ready batch", async () => {
+  it("restores a server-backed ready batch at the review step", async () => {
     mocks.getBatch.mockResolvedValue({
       batch: makeBatch({
         id: "batch-resume",
@@ -1073,7 +1094,7 @@ describe("BulkIngestionWizard", () => {
     render(<BulkIngestionWizard initialBatchId="batch-resume" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
     });
   });
 
@@ -1140,6 +1161,10 @@ describe("BulkIngestionWizard", () => {
 
     render(<BulkIngestionWizard />);
     await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+    await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
     });
 
@@ -1169,6 +1194,10 @@ describe("BulkIngestionWizard", () => {
     });
 
     render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
     await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
     });

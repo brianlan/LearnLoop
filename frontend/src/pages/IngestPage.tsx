@@ -1,8 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { BulkIngestionWizard } from "@/components/BulkIngestionWizard";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 
 export function IngestPage() {
   const navigate = useNavigate();
+  const tagSuggestions = useTagSuggestions();
 
   const handleComplete = () => {
     navigate("/problems");
@@ -25,7 +27,11 @@ export function IngestPage() {
       >
         Ingest New Problems
       </h1>
-      <BulkIngestionWizard onComplete={handleComplete} onCancel={handleCancel} />
+      <BulkIngestionWizard
+        onComplete={handleComplete}
+        onCancel={handleCancel}
+        tagSuggestions={tagSuggestions}
+      />
     </main>
   );
 }

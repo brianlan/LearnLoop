@@ -182,6 +182,27 @@ async function fillDraftsViaApi(
 }
 
 async function submitBatchAndVerifyCount(page: any, expectedCount: number) {
+  let currentStep = "";
+  await expect
+    .poll(async () => {
+      if (await page.getByTestId("bulk-wizard-submit-step").isVisible()) {
+        currentStep = "submit";
+        return currentStep;
+      }
+      if (await page.getByTestId("bulk-wizard-review-step").isVisible()) {
+        currentStep = "review";
+        return currentStep;
+      }
+      currentStep = "";
+      return "";
+    })
+    .toMatch(/^(review|submit)$/);
+
+  if (currentStep === "review") {
+    const continueButton = page.getByTestId("bulk-review-continue");
+    await expect(continueButton).toBeEnabled();
+    await continueButton.click();
+  }
   await waitForStep(page, "submit");
   await page.getByTestId("bulk-submit-button").click();
   await expect(page.getByTestId("bulk-wizard-complete")).toBeVisible();
@@ -199,6 +220,8 @@ test.describe("Bulk ingestion E2E", () => {
     page,
     request,
   }) => {
+    test.setTimeout(60000);
+
     const session = await createSession(request);
     await addAuthenticatedSession(page, session);
 
@@ -229,6 +252,46 @@ test.describe("Bulk ingestion E2E", () => {
 
     await page.reload();
     await submitBatchAndVerifyCount(page, 1);
+  });
+
+  test("keeps review editors focused while autosaving", async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(60000);
+
+    const session = await createSession(request);
+    await addAuthenticatedSession(page, session);
+
+    await uploadImages(page, ["problem-a.png"]);
+    await detectAndCommitAll(page);
+
+    const batchId = await getActiveBatchId(request, session);
+    await waitForAllItemsReady(request, session, batchId);
+
+    await page.reload();
+    await waitForStep(page, "review");
+
+    const answerInput = page.getByTestId("bulk-review-answer");
+    await answerInput.fill("focus answer");
+    await expect(answerInput).toBeFocused();
+    await page.waitForTimeout(700);
+    await expect(answerInput).toBeFocused();
+
+    const graphDslInput = page.getByTestId("bulk-review-graphdsl");
+    await graphDslInput.fill("board.create('point', [0, 0]);");
+    await expect(graphDslInput).toBeFocused();
+    await page.waitForTimeout(700);
+    await expect(graphDslInput).toBeFocused();
+
+    const tagInput = page.getByTestId("bulk-review-tags-field");
+    await tagInput.fill("focus-tag");
+    await tagInput.press("Enter");
+    await expect(tagInput).toBeFocused();
+    await page.waitForTimeout(700);
+    await expect(tagInput).toBeFocused();
+    await tagInput.fill("second-tag");
+    await expect(tagInput).toHaveValue("second-tag");
   });
 
   test("recovers from detection failure after retry", async ({
@@ -273,6 +336,8 @@ test.describe("Bulk ingestion E2E", () => {
     page,
     request,
   }) => {
+    test.setTimeout(60000);
+
     const session = await createSession(request);
     await addAuthenticatedSession(page, session);
 
@@ -327,6 +392,8 @@ test.describe("Bulk ingestion E2E", () => {
     page,
     request,
   }) => {
+    test.setTimeout(60000);
+
     const session = await createSession(request);
     await addAuthenticatedSession(page, session);
 

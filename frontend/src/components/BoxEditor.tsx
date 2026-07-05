@@ -292,6 +292,9 @@ export function BoxEditor({
         src={imageUrl}
         alt="Review"
         data-testid="box-editor-image"
+        width={naturalWidth}
+        height={naturalHeight}
+        onLoad={refreshSize}
         style={{
           display: "block",
           maxWidth: "100%",

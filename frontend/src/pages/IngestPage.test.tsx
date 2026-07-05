@@ -17,6 +17,10 @@ vi.mock("@/components/BulkIngestionWizard", () => ({
   BulkIngestionWizard: () => <div data-testid="bulk-ingestion-wizard" />,
 }));
 
+vi.mock("@/hooks/useTagSuggestions", () => ({
+  useTagSuggestions: () => ["algebra"],
+}));
+
 describe("IngestPage", () => {
   beforeEach(() => {
     mockNavigate.mockClear();

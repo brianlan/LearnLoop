@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BulkBatch, BulkDraft, BulkItem } from "@/types/bulkIngestion";
 import { TagInput } from "./TagInput";
+import { GraphSandbox } from "./GraphSandbox";
+import { LatexText } from "./LatexText";
 
 const POLL_INTERVAL_MS = 2500;
 const BASE_RETRY_MS = 500;
 const MAX_RETRY_MS = 4000;
+const ACTION_REQUIRED_BORDER = "2px solid var(--color-error, #dc2626)";
 
 function retryDelayMs(failureCount: number): number {
   return Math.min(BASE_RETRY_MS * 2 ** failureCount, MAX_RETRY_MS);
@@ -33,6 +36,10 @@ function defaultDraft(item: BulkItem): BulkDraft {
   };
 }
 
+function serializeDraft(draft: BulkDraft): string {
+  return JSON.stringify(draft);
+}
+
 function statusLabel(status: string): string {
   switch (status) {
     case "queued":
@@ -54,6 +61,14 @@ function statusLabel(status: string): string {
   }
 }
 
+function getRequiredFieldGaps(draft: BulkDraft) {
+  return {
+    text: !draft.text || draft.text.trim() === "",
+    problemType: !draft.problemType,
+    correctAnswer: !draft.correctAnswer || draft.correctAnswer.trim() === "",
+  };
+}
+
 export interface BulkReviewStepProps {
   batch: BulkBatch;
   isLoading: boolean;
@@ -65,6 +80,8 @@ export interface BulkReviewStepProps {
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
   onUndoDelete: (itemId: string) => void | Promise<void>;
+  onContinue: () => void;
+  tagSuggestions?: string[];
 }
 
 export function BulkReviewStep({
@@ -75,6 +92,8 @@ export function BulkReviewStep({
   onRetry,
   onDelete,
   onUndoDelete,
+  onContinue,
+  tagSuggestions = [],
 }: BulkReviewStepProps) {
   const items = useMemo(
     () => [...batch.items].sort((a, b) => a.order - b.order),
@@ -91,6 +110,7 @@ export function BulkReviewStep({
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
   const saveFailuresRef = useRef<Record<string, number>>({});
+  const serverDraftRefs = useRef<Record<string, string>>({});
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
@@ -103,6 +123,29 @@ export function BulkReviewStep({
     },
     [localDrafts],
   );
+
+  const reviewTagSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+
+    const addTag = (tag: string) => {
+      const trimmed = tag.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      merged.push(trimmed);
+    };
+
+    for (const tag of tagSuggestions) {
+      addTag(tag);
+    }
+    for (const item of items) {
+      for (const tag of getItemDraft(item).tags ?? []) {
+        addTag(tag);
+      }
+    }
+
+    return merged;
+  }, [getItemDraft, items, tagSuggestions]);
 
   const updateDraft = useCallback(
     (itemId: string, next: Partial<BulkDraft>) => {
@@ -132,6 +175,36 @@ export function BulkReviewStep({
       return merged;
     });
   }, [selectedItem]);
+
+  useEffect(() => {
+    setLocalDrafts((prev) => {
+      let next = prev;
+      for (const item of items) {
+        const itemId = item.itemId;
+        const serverDraft = defaultDraft(item);
+        const serializedServerDraft = serializeDraft(serverDraft);
+        const previousServerDraft = serverDraftRefs.current[itemId];
+        serverDraftRefs.current[itemId] = serializedServerDraft;
+
+        if (previousServerDraft === serializedServerDraft) continue;
+        if (prev[itemId] === undefined) continue;
+        if (dirtyRefs.current.has(itemId)) continue;
+        if (savingItems.has(itemId)) continue;
+        if (saveFailuresRef.current[itemId] !== undefined) continue;
+        if (serializeDraft(prev[itemId]) === serializedServerDraft) continue;
+
+        if (next === prev) {
+          next = { ...prev };
+        }
+        next[itemId] = serverDraft;
+      }
+
+      if (next !== prev) {
+        draftRefs.current = next;
+      }
+      return next;
+    });
+  }, [items, savingItems]);
 
   useEffect(() => {
     const timeoutIds: Record<string, number> = {};
@@ -246,9 +319,52 @@ export function BulkReviewStep({
     selectedItem.status !== "extracting" &&
     selectedItem.status !== "submitted";
   const currentDraft = getItemDraft(selectedItem);
-  const isWorking = isLoading || savingItems.has(selectedItem.itemId);
+  const isActionWorking = isLoading || savingItems.has(selectedItem.itemId);
+  const isFieldDisabled = !isEditable || isLoading;
   const saveFailureCount = saveFailures[selectedItem.itemId] ?? 0;
   const hasSaveFailed = saveFailureCount > 0;
+  const activeItems = items.filter((item) => item.status !== "deleted");
+  const itemValidation = activeItems.map((item) => {
+    const reasons: string[] = [];
+    const draft = getItemDraft(item);
+    const requiredFieldGaps = getRequiredFieldGaps(draft);
+    if (item.status === "queued" || item.status === "extracting") {
+      reasons.push(`Item ${item.order + 1}: Extraction is still running`);
+    } else if (item.status === "failed") {
+      reasons.push(`Item ${item.order + 1}: Extraction failed`);
+    } else if (item.status !== "ready" && item.status !== "submit-failed") {
+      reasons.push(`Item ${item.order + 1}: Item is not ready`);
+    }
+    if (!draft.text || draft.text.trim() === "") {
+      reasons.push(`Item ${item.order + 1}: Question text is required`);
+    }
+    if (!draft.problemType) {
+      reasons.push(`Item ${item.order + 1}: Problem type is required`);
+    }
+    if (!draft.correctAnswer || draft.correctAnswer.trim() === "") {
+      reasons.push(`Item ${item.order + 1}: Correct answer is required`);
+    }
+    return { itemId: item.itemId, reasons, requiredFieldGaps };
+  });
+  const itemValidationById = new Map(
+    itemValidation.map((validation) => [validation.itemId, validation]),
+  );
+  const selectedValidation = itemValidationById.get(selectedItem.itemId);
+  const selectedRequiredFieldGaps =
+    selectedValidation?.requiredFieldGaps ?? getRequiredFieldGaps(currentDraft);
+  const continueDisabledReasons = itemValidation.flatMap(
+    (validation) => validation.reasons,
+  );
+  if (activeItems.length === 0) {
+    continueDisabledReasons.push("No items to submit");
+  }
+  if (dirtyItems.size > 0 || savingItems.size > 0) {
+    continueDisabledReasons.push("Draft changes are still saving");
+  }
+  if (Object.keys(saveFailures).length > 0) {
+    continueDisabledReasons.push("Draft save failed, retrying");
+  }
+  const canContinue = continueDisabledReasons.length === 0;
 
   return (
     <div data-testid="bulk-wizard-review-step">
@@ -283,9 +399,10 @@ export function BulkReviewStep({
       </div>
 
       <div
+        data-testid="bulk-review-layout"
         style={{
           display: "grid",
-          gridTemplateColumns: "240px 1fr",
+          gridTemplateColumns: "120px 1fr",
           gap: "16px",
         }}
       >
@@ -297,11 +414,21 @@ export function BulkReviewStep({
                 <button
                   type="button"
                   data-testid={`bulk-review-item-${item.itemId}`}
+                  data-action-required={
+                    (itemValidationById.get(item.itemId)?.reasons.length ?? 0) > 0
+                      ? "true"
+                      : "false"
+                  }
                   onClick={() => setSelectedItemId(item.itemId)}
                   disabled={item.itemId === selectedItem.itemId}
                   style={{
                     width: "100%",
                     textAlign: "left",
+                    border:
+                      (itemValidationById.get(item.itemId)?.reasons.length ?? 0) > 0
+                        ? ACTION_REQUIRED_BORDER
+                        : "2px solid transparent",
+                    borderRadius: "6px",
                     background:
                       item.itemId === selectedItem.itemId
                         ? "var(--color-primary)"
@@ -351,7 +478,7 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-retry"
                   onClick={() => onRetry(selectedItem.itemId)}
-                  disabled={isWorking}
+                  disabled={isActionWorking}
                 >
                   Retry extraction
                 </button>
@@ -361,7 +488,7 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-undo"
                   onClick={() => onUndoDelete(selectedItem.itemId)}
-                  disabled={isWorking}
+                  disabled={isActionWorking}
                 >
                   Undo delete
                 </button>
@@ -370,7 +497,7 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-delete"
                   onClick={() => onDelete(selectedItem.itemId)}
-                  disabled={isWorking}
+                  disabled={isActionWorking}
                 >
                   Delete
                 </button>
@@ -410,11 +537,43 @@ export function BulkReviewStep({
                 onChange={(event) =>
                   updateDraft(selectedItem.itemId, { text: event.target.value })
                 }
-                disabled={!isEditable || isWorking}
+                disabled={isFieldDisabled}
                 rows={4}
-                style={{ width: "100%" }}
+                style={{
+                  width: "100%",
+                  border: selectedRequiredFieldGaps.text
+                    ? ACTION_REQUIRED_BORDER
+                    : undefined,
+                }}
               />
             </label>
+
+            <div>
+              <div
+                style={{
+                  fontSize: "0.85em",
+                  fontWeight: 600,
+                  marginBottom: "6px",
+                }}
+              >
+                Text preview
+              </div>
+              <div
+                data-testid="bulk-review-text-preview"
+                style={{
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "6px",
+                  padding: "12px",
+                  minHeight: "64px",
+                  backgroundColor: "var(--color-surface-muted)",
+                }}
+              >
+                <LatexText
+                  text={currentDraft.text ?? ""}
+                  style={{ whiteSpace: "pre-wrap" }}
+                />
+              </div>
+            </div>
 
             <div style={{ display: "flex", gap: "12px" }}>
               <label style={{ flex: 1 }}>
@@ -427,8 +586,13 @@ export function BulkReviewStep({
                       problemType: event.target.value,
                     })
                   }
-                  disabled={!isEditable || isWorking}
-                  style={{ width: "100%" }}
+                  disabled={isFieldDisabled}
+                  style={{
+                    width: "100%",
+                    border: selectedRequiredFieldGaps.problemType
+                      ? ACTION_REQUIRED_BORDER
+                      : undefined,
+                  }}
                 >
                   {PROBLEM_TYPES.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -448,7 +612,7 @@ export function BulkReviewStep({
                       subject: event.target.value,
                     })
                   }
-                  disabled={!isEditable || isWorking}
+                  disabled={isFieldDisabled}
                   style={{ width: "100%" }}
                 >
                   {SUBJECTS.map((option) => (
@@ -471,15 +635,19 @@ export function BulkReviewStep({
                     correctAnswer: event.target.value,
                   })
                 }
-                disabled={!isEditable || isWorking}
-                style={{ width: "100%" }}
+                disabled={isFieldDisabled}
+                style={{
+                  width: "100%",
+                  border: selectedRequiredFieldGaps.correctAnswer
+                    ? ACTION_REQUIRED_BORDER
+                    : undefined,
+                }}
               />
             </label>
 
             <label>
               Graph DSL
-              <input
-                type="text"
+              <textarea
                 data-testid="bulk-review-graphdsl"
                 value={currentDraft.graphDsl ?? ""}
                 onChange={(event) =>
@@ -487,22 +655,58 @@ export function BulkReviewStep({
                     graphDsl: event.target.value,
                   })
                 }
-                disabled={!isEditable || isWorking}
-                style={{ width: "100%" }}
+                disabled={isFieldDisabled}
+                rows={10}
+                style={{
+                  width: "100%",
+                  minHeight: "180px",
+                  resize: "vertical",
+                  fontFamily: "monospace",
+                  fontSize: "0.9em",
+                  lineHeight: 1.4,
+                }}
               />
             </label>
+
+            {currentDraft.graphDsl?.trim() && (
+              <div>
+                <div
+                  style={{
+                    fontSize: "0.85em",
+                    fontWeight: 600,
+                    marginBottom: "6px",
+                  }}
+                >
+                  Graph preview
+                </div>
+                <GraphSandbox dsl={currentDraft.graphDsl} height={300} />
+              </div>
+            )}
 
             <TagInput
               tags={currentDraft.tags ?? []}
               onChange={(tags) =>
                 updateDraft(selectedItem.itemId, { tags })
               }
-              disabled={!isEditable || isWorking}
+              suggestions={reviewTagSuggestions}
+              placeholder="Add a tag..."
+              disabled={isFieldDisabled}
               label="Tags"
               testId="bulk-review-tags"
             />
           </div>
         </div>
+      </div>
+
+      <div style={{ marginTop: "16px", textAlign: "right" }}>
+        <button
+          type="button"
+          data-testid="bulk-review-continue"
+          onClick={onContinue}
+          disabled={!canContinue || isLoading}
+        >
+          Continue to submit
+        </button>
       </div>
     </div>
   );

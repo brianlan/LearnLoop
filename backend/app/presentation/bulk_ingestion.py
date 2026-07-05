@@ -437,13 +437,18 @@ async def detect_image_boxes(
         result = await vlm.detect_problem_boxes(
             image_base64=base64.b64encode(image_bytes).decode()
         )
+        detected_boxes = validate_boxes(
+            [box.model_dump() for box in result.boxes],
+            None,
+            None,
+        )
         await save_image_detection_success(
             database,
             batch_id,
             user["_id"],
             image_id,
             subject=result.subject,
-            boxes=[box.model_dump() for box in result.boxes],
+            boxes=detected_boxes,
             model=result.model,
             raw_provider_response=result.raw_provider_response,
             now=datetime.now(UTC),

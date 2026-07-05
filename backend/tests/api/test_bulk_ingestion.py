@@ -575,7 +575,13 @@ async def test_detect_success_creates_boxes_and_subject(
     assert image["status"] == "ready"
     assert image["subject"] == "math"
     assert len(image["boxes"]) == 1
-    assert image["boxes"][0] == {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
+    assert image["boxes"][0] == {
+        "boxId": "box-1",
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1.0,
+        "height": 1.0,
+    }
     assert image["detection"]["model"] == "fake-helper-vlm"
     assert image["sourceImage"]["width"] == 1
     assert image["sourceImage"]["height"] == 1
@@ -668,6 +674,7 @@ async def test_manual_box_entry_after_detection_failure(
     assert image["status"] == "ready"
     assert image["subject"] == "math"
     assert len(image["boxes"]) == 1
+    assert image["boxes"][0]["boxId"] == "box-1"
 
 
 @pytest.mark.asyncio
@@ -693,8 +700,8 @@ async def test_save_boxes_persists_edits(
         json={
             "subject": "english",
             "boxes": [
-                {"x": 0, "y": 0, "width": 1, "height": 1},
-                {"x": 0, "y": 0, "width": 1, "height": 1},
+                {"boxId": "edited-1", "x": 0, "y": 0, "width": 1, "height": 1},
+                {"boxId": "edited-2", "x": 0, "y": 0, "width": 1, "height": 1},
             ],
         },
     )
@@ -702,6 +709,7 @@ async def test_save_boxes_persists_edits(
     image = save_response.json()["batch"]["images"][0]
     assert image["subject"] == "english"
     assert len(image["boxes"]) == 2
+    assert [box["boxId"] for box in image["boxes"]] == ["edited-1", "edited-2"]
 
 
 @pytest.mark.asyncio

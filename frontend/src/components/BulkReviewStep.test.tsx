@@ -67,6 +67,7 @@ describe("BulkReviewStep", () => {
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
+    onContinue: vi.fn(),
   };
 
   beforeEach(() => {
@@ -95,6 +96,253 @@ describe("BulkReviewStep", () => {
       "src",
       "http://example.com/crop-item-1.png",
     );
+  });
+
+  it("updates the selected item's empty queued draft when extraction completes", async () => {
+    const { rerender } = render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              status: "queued",
+              order: 0,
+              draft: {},
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("");
+
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              status: "ready",
+              order: 0,
+              draft: {
+                text: "Extracted selected problem text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: null,
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-text")).toHaveValue(
+        "Extracted selected problem text",
+      );
+    });
+  });
+
+  it("does not overwrite a dirty local draft when server draft changes", async () => {
+    const { rerender } = render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "Initial server text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "Unsaved local edit" },
+    });
+
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "New server text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue(
+      "Unsaved local edit",
+    );
+  });
+
+  it("uses a narrow item list column", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-layout")).toHaveStyle({
+      gridTemplateColumns: "120px 1fr",
+    });
+  });
+
+  it("renders text and graph previews and a resizable Graph DSL editor", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              draft: {
+                text: "Compute $x^2$",
+                problemType: "short-answer",
+                graphDsl: "board.create('point', [0, 0]);",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text-preview")).toHaveTextContent(
+      "Compute",
+    );
+    expect(screen.getByTestId("graph-sandbox")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-graphdsl")).toHaveStyle({
+      resize: "vertical",
+      minHeight: "180px",
+    });
+  });
+
+  it("shows tag autocomplete suggestions from existing tags", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        tagSuggestions={["algebra", "geometry"]}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), {
+      target: { value: "a" },
+    });
+
+    expect(screen.getByTestId("bulk-review-tags-suggestion-algebra")).toBeInTheDocument();
+  });
+
+  it("uses tags added to one bulk item as suggestions for another item", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const firstTagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(firstTagInput, { target: { value: "calculus-new" } });
+    fireEvent.keyDown(firstTagInput, { key: "Enter", code: "Enter" });
+
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+
+    const secondTagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(secondTagInput, { target: { value: "cal" } });
+
+    expect(
+      screen.getByTestId("bulk-review-tags-suggestion-calculus-new"),
+    ).toBeInTheDocument();
+  });
+
+  it("requires complete draft fields before continuing to submit", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              draft: {
+                text: "What is 2+2?",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
+    expect(screen.queryByTestId("bulk-review-continue-reasons")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-item-item-1")).toHaveAttribute(
+      "data-action-required",
+      "true",
+    );
+    expect(screen.getByTestId("bulk-review-answer").style.border).toBe(
+      "2px solid var(--color-error, #dc2626)",
+    );
+  });
+
+  it("continues to submit after all active items are ready and valid", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+
+    expect(handlers.onContinue).toHaveBeenCalledTimes(1);
   });
 
   it("disables Previous at the first item and Next at the last item", () => {
@@ -246,6 +494,44 @@ describe("BulkReviewStep", () => {
       "item-1",
       expect.objectContaining({ correctAnswer: "second" }),
     );
+  });
+
+  it("keeps focused fields enabled while autosaving", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const answerInput = screen.getByTestId("bulk-review-answer");
+    answerInput.focus();
+    fireEvent.change(answerInput, { target: { value: "focused answer" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+    expect(answerInput).not.toBeDisabled();
+    expect(answerInput).toHaveFocus();
+
+    await act(async () => {
+      resolveSave(undefined);
+    });
   });
 
   it("disables fields and shows undo for deleted items", () => {

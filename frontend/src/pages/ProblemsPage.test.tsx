@@ -212,7 +212,7 @@ describe("ProblemsPage", () => {
     renderProblemsPage();
     await screen.findByText("What is 2+2?");
 
-    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Section 1" }));
     await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
     await user.selectOptions(screen.getByLabelText("Filter by Type:"), "short-answer");
     await user.type(screen.getByLabelText("Search problems:"), "proof");

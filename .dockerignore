@@ -1,0 +1,15 @@
+.git
+.github
+.gemini
+.pytest_cache
+.vscode
+node_modules
+**/node_modules
+**/__pycache__
+**/.venv
+tmp
+volume-backups
+drafts
+*.png
+*.tar.gz
+*.log
