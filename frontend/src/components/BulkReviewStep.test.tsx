@@ -98,6 +98,109 @@ describe("BulkReviewStep", () => {
     );
   });
 
+  it("updates the selected item's empty queued draft when extraction completes", async () => {
+    const { rerender } = render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              status: "queued",
+              order: 0,
+              draft: {},
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("");
+
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              status: "ready",
+              order: 0,
+              draft: {
+                text: "Extracted selected problem text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: null,
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-text")).toHaveValue(
+        "Extracted selected problem text",
+      );
+    });
+  });
+
+  it("does not overwrite a dirty local draft when server draft changes", async () => {
+    const { rerender } = render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "Initial server text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "Unsaved local edit" },
+    });
+
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "New server text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue(
+      "Unsaved local edit",
+    );
+  });
+
   it("uses a narrow item list column", () => {
     render(
       <BulkReviewStep

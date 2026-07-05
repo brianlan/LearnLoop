@@ -35,6 +35,10 @@ function defaultDraft(item: BulkItem): BulkDraft {
   };
 }
 
+function serializeDraft(draft: BulkDraft): string {
+  return JSON.stringify(draft);
+}
+
 function statusLabel(status: string): string {
   switch (status) {
     case "queued":
@@ -97,6 +101,7 @@ export function BulkReviewStep({
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
   const saveFailuresRef = useRef<Record<string, number>>({});
+  const serverDraftRefs = useRef<Record<string, string>>({});
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
@@ -138,6 +143,36 @@ export function BulkReviewStep({
       return merged;
     });
   }, [selectedItem]);
+
+  useEffect(() => {
+    setLocalDrafts((prev) => {
+      let next = prev;
+      for (const item of items) {
+        const itemId = item.itemId;
+        const serverDraft = defaultDraft(item);
+        const serializedServerDraft = serializeDraft(serverDraft);
+        const previousServerDraft = serverDraftRefs.current[itemId];
+        serverDraftRefs.current[itemId] = serializedServerDraft;
+
+        if (previousServerDraft === serializedServerDraft) continue;
+        if (prev[itemId] === undefined) continue;
+        if (dirtyRefs.current.has(itemId)) continue;
+        if (savingItems.has(itemId)) continue;
+        if (saveFailuresRef.current[itemId] !== undefined) continue;
+        if (serializeDraft(prev[itemId]) === serializedServerDraft) continue;
+
+        if (next === prev) {
+          next = { ...prev };
+        }
+        next[itemId] = serverDraft;
+      }
+
+      if (next !== prev) {
+        draftRefs.current = next;
+      }
+      return next;
+    });
+  }, [items, savingItems]);
 
   useEffect(() => {
     const timeoutIds: Record<string, number> = {};
