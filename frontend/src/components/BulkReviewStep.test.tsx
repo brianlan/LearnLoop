@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { BulkReviewStep } from "./BulkReviewStep";
 import type { BulkBatch, BulkItem } from "@/types/bulkIngestion";
 
@@ -783,5 +783,183 @@ describe("BulkReviewStep", () => {
         screen.queryByTestId("bulk-review-save-status"),
       ).not.toBeInTheDocument();
     });
+  });
+
+  it("adds a tag to one draft and reuses it on another draft via the recent chip", async () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // Add "calculus" to item-1.
+    const firstTagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(firstTagInput, { target: { value: "calculus" } });
+    fireEvent.keyDown(firstTagInput, { key: "Enter", code: "Enter" });
+
+    // Switch to item-2; the recent chip should appear and add the tag on click.
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    const chip = screen.getByTestId("bulk-review-recent-tag-calculus");
+    fireEvent.click(chip);
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-2",
+        expect.objectContaining({ tags: ["math", "calculus"] }),
+      );
+    });
+  });
+
+  it("hides recent tags already selected on the current draft", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // Add "calculus" to item-1; it is now selected, so the chip is hidden.
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "calculus" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    expect(
+      screen.queryByTestId("bulk-review-recent-tag-calculus"),
+    ).not.toBeInTheDocument();
+
+    // Switch to item-2 (does not have "calculus"); the chip now appears.
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    expect(
+      screen.getByTestId("bulk-review-recent-tag-calculus"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders at most 5 recent tag chips", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // Add 7 distinct tags to item-1 via comma-separated input.
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "t1,t2,t3,t4,t5,t6,t7" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    // Switch to item-2 (only has "math"); recent chips should be capped at 5.
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    const chips = within(
+      screen.getByTestId("bulk-review-recent-tags"),
+    ).getAllByRole("button");
+    expect(chips).toHaveLength(5);
+  });
+
+  it("does not add tags from recent chips when review fields are disabled", async () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1, status: "deleted" }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // Add "physics" to item-1.
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "physics" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    // Switch to the deleted item-2 (fields disabled); chip is disabled.
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    const chip = screen.getByTestId("bulk-review-recent-tag-physics");
+    expect(chip).toBeDisabled();
+
+    fireEvent.click(chip);
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    // item-2's tags must remain unchanged.
+    expect(handlers.onUpdateDraft).not.toHaveBeenCalledWith(
+      "item-2",
+      expect.objectContaining({ tags: expect.arrayContaining(["physics"]) }),
+    );
+  });
+
+  it("adds each tag from comma-separated multi-tag input to recent tags", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "alpha,beta" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    expect(screen.getByTestId("bulk-review-recent-tag-alpha")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-recent-tag-beta")).toBeInTheDocument();
+  });
+
+  it("adds each tag from semicolon-separated input to recent tags", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "gamma" } });
+    fireEvent.keyDown(tagInput, { key: ";" });
+    fireEvent.change(tagInput, { target: { value: "delta" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    expect(screen.getByTestId("bulk-review-recent-tag-gamma")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-recent-tag-delta")).toBeInTheDocument();
   });
 });
