@@ -20,7 +20,7 @@ export function BulkUploadStep({
 
   return (
     <div data-testid="bulk-wizard-upload-step">
-      <h2>Upload images</h2>
+      <h2>Upload images or PDFs</h2>
       {error && (
         <div
           data-testid="bulk-upload-error"
@@ -31,7 +31,7 @@ export function BulkUploadStep({
       )}
       {batch ? (
         <>
-          <p>Add images to your batch.</p>
+          <p>Add images or PDFs to your batch.</p>
           {batch.images.length > 0 && (
             <ul data-testid="bulk-upload-image-list">
               {batch.images.map((image) => (
@@ -42,7 +42,7 @@ export function BulkUploadStep({
           <input
             ref={inputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf,.pdf"
             multiple
             data-testid="bulk-wizard-upload-input"
             onChange={(event) => {
@@ -57,7 +57,7 @@ export function BulkUploadStep({
             onClick={() => inputRef.current?.click()}
             disabled={isLoading}
           >
-            Choose image files
+            Choose files
           </button>
         </>
       ) : (

@@ -127,6 +127,28 @@ describe("bulk ingestion API client", () => {
       capturedBody = callArgs[1].body as FormData;
       expect(capturedBody.getAll("images")).toHaveLength(2);
     });
+
+    it("sends PDF files through the same multipart upload path", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const files = [
+        new File(["pdf-bytes"], "doc.pdf", { type: "application/pdf" }),
+      ];
+
+      await uploadBatchImages("batch-1", files);
+
+      const callArgs = mockFetch.mock.calls[0] as [string, RequestInit];
+      const body = callArgs[1].body as FormData;
+      const uploaded = body.getAll("images");
+      expect(uploaded).toHaveLength(1);
+      expect((uploaded[0] as File).name).toBe("doc.pdf");
+      expect((uploaded[0] as File).type).toBe("application/pdf");
+    });
   });
 
   describe("detectImageBoxes", () => {
