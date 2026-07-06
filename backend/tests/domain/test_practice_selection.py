@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 import random
 
+import pytest
+
 from app.domain.models import CorrectAnswer, Problem, Tracking
 from app.domain.practice_selection import (
     PracticeSelectionConfig,
@@ -398,15 +400,16 @@ def test_compute_problem_weight_breakdown_all_components():
     # lastWrong = 2.0 * 1.5 = 3.0
     assert breakdown.lastWrong == 3.0
 
-    # diff = 7 - 3 = 4, failure_score = sqrt(4) = 2.0, failure = 2.0 * 2.0 = 4.0
-    assert breakdown.failure == 4.0
+    # failedCount=7 > correctCount=3 and correctCount>0 => ratio: 7/3
+    # failure = (7/3) * 2.0 ≈ 4.6666666667
+    assert breakdown.failure == pytest.approx((7 / 3) * 2.0)
 
     # days_since = 30, recency_score = 1.0 + 30/30 = 2.0
     # recency = 2.0 * 1.0 = 2.0
     assert breakdown.recency == 2.0
 
-    assert breakdown.total == 9.0
-    assert breakdown.total == breakdown.lastWrong + breakdown.failure + breakdown.recency
+    assert breakdown.total == pytest.approx(3.0 + (7 / 3) * 2.0 + 2.0)
+    assert breakdown.total == pytest.approx(breakdown.lastWrong + breakdown.failure + breakdown.recency)
 
 
 def test_compute_problem_weight_breakdown_never_tested():

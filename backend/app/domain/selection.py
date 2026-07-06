@@ -69,11 +69,16 @@ def compute_score_breakdown(
         recency_score = 1.0
 
     # Failure score
-    diff = problem.tracking.failedCount - problem.tracking.correctCount
-    if diff == 0:
-        failure_score = 0.0
+    failed_count = problem.tracking.failedCount
+    correct_count = problem.tracking.correctCount
+    if failed_count > correct_count and correct_count > 0:
+        failure_score = failed_count / correct_count
     else:
-        failure_score = math.copysign(math.sqrt(abs(diff)), diff)
+        diff = failed_count - correct_count
+        if diff == 0:
+            failure_score = 0.0
+        else:
+            failure_score = math.copysign(math.sqrt(abs(diff)), diff)
 
     # Last wrong score
     if problem.tracking.lastTestedAt is None:

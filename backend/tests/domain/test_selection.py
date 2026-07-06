@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from app.domain import (
     Problem,
     CorrectAnswer,
@@ -198,6 +201,51 @@ def test_failure_score_weighted_multiplier():
     assert breakdown.failure == 4.0
 
 
+def test_failure_score_ratio_when_more_failed_than_correct():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=6, failed_count=4, correct_count=2)
+    config = ProblemSelectionConfig(failure_rate_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 2.0
+
+
+def test_failure_score_ratio_with_weight():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=10, failed_count=7, correct_count=3)
+    config = ProblemSelectionConfig(failure_rate_weight=2.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == pytest.approx((7 / 3) * 2.0)
+
+
+def test_failure_score_more_failed_than_correct_zero_correct_uses_sqrt():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem("p1", exposure_count=4, failed_count=4, correct_count=0)
+    config = ProblemSelectionConfig(failure_rate_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 2.0
+
+
+def test_failure_score_ratio_total_positive():
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem(
+        "p1",
+        last_tested_at=now - timedelta(days=30),
+        last_attempt_correct=False,
+        exposure_count=6,
+        failed_count=4,
+        correct_count=2,
+    )
+    config = ProblemSelectionConfig(
+        recency_weight=1.0,
+        failure_rate_weight=1.0,
+        last_wrong_weight=1.0,
+    )
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.failure == 2.0
+    assert breakdown.total == pytest.approx(breakdown.recency + breakdown.failure + breakdown.last_wrong)
+    assert breakdown.total > 0
+
+
 def test_last_wrong_never_tested():
     now = datetime.now(timezone.utc)
     problem = create_test_problem("p1", last_tested_at=None)
@@ -249,12 +297,13 @@ def test_weighted_total_equals_component_sum():
     breakdown = compute_score_breakdown(problem, config, now)
     # recency_score = 1.0 + 30/30 = 2.0, recency = 2.0 * 1.0 = 2.0
     assert breakdown.recency == 2.0
-    # diff = 7 - 3 = 4, failure_score = sqrt(4) = 2.0, failure = 2.0 * 2.0 = 4.0
-    assert breakdown.failure == 4.0
+    # failedCount=7 > correctCount=3 and correctCount>0 => ratio: 7/3
+    # failure = (7/3) * 2.0 ≈ 4.6666666667
+    assert breakdown.failure == pytest.approx((7 / 3) * 2.0)
     # last_wrong_score = 2.0, last_wrong = 2.0 * 1.5 = 3.0
     assert breakdown.last_wrong == 3.0
-    assert breakdown.total == 9.0
-    assert breakdown.total == breakdown.recency + breakdown.failure + breakdown.last_wrong
+    assert breakdown.total == pytest.approx(2.0 + (7 / 3) * 2.0 + 3.0)
+    assert breakdown.total == pytest.approx(breakdown.recency + breakdown.failure + breakdown.last_wrong)
 
 
 def test_total_score_capped_at_zero():
