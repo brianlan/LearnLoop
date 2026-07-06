@@ -336,7 +336,7 @@ describe("ProblemsPage", () => {
     expect(screen.getByRole("option", { name: "Add date" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Last test date" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Section 1" }));
     await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
     await user.selectOptions(screen.getByLabelText("Sort by:"), "selectionScore");
     await user.selectOptions(screen.getByLabelText("Order:"), "asc");
