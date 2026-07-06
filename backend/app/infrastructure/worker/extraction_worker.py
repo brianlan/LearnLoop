@@ -261,7 +261,7 @@ async def process_item(
             "text": result.text,
             "problemType": result.problem_type,
             "graphDsl": result.graph_dsl,
-            "correctAnswer": None,
+            "correctAnswer": result.correct_answer,
             "tags": [],
             "subject": subject,
         },

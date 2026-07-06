@@ -68,12 +68,14 @@ def make_extraction_result(
     text: str = "What is 2+2?",
     problem_type: str = "short-answer",
     graph_dsl: str | None = None,
+    correct_answer: str | None = None,
     model: str = "fake-ingestion-vlm",
 ) -> ExtractionResult:
     raw = {
         "text": text,
         "problemType": problem_type,
         "graphDsl": graph_dsl,
+        "correctAnswer": correct_answer,
         "providerMetadata": {"provider": "fake"},
     }
     return ExtractionResult(
@@ -82,6 +84,7 @@ def make_extraction_result(
         text=text,
         problem_type=problem_type,
         graph_dsl=graph_dsl,
+        correct_answer=correct_answer,
         provider_metadata=raw["providerMetadata"],
         raw_provider_response=raw,
     )
@@ -303,6 +306,7 @@ async def test_process_item_success_math(
     assert stored_item["status"] == ItemState.READY.value
     assert stored_item["draft"]["text"] == "math problem"
     assert stored_item["draft"]["subject"] == "math"
+    assert stored_item["draft"]["correctAnswer"] is None
     assert stored_item["extraction"]["success"] is True
     assert stored_item["extraction"]["model"] == "math-model"
     assert stored_item["crop"] is not None
@@ -342,6 +346,83 @@ async def test_process_item_routes_to_english_client(
     assert len(english_client.calls) == 1
     refreshed = await get_batch(database, batch_id, batch["userId"])
     assert refreshed["items"][0]["extraction"]["model"] == "english-model"
+
+
+@pytest.mark.asyncio
+async def test_process_item_persists_english_correct_answer(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    settings: Settings,
+) -> None:
+    batch_id, user_id, _image_id, item_id = _seed_batch_with_committed_item(
+        database,
+        storage,
+        subject="english",
+        box={"x": 0, "y": 0, "width": 1, "height": 1},
+    )
+    batch = await get_batch(database, batch_id, user_id)
+    item = batch["items"][0]
+
+    math_client = FakeIngestionVLMClient(model="math-model")
+    english_client = FakeIngestionVLMClient(model="english-model")
+    english_client.responses.append(
+        make_extraction_result(
+            text="english problem",
+            correct_answer="bus",
+            model="english-model",
+        )
+    )
+
+    await process_item(
+        item,
+        batch,
+        database,
+        storage,
+        math_client,
+        english_client,
+        settings,
+    )
+
+    refreshed = await get_batch(database, batch_id, batch["userId"])
+    stored_item = refreshed["items"][0]
+    assert stored_item["status"] == ItemState.READY.value
+    assert stored_item["draft"]["correctAnswer"] == "bus"
+
+
+@pytest.mark.asyncio
+async def test_process_item_leaves_answer_empty_when_correct_answer_null(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    settings: Settings,
+) -> None:
+    batch_id, user_id, _image_id, item_id = _seed_batch_with_committed_item(
+        database,
+        storage,
+        subject="english",
+        box={"x": 0, "y": 0, "width": 1, "height": 1},
+    )
+    batch = await get_batch(database, batch_id, user_id)
+    item = batch["items"][0]
+
+    math_client = FakeIngestionVLMClient(model="math-model")
+    english_client = FakeIngestionVLMClient(model="english-model")
+    english_client.responses.append(
+        make_extraction_result(text="english problem", correct_answer=None, model="english-model")
+    )
+
+    await process_item(
+        item,
+        batch,
+        database,
+        storage,
+        math_client,
+        english_client,
+        settings,
+    )
+
+    refreshed = await get_batch(database, batch_id, batch["userId"])
+    stored_item = refreshed["items"][0]
+    assert stored_item["draft"]["correctAnswer"] is None
 
 
 @pytest.mark.asyncio

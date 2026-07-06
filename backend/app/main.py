@@ -58,6 +58,7 @@ async def _run_extraction_worker_with_logging(database, storage, settings, stop_
             api_key=settings.english_ingestion_vlm_api_key,
             timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
             extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
+            request_correct_answer=True,
         )
         await run_extraction_worker(
             database,

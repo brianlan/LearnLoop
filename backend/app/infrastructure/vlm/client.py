@@ -105,6 +105,7 @@ class _ExtractionProviderPayload(BaseModel):
     text: str
     problem_type: ProblemType = Field(alias="problemType")
     graph_dsl: str | None = Field(default=None, alias="graphDsl")
+    correct_answer: str | None = Field(default=None, alias="correctAnswer")
     provider_metadata: dict[str, Any] = Field(default_factory=dict, alias="providerMetadata")
 
 
@@ -149,6 +150,7 @@ class ExtractionResult(BaseModel):
     text: str
     problem_type: ProblemType | None
     graph_dsl: str | None
+    correct_answer: str | None = None
     provider_metadata: dict[str, Any]
     raw_provider_response: dict[str, Any]
 
@@ -191,6 +193,7 @@ class VLMClient(BaseVLMClient):
         timeout_seconds: float,
         http_client: httpx.AsyncClient | None = None,
         extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
+        request_correct_answer: bool = False,
     ) -> None:
         super().__init__(
             endpoint=endpoint,
@@ -201,6 +204,7 @@ class VLMClient(BaseVLMClient):
             error_factory=VLMError,
         )
         self._extraction_system_prompt = extraction_system_prompt
+        self._request_correct_answer = request_correct_answer
 
     @property
     def model(self) -> str:
@@ -212,6 +216,14 @@ class VLMClient(BaseVLMClient):
         image_url: str | None = None,
         image_base64: str | None = None,
     ) -> ExtractionResult:
+        properties: dict[str, Any] = {
+            "text": {"type": "string"},
+            "problemType": {"type": "string"},
+            "graphDsl": {"type": ["string", "null"]},
+            "providerMetadata": {"type": "object"},
+        }
+        if self._request_correct_answer:
+            properties["correctAnswer"] = {"type": ["string", "null"]}
         request = ExtractionRequest(
             model=self._model,
             prompt=self._extraction_system_prompt,
@@ -220,12 +232,7 @@ class VLMClient(BaseVLMClient):
             expectedResponseSchema={
                 "type": "object",
                 "required": ["text", "problemType"],
-                "properties": {
-                    "text": {"type": "string"},
-                    "problemType": {"type": "string"},
-                    "graphDsl": {"type": ["string", "null"]},
-                    "providerMetadata": {"type": "object"},
-                },
+                "properties": properties,
             },
         )
         raw_provider_response = await self._send_request(request)
@@ -236,6 +243,7 @@ class VLMClient(BaseVLMClient):
             text=payload.text,
             problem_type=payload.problem_type,
             graph_dsl=payload.graph_dsl,
+            correct_answer=payload.correct_answer,
             provider_metadata=payload.provider_metadata,
             raw_provider_response=raw_provider_response,
         )
@@ -380,8 +388,7 @@ class VLMClient(BaseVLMClient):
                 raw_provider_response=raw_provider_response,
             ) from exc
 
-    @staticmethod
-    def _build_chat_completion_payload(request: _RequestBase) -> dict[str, Any]:
+    def _build_chat_completion_payload(self, request: _RequestBase) -> dict[str, Any]:
         if isinstance(request, GradingRequest):
             user_prompt = build_grading_user_prompt(
                 problem_text=request.problem_text,
@@ -401,6 +408,7 @@ class VLMClient(BaseVLMClient):
         else:
             user_prompt = build_extraction_user_prompt(
                 expected_response_schema=request.expected_response_schema,
+                include_correct_answer=self._request_correct_answer,
             )
 
         content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] = [

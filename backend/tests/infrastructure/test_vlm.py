@@ -159,6 +159,158 @@ async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None
     assert result.text == "Find $x$ when $x+1=2$"
 
 
+def _build_english_client(handler) -> VLMClient:
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        transport=transport,
+        base_url="https://vlm.example/api",
+        timeout=5,
+        headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
+    )
+    return VLMClient(
+        endpoint="https://vlm.example/api",
+        model="demo",
+        api_key="demo",
+        timeout_seconds=5,
+        http_client=http_client,
+        extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
+        request_correct_answer=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_math_does_not_request_correct_answer() -> None:
+    captured: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        captured["user_prompt"] = payload["messages"][1]["content"][0]["text"]
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {"text": "x", "problemType": "short-answer", "graphDsl": None}
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_client(handler)
+    await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert '"correctAnswer"' not in captured["user_prompt"]
+    assert "nullable \"correctAnswer\"" not in captured["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_english_requests_correct_answer() -> None:
+    captured: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode())
+        captured["user_prompt"] = payload["messages"][1]["content"][0]["text"]
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "I go to school by ___.",
+                                    "problemType": "fill-in-the-blank",
+                                    "graphDsl": None,
+                                    "correctAnswer": "bus",
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_english_client(handler)
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert '"correctAnswer": {"type": ["string", "null"]}' in captured["user_prompt"]
+    assert 'nullable "correctAnswer"' in captured["user_prompt"]
+    assert result.correct_answer == "bus"
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_parses_null_correct_answer() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Write a sentence.",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                    "correctAnswer": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_english_client(handler)
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.correct_answer is None
+
+
+@pytest.mark.asyncio
+async def test_vlm_extraction_tolerates_omitted_correct_answer() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "text": "Write a sentence.",
+                                    "problemType": "short-answer",
+                                    "graphDsl": None,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+        )
+
+    client = _build_english_client(handler)
+    result = await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert result.correct_answer is None
+
+
 @pytest.mark.asyncio
 async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -557,6 +709,15 @@ def test_english_extraction_prompt_allows_diagram_dsl() -> None:
 def test_english_extraction_prompt_contains_english_guidance() -> None:
     assert "multi-choice" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "passage" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower() or "text" in ENGLISH_EXTRACTION_SYSTEM_PROMPT.lower()
+
+
+def test_english_extraction_prompt_documents_correct_answer() -> None:
+    assert "correctAnswer" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "nullable string" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_math_extraction_prompt_does_not_request_correct_answer() -> None:
+    assert "correctAnswer" not in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_math_extraction_prompt_scopes_javascript_to_graph_dsl_field() -> None:
