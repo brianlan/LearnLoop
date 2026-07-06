@@ -92,6 +92,20 @@ describe("HomePage", () => {
     expect(screen.getByTestId("error").textContent).toContain("boom");
   });
 
+  it("sends the detected timezone as a query parameter", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse(),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-activity-grid")).toBeInTheDocument();
+    });
+    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain("/home/summary");
+    expect(calledUrl).toContain("timezone=");
+  });
+
   it("renders zero-problem state with 0% and note", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
