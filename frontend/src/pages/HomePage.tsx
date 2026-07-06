@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { api, ApiError } from "@/api/client";
+import { getTimezone } from "@/utils/format";
 
 interface HomeCoverage {
   totalProblems: number;
@@ -95,9 +96,10 @@ function cellIntensity(count: number, maxCount: number): number {
 
 export function HomePage() {
   const { theme } = useTheme();
+  const timezone = getTimezone();
   const { data, isLoading, error } = useQuery<HomeSummaryResponse>({
-    queryKey: ["home-summary"],
-    queryFn: () => api.get<HomeSummaryResponse>("/home/summary"),
+    queryKey: ["home-summary", timezone],
+    queryFn: () => api.get<HomeSummaryResponse>(`/home/summary?timezone=${encodeURIComponent(timezone)}`),
   });
 
   const [activeTooltip, setActiveTooltip] = useState<{ date: string; text: string } | null>(null);

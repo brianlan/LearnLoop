@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { formatProblemReference } from "@/utils/format";
+import { formatProblemReference, formatDate } from "@/utils/format";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
@@ -633,7 +633,7 @@ export function ProblemDetailPage() {
               {tracking.lastTestedAt && (
                 <div>
                   <label style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.25rem" }}>Last Tested</label>
-                  <div style={{ fontSize: "0.95rem", fontWeight: 600, padding: "0.25rem 0" }}>{new Date(tracking.lastTestedAt).toLocaleString()}</div>
+                  <div style={{ fontSize: "0.95rem", fontWeight: 600, padding: "0.25rem 0" }}>{formatDate(tracking.lastTestedAt)}</div>
                 </div>
               )}
               {tracking.practiceWeight && (

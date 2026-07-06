@@ -1,9 +1,21 @@
+export function getTimezone(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return tz || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 export function formatDate(dateString?: string): string {
   if (!dateString) {
     return "—";
   }
 
-  return new Date(dateString).toLocaleString();
+  return new Date(dateString).toLocaleString(undefined, {
+    timeZone: getTimezone(),
+    timeZoneName: "short",
+  });
 }
 
 export function formatScore(score: number | null): string {

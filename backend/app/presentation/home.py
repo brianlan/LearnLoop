@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
@@ -49,7 +50,16 @@ class HomeSummaryResponse(BaseModel):
 async def get_home_summary(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    timezone: Annotated[str | None, Query()] = None,
 ) -> HomeSummaryResponse:
+    if timezone is not None:
+        try:
+            tz = ZoneInfo(timezone)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid timezone")
+    else:
+        tz = UTC
+
     user_id = current_user["_id"]
 
     problem_documents = await database["problems"].find(
@@ -109,7 +119,7 @@ async def get_home_summary(
         round((mastered_problems / total_problems) * 100) if total_problems else 0
     )
 
-    today = datetime.now(UTC).date()
+    today = datetime.now(tz).date()
     start_date = today - timedelta(days=364)
 
     daily_counts: dict[str, int] = {}
@@ -121,7 +131,7 @@ async def get_home_summary(
     def _date_key(value: Any) -> str | None:
         if not isinstance(value, datetime):
             return None
-        event_date = value.astimezone(UTC).date()
+        event_date = value.astimezone(tz).date()
         if start_date <= event_date <= today:
             return event_date.strftime("%Y-%m-%d")
         return None

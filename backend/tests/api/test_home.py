@@ -477,3 +477,71 @@ async def test_summary_conquest_exam_overrides_older_practice(
     response = await client.get("/api/v1/home/summary")
     data = response.json()
     assert data["conquest"]["masteredProblems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_timezone_buckets_by_local_date(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """An event near UTC midnight should land on the next local date for Asia/Shanghai."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+
+    # 2026-01-15T23:30:00Z is 2026-01-16T07:30:00+08:00 in Asia/Shanghai
+    event_time = datetime(2026, 1, 15, 23, 30, tzinfo=UTC)
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=event_time),
+    ])
+
+    # With UTC (default) the event should be on Jan 15
+    response_utc = await client.get("/api/v1/home/summary")
+    data_utc = response_utc.json()
+    jan15_utc = next(d for d in data_utc["activity"]["days"] if d["date"] == "2026-01-15")
+    jan16_utc = next(d for d in data_utc["activity"]["days"] if d["date"] == "2026-01-16")
+    assert jan15_utc["count"] == 1
+    assert jan16_utc["count"] == 0
+
+    # With Asia/Shanghai the event should be on Jan 16
+    response_tz = await client.get("/api/v1/home/summary?timezone=Asia/Shanghai")
+    data_tz = response_tz.json()
+    jan15_tz = next(d for d in data_tz["activity"]["days"] if d["date"] == "2026-01-15")
+    jan16_tz = next(d for d in data_tz["activity"]["days"] if d["date"] == "2026-01-16")
+    assert jan15_tz["count"] == 0
+    assert jan16_tz["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_invalid_timezone_returns_400(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    response = await client.get("/api/v1/home/summary?timezone=NotARealTimezone")
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_summary_omitting_timezone_defaults_to_utc(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Backward compatibility: omitting timezone should use UTC."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    now = datetime.now(UTC)
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=now),
+    ])
+
+    response_with = await client.get("/api/v1/home/summary?timezone=UTC")
+    response_without = await client.get("/api/v1/home/summary")
+    assert response_with.status_code == 200
+    assert response_without.status_code == 200
+
+    data_with = response_with.json()
+    data_without = response_without.json()
+    today_str = now.strftime("%Y-%m-%d")
+    day_with = next(d for d in data_with["activity"]["days"] if d["date"] == today_str)
+    day_without = next(d for d in data_without["activity"]["days"] if d["date"] == today_str)
+    assert day_with["count"] == day_without["count"]
