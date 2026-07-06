@@ -792,4 +792,105 @@ describe("ProblemsPage", () => {
     // Move selected should be disabled
     expect(screen.getByRole("button", { name: "Move selected" })).toBeDisabled();
   });
+
+  it("renders the Solution state filter with all required options", async () => {
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    expect(screen.getByLabelText("Solution state:")).toBeInTheDocument();
+    for (const label of ["All", "Not Started", "Pending", "Generating", "Generated", "Failed"]) {
+      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("selecting Failed sends solutionState=failed together with existing filters", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
+    await user.selectOptions(screen.getByLabelText("Solution state:"), "failed");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("solutionState=failed");
+      expect(lastUrl).toContain("tag=algebra");
+      expect(lastUrl).toContain("page=1");
+    });
+  });
+
+  it("remembers the selected solution state across remounts", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    const { unmount } = renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.selectOptions(screen.getByLabelText("Solution state:"), "failed");
+    await waitFor(() => {
+      expect(problemRequestUrls().at(-1) ?? "").toContain("solutionState=failed");
+    });
+
+    unmount();
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await waitFor(() => {
+      expect(problemRequestUrls().at(-1) ?? "").toContain("solutionState=failed");
+    });
+    expect(screen.getByLabelText("Solution state:")).toHaveValue("failed");
+  });
+
+  it("reset helper clears the solution-state preference", async () => {
+    const user = userEvent.setup();
+    installApiMock();
+
+    const { unmount } = renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await user.selectOptions(screen.getByLabelText("Solution state:"), "failed");
+    await waitFor(() => {
+      expect(problemRequestUrls().at(-1) ?? "").toContain("solutionState=failed");
+    });
+
+    unmount();
+    _resetProblemsPagePreferencesForTests();
+    renderProblemsPage();
+    await screen.findByText("What is 2+2?");
+
+    await waitFor(() => {
+      expect(problemRequestUrls().at(-1) ?? "").not.toContain("solutionState=");
+    });
+    expect(screen.getByLabelText("Solution state:")).toHaveValue("");
+  });
+
+  it("changing solution state resets requests to page 1 and exits selection mode", async () => {
+    const user = userEvent.setup();
+    installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })], total: 25 });
+
+    renderProblemsPage();
+    await screen.findByText("Second problem");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    const card = screen.getByText("What is 2+2?").closest("div")!;
+    fireEvent.pointerDown(card);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    fireEvent.pointerUp(card);
+    await screen.findByRole("checkbox", { name: "Select problem p1" });
+
+    await user.selectOptions(screen.getByLabelText("Solution state:"), "failed");
+
+    await waitFor(() => {
+      const lastUrl = problemRequestUrls().at(-1) ?? "";
+      expect(lastUrl).toContain("solutionState=failed");
+      expect(lastUrl).toContain("page=1");
+    });
+    expect(screen.queryByLabelText("Bulk actions")).not.toBeInTheDocument();
+  });
 });

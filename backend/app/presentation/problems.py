@@ -121,8 +121,56 @@ class BulkSetFolderResponse(BaseModel):
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 ProblemSortBy = Literal["selectionScore", "addDate", "lastTestDate"]
 ProblemSortOrder = Literal["asc", "desc"]
+SolutionState = Literal["none", "pending", "generating", "ready", "failed"]
 
 
+async def _solution_state_problem_ids(
+    database: Any,
+    user_id: Any,
+    solution_state: str,
+) -> list[ObjectId] | None:
+    """Return problem ``_id``s whose effective solution state matches ``solution_state``.
+
+    A ``None`` return value means no ``_id`` filter is needed (all of the user's
+    problems match the requested state). Effective status precedence mirrors
+    ``GET /api/v1/problems/{id}/solution-status``: a canonical solution means
+    ``ready`` even when a stale task also exists; otherwise the task status wins;
+    otherwise the status is ``none``.
+    """
+    user_id_str = str(user_id)
+    solutions = database["canonical_solutions"]
+    tasks = database["solution_generation_tasks"]
+
+    ready_docs = await solutions.find({"user_id": user_id_str}).to_list(length=None)
+    ready_ids = {str(doc["problem_id"]) for doc in ready_docs}
+
+    if solution_state == "ready":
+        return [ObjectId(pid) for pid in ready_ids]
+
+    task_docs = await tasks.find({"user_id": user_id_str}).to_list(length=None)
+
+    if solution_state in ("pending", "generating", "failed"):
+        return [
+            ObjectId(doc["problem_id"])
+            for doc in task_docs
+            if str(doc.get("status", "pending")) == solution_state
+            and str(doc["problem_id"]) not in ready_ids
+        ]
+
+    # solution_state == "none": problems with neither a canonical solution nor a task.
+    task_ids = {str(doc["problem_id"]) for doc in task_docs}
+    has_state_ids = ready_ids | task_ids
+    if not has_state_ids:
+        return None
+
+    problem_docs = await database["problems"].find(
+        {"userId": user_id, "isDeleted": False}
+    ).to_list(length=None)
+    return [
+        doc["_id"]
+        for doc in problem_docs
+        if str(doc["_id"]) not in has_state_ids
+    ]
 
 
 def _serialize_tracking(problem: dict[str, Any]) -> TrackingPayload:
@@ -261,6 +309,7 @@ async def list_problems(
     folder_id: str | None = Query(default=None, alias="folderId"),
     sort_by: ProblemSortBy | None = Query(default=None, alias="sortBy"),
     sort_order: ProblemSortOrder | None = Query(default=None, alias="sortOrder"),
+    solution_state: SolutionState | None = Query(default=None, alias="solutionState"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ProblemListResponse:
@@ -291,6 +340,11 @@ async def list_problems(
             descendant_ids = await get_all_descendant_folder_ids(database, folder_oid)
             all_folder_ids = {folder_oid} | descendant_ids
             query["folderId"] = {"$in": [str(fid) for fid in all_folder_ids]}
+
+    if solution_state is not None:
+        matching_ids = await _solution_state_problem_ids(database, user_id, solution_state)
+        if matching_ids is not None:
+            query["_id"] = {"$in": matching_ids}
 
     total = await database["problems"].count_documents(query)
     skip = (page - 1) * page_size
