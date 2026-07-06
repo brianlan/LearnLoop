@@ -5,7 +5,7 @@ import logging
 import mimetypes
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
@@ -29,6 +29,7 @@ from app.domain.models import ProblemSubject, ProblemType
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.documents import build_source_image
 from app.infrastructure.ingestion.image_size import get_image_size
+from app.infrastructure.ingestion.pdf import PdfRenderError, render_pdf_pages
 from app.infrastructure.ingestion.repository import (
     add_source_image,
     commit_image_boxes,
@@ -290,24 +291,61 @@ async def _load_owned_batch_for_read(
     return batch
 
 
-async def _validate_image_upload(
-    image: UploadFile,
-    max_image_bytes: int,
-) -> tuple[bytes, str]:
-    content_type = image.content_type or ""
-    if not content_type.startswith("image/"):
-        raise ApiError(400, "INVALID_IMAGE", "Uploaded file must be an image")
+class _UploadPayload(NamedTuple):
+    image_bytes: bytes
+    content_type: str
+    width: int | None
+    height: int | None
+    extension: str
 
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise ApiError(400, "INVALID_IMAGE", "Uploaded image is empty")
-    if len(image_bytes) > max_image_bytes:
-        raise ApiError(
-            400,
-            "IMAGE_TOO_LARGE",
-            f"Image exceeds maximum size of {max_image_bytes} bytes",
-        )
-    return image_bytes, content_type
+
+async def _expand_upload(
+    upload: UploadFile,
+    settings: Settings,
+) -> list[_UploadPayload]:
+    """Expand a single uploaded file into one or more image payloads.
+
+    Images pass through directly. PDFs are rendered to one PNG page image
+    per page. Unsupported files are rejected.
+    """
+    content_type = upload.content_type or ""
+    filename = (upload.filename or "").lower()
+
+    if content_type.startswith("image/"):
+        image_bytes = await upload.read()
+        if not image_bytes:
+            raise ApiError(400, "INVALID_IMAGE", "Uploaded image is empty")
+        if len(image_bytes) > settings.bulk_ingestion_max_image_bytes:
+            raise ApiError(
+                400,
+                "IMAGE_TOO_LARGE",
+                f"Image exceeds maximum size of {settings.bulk_ingestion_max_image_bytes} bytes",
+            )
+        width, height = get_image_size(image_bytes) or (None, None)
+        return [_UploadPayload(image_bytes, content_type, width, height, _guess_extension(upload))]
+
+    if content_type == "application/pdf" or filename.endswith(".pdf"):
+        pdf_bytes = await upload.read()
+        if not pdf_bytes:
+            raise ApiError(400, "INVALID_PDF", "Uploaded PDF is empty")
+        try:
+            rendered_pages = render_pdf_pages(pdf_bytes)
+        except PdfRenderError as exc:
+            raise ApiError(400, "INVALID_PDF", str(exc)) from exc
+        payloads: list[_UploadPayload] = []
+        for page in rendered_pages:
+            if len(page.bytes) > settings.bulk_ingestion_max_image_bytes:
+                raise ApiError(
+                    400,
+                    "IMAGE_TOO_LARGE",
+                    f"Rendered PDF page exceeds maximum size of {settings.bulk_ingestion_max_image_bytes} bytes",
+                )
+            payloads.append(
+                _UploadPayload(page.bytes, page.content_type, page.width, page.height, ".png")
+            )
+        return payloads
+
+    raise ApiError(400, "INVALID_IMAGE", "Uploaded file must be an image or PDF")
 
 
 @router.post("", response_model=BatchResponse, status_code=201)
@@ -346,7 +384,15 @@ async def upload_batch_images(
         raise ApiError(400, "INVALID_IMAGE", "No images provided")
 
     existing_count = len(batch.get("images", []))
-    if existing_count + len(images) > settings.bulk_ingestion_max_images:
+
+    # Expand all uploads (images pass through; PDFs render to page images)
+    # before enforcing the batch image limit, so partial storage is avoided
+    # on validation failures and the limit accounts for expanded pages.
+    payloads: list[_UploadPayload] = []
+    for upload in images:
+        payloads.extend(await _expand_upload(upload, settings))
+
+    if existing_count + len(payloads) > settings.bulk_ingestion_max_images:
         raise ApiError(
             409,
             "BATCH_IMAGE_LIMIT_EXCEEDED",
@@ -354,25 +400,23 @@ async def upload_batch_images(
         )
 
     now = datetime.now(UTC)
-    for offset, image in enumerate(images):
-        image_bytes, content_type = await _validate_image_upload(
-            image, settings.bulk_ingestion_max_image_bytes
-        )
+    for offset, payload in enumerate(payloads):
         object_key = s3_storage.build_object_key(
-            str(user["_id"]), _guess_extension(image), category="ingestion/batches"
+            str(user["_id"]), payload.extension, category="ingestion/batches"
         )
-        s3_storage.put_object(settings.s3_bucket, object_key, image_bytes, content_type)
+        s3_storage.put_object(
+            settings.s3_bucket, object_key, payload.image_bytes, payload.content_type
+        )
 
-        width, height = get_image_size(image_bytes) or (None, None)
         source_image = build_source_image(
             bucket=settings.s3_bucket,
             object_key=object_key,
-            content_type=content_type,
-            size_bytes=len(image_bytes),
-            sha256=hashlib.sha256(image_bytes).hexdigest(),
+            content_type=payload.content_type,
+            size_bytes=len(payload.image_bytes),
+            sha256=hashlib.sha256(payload.image_bytes).hexdigest(),
             uploaded_at=now,
-            width=width,
-            height=height,
+            width=payload.width,
+            height=payload.height,
         )
         await add_source_image(
             database,

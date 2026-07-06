@@ -121,6 +121,19 @@ def make_valid_png_bytes(*, width: int = 10, height: int = 10) -> bytes:
     return buffer.getvalue()
 
 
+def make_pdf_bytes(num_pages: int = 1) -> bytes:
+    """Create a minimal multi-page PDF whose rendered pages fit the test image byte limit."""
+    import pymupdf
+
+    document = pymupdf.open()
+    for _ in range(num_pages):
+        document.new_page(width=1, height=1)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    document.close()
+    return buffer.getvalue()
+
+
 def make_extraction_result(
     *,
     text: str = "What is 2+2?",
@@ -513,6 +526,155 @@ async def test_upload_enforces_ownership(
     stored = await database["ingestion_batches"].find_one({"_id": ObjectId(batch_id)})
     assert stored is not None
     assert stored["userId"] == owner["_id"]
+
+
+@pytest.mark.asyncio
+async def test_upload_pdf_creates_one_image_per_page(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("doc.pdf", make_pdf_bytes(num_pages=2), "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    images = response.json()["batch"]["images"]
+    assert len(images) == 2
+    for index, image in enumerate(images):
+        assert image["order"] == index
+        assert image["status"] == "uploaded"
+        assert image["sourceImage"]["contentType"] == "image/png"
+        assert image["sourceImage"]["width"] is not None
+        assert image["sourceImage"]["height"] is not None
+
+    storage: FakeStorage = bulk_app.state.fake_storage
+    assert len(storage.put_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_upload_multiple_pdfs_preserves_file_and_page_order(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    # The example case from the issue: two PDFs with 2 and 3 pages = 5 images.
+    # The default test fixture limits batches to 3 images, so override it.
+    base_settings = bulk_app.dependency_overrides[get_app_settings]()
+    bulk_app.dependency_overrides[get_app_settings] = lambda: base_settings.model_copy(
+        update={"bulk_ingestion_max_images": 10}
+    )
+
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files=[
+            ("images", ("first.pdf", make_pdf_bytes(num_pages=2), "application/pdf")),
+            ("images", ("second.pdf", make_pdf_bytes(num_pages=3), "application/pdf")),
+        ],
+    )
+
+    assert response.status_code == 201
+    images = response.json()["batch"]["images"]
+    assert len(images) == 5
+    assert [image["order"] for image in images] == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_upload_mixed_image_and_pdf_preserves_order(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    image_bytes = make_png_bytes()
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files=[
+            ("images", ("photo.png", image_bytes, "image/png")),
+            ("images", ("doc.pdf", make_pdf_bytes(num_pages=2), "application/pdf")),
+        ],
+    )
+
+    assert response.status_code == 201
+    images = response.json()["batch"]["images"]
+    assert len(images) == 3
+    assert images[0]["sourceImage"]["contentType"] == "image/png"
+    assert images[1]["sourceImage"]["contentType"] == "image/png"
+    assert images[2]["sourceImage"]["contentType"] == "image/png"
+    assert [image["order"] for image in images] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_upload_pdf_page_count_included_in_image_limit(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    image_bytes = make_png_bytes()
+    first_response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("photo.png", image_bytes, "image/png")},
+    )
+    assert first_response.status_code == 201
+
+    second_response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("doc.pdf", make_pdf_bytes(num_pages=3), "application/pdf")},
+    )
+
+    assert second_response.status_code == 409
+    assert second_response.json()["error"]["code"] == "BATCH_IMAGE_LIMIT_EXCEEDED"
+
+    storage: FakeStorage = bulk_app.state.fake_storage
+    assert len(storage.put_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_empty_pdf(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("empty.pdf", b"", "application/pdf")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_PDF"
+
+    storage: FakeStorage = bulk_app.state.fake_storage
+    assert len(storage.put_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_invalid_pdf(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("corrupt.pdf", b"not a pdf", "application/pdf")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_PDF"
+
+    storage: FakeStorage = bulk_app.state.fake_storage
+    assert len(storage.put_calls) == 0
 
 
 @pytest.mark.asyncio
