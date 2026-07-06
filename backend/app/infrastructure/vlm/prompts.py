@@ -347,6 +347,9 @@ Fields:
 - problemType: one of single-choice, multi-choice, fill-in-the-blank, short-answer.
 - graphDsl: nullable string. Use this only when the problem contains a geometry or coordinate-style diagram
   that can be reconstructed with the supported JSXGraph elements below. Otherwise return null.
+- correctAnswer: nullable string. If the image visibly shows the expected answer (for example an answer key,
+  a printed answer, or a clearly indicated correct option), put that answer here as plain text. If no answer is
+  visible in the image, return null. Do not solve the problem or infer an answer that is not shown.
 - providerMetadata: optional object. Omit it unless the caller explicitly requires provider-specific metadata.
 
 ## Core extraction rules
@@ -581,10 +584,18 @@ Fields:
 """
 
 
-def build_extraction_user_prompt(*, expected_response_schema: dict[str, Any]) -> str:
+def build_extraction_user_prompt(
+    *,
+    expected_response_schema: dict[str, Any],
+    include_correct_answer: bool = False,
+) -> str:
+    if include_correct_answer:
+        keys_clause = '"text", "problemType", "graphDsl", nullable "correctAnswer", and optional "providerMetadata"'
+    else:
+        keys_clause = '"text", "problemType", "graphDsl", and optional "providerMetadata"'
     return (
         "Extract the study problem from the attached image.\n"
-        'Return only JSON with keys "text", "problemType", "graphDsl", and optional "providerMetadata".\n'
+        f"Return only JSON with keys {keys_clause}.\n"
         "Expected JSON schema:\n"
         f"{json.dumps(expected_response_schema, ensure_ascii=False)}"
     )

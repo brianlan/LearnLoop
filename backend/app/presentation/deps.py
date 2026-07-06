@@ -162,6 +162,7 @@ def create_english_ingestion_vlm_client(
         api_key=settings.english_ingestion_vlm_api_key,
         timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
         extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
+        request_correct_answer=True,
     )
 
 
