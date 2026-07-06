@@ -107,6 +107,7 @@ export function BulkReviewStep({
   const [dirtyItems, setDirtyItems] = useState<Set<string>>(new Set());
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
   const [saveFailures, setSaveFailures] = useState<Record<string, number>>({});
+  const [recentTags, setRecentTags] = useState<string[]>([]);
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
   const saveFailuresRef = useRef<Record<string, number>>({});
@@ -163,6 +164,31 @@ export function BulkReviewStep({
       });
     },
     [],
+  );
+
+  const handleTagsChange = useCallback(
+    (itemId: string, nextTags: string[], prevTags: string[]) => {
+      const prevSet = new Set(prevTags);
+      const added = nextTags.filter((tag) => !prevSet.has(tag));
+      if (added.length > 0) {
+        setRecentTags((prev) => {
+          const next = [...prev];
+          const seen = new Set(prev);
+          for (const tag of added) {
+            if (seen.has(tag)) {
+              const index = next.indexOf(tag);
+              if (index >= 0) next.splice(index, 1);
+            } else {
+              seen.add(tag);
+            }
+            next.unshift(tag);
+          }
+          return next.slice(0, 5);
+        });
+      }
+      updateDraft(itemId, { tags: nextTags });
+    },
+    [updateDraft],
   );
 
   useEffect(() => {
@@ -365,6 +391,16 @@ export function BulkReviewStep({
     continueDisabledReasons.push("Draft save failed, retrying");
   }
   const canContinue = continueDisabledReasons.length === 0;
+
+  const currentTagSet = new Set(currentDraft.tags ?? []);
+  const visibleRecentTags = recentTags.filter((tag) => !currentTagSet.has(tag));
+
+  const handleRecentTagClick = (tag: string) => {
+    if (isFieldDisabled) return;
+    const currentTags = currentDraft.tags ?? [];
+    if (currentTags.includes(tag)) return;
+    handleTagsChange(selectedItem.itemId, [...currentTags, tag], currentTags);
+  };
 
   return (
     <div data-testid="bulk-wizard-review-step">
@@ -683,10 +719,53 @@ export function BulkReviewStep({
               </div>
             )}
 
+            {visibleRecentTags.length > 0 && (
+              <div
+                data-testid="bulk-review-recent-tags"
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "6px",
+                  alignItems: "center",
+                  marginBottom: "8px",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "0.85em",
+                    fontWeight: 600,
+                    color: "var(--color-text-muted)",
+                  }}
+                >
+                  Recent tags:
+                </span>
+                {visibleRecentTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    data-testid={`bulk-review-recent-tag-${tag}`}
+                    disabled={isFieldDisabled}
+                    onClick={() => handleRecentTagClick(tag)}
+                    style={{
+                      padding: "2px 8px",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--color-surface)",
+                      color: "var(--color-text)",
+                      fontSize: "0.8em",
+                      cursor: isFieldDisabled ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <TagInput
               tags={currentDraft.tags ?? []}
               onChange={(tags) =>
-                updateDraft(selectedItem.itemId, { tags })
+                handleTagsChange(selectedItem.itemId, tags, currentDraft.tags ?? [])
               }
               suggestions={reviewTagSuggestions}
               placeholder="Add a tag..."
