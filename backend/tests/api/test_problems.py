@@ -533,6 +533,173 @@ async def test_solution_status(problems_app: FastAPI, client: AsyncClient) -> No
 
 
 @pytest.mark.asyncio
+async def test_regenerate_solution_when_ready_deletes_solution_and_enqueues_task(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    problem_id_str = str(problem["_id"])
+    database["problems"].seed(problem)
+
+    solution = make_canonical_solution(problem, user_id)
+    database["canonical_solutions"].seed(solution)
+
+    response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "pending"}
+
+    # canonical solution deleted
+    remaining_solutions = await database["canonical_solutions"].find(
+        {"problem_id": problem_id_str}
+    ).to_list(length=None)
+    assert remaining_solutions == []
+
+    # pending task created
+    tasks = await database["solution_generation_tasks"].find(
+        {"problem_id": problem_id_str}
+    ).to_list(length=None)
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_solution_when_failed_resets_task_to_pending(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    problem_id_str = str(problem["_id"])
+    database["problems"].seed(problem)
+
+    failed_task = {
+        **make_solution_task(problem, user_id, status="failed"),
+        "retry_count": 3,
+        "failure_reason": "VLM timeout",
+        "started_at": datetime.now(UTC) - timedelta(hours=1),
+    }
+    database["solution_generation_tasks"].seed(failed_task)
+
+    response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "pending"}
+
+    tasks = await database["solution_generation_tasks"].find(
+        {"problem_id": problem_id_str}
+    ).to_list(length=None)
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "pending"
+    assert tasks[0]["retry_count"] == 0
+    assert tasks[0]["failure_reason"] is None
+    assert tasks[0]["started_at"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pending", "generating"])
+async def test_regenerate_solution_rejects_ineligible_active_states(
+    problems_app: FastAPI, client: AsyncClient, status: str
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    problem_id_str = str(problem["_id"])
+    database["problems"].seed(problem)
+
+    database["solution_generation_tasks"].seed(
+        make_solution_task(problem, user_id, status=status)
+    )
+
+    response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "SOLUTION_REGENERATION_CONFLICT"
+
+    # task unchanged
+    tasks = await database["solution_generation_tasks"].find(
+        {"problem_id": problem_id_str}
+    ).to_list(length=None)
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == status
+
+
+@pytest.mark.asyncio
+async def test_regenerate_solution_rejects_none_state(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    problem_id_str = str(problem["_id"])
+    database["problems"].seed(problem)
+
+    response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "SOLUTION_REGENERATION_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_solution_forbidden_for_other_user(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    other_user_id = problems_app.state.secondary_user["_id"]
+    other_problem = make_problem(other_user_id)
+    database["problems"].seed(other_problem)
+    database["canonical_solutions"].seed(make_canonical_solution(other_problem, other_user_id))
+
+    response = await client.post(
+        f"/api/v1/problems/{str(other_problem['_id'])}/solution-regeneration"
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_regenerate_solution_when_ready_with_stale_task_resets_task(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    """When both a canonical solution and a stale task exist (effective 'ready'),
+    regeneration deletes the solution and resets the existing task to pending
+    rather than creating a duplicate."""
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    problem_id_str = str(problem["_id"])
+    database["problems"].seed(problem)
+
+    stale_task = {
+        **make_solution_task(problem, user_id, status="ready"),
+        "retry_count": 2,
+        "failure_reason": "old failure",
+    }
+    database["solution_generation_tasks"].seed(stale_task)
+    database["canonical_solutions"].seed(make_canonical_solution(problem, user_id))
+
+    response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "pending"}
+
+    # solution deleted
+    remaining = await database["canonical_solutions"].find(
+        {"problem_id": problem_id_str}
+    ).to_list(length=None)
+    assert remaining == []
+
+    # exactly one task, reset to pending
+    tasks = await database["solution_generation_tasks"].find(
+        {"problem_id": problem_id_str}
+    ).to_list(length=None)
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "pending"
+    assert tasks[0]["retry_count"] == 0
+    assert tasks[0]["failure_reason"] is None
+
+
+@pytest.mark.asyncio
 async def test_solution_state_filter_failed(
     problems_app: FastAPI, client: AsyncClient
 ) -> None:

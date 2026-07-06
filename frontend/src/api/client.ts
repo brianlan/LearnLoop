@@ -142,6 +142,13 @@ export const api = {
     return this.get<{ status: string }>(`/problems/${problemId}/solution-status`);
   },
 
+  /**
+   * Regenerate the canonical solution for a problem.
+   */
+  async regenerateSolution(problemId: string): Promise<{ status: string }> {
+    return this.post<{ status: string }>(`/problems/${problemId}/solution-regeneration`, {});
+  },
+
   async get<T>(path: string): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
