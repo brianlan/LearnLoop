@@ -125,6 +125,31 @@ def make_problem(
     }
 
 
+def make_solution_task(
+    problem: dict[str, Any], user_id: ObjectId, *, status: str
+) -> dict[str, Any]:
+    return {
+        "_id": ObjectId(),
+        "problem_id": str(problem["_id"]),
+        "user_id": str(user_id),
+        "status": status,
+        "created_at": datetime.now(UTC),
+    }
+
+
+def make_canonical_solution(
+    problem: dict[str, Any], user_id: ObjectId
+) -> dict[str, Any]:
+    return {
+        "_id": ObjectId(),
+        "problem_id": str(problem["_id"]),
+        "user_id": str(user_id),
+        "steps_markdown": "step 1",
+        "final_answer": "4",
+        "math_level_classification": "basic",
+    }
+
+
 @pytest_asyncio.fixture
 async def problems_app() -> FastAPI:
     application = create_app()
@@ -505,6 +530,167 @@ async def test_solution_status(problems_app: FastAPI, client: AsyncClient) -> No
     database["problems"].seed(other_problem)
     response = await client.get(f"/api/v1/problems/{str(other_problem['_id'])}/solution-status")
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_solution_state_filter_failed(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    failed_problem = make_problem(user_id, text="Failed problem")
+    ready_problem = make_problem(user_id, text="Ready problem")
+    none_problem = make_problem(user_id, text="None problem")
+    database["problems"].seed(failed_problem, ready_problem, none_problem)
+    database["solution_generation_tasks"].seed(
+        make_solution_task(failed_problem, user_id, status="failed"),
+    )
+    database["canonical_solutions"].seed(
+        make_canonical_solution(ready_problem, user_id),
+    )
+
+    response = await client.get("/api/v1/problems", params={"solutionState": "failed"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == str(failed_problem["_id"])
+
+
+@pytest.mark.asyncio
+async def test_solution_state_filter_each_state(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    pending_problem = make_problem(user_id, text="Pending")
+    generating_problem = make_problem(user_id, text="Generating")
+    ready_problem = make_problem(user_id, text="Ready")
+    none_problem = make_problem(user_id, text="None")
+    database["problems"].seed(
+        pending_problem, generating_problem, ready_problem, none_problem
+    )
+    database["solution_generation_tasks"].seed(
+        make_solution_task(pending_problem, user_id, status="pending"),
+        make_solution_task(generating_problem, user_id, status="generating"),
+    )
+    database["canonical_solutions"].seed(
+        make_canonical_solution(ready_problem, user_id),
+    )
+
+    for state, expected in [
+        ("pending", pending_problem),
+        ("generating", generating_problem),
+        ("ready", ready_problem),
+        ("none", none_problem),
+    ]:
+        response = await client.get("/api/v1/problems", params={"solutionState": state})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 1, state
+        assert body["items"][0]["id"] == str(expected["_id"]), state
+
+
+@pytest.mark.asyncio
+async def test_solution_state_ready_precedence_over_stale_failed_task(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Has solution and stale failed task")
+    database["problems"].seed(problem)
+    # Stale failed task that should be shadowed by the canonical solution.
+    database["solution_generation_tasks"].seed(
+        make_solution_task(problem, user_id, status="failed"),
+    )
+    database["canonical_solutions"].seed(make_canonical_solution(problem, user_id))
+
+    ready_response = await client.get("/api/v1/problems", params={"solutionState": "ready"})
+    assert ready_response.status_code == 200
+    ready_body = ready_response.json()
+    assert ready_body["total"] == 1
+    assert ready_body["items"][0]["id"] == str(problem["_id"])
+
+    failed_response = await client.get("/api/v1/problems", params={"solutionState": "failed"})
+    assert failed_response.status_code == 200
+    assert failed_response.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_solution_state_composes_with_other_filters(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    matching = make_problem(
+        user_id, text="Matching failed problem", tags=["algebra"], problem_type="short-answer"
+    )
+    other_failed = make_problem(
+        user_id, text="Other failed", tags=["geometry"], problem_type="single-choice"
+    )
+    database["problems"].seed(matching, other_failed)
+    database["solution_generation_tasks"].seed(
+        make_solution_task(matching, user_id, status="failed"),
+        make_solution_task(other_failed, user_id, status="failed"),
+    )
+
+    response = await client.get(
+        "/api/v1/problems",
+        params={
+            "solutionState": "failed",
+            "tag": "algebra",
+            "type": "short-answer",
+            "q": "matching",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == str(matching["_id"])
+
+
+@pytest.mark.asyncio
+async def test_solution_state_invalid_returns_422(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    response = await client.get("/api/v1/problems", params={"solutionState": "bogus"})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_solution_state_isolates_other_users(
+    problems_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    other_user_id = problems_app.state.secondary_user["_id"]
+
+    own_problem = make_problem(user_id, text="Own none problem")
+    database["problems"].seed(own_problem)
+
+    # Another user has a failed task and a ready solution, but for their own problems.
+    other_failed_problem = make_problem(other_user_id, text="Other user failed")
+    other_ready_problem = make_problem(other_user_id, text="Other user ready")
+    database["problems"].seed(other_failed_problem, other_ready_problem)
+    database["solution_generation_tasks"].seed(
+        make_solution_task(other_failed_problem, other_user_id, status="failed"),
+    )
+    database["canonical_solutions"].seed(
+        make_canonical_solution(other_ready_problem, other_user_id),
+    )
+
+    none_response = await client.get("/api/v1/problems", params={"solutionState": "none"})
+    assert none_response.status_code == 200
+    none_body = none_response.json()
+    assert none_body["total"] == 1
+    assert none_body["items"][0]["id"] == str(own_problem["_id"])
+
+    failed_response = await client.get("/api/v1/problems", params={"solutionState": "failed"})
+    assert failed_response.status_code == 200
+    assert failed_response.json()["total"] == 0
+
+    ready_response = await client.get("/api/v1/problems", params={"solutionState": "ready"})
+    assert ready_response.status_code == 200
+    assert ready_response.json()["total"] == 0
 
 
 async def test_search_by_text(

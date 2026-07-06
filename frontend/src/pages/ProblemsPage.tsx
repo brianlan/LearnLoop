@@ -30,6 +30,15 @@ const SORT_ORDER_OPTIONS: Array<{ value: ProblemSortOrder; label: string }> = [
   { value: "asc", label: "Ascending" },
 ];
 
+const SOLUTION_STATE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "All" },
+  { value: "none", label: "Not Started" },
+  { value: "pending", label: "Pending" },
+  { value: "generating", label: "Generating" },
+  { value: "ready", label: "Generated" },
+  { value: "failed", label: "Failed" },
+];
+
 type ProblemsPagePreferences = {
   selectedFolderId: string;
   selectedTag: string;
@@ -37,6 +46,7 @@ type ProblemsPagePreferences = {
   searchQuery: string;
   sortBy: ProblemSortBy;
   sortOrder: ProblemSortOrder;
+  solutionState: string;
 };
 
 const DEFAULT_PREFERENCES: ProblemsPagePreferences = {
@@ -46,6 +56,7 @@ const DEFAULT_PREFERENCES: ProblemsPagePreferences = {
   searchQuery: "",
   sortBy: "",
   sortOrder: "desc",
+  solutionState: "",
 };
 
 let problemsPagePreferences: ProblemsPagePreferences = { ...DEFAULT_PREFERENCES };
@@ -104,6 +115,7 @@ export function ProblemsPage() {
   const [searchQuery, setSearchQuery] = useState<string>(problemsPagePreferences.searchQuery);
   const [sortBy, setSortBy] = useState<ProblemSortBy>(problemsPagePreferences.sortBy);
   const [sortOrder, setSortOrder] = useState<ProblemSortOrder>(problemsPagePreferences.sortOrder);
+  const [solutionState, setSolutionState] = useState<string>(problemsPagePreferences.solutionState);
   const [selectedProblemIds, setSelectedProblemIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [bulkTarget, setBulkTarget] = useState<string>(UNFILED_FOLDER_ID);
@@ -120,7 +132,7 @@ export function ProblemsPage() {
   const pageSize = 20;
 
   const { data: problemsData, isLoading: isLoadingProblems } = useQuery({
-    queryKey: ["problems", page, selectedTag, selectedProblemType, searchQuery, selectedFolderId, sortBy, sortOrder],
+    queryKey: ["problems", page, selectedTag, selectedProblemType, searchQuery, selectedFolderId, sortBy, sortOrder, solutionState],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: String(page),
@@ -130,6 +142,7 @@ export function ProblemsPage() {
       if (selectedProblemType) params.append("type", selectedProblemType);
       if (searchQuery.trim()) params.append("q", searchQuery.trim());
       if (selectedFolderId) params.append("folderId", selectedFolderId);
+      if (solutionState) params.append("solutionState", solutionState);
       if (sortBy) {
         params.append("sortBy", sortBy);
         params.append("sortOrder", sortOrder);
@@ -645,6 +658,35 @@ export function ProblemsPage() {
               }}
             >
               {PROBLEM_TYPE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value || "all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="solution-state-filter" style={{ fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", display: "block", marginBottom: "0.375rem" }}>Solution state: </label>
+            <select
+              id="solution-state-filter"
+              value={solutionState}
+              onChange={(e) => {
+                setSolutionState(e.target.value);
+                problemsPagePreferences.solutionState = e.target.value;
+                setPage(1);
+                exitSelectionMode();
+              }}
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface-muted)",
+                color: "var(--color-text)",
+                fontSize: "0.875rem",
+                minWidth: "150px",
+                outline: "none"
+              }}
+            >
+              {SOLUTION_STATE_OPTIONS.map((option) => (
                 <option key={option.value || "all"} value={option.value}>
                   {option.label}
                 </option>
