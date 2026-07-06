@@ -170,6 +170,17 @@ export function ProblemDetailPage() {
     },
   });
 
+  const regenerateMutation = useMutation({
+    mutationFn: () => api.regenerateSolution(problemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["solution-status", problemId] });
+      setError(null);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Regeneration failed");
+    },
+  });
+
   const handleEdit = () => {
     if (problem) {
         setEditForm({
@@ -343,6 +354,23 @@ export function ProblemDetailPage() {
                 }}
               >
                 AI Explain
+              </button>
+            )}
+            {(solutionStatus === "failed" || solutionStatus === "ready") && (
+              <button
+                type="button"
+                onClick={() => regenerateMutation.mutate()}
+                disabled={regenerateMutation.isPending}
+                data-testid="regenerate-solution-button"
+                className="btn btn-secondary"
+                style={{
+                  padding: "0.4rem 0.75rem",
+                  borderRadius: "var(--radius-md)",
+                  fontSize: "0.8125rem",
+                  fontWeight: 700,
+                }}
+              >
+                {regenerateMutation.isPending ? "Regenerating..." : "Re-generate solution"}
               </button>
             )}
           </div>

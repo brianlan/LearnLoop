@@ -17,6 +17,7 @@ vi.mock("@/api/client", () => ({
     delete: vi.fn(),
     verifyTeacherPassword: vi.fn(),
     getSolutionStatus: vi.fn(),
+    regenerateSolution: vi.fn(),
   },
 }));
 
@@ -96,10 +97,12 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.delete).mockReset();
     vi.mocked(api.verifyTeacherPassword).mockReset();
     vi.mocked(api.getSolutionStatus).mockReset();
+    vi.mocked(api.regenerateSolution).mockReset();
     mockNavigate.mockReset();
 
     // Default: no solution status
     vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
+    vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
   });
 
   it("renders problem details", async () => {
@@ -717,5 +720,114 @@ describe("ProblemDetailPage", () => {
       expect(screen.getByTestId("solution-status")).toHaveTextContent("Solution Not Started");
     });
     expect(screen.queryByTestId("ai-explain-button")).not.toBeInTheDocument();
+  });
+
+  it("renders Re-generate solution button when status is ready", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "ready" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("regenerate-solution-button")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("regenerate-solution-button")).toHaveTextContent("Re-generate solution");
+  });
+
+  it("renders Re-generate solution button when status is failed", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "failed" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("regenerate-solution-button")).toBeInTheDocument();
+    });
+  });
+
+  it("does not render Re-generate solution button for none, pending, or generating", async () => {
+    for (const status of ["none", "pending", "generating"]) {
+      vi.mocked(api.get).mockReset();
+      vi.mocked(api.get)
+        .mockResolvedValueOnce({ problem: baseProblem })
+        .mockResolvedValueOnce(baseTracking);
+      vi.mocked(api.getSolutionStatus).mockResolvedValue({ status });
+
+      renderProblemDetailPage();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("solution-status")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("regenerate-solution-button")).not.toBeInTheDocument();
+    }
+  });
+
+  it("calls regenerateSolution API and invalidates solution status on click", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "failed" });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("regenerate-solution-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("regenerate-solution-button"));
+
+    await waitFor(() => {
+      expect(vi.mocked(api.regenerateSolution)).toHaveBeenCalledWith("abc123");
+    });
+    // After success, solution status is refetched (invalidated)
+    await waitFor(() => {
+      expect(vi.mocked(api.getSolutionStatus).mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  it("disables Re-generate button while mutation is pending", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "failed" });
+    // Never resolves so mutation stays pending
+    vi.mocked(api.regenerateSolution).mockReturnValue(new Promise(() => {}));
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("regenerate-solution-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("regenerate-solution-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("regenerate-solution-button")).toBeDisabled();
+    });
+    expect(screen.getByTestId("regenerate-solution-button")).toHaveTextContent("Regenerating...");
+  });
+
+  it("displays error when regeneration fails", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "failed" });
+    vi.mocked(api.regenerateSolution).mockRejectedValue(new Error("Server error"));
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("regenerate-solution-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("regenerate-solution-button"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Server error");
+    });
   });
 });

@@ -14,6 +14,7 @@ from app.infrastructure.storage.mongo import (
     SOLUTION_GENERATION_TASKS_COLLECTION,
 )
 from app.observability import log_solution_generation_event
+from app.presentation.errors import ApiError
 
 SOLUTION_BACKFILL_BATCH_SIZE = 100
 
@@ -116,3 +117,90 @@ async def backfill_solution_generation_tasks(
             log_solution_generation_event("enqueued", doc["problem_id"])
 
     return len(missing_documents)
+
+
+async def _reset_task_to_pending(
+    tasks_col: Any,
+    task_id: Any,
+    *,
+    now: datetime,
+) -> None:
+    """Reset an existing task to pending, clearing retry/failure state."""
+    await tasks_col.update_one(
+        {"_id": task_id},
+        {
+            "$set": {
+                "status": SolutionGenerationStatus.PENDING.value,
+                "retry_count": 0,
+                "failure_reason": None,
+                "started_at": None,
+                "process_after": now,
+                "updated_at": now,
+            }
+        },
+    )
+
+
+async def regenerate_solution_task_for_problem(
+    database: Any,
+    problem_id: str,
+    user_id: str,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Regenerate the canonical solution for a problem.
+
+    Eligible states:
+      - ``ready``: delete the existing canonical solution, then create or reset
+        a pending task.
+      - ``failed``: reset the failed task to pending.
+
+    Ineligible states (``none``, ``pending``, ``generating``) raise
+    ``ApiError(409)``.
+
+    Returns ``"pending"`` on success.
+    """
+    tasks = _safe_get_collection(database, SOLUTION_GENERATION_TASKS_COLLECTION)
+    solutions = _safe_get_collection(database, CANONICAL_SOLUTIONS_COLLECTION)
+    if tasks is None or solutions is None:
+        raise KeyError("solution generation collections are unavailable")
+
+    current_time = now or _utc_now()
+
+    existing_solution = await solutions.find_one({"problem_id": problem_id})
+    existing_task = await tasks.find_one({"problem_id": problem_id})
+
+    # Effective status "ready": a canonical solution takes precedence over any
+    # stale task.
+    if existing_solution is not None:
+        await solutions.delete_one({"problem_id": problem_id})
+        if existing_task is not None:
+            await _reset_task_to_pending(tasks, existing_task["_id"], now=current_time)
+        else:
+            await tasks.insert_one(
+                _build_solution_task_document(
+                    problem_id=problem_id,
+                    user_id=user_id,
+                    now=current_time,
+                )
+            )
+        log_solution_generation_event("regenerate", problem_id)
+        return SolutionGenerationStatus.PENDING.value
+
+    if existing_task is not None:
+        status = str(existing_task.get("status", "pending"))
+        if status == SolutionGenerationStatus.FAILED.value:
+            await _reset_task_to_pending(tasks, existing_task["_id"], now=current_time)
+            log_solution_generation_event("regenerate", problem_id)
+            return SolutionGenerationStatus.PENDING.value
+        raise ApiError(
+            409,
+            "SOLUTION_REGENERATION_CONFLICT",
+            "Solution is already pending or generating.",
+        )
+
+    raise ApiError(
+        409,
+        "SOLUTION_REGENERATION_CONFLICT",
+        "No solution to regenerate.",
+    )

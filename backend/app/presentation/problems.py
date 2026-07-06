@@ -19,6 +19,7 @@ from app.presentation.errors import ApiError
 from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.helpers import build_problem_image_url, get_all_descendant_folder_ids, get_owned_folder, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
+from app.presentation.solution_generation import regenerate_solution_task_for_problem
 from app.presentation.tags import _register_tags
 
 router = APIRouter(prefix="/problems", tags=["problems"])
@@ -541,6 +542,26 @@ async def get_solution_status(
         return SolutionStatusResponse(status=str(existing_task.get("status", "pending")))
         
     return SolutionStatusResponse(status="none")
+
+
+@router.post("/{problem_id}/solution-regeneration", response_model=SolutionStatusResponse)
+async def regenerate_solution(
+    problem_id: str,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+) -> SolutionStatusResponse:
+    problem = await get_owned_problem(
+        database,
+        problem_id,
+        current_user["_id"],
+        allow_deleted=False,
+    )
+    status = await regenerate_solution_task_for_problem(
+        database,
+        str(problem["_id"]),
+        str(current_user["_id"]),
+    )
+    return SolutionStatusResponse(status=status)
 
 
 @router.get("/{problem_id}/tracking", response_model=ProblemTrackingResponse)
