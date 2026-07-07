@@ -512,6 +512,62 @@ async def test_vlm_invalid_response_shape_is_rejected() -> None:
     assert exc_info.value.retryable is False
 
 
+@pytest.mark.asyncio
+async def test_vlm_parser_rejects_invalid_chat_completion_shape() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    client = _build_client(handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider response failed chat completion validation"
+    assert exc_info.value.raw_provider_response == {"unexpected": "shape"}
+
+
+@pytest.mark.asyncio
+async def test_vlm_parser_rejects_empty_choices() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": []})
+
+    client = _build_client(handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider returned no choices"
+    assert exc_info.value.raw_provider_response == {"choices": []}
+
+
+@pytest.mark.asyncio
+async def test_vlm_parser_rejects_empty_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]},
+        )
+
+    client = _build_client(handler)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider response content was empty"
+    assert exc_info.value.raw_provider_response == {
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]
+    }
+
+
 def test_strip_json_code_fences_leaves_plain_json_unchanged() -> None:
     plain = '{"text":"hello"}'
 

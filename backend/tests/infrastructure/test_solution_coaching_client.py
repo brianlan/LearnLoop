@@ -246,6 +246,68 @@ async def test_solution_vlm_client_rejects_malformed_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_solution_vlm_parser_rejects_invalid_chat_completion_shape() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    client = _build_solution_client(handler)
+
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
+        await client.generate_solution(
+            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+        )
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider response failed chat completion validation"
+    assert exc_info.value.raw_provider_response == {"unexpected": "shape"}
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_parser_rejects_empty_choices() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": []})
+
+    client = _build_solution_client(handler)
+
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
+        await client.generate_solution(
+            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+        )
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider returned no choices"
+    assert exc_info.value.raw_provider_response == {"choices": []}
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_parser_rejects_empty_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]},
+        )
+
+    client = _build_solution_client(handler)
+
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
+        await client.generate_solution(
+            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+        )
+    await client.aclose()
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider response content was empty"
+    assert exc_info.value.raw_provider_response == {
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]
+    }
+
+
+@pytest.mark.asyncio
 async def test_solution_vlm_client_classifies_provider_failure_as_retryable() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"detail": "overloaded"})

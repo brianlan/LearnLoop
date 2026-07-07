@@ -24,7 +24,6 @@ from app.infrastructure.vlm._models import (
     _ChatMessage,
     _ChatMessageContentImageUrl,
     _ChatMessageContentText,
-    _ChatCompletionResponse,
 )
 from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
@@ -434,41 +433,3 @@ class VLMClient(BaseVLMClient):
             ],
         )
         return chat_request.model_dump(exclude_none=True)
-
-    def _parse_chat_completion_response(self, raw_body: dict[str, Any]) -> dict[str, Any]:
-        try:
-            completion = _ChatCompletionResponse.model_validate(raw_body)
-        except ValidationError as exc:
-            raise VLMError(
-                "VLM provider response failed chat completion validation",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            ) from exc
-
-        if not completion.choices:
-            raise VLMError(
-                "VLM provider returned no choices",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            )
-
-        message = completion.choices[0].message
-        content = message.content
-        if not content:
-            raise VLMError(
-                "VLM provider response content was empty",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            )
-
-        stripped_content, extracted_reasoning = self._strip_thinking_content(content)
-        parsed = self._load_json_content(stripped_content)
-        reasoning_content = message.reasoning_content
-        if reasoning_content is None:
-            reasoning_content = extracted_reasoning
-        if reasoning_content is not None:
-            parsed["reasoning_content"] = reasoning_content
-        return parsed

@@ -5,6 +5,9 @@ import re
 from typing import Any, Callable
 
 import httpx
+from pydantic import ValidationError
+
+from app.infrastructure.vlm._models import _ChatCompletionResponse
 
 FAILURE_CODE_TIMEOUT = "vlm-timeout"
 FAILURE_CODE_NETWORK = "vlm-network-error"
@@ -189,3 +192,41 @@ class BaseVLMClient:
             retryable=False,
             raw_provider_response=content,
         )
+
+    def _parse_chat_completion_response(self, raw_body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            completion = _ChatCompletionResponse.model_validate(raw_body)
+        except ValidationError as exc:
+            raise self._make_error(
+                "VLM provider response failed chat completion validation",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            ) from exc
+
+        if not completion.choices:
+            raise self._make_error(
+                "VLM provider returned no choices",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+
+        message = completion.choices[0].message
+        content = message.content
+        if not content:
+            raise self._make_error(
+                "VLM provider response content was empty",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+
+        stripped_content, extracted_reasoning = self._strip_thinking_content(content)
+        parsed = self._load_json_content(stripped_content)
+        reasoning_content = message.reasoning_content
+        if reasoning_content is None:
+            reasoning_content = extracted_reasoning
+        if reasoning_content is not None:
+            parsed["reasoning_content"] = reasoning_content
+        return parsed
