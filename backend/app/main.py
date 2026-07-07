@@ -15,7 +15,7 @@ from app.infrastructure.vlm.client import VLMClient
 from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
 from app.infrastructure.worker.extraction_worker import run_extraction_worker
 from app.infrastructure.worker.solution_worker import run_solution_worker
-from app.presentation.solution_generation import backfill_solution_generation_tasks
+from app.solution_generation import backfill_solution_generation_tasks
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
 from app.presentation.errors import ApiError, api_error_handler, validation_error_handler
