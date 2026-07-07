@@ -24,6 +24,7 @@ from app.presentation.deps import (
     create_math_ingestion_vlm_client,
     get_app_settings,
     get_database,
+    get_s3_storage,
 )
 from app.presentation import ingestion as ingestion_presentation
 from tests.api.conftest import FakeDatabase
@@ -250,10 +251,10 @@ async def ingestion_app() -> AsyncIterator[FastAPI]:
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_app_settings] = lambda: settings
-    application.dependency_overrides[ingestion_presentation.get_s3_storage] = lambda: storage
-    application.dependency_overrides[ingestion_presentation.create_helper_vlm_client] = lambda: helper_vlm_client
-    application.dependency_overrides[ingestion_presentation.create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm_client
-    application.dependency_overrides[ingestion_presentation.create_english_ingestion_vlm_client] = lambda: english_ingestion_vlm_client
+    application.dependency_overrides[get_s3_storage] = lambda: storage
+    application.dependency_overrides[create_helper_vlm_client] = lambda: helper_vlm_client
+    application.dependency_overrides[create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm_client
+    application.dependency_overrides[create_english_ingestion_vlm_client] = lambda: english_ingestion_vlm_client
     application.dependency_overrides[ingestion_presentation.get_preview_sync_wait_seconds] = (
         lambda: application.state.sync_wait_seconds
     )

@@ -18,6 +18,9 @@ from app.main import create_app
 from app.presentation import ingestion as ingestion_presentation
 from app.infrastructure.storage.mongo import get_mongo_adapter
 from app.presentation.deps import (
+    create_english_ingestion_vlm_client,
+    create_helper_vlm_client,
+    create_math_ingestion_vlm_client,
     get_app_settings,
     get_database,
     get_grading_vlm_client,
@@ -290,10 +293,9 @@ async def app() -> AsyncIterator[FastAPI]:
     application.dependency_overrides[get_s3_storage] = lambda: storage
     application.dependency_overrides[get_mongo_adapter] = lambda: adapter
     application.dependency_overrides[get_grading_vlm_client] = lambda: grading_vlm
-    application.dependency_overrides[ingestion_presentation.get_s3_storage] = lambda: storage
-    application.dependency_overrides[ingestion_presentation.create_helper_vlm_client] = lambda: helper_vlm
-    application.dependency_overrides[ingestion_presentation.create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm
-    application.dependency_overrides[ingestion_presentation.create_english_ingestion_vlm_client] = lambda: english_ingestion_vlm
+    application.dependency_overrides[create_helper_vlm_client] = lambda: helper_vlm
+    application.dependency_overrides[create_math_ingestion_vlm_client] = lambda: math_ingestion_vlm
+    application.dependency_overrides[create_english_ingestion_vlm_client] = lambda: english_ingestion_vlm
     application.dependency_overrides[ingestion_presentation.get_preview_sync_wait_seconds] = (
         lambda: application.state.sync_wait_seconds
     )

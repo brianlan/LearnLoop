@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -49,14 +49,14 @@ from app.infrastructure.ingestion.repository import (
     update_item_draft,
 )
 from app.infrastructure.storage.mongo import Document
-from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
+from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.base_client import BaseVLMError
 from app.presentation.deps import (
+    CurrentUserDependency,
     DatabaseDependency,
     HelperVLMDependency,
-    get_app_settings,
-    get_current_user,
-    get_s3_storage,
+    SettingsDependency,
+    StorageDependency,
 )
 from app.presentation.errors import ApiError
 from app.presentation.helpers import (
@@ -69,10 +69,6 @@ from app.presentation.problem_creation import create_problem_from_draft
 from app.presentation.schemas import SourceImagePayload
 
 router = APIRouter(prefix="/ingestion-batches", tags=["bulk-ingestion"])
-
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
-StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
-SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
 
 
 class DetectionResponse(BaseModel):

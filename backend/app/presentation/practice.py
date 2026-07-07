@@ -15,16 +15,16 @@ from app.domain.practice_selection import (
     get_eligible_practice_problems,
     select_practice_problem,
 )
-from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.config.settings import get_settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient, VLMError
 from app.presentation.deps import (
+    CurrentUserDependency,
     DatabaseDependency,
-    get_app_settings,
-    get_current_user,
+    SettingsDependency,
+    StorageDependency,
     get_grading_vlm_client,
-    get_s3_storage,
 )
 from app.infrastructure.storage.s3 import load_source_image_base64
 from app.presentation.helpers import build_problem_image_url, parse_object_id
@@ -34,9 +34,6 @@ from app.presentation.errors import ApiError
 router = APIRouter(prefix="/practice", tags=["practice"])
 
 
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
-SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
-StorageDependency = Annotated[S3StorageAdapter, Depends(get_s3_storage)]
 VLMDependency = Annotated[VLMClient, Depends(get_grading_vlm_client)]
 
 
