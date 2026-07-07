@@ -3,15 +3,14 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import UTC, datetime
 from random import Random
-from typing import Annotated, Any
+from typing import Any
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
 from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
 from app.domain.selection import ProblemSelectionConfig, select_problems
 from app.domain.state import transition_exam_state
-from app.infrastructure.config.settings import Settings, get_settings
 from app.presentation.exam_grading import build_tracking_update, grade_item
 from app.presentation.exam_helpers import (
     build_exam_summary,
@@ -22,10 +21,11 @@ from app.presentation.exam_helpers import (
 )
 from app.presentation.deps import (
     AdapterDependency,
+    CurrentUserDependency,
     DatabaseDependency,
     GradingVLMDependency,
+    SettingsDependency,
     StorageDependency,
-    get_current_user,
 )
 from app.presentation.errors import ApiError
 from app.presentation.exam_serialization import (
@@ -44,10 +44,6 @@ from app.presentation.exam_serialization import (
 )
 
 router = APIRouter(prefix="/exams", tags=["exams"])
-
-
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
-SettingsDependency = Annotated[Settings, Depends(get_settings)]
 
 
 @router.post("", response_model=CreateExamResponse, status_code=201)

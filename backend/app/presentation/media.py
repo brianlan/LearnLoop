@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 from io import BytesIO
-from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-from app.presentation.deps import DatabaseDependency, StorageDependency, get_current_user
+from app.presentation.deps import CurrentUserDependency, DatabaseDependency, StorageDependency
 from app.presentation.errors import ApiError
 from app.presentation.helpers import get_owned_problem
 
 router = APIRouter(tags=["media"])
-
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 
 
 @router.get("/problems/{problem_id}/image")

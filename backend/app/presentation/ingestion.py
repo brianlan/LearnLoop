@@ -14,19 +14,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType
-from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
-from app.infrastructure.vlm.client import VLMClient, VLMError
+from app.infrastructure.vlm.client import VLMError
 from app.presentation.deps import (
+    CurrentUserDependency,
     DatabaseDependency,
+    EnglishIngestionVLMDependency,
+    HelperVLMDependency,
+    MathIngestionVLMDependency,
+    SettingsDependency,
     StorageDependency,
-    create_english_ingestion_vlm_client,
-    create_helper_vlm_client,
-    create_math_ingestion_vlm_client,
-    get_app_settings,
-    get_current_user,
-    get_s3_storage,
 )
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags, parse_object_id
@@ -55,19 +53,12 @@ class PreviewDraftPatchRequest(BaseModel):
     subject: ProblemSubject | None = None
 
 
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
-SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
-
-
 def get_preview_sync_wait_seconds() -> float:
     return DEFAULT_SYNC_WAIT_SECONDS
 
 
 S3Dependency = StorageDependency
 SyncWaitDependency = Annotated[float, Depends(get_preview_sync_wait_seconds)]
-HelperVLMDependency = Annotated[VLMClient, Depends(create_helper_vlm_client)]
-MathIngestionVLMDependency = Annotated[VLMClient, Depends(create_math_ingestion_vlm_client)]
-EnglishIngestionVLMDependency = Annotated[VLMClient, Depends(create_english_ingestion_vlm_client)]
 
 
 async def _get_owned_preview(

@@ -14,9 +14,10 @@ from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.vlm.client import VLMError
 from app.main import create_app
-from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import get_mongo_adapter
 from app.presentation.deps import (
+    get_app_settings,
     get_current_user,
     get_database,
     get_grading_vlm_client,
@@ -181,7 +182,7 @@ async def exams_app() -> FastAPI:
     )
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
-    application.dependency_overrides[get_settings] = lambda: settings
+    application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_mongo_adapter] = lambda: adapter
     application.dependency_overrides[get_s3_storage] = lambda: storage
     application.dependency_overrides[get_grading_vlm_client] = lambda: vlm
@@ -600,7 +601,7 @@ async def exams_app_with_min_age() -> FastAPI:
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
-    application.dependency_overrides[get_settings] = lambda: settings
+    application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_mongo_adapter] = lambda: adapter
     application.dependency_overrides[get_s3_storage] = lambda: storage
     application.dependency_overrides[get_grading_vlm_client] = lambda: vlm
@@ -678,7 +679,7 @@ async def exams_app_with_custom_policy() -> FastAPI:
 
     application.dependency_overrides[get_database] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: deepcopy(user)
-    application.dependency_overrides[get_settings] = lambda: settings
+    application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_mongo_adapter] = lambda: adapter
     application.dependency_overrides[get_s3_storage] = lambda: storage
     application.dependency_overrides[get_grading_vlm_client] = lambda: vlm

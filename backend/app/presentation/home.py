@@ -4,15 +4,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
-from app.presentation.deps import DatabaseDependency, get_current_user
+from app.presentation.deps import CurrentUserDependency, DatabaseDependency
 
 router = APIRouter(prefix="/home", tags=["home"])
-
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
 
 _MASTERY_STATUSES = {GradingStatus.CORRECT.value, GradingStatus.INCORRECT.value}
 

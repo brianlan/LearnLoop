@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import Annotated, Any
+from typing import Annotated
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends
@@ -9,18 +9,14 @@ from pydantic import BaseModel, Field
 
 from app.domain.models import CoachingConversation
 from app.domain.coaching.service import CoachingService, CoachingError
-from app.infrastructure.config.settings import Settings
 from app.presentation.deps import (
+    CurrentUserDependency,
     DatabaseDependency,
-    get_current_user,
-    get_app_settings,
+    SettingsDependency,
 )
 from app.presentation.errors import ApiError
 
 router = APIRouter(prefix="/coaching", tags=["coaching"])
-
-CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
-SettingsDependency = Annotated[Settings, Depends(get_app_settings)]
 
 class CoachingMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
