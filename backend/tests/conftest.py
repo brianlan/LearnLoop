@@ -12,13 +12,6 @@ from tests.test_utils.db_fakes import (
     FakeCollection as FakeCollection,
     FakeCursor as FakeCursor,
     FakeDatabase as FakeDatabase,
-    FakeDeleteResult as FakeDeleteResult,
-    FakeInsertOneResult as FakeInsertOneResult,
-    FakeUpdateResult as FakeUpdateResult,
-    _eval_pipeline_expr as _eval_pipeline_expr,
-    _inc_nested as _inc_nested,
-    _set_nested as _set_nested,
-    get_nested_values as get_nested_values,
     matches_query as matches_query,
 )
 
