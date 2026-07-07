@@ -347,20 +347,26 @@ Fields:
 - problemType: one of single-choice, multi-choice, fill-in-the-blank, short-answer.
 - graphDsl: nullable string. Use this only when the problem contains a geometry or coordinate-style diagram
   that can be reconstructed with the supported JSXGraph elements below. Otherwise return null.
-- correctAnswer: nullable string. If the image visibly shows the expected answer (for example an answer key,
-  a printed answer, or a clearly indicated correct option), put that answer here as plain text. If no answer is
-  visible in the image, return null. Do not solve the problem or infer an answer that is not shown.
+- correctAnswer: nullable string. Generate this by solving or answering the visible English problem.
+  - For single-choice problems, return the correct option label only, e.g. `B`.
+  - For multi-choice problems, return the correct option labels as a comma-separated list, e.g. `A, C`.
+  - For fill-in-the-blank and constrained short-answer problems, return a concise answer, e.g. `bus`.
+  - For open-ended tasks such as writing a sentence, making a dialogue, or free translation, return a reasonable model answer.
+  - If you are uncertain, provide your best guess rather than returning null.
+  - Return null only when the problem is too incomplete or incoherent to form any answer at all.
 - providerMetadata: optional object. Omit it unless the caller explicitly requires provider-specific metadata.
 
 ## Core extraction rules
 
-Extract the visible problem faithfully.
-Do not solve the problem.
-Do not answer questions.
-Do not fill in blanks.
+Extract the visible problem faithfully into the `text` field.
+Do not solve the problem in the `text` field — represent blanks with the normalized blank form.
+Do not answer questions in the `text` field.
+Do not fill in blanks in the `text` field.
 Do not correct grammar, spelling, punctuation, or capitalization unless the correction is visibly present in the image.
-Do not invent missing words, missing options, missing labels, or missing numbers.
+Do not invent missing words, missing options, missing labels, or missing numbers in the `text` field.
 If some text is unclear, extract the most likely visible text without adding explanations.
+
+The `correctAnswer` field is different: solve or answer the visible problem to generate it (see the field description above).
 
 ## Text structure
 

@@ -714,6 +714,31 @@ def test_english_extraction_prompt_contains_english_guidance() -> None:
 def test_english_extraction_prompt_documents_correct_answer() -> None:
     assert "correctAnswer" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
     assert "nullable string" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "solving or answering" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "Do not solve the problem or infer an answer that is not shown" not in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_instructs_labels_only_for_choices() -> None:
+    assert "label only" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "comma-separated list" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_instructs_model_answer_for_open_ended() -> None:
+    assert "model answer" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "open-ended" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_instructs_best_guess_for_uncertain() -> None:
+    assert "best guess" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_reserves_null_for_impossible() -> None:
+    assert "too incomplete or incoherent" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_english_extraction_prompt_scopes_no_solve_to_text_field() -> None:
+    assert "Do not solve the problem in the `text` field" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
+    assert "solve or answer the visible problem to generate it" in ENGLISH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_math_extraction_prompt_does_not_request_correct_answer() -> None:
