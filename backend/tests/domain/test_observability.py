@@ -143,7 +143,7 @@ async def test_send_message_logs_observability(caplog):
 
 @pytest.mark.asyncio
 async def test_enqueue_solution_logs_observability(caplog):
-    from app.presentation.solution_generation import enqueue_solution_generation_task_for_problem
+    from app.solution_generation import enqueue_solution_generation_task_for_problem
 
     class FakeCol:
         def __init__(self):

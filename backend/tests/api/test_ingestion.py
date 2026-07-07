@@ -776,7 +776,7 @@ async def test_confirm_preview_rejects_double_confirmation(
 async def test_backfill_solution_generation_tasks_enqueues_only_missing_problems(
     ingestion_app: FastAPI,
 ) -> None:
-    from app.presentation.solution_generation import backfill_solution_generation_tasks
+    from app.solution_generation import backfill_solution_generation_tasks
 
     database: FakeDatabase = ingestion_app.state.fake_database
     owner = {

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 from app.domain import ProblemSubject, ProblemType, normalize_answer
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags
-from app.presentation.solution_generation import enqueue_solution_generation_task_for_problem
+from app.solution_generation import enqueue_solution_generation_task_for_problem
 from app.presentation.tag_registration import _register_tags
 
 
