@@ -5,10 +5,10 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.infrastructure.config.settings import get_settings
-from app.infrastructure.vlm.client import FAILURE_CODE_STALE_PREVIEW
-
 from .models import IngestionPreviewStatus, ExamState
+
+# Domain-owned failure code for stale-preview recovery.
+FAILURE_CODE_STALE_PREVIEW = "vlm-stale-preview-timeout"
 
 
 class InvalidStateTransitionError(Exception):
@@ -19,7 +19,7 @@ def recover_stale_preview(
     preview: Mapping[str, Any],
     *,
     now: datetime | None = None,
-    extracting_window_seconds: float | None = None,
+    extracting_window_seconds: float,
 ) -> dict[str, Any] | None:
     status = preview.get("status")
     if status != "extracting":
@@ -34,11 +34,7 @@ def recover_stale_preview(
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
 
-    window = timedelta(
-        seconds=extracting_window_seconds
-        if extracting_window_seconds is not None
-        else get_settings().preview_extracting_window_seconds
-    )
+    window = timedelta(seconds=extracting_window_seconds)
     if current_time - started_at <= window:
         return None
 
