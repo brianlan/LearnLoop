@@ -5,7 +5,12 @@ from typing import Any
 
 from bson import ObjectId
 
-from tests.conftest import FakeCursor, FakeDatabase, FakeStorage, matches_query
+from tests.conftest import FakeStorage as FakeStorage
+from tests.test_utils.db_fakes import (
+    FakeCursor as FakeCursor,
+    FakeDatabase as FakeDatabase,
+    matches_query as matches_query,
+)
 
 
 def make_user(user_id: ObjectId, username: str) -> dict[str, Any]:
