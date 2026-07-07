@@ -13,7 +13,7 @@ from app.domain import ProblemSubject, ProblemType, normalize_answer
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags
 from app.presentation.solution_generation import enqueue_solution_generation_task_for_problem
-from app.presentation.tags import _register_tags
+from app.presentation.tag_registration import _register_tags
 
 
 async def create_problem_from_draft(

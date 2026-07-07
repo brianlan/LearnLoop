@@ -20,7 +20,7 @@ from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.helpers import build_problem_image_url, get_all_descendant_folder_ids, get_owned_folder, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.schemas import CorrectAnswerPayload
 from app.presentation.solution_generation import regenerate_solution_task_for_problem
-from app.presentation.tags import _register_tags
+from app.presentation.tag_registration import _register_tags
 
 router = APIRouter(prefix="/problems", tags=["problems"])
 
