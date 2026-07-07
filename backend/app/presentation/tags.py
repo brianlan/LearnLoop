@@ -11,7 +11,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.infrastructure.storage.mongo import Document
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency
 from app.presentation.errors import ApiError
-from app.presentation.helpers import normalize_tags, parse_object_id
+from app.presentation.helpers import parse_object_id
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
@@ -81,34 +81,6 @@ async def _count_problems_with_tag(database: AsyncDatabase[Document], user_id: O
     return await database["problems"].count_documents(
         {"userId": user_id, "tags": tag_name, "isDeleted": False}
     )
-
-
-async def _register_tags(database: AsyncDatabase[Document], user_id: ObjectId, tags: list[str]) -> None:
-    """Auto-register any new tags that don't already exist for the user.
-
-    Uses insert_many with ordered=False so that duplicate-key errors from
-    concurrent requests are silently skipped rather than aborting the batch.
-    """
-    from pymongo.errors import BulkWriteError
-
-    normalized = normalize_tags(tags)
-    if not normalized:
-        return
-    existing = await database["tags"].find(
-        {"userId": user_id, "name": {"$in": normalized}}
-    ).to_list(length=None)
-    existing_names = {tag["name"] for tag in existing}
-    now = datetime.now(UTC)
-    new_tags = [
-        {"_id": ObjectId(), "userId": user_id, "name": name, "createdAt": now, "updatedAt": now}
-        for name in normalized
-        if name not in existing_names
-    ]
-    if new_tags:
-        try:
-            await database["tags"].insert_many(new_tags, ordered=False)
-        except BulkWriteError:
-            pass
 
 
 @router.get("", response_model=TagListResponse)
