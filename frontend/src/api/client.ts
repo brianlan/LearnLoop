@@ -65,34 +65,15 @@ export const api = {
   },
 
   async getMe(): Promise<MeResponse> {
-    const response = await fetch(`${API_BASE}/auth/me`, {
-      credentials: "include",
-    });
-    return handleResponse<MeResponse>(response);
+    return this.get<MeResponse>("/auth/me");
   },
 
   async login(username: string, password: string): Promise<AuthResponse> {
-    const response = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({ username, password }),
-    });
-    return handleResponse<AuthResponse>(response);
+    return this.post<AuthResponse>("/auth/login", { username, password });
   },
 
   async register(username: string, password: string): Promise<AuthResponse> {
-    const response = await fetch(`${API_BASE}/auth/register`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({ username, password }),
-    });
-    return handleResponse<AuthResponse>(response);
+    return this.post<AuthResponse>("/auth/register", { username, password });
   },
 
   async logout(): Promise<{ ok: boolean }> {
@@ -104,15 +85,7 @@ export const api = {
   },
 
   async verifyTeacherPassword(password: string): Promise<{ ok: boolean }> {
-    const response = await fetch(`${API_BASE}/teacher-password/verify`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({ password }),
-    });
-    return handleResponse<{ ok: boolean }>(response);
+    return this.post<{ ok: boolean }>("/teacher-password/verify", { password });
   },
 
   async changeTeacherPassword(
@@ -120,19 +93,11 @@ export const api = {
     newPassword: string,
     confirmPassword: string
   ): Promise<{ ok: boolean }> {
-    const response = await fetch(`${API_BASE}/teacher-password/change`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({
-        current_password: currentPassword,
-        new_password: newPassword,
-        confirm_password: confirmPassword,
-      }),
+    return this.post<{ ok: boolean }>("/teacher-password/change", {
+      current_password: currentPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
     });
-    return handleResponse<{ ok: boolean }>(response);
   },
 
   /**
