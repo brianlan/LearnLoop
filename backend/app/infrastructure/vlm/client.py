@@ -9,6 +9,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.domain.state import FAILURE_CODE_STALE_PREVIEW as FAILURE_CODE_STALE_PREVIEW
 from app.infrastructure.vlm.base_client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
@@ -38,8 +39,6 @@ from app.infrastructure.vlm.prompts import (
 )
 
 ProblemType = Literal["single-choice", "multi-choice", "fill-in-the-blank", "short-answer"]
-
-FAILURE_CODE_STALE_PREVIEW = "vlm-stale-preview-timeout"
 
 
 class VLMError(BaseVLMError):
