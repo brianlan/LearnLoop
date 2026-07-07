@@ -1,119 +1,36 @@
-# Frontend Refactoring Backlog
+# Frontend Refactoring Backlog (Archived)
 
-This document tracks refactoring opportunities identified but deferred for future work.
+> **Status:** Archived on 2026-07-07.
+>
+> The original entries below have been completed or made obsolete by subsequent
+> frontend work. This file is kept as an archive note so future readers can see
+> what was tracked and where the completed work now lives. New frontend
+> refactoring opportunities should be proposed as separate GitHub issues instead
+> of being added here.
 
-## Batch 2 — Deferred Items
+## Archive Evidence
 
-### 1. Unify API Import Style (Complete)
+Each row maps an original backlog entry to its current state in the codebase,
+with pointers that can be spot-checked to confirm the work is done.
 
-**Status:** Partially done
-**Files:** `api/client.ts`, `contexts/AuthContext.tsx`
+| # | Original entry | Status | Evidence |
+|---|----------------|--------|----------|
+| 1 | Unify API import style (named `api` import; remove default export) | Complete | `src/contexts/AuthContext.tsx:4` uses `import { api, type User } from "@/api/client"`; `src/api/client.ts` has no `export default` (only `export const api`, `export class ApiError`, and interface exports) |
+| 2 | IngestionWizard API client consistency / add `postFormData` | Complete / obsolete | `src/api/client.ts:203` defines `postFormData<T>(path, formData)`; `src/api/bulkIngestion.ts:29` uses `api.postFormData<BatchResponse>(...)`; the original `src/components/IngestionWizard.tsx` no longer exists (replaced by `BulkIngestionWizard.tsx`, which has no raw `fetch` calls) |
+| 3 | Problem interface unification (`types/problem.ts`) | Complete | `src/types/problem.ts` exports canonical `ProblemDetail`, `ProblemResponse`, `ProblemListItem`, `PracticeWeight`, `ProblemsResponse`; consumed by `src/pages/ProblemDetailPage.tsx:13`, `src/pages/CoachingPage.tsx:10`, `src/pages/ProblemsPage.tsx:9`; no duplicated `Problem` interface remains |
+| 4 | Shared `PROBLEM_TYPE_OPTIONS` constant | Complete | `src/constants/problemTypes.ts:1` defines `PROBLEM_TYPE_OPTIONS`; consumed by `src/pages/ProblemDetailPage.tsx:14` and `src/pages/ProblemsPage.tsx:11` (via `PROBLEM_TYPE_FILTER_OPTIONS`) |
+| 5 | Fragile 404 error detection -> typed `ApiError` | Complete | `src/api/client.ts:8` exports `class ApiError extends Error` with a `status: number` field; `src/pages/ActiveExamPage.tsx:204` and `src/components/BulkIngestionWizard.tsx:165` use `instanceof ApiError && .status === 404` instead of string matching; no `message.includes("404")` remains |
 
-**Remaining work:**
-- Update `AuthContext.tsx` to use named import `import { api } from "@/api/client"`
-- Remove the default export from `client.ts`
+## Notes
 
-**Reason deferred:** AuthContext was outside the scope of the current refactoring batch. Requires separate change.
-
----
-
-### 2. IngestionWizard API Client Consistency
-
-**Status:** Deferred
-**Files:** `components/IngestionWizard.tsx`, `api/client.ts`
-
-**Problem:**
-IngestionWizard bypasses the API client for some network calls:
-- `createPreview()` uses raw `fetch()` with FormData
-- `updatePreview()` uses raw `fetch()`
-- `retryPreview()` uses raw `fetch()`
-- `confirmPreview()` uses raw `fetch()`
-
-Meanwhile, `getPreview()` correctly uses `api.get()`.
-
-**Impact:**
-- Inconsistent error handling (raw fetch loses `code` and `status` fields)
-- Hardcoded `/api/v1` prefix in raw calls
-- Future changes to API client (auth, retries, logging) won't apply to these calls
-
-**Recommended approach:**
-1. Add `postFormData(url: string, formData: FormData)` method to API client
-2. Migrate IngestionWizard to use `api.postFormData()`, `api.patch()`, `api.post()`
-
-**Risk level:** Medium — changes network call behavior and error handling
-
----
-
-### 3. Problem Interface Unification
-
-**Status:** Deferred
-**Files:** `pages/ProblemsPage.tsx`, `pages/ProblemDetailPage.tsx`, `types/exam.ts`
-
-**Problem:**
-`Problem` interface is defined inline in two places with different field subsets:
-- `ProblemsPage.tsx` lines 7-23
-- `ProblemDetailPage.tsx` lines 19-30
-
-`CorrectAnswer` interface is duplicated between `ProblemDetailPage.tsx` and `types/exam.ts`.
-
-**Recommended approach:**
-Create `types/problem.ts` with canonical `Problem` interface that is the union of both. Pages use a single import. If a page only needs a subset, use `Pick<Problem, ...>`.
-
-**Reason deferred:** Requires verifying which fields each page actually depends on from API responses.
-
----
-
-### 4. Shared PROBLEM_TYPE_OPTIONS Constant
-
-**Status:** Deferred
-**Files:** `pages/ProblemsPage.tsx`, `components/IngestionWizard.tsx`
-
-**Problem:**
-Problem type options are defined in multiple places:
-- `ProblemsPage.tsx` has `PROBLEM_TYPE_OPTIONS` constant
-- `IngestionWizard.tsx` hardcodes `<option>` values in JSX
-
-**Recommended approach:**
-Define `PROBLEM_TYPE_OPTIONS` once (in `types/` or shared constants file) and import in both places.
-
-**Risk level:** Low
-
----
-
-### 5. Fragile 404 Error Detection
-
-**Status:** Deferred
-**Files:** `pages/ActiveExamPage.tsx`, `api/client.ts`
-
-**Problem:**
-ActiveExamPage detects 404 errors by string matching:
-```tsx
-const isNotFoundError = examError instanceof Error && examError.message.includes("404");
-```
-
-This relies on the HTTP status code being embedded in the error message string. A change to error message formatting would break this detection.
-
-**Recommended approach:**
-Export a typed `ApiError` class with `status` field, so consumers can check `err.status === 404` instead of string matching.
-
-**Reason deferred:** Changes error handling contract. Requires human judgment on whether this affects business flow (showing "no active exam" vs "error").
-
-**Risk level:** Medium
-
----
-
-## Summary
-
-| Item | Priority | Risk | Effort |
-|------|----------|------|--------|
-| API import style (AuthContext) | P2 | Low | Small |
-| IngestionWizard API client | P1 | Medium | Medium |
-| Problem interface unification | P2 | Low | Small |
-| PROBLEM_TYPE_OPTIONS constant | P2 | Low | Small |
-| 404 error detection | P2 | Medium | Small |
-
----
+- This archive records only the originally tracked items. It is not a new backlog.
+- Evidence pointers reflect the codebase at archive time (commit `1226b7e`,
+  2026-07-07) and may drift as the codebase evolves; search by symbol name to
+  re-locate any pointer.
 
 ## Change Log
 
-- **2026-05-24**: Initial backlog created after Batch 1 refactoring
+- **2026-05-24**: Initial backlog created after Batch 1 refactoring.
+- **2026-07-07**: Backlog archived. All five original entries are complete or
+  obsolete; see the evidence table above. New refactoring opportunities should be
+  proposed as separate GitHub issues.
