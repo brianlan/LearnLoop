@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
 
 from app.domain.models import ProblemType
 from app.presentation.helpers import build_problem_image_url
-from app.presentation.schemas import CorrectAnswerPayload
+from app.presentation.schemas import CorrectAnswerPayload, UTCDatetime
 
 
 class TrackingPayload(BaseModel):
     exposureCount: int
     correctCount: int
     failedCount: int
-    lastTestedAt: datetime | None
+    lastTestedAt: UTCDatetime | None
     lastAttemptCorrect: bool | None
 
 
@@ -35,9 +34,9 @@ class ProblemSummaryPayload(BaseModel):
     tags: list[str]
     tracking: TrackingPayload
     isDeleted: bool
-    deletedAt: datetime | None
-    createdAt: datetime
-    updatedAt: datetime
+    deletedAt: UTCDatetime | None
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
     imageUrl: str | None = None
     folderId: str | None = None
 

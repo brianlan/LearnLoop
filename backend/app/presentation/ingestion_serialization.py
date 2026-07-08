@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload
+from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload, UTCDatetime
 
 
 class PreviewDraftPayload(BaseModel):
@@ -20,8 +19,8 @@ class PreviewDraftPayload(BaseModel):
 
 class PreviewExtractionPayload(BaseModel):
     requestModel: str | None = None
-    requestStartedAt: datetime | None = None
-    requestFinishedAt: datetime | None = None
+    requestStartedAt: UTCDatetime | None = None
+    requestFinishedAt: UTCDatetime | None = None
     success: bool | None = None
     rawText: str | None = None
     rawProblemType: str | None = None
@@ -49,9 +48,9 @@ class PreviewPayload(BaseModel):
     draft: PreviewDraftPayload
     extraction: PreviewExtractionPayload
     helperDetection: PreviewHelperDetectionPayload
-    createdAt: datetime
-    updatedAt: datetime
-    expiresAt: datetime
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
+    expiresAt: UTCDatetime
 
 
 class PreviewResponse(BaseModel):
@@ -67,8 +66,8 @@ class ProblemPayload(BaseModel):
     correctAnswer: CorrectAnswerPayload
     tags: list[str] = Field(default_factory=list)
     sourceImage: SourceImagePayload | None = None
-    createdAt: datetime
-    updatedAt: datetime
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
 
 
 class ProblemResponse(BaseModel):

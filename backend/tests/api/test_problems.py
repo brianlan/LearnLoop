@@ -231,6 +231,26 @@ async def test_problem_detail_defaults_missing_subject_to_math(
 
 
 @pytest.mark.asyncio
+async def test_problem_response_serializes_naive_utc_datetime_with_timezone(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    # Mongo/PyMongo returns UTC datetimes as naive by default. Simulate that
+    # storage shape so the regression is exercised through a real endpoint.
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    naive_utc = datetime(2026, 5, 25, 13, 51, 4)
+    problem = make_problem(user_id, created_at=naive_utc, updated_at=naive_utc)
+    database["problems"].seed(problem)
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}")
+
+    assert response.status_code == 200
+    created_at = response.json()["problem"]["createdAt"]
+    assert created_at == "2026-05-25T13:51:04Z"
+
+
+@pytest.mark.asyncio
 async def test_list_detail_update_delete_tags_and_tracking(
     problems_app: FastAPI,
     client: AsyncClient,

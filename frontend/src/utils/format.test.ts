@@ -74,4 +74,19 @@ describe("formatDate", () => {
     // In UTC, the date should remain Jan 15
     expect(result).toContain("1/15/2026");
   });
+
+  it("renders a UTC timestamp as the GMT+8 converted time, not the raw UTC wall time", () => {
+    // Mock timezone detection to Asia/Shanghai (UTC+8).
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation(
+      (() => ({
+        resolvedOptions: () => ({ timeZone: "Asia/Shanghai" }),
+      })) as unknown as typeof Intl.DateTimeFormat,
+    );
+
+    // 2026-05-25T13:51:04Z is 2026-05-25T21:51:04+08:00 in GMT+8.
+    const result = formatDate("2026-05-25T13:51:04Z");
+    // The converted GMT+8 wall time is 9:51:04 PM, not the raw UTC 13:51.
+    expect(result).toContain("9:51:04 PM");
+    expect(result).not.toContain("1:51:04 PM");
+  });
 });
