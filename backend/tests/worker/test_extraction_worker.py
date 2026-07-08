@@ -314,6 +314,44 @@ async def test_process_item_success_math(
 
 
 @pytest.mark.asyncio
+async def test_process_item_normalizes_draft_text_and_preserves_raw_text(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    settings: Settings,
+) -> None:
+    batch_id, user_id, _image_id, item_id = _seed_batch_with_committed_item(
+        database,
+        storage,
+        subject="math",
+        box={"x": 0, "y": 0, "width": 1, "height": 1},
+    )
+    batch = await get_batch(database, batch_id, user_id)
+    item = batch["items"][0]
+
+    math_client = FakeIngestionVLMClient(model="math-model")
+    english_client = FakeIngestionVLMClient(model="english-model")
+    raw_text = "已知$45$和$x$，求$y$。"
+    math_client.responses.append(make_extraction_result(text=raw_text, model="math-model"))
+
+    await process_item(
+        item,
+        batch,
+        database,
+        storage,
+        math_client,
+        english_client,
+        settings,
+    )
+
+    refreshed = await get_batch(database, batch_id, batch["userId"])
+    stored_item = refreshed["items"][0]
+    # Draft text is normalized: numeric unwrapped, inline math spaced.
+    assert stored_item["draft"]["text"] == "已知45和 $x$ ，求 $y$ 。"
+    # Raw extraction text remains the unmodified VLM output.
+    assert stored_item["extraction"]["rawText"] == raw_text
+
+
+@pytest.mark.asyncio
 async def test_process_item_routes_to_english_client(
     database: FakeDatabase,
     storage: FakeStorage,

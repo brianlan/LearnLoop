@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.domain.ingestion import BatchState, ItemState
+from app.domain.normalization import normalize_extracted_problem_text
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.crop import crop_image_to_box
 from app.infrastructure.ingestion.documents import build_crop_image
@@ -251,6 +252,7 @@ async def process_item(
         return
 
     finished_at = _utc_now()
+    normalized_text = normalize_extracted_problem_text(result.text)
     await save_item_extraction_success(
         database,
         batch_id,
@@ -258,7 +260,7 @@ async def process_item(
         item_id,
         crop=crop_meta,
         draft={
-            "text": result.text,
+            "text": normalized_text,
             "problemType": result.problem_type,
             "graphDsl": result.graph_dsl,
             "correctAnswer": result.correct_answer,

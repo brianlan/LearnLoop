@@ -356,6 +356,42 @@ async def test_create_preview_with_valid_image_returns_expected_status(
 
 
 @pytest.mark.asyncio
+async def test_create_preview_normalizes_draft_text_and_preserves_raw_text(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    helper_vlm: FakeVLMClient = ingestion_app.state.fake_helper_vlm_client
+    math_vlm: FakeVLMClient = ingestion_app.state.fake_math_ingestion_vlm_client
+    helper_vlm.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="math",
+            confidence=0.95,
+            reason="Contains math notation",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    raw_text = "已知$45$和$x$，求$y$。"
+    math_vlm.responses = [make_extraction_result(text=raw_text)]
+    ingestion_app.state.sync_wait_seconds = 1.0
+
+    create_response = await authenticated_client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("test.png", make_png_bytes(), "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    preview = create_response.json()["preview"]
+    assert preview["status"] == "ready"
+    # Draft text is normalized: numeric unwrapped, inline math spaced.
+    assert preview["draft"]["text"] == "已知45和 $x$ ，求 $y$ 。"
+    # Raw extraction text remains the unmodified VLM output.
+    assert preview["extraction"]["rawText"] == raw_text
+
+
+@pytest.mark.asyncio
 async def test_create_preview_with_non_image_returns_validation_error(
     authenticated_client: AsyncClient,
 ) -> None:

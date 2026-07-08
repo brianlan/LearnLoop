@@ -12,6 +12,7 @@ from bson import ObjectId
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.domain import IngestionPreviewStatus, recover_stale_preview, transition_preview_state
+from app.domain.normalization import normalize_extracted_problem_text
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
@@ -170,9 +171,10 @@ async def _run_extraction_task(
             return
 
         finished_at = utc_now()
+        normalized_text = normalize_extracted_problem_text(result.text)
         draft = _merge_draft_with_extraction(
             preview.get("editableDraft"),
-            text=result.text,
+            text=normalized_text,
             problem_type=result.problem_type,
             graph_dsl=result.graph_dsl,
         )

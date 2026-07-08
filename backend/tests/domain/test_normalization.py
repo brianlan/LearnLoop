@@ -1,6 +1,6 @@
 import pytest
 from app.domain import ProblemType, CorrectAnswer, normalize_answer
-from app.domain.normalization import compare_answers
+from app.domain.normalization import compare_answers, normalize_extracted_problem_text
 
 
 def test_single_choice_normalization():
@@ -168,3 +168,67 @@ class TestCompareAnswers:
         )
         stored_answer = {"normalizedSet": ("a", "b"), "normalizedText": "a,b"}
         assert compare_answers(normalized, stored_answer, ProblemType.MULTI_CHOICE) is True
+
+
+class TestNormalizeExtractedProblemTextNumericUnwrap:
+    def test_unsigned_integer_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("The answer is $45$.") == "The answer is 45."
+
+    def test_unsigned_decimal_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("Pi is $3.14$.") == "Pi is 3.14."
+
+    def test_padded_number_unwrapped_and_trimmed(self) -> None:
+        assert normalize_extracted_problem_text("$ 45 $") == "45"
+
+
+class TestNormalizeExtractedProblemTextNoUnwrap:
+    def test_negative_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$-3$") == "$-3$"
+
+    def test_comma_grouped_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$1,000$") == "$1,000$"
+
+    def test_percentage_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$45\\%$") == "$45\\%$"
+
+    def test_variable_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$x$") == "$x$"
+
+    def test_expression_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$x+1$") == "$x+1$"
+
+    def test_fraction_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$\\frac{1}{2}$") == "$\\frac{1}{2}$"
+
+    def test_display_math_not_unwrapped(self) -> None:
+        assert normalize_extracted_problem_text("$$45$$") == "$$45$$"
+
+
+class TestNormalizeExtractedProblemTextSpacing:
+    def test_adds_spaces_around_inline_math_adjacent_to_english(self) -> None:
+        assert normalize_extracted_problem_text("Find$x$when$x+1=2$") == "Find $x$ when $x+1=2$"
+
+    def test_adds_spaces_around_inline_math_adjacent_to_chinese_and_punctuation(self) -> None:
+        assert normalize_extracted_problem_text("已知$x$，求$y$。") == "已知 $x$ ，求 $y$ 。"
+
+    def test_collapses_extra_boundary_spaces_to_one(self) -> None:
+        assert normalize_extracted_problem_text("已知  $x$  ，求  $y$  。") == "已知 $x$ ，求 $y$ 。"
+
+    def test_preserves_inline_math_at_start_of_line(self) -> None:
+        text = "$x$ is the unknown"
+        assert normalize_extracted_problem_text(text) == "$x$ is the unknown"
+
+    def test_preserves_inline_math_at_end_of_line(self) -> None:
+        text = "the unknown is $x$"
+        assert normalize_extracted_problem_text(text) == "the unknown is $x$"
+
+    def test_preserves_content_inside_delimiters(self) -> None:
+        text = "已知 $ x + 1 $ 。"
+        assert normalize_extracted_problem_text(text) == "已知 $ x + 1 $ 。"
+
+
+class TestNormalizeExtractedProblemTextCombined:
+    def test_numeric_unwrap_runs_before_spacing(self) -> None:
+        # $45$ unwraps to 45 (no longer inline math), while $x$ gets spacing.
+        assert normalize_extracted_problem_text("已知$45$和$x$。") == "已知45和 $x$ 。"
+
