@@ -178,7 +178,7 @@ describe("HomePage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-firstpass-percentage").textContent).toBe("50%");
     });
-    expect(screen.getByTestId("home-firstpass-text").textContent).toContain("2 of 4 attempted problems correct on first try");
+    expect(screen.getByTestId("home-firstpass-text").textContent).toContain("2 of 4 attempts correct on first try");
   });
 
   it("renders no-attempt message when firstPass has zero attempts", async () => {
