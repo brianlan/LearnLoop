@@ -241,7 +241,7 @@ export function HomePage() {
               "No attempts yet. Try problems to start tracking first-pass rate."
             ) : (
               <>
-                {firstPass.firstPassCorrectProblems} of {firstPass.attemptedProblems} attempted problems correct on first try
+                {firstPass.firstPassCorrectProblems} of {firstPass.attemptedProblems} attempts correct on first try
               </>
             )}
           </div>
