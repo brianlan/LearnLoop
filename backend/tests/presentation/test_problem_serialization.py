@@ -8,7 +8,7 @@ preserving.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone, timedelta
 from typing import Any
 
 from bson import ObjectId
@@ -23,6 +23,7 @@ from app.presentation.problem_serialization import (
     _serialize_problem_detail,
     _serialize_problem_summary,
 )
+from app.presentation.schemas import UTCDatetime, ensure_utc
 
 NOW = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
@@ -266,3 +267,52 @@ def test_serialize_detail_origin_none() -> None:
         "rawExtractedProblemType": None,
         "rawExtractedGraphDsl": None,
     }
+
+
+# ---- UTC timestamp serialization (timezone-naive Mongo datetimes) ----
+
+
+def test_ensure_utc_treats_naive_datetime_as_utc() -> None:
+    naive = datetime(2026, 5, 25, 13, 51, 4)
+    assert ensure_utc(naive) == naive.replace(tzinfo=UTC)
+
+
+def test_ensure_utc_converts_aware_datetime_to_utc() -> None:
+    aware = datetime(2026, 5, 25, 21, 51, 4, tzinfo=timezone(timedelta(hours=8)))
+    assert ensure_utc(aware) == datetime(2026, 5, 25, 13, 51, 4, tzinfo=UTC)
+
+
+def test_ensure_utc_leaves_none_unchanged() -> None:
+    assert ensure_utc(None) is None
+
+
+def test_naive_utc_datetime_serializes_with_utc_timezone() -> None:
+    # Simulates a naive UTC datetime returned by Mongo/PyMongo (tz_aware=False).
+    naive = datetime(2026, 5, 25, 13, 51, 4)
+    problem = _make_problem(createdAt=naive, updatedAt=naive)
+    detail = _serialize_problem_detail(problem)
+
+    json = detail.model_dump_json()
+    assert '"createdAt":"2026-05-25T13:51:04Z"' in json
+    assert '"updatedAt":"2026-05-25T13:51:04Z"' in json
+
+
+def test_aware_utc_datetime_serializes_with_utc_timezone() -> None:
+    problem = _make_problem()
+    detail = _serialize_problem_detail(problem)
+
+    assert detail.createdAt.tzinfo is not None
+    json = detail.model_dump_json()
+    assert '"createdAt":"2026-01-01T00:00:00Z"' in json
+
+
+def test_naive_optional_datetime_serializes_with_utc_timezone() -> None:
+    naive = datetime(2026, 5, 25, 13, 51, 4)
+    problem = _make_problem(deletedAt=naive)
+    problem["tracking"]["lastTestedAt"] = naive
+    summary = _serialize_problem_summary(problem)
+
+    json = summary.model_dump_json()
+    assert '"lastTestedAt":"2026-05-25T13:51:04Z"' in json
+    assert '"deletedAt":"2026-05-25T13:51:04Z"' in json
+

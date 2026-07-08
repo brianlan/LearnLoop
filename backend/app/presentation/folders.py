@@ -15,6 +15,7 @@ from app.presentation.helpers import (
     get_owned_folder,
     parse_object_id,
 )
+from app.presentation.schemas import UTCDatetime
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -27,8 +28,8 @@ class FolderNodePayload(BaseModel):
     parentId: str | None
     problemCount: int
     children: list["FolderNodePayload"]
-    createdAt: datetime
-    updatedAt: datetime
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
 
 
 class FolderTreeResponse(BaseModel):
@@ -51,8 +52,8 @@ class FolderPayload(BaseModel):
     id: str
     name: str
     parentId: str | None
-    createdAt: datetime
-    updatedAt: datetime
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
 
 
 class FolderResponse(BaseModel):

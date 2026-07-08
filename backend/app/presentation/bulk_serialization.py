@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -11,7 +10,7 @@ from app.presentation.helpers import (
     build_ingestion_crop_url,
     build_ingestion_source_image_url,
 )
-from app.presentation.schemas import SourceImagePayload
+from app.presentation.schemas import SourceImagePayload, UTCDatetime
 
 
 class DetectionResponse(BaseModel):
@@ -29,9 +28,9 @@ class ImageResponse(BaseModel):
     subject: str | None
     boxes: list[dict[str, Any]]
     detection: DetectionResponse
-    committedAt: datetime | None
-    createdAt: datetime
-    updatedAt: datetime
+    committedAt: UTCDatetime | None
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
 
 
 class ItemResponse(BaseModel):
@@ -46,9 +45,9 @@ class ItemResponse(BaseModel):
     submit: dict[str, Any]
     origin: dict[str, Any]
     crop: dict[str, Any] | None
-    leaseUntil: datetime | None
-    createdAt: datetime
-    updatedAt: datetime
+    leaseUntil: UTCDatetime | None
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
 
 
 class BatchPayload(BaseModel):
@@ -57,9 +56,9 @@ class BatchPayload(BaseModel):
     status: str
     images: list[ImageResponse]
     items: list[ItemResponse]
-    createdAt: datetime
-    updatedAt: datetime
-    expiresAt: datetime
+    createdAt: UTCDatetime
+    updatedAt: UTCDatetime
+    expiresAt: UTCDatetime
 
 
 class BatchResponse(BaseModel):

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.domain.models import ExamState, GradingStatus, ProblemType
 from app.presentation.helpers import build_problem_image_url
-from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload
+from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload, UTCDatetime
 
 
 class CreateExamRequest(BaseModel):
@@ -35,7 +34,7 @@ class ExamProblemPayload(BaseModel):
 
 class ExamAnswerPayload(BaseModel):
     raw: str | None = None
-    savedAt: datetime | None = None
+    savedAt: UTCDatetime | None = None
 
 
 class ExamGradingPayload(BaseModel):
@@ -46,7 +45,7 @@ class ExamGradingPayload(BaseModel):
     feedback: str | None = None
     providerModel: str | None = None
     rawProviderResponse: dict[str, Any] | None = None
-    gradedAt: datetime | None = None
+    gradedAt: UTCDatetime | None = None
     retryCount: int = 0
     selfReportedCorrect: bool | None = None
 
@@ -71,7 +70,7 @@ class SelectionPolicyPayload(BaseModel):
 class ExamConfigSnapshotPayload(BaseModel):
     maxProblemCount: int
     selectionPolicy: SelectionPolicyPayload
-    generatedAt: datetime
+    generatedAt: UTCDatetime
 
 
 class ExamSummaryPayload(BaseModel):
@@ -90,11 +89,11 @@ class ExamPayload(BaseModel):
     configSnapshot: ExamConfigSnapshotPayload
     items: list[ExamItemPayload]
     summary: ExamSummaryPayload
-    createdAt: datetime
-    startedAt: datetime | None = None
-    submittedAt: datetime | None = None
-    discardedAt: datetime | None = None
-    updatedAt: datetime
+    createdAt: UTCDatetime
+    startedAt: UTCDatetime | None = None
+    submittedAt: UTCDatetime | None = None
+    discardedAt: UTCDatetime | None = None
+    updatedAt: UTCDatetime
 
 
 class CreateExamResponse(BaseModel):
@@ -117,9 +116,9 @@ class SelfReportResponse(BaseModel):
 class ExamHistoryItemPayload(BaseModel):
     id: str
     state: ExamState
-    createdAt: datetime
-    submittedAt: datetime | None = None
-    discardedAt: datetime | None = None
+    createdAt: UTCDatetime
+    submittedAt: UTCDatetime | None = None
+    discardedAt: UTCDatetime | None = None
     summary: ExamSummaryPayload
 
 

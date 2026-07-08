@@ -12,6 +12,7 @@ from app.infrastructure.storage.mongo import Document
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency
 from app.presentation.errors import ApiError
 from app.presentation.helpers import parse_object_id
+from app.presentation.schemas import UTCDatetime
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/tags", tags=["tags"])
 class TagPayload(BaseModel):
     id: str
     name: str
-    createdAt: datetime
+    createdAt: UTCDatetime
     problemCount: int
 
 

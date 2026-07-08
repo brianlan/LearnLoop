@@ -30,6 +30,7 @@ from app.infrastructure.storage.s3 import load_source_image_base64
 from app.presentation.helpers import build_problem_image_url, parse_object_id
 from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.errors import ApiError
+from app.presentation.schemas import UTCDatetime
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -57,7 +58,7 @@ class PracticeAttemptDetail(BaseModel):
     submittedAnswer: str
     gradingStatus: str
     gradingMethod: str
-    createdAt: datetime
+    createdAt: UTCDatetime
     feedback: str | None = None
 
 
@@ -65,7 +66,7 @@ class PracticeHistorySummary(BaseModel):
     totalAttempts: int
     correctCount: int
     wrongCount: int
-    lastPracticedAt: datetime | None = None
+    lastPracticedAt: UTCDatetime | None = None
     lastResult: str | None = None
 
 
