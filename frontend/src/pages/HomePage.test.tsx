@@ -36,6 +36,9 @@ function summaryResponse(overrides: Partial<{
   percentage: number;
   masteredProblems: number;
   conquestPercentage: number;
+  firstPassAttempted: number;
+  firstPassCorrect: number;
+  firstPassPercentage: number;
   days: { date: string; count: number }[];
 }> = {}) {
   const today = new Date();
@@ -56,6 +59,11 @@ function summaryResponse(overrides: Partial<{
       totalProblems,
       masteredProblems: overrides.masteredProblems ?? 0,
       percentage: overrides.conquestPercentage ?? 0,
+    },
+    firstPass: {
+      attemptedProblems: overrides.firstPassAttempted ?? 1,
+      firstPassCorrectProblems: overrides.firstPassCorrect ?? 0,
+      percentage: overrides.firstPassPercentage ?? 0,
     },
     activity: {
       startDate: days[0].date,
@@ -109,7 +117,7 @@ describe("HomePage", () => {
   it("renders zero-problem state with 0% and note", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => summaryResponse({ totalProblems: 0, triedProblems: 0, percentage: 0, masteredProblems: 0, conquestPercentage: 0 }),
+      json: async () => summaryResponse({ totalProblems: 0, triedProblems: 0, percentage: 0, masteredProblems: 0, conquestPercentage: 0, firstPassAttempted: 0, firstPassCorrect: 0, firstPassPercentage: 0 }),
     });
     renderHomePage();
     await waitFor(() => {
@@ -118,6 +126,8 @@ describe("HomePage", () => {
     expect(screen.getByTestId("home-coverage-text").textContent).toContain("No problems yet");
     expect(screen.getByTestId("home-conquest-percentage").textContent).toBe("0%");
     expect(screen.getByTestId("home-conquest-text").textContent).toContain("No problems yet");
+    expect(screen.getByTestId("home-firstpass-percentage").textContent).toBe("0%");
+    expect(screen.getByTestId("home-firstpass-text").textContent).toContain("No attempts yet");
   });
 
   it("renders coverage percentage and supporting text in normal state", async () => {
@@ -148,6 +158,46 @@ describe("HomePage", () => {
       expect(screen.getByTestId("home-conquest-percentage").textContent).toBe("50%");
     });
     expect(screen.getByTestId("home-conquest-text").textContent).toContain("2 of 4 problems mastered");
+  });
+
+  it("renders first-pass rate as the third stat card with percentage and supporting text", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        totalProblems: 4,
+        triedProblems: 3,
+        percentage: 75,
+        masteredProblems: 2,
+        conquestPercentage: 50,
+        firstPassAttempted: 4,
+        firstPassCorrect: 2,
+        firstPassPercentage: 50,
+      }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-firstpass-percentage").textContent).toBe("50%");
+    });
+    expect(screen.getByTestId("home-firstpass-text").textContent).toContain("2 of 4 attempted problems correct on first try");
+  });
+
+  it("renders no-attempt message when firstPass has zero attempts", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        totalProblems: 2,
+        triedProblems: 0,
+        percentage: 0,
+        firstPassAttempted: 0,
+        firstPassCorrect: 0,
+        firstPassPercentage: 0,
+      }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-firstpass-percentage").textContent).toBe("0%");
+    });
+    expect(screen.getByTestId("home-firstpass-text").textContent).toContain("No attempts yet");
   });
 
   it("renders activity grid cells with returned counts", async () => {

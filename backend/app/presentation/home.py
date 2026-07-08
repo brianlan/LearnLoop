@@ -27,6 +27,12 @@ class HomeConquest(BaseModel):
     percentage: int
 
 
+class HomeFirstPass(BaseModel):
+    attemptedProblems: int
+    firstPassCorrectProblems: int
+    percentage: int
+
+
 class HomeActivityDay(BaseModel):
     date: str
     count: int
@@ -41,6 +47,7 @@ class HomeActivity(BaseModel):
 class HomeSummaryResponse(BaseModel):
     coverage: HomeCoverage
     conquest: HomeConquest
+    firstPass: HomeFirstPass
     activity: HomeActivity
 
 
@@ -68,6 +75,7 @@ async def get_home_summary(
 
     tried_problem_ids: set[Any] = set()
     latest_mastery: dict[Any, tuple[datetime, bool]] = {}
+    earliest_attempt: dict[Any, tuple[datetime, bool]] = {}
 
     def _consider_mastery(problem_id: Any, event_time: Any, status: str) -> None:
         if status not in _MASTERY_STATUSES:
@@ -79,6 +87,16 @@ async def get_home_summary(
         if previous is None or event_time > previous[0]:
             latest_mastery[problem_id] = (event_time, is_correct)
 
+    def _consider_first_pass(problem_id: Any, event_time: Any, status: str) -> None:
+        if not isinstance(event_time, datetime):
+            return
+        is_correct = status == GradingStatus.CORRECT.value
+        previous = earliest_attempt.get(problem_id)
+        if previous is None or event_time < previous[0]:
+            earliest_attempt[problem_id] = (event_time, is_correct)
+        elif event_time == previous[0]:
+            earliest_attempt[problem_id] = (event_time, previous[1] or is_correct)
+
     practice_attempts = await database["practice_attempts"].find(
         {"userId": user_id}
     ).to_list(length=None)
@@ -87,6 +105,11 @@ async def get_home_summary(
         if problem_id in non_deleted_problem_ids:
             tried_problem_ids.add(problem_id)
             _consider_mastery(
+                problem_id,
+                attempt.get("createdAt"),
+                str(attempt.get("gradingStatus", "")),
+            )
+            _consider_first_pass(
                 problem_id,
                 attempt.get("createdAt"),
                 str(attempt.get("gradingStatus", "")),
@@ -108,6 +131,11 @@ async def get_home_summary(
                 submitted_at,
                 str(grading.get("status", "")),
             )
+            _consider_first_pass(
+                problem_id,
+                submitted_at,
+                str(grading.get("status", "")),
+            )
 
     tried_problems = len(tried_problem_ids)
     percentage = round((tried_problems / total_problems) * 100) if total_problems else 0
@@ -115,6 +143,13 @@ async def get_home_summary(
     mastered_problems = sum(1 for _, is_correct in latest_mastery.values() if is_correct)
     conquest_percentage = (
         round((mastered_problems / total_problems) * 100) if total_problems else 0
+    )
+
+    first_pass_correct_problems = sum(
+        1 for _, is_correct in earliest_attempt.values() if is_correct
+    )
+    first_pass_percentage = (
+        round((first_pass_correct_problems / tried_problems) * 100) if tried_problems else 0
     )
 
     today = datetime.now(tz).date()
@@ -159,6 +194,11 @@ async def get_home_summary(
             totalProblems=total_problems,
             masteredProblems=mastered_problems,
             percentage=conquest_percentage,
+        ),
+        firstPass=HomeFirstPass(
+            attemptedProblems=tried_problems,
+            firstPassCorrectProblems=first_pass_correct_problems,
+            percentage=first_pass_percentage,
         ),
         activity=HomeActivity(
             startDate=start_date.strftime("%Y-%m-%d"),

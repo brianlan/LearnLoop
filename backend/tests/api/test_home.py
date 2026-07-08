@@ -102,6 +102,9 @@ async def test_summary_no_problems_returns_zero(home_app: FastAPI, client: Async
     assert data["conquest"]["totalProblems"] == 0
     assert data["conquest"]["masteredProblems"] == 0
     assert data["conquest"]["percentage"] == 0
+    assert data["firstPass"]["attemptedProblems"] == 0
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+    assert data["firstPass"]["percentage"] == 0
     assert data["activity"]["startDate"]
     assert data["activity"]["endDate"]
     assert len(data["activity"]["days"]) == 365
@@ -545,3 +548,225 @@ async def test_summary_omitting_timezone_defaults_to_utc(
     day_with = next(d for d in data_with["activity"]["days"] if d["date"] == today_str)
     day_without = next(d for d in data_without["activity"]["days"] if d["date"] == today_str)
     assert day_with["count"] == day_without["count"]
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_no_attempts_returns_zero(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Problems exist but no attempts: firstPass should be zero."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 0
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+    assert data["firstPass"]["percentage"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_correct_practice_attempt(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """First practice attempt correct yields 100%."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=datetime(2026, 1, 1, tzinfo=UTC), grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 1
+    assert data["firstPass"]["firstPassCorrectProblems"] == 1
+    assert data["firstPass"]["percentage"] == 100
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_incorrect_then_correct_not_first_pass(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """First attempt incorrect, later correct: not first-pass correct."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    older = datetime(2026, 1, 1, tzinfo=UTC)
+    newer = datetime(2026, 2, 1, tzinfo=UTC)
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=older, grading_status="incorrect"),
+        make_practice_attempt(user_id, problem["_id"], created_at=newer, grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 1
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+    assert data["firstPass"]["percentage"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_exam_correct_item(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """First submitted exam item correct counts as first-pass correct."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("exams", [
+        make_submitted_exam(
+            user_id,
+            problem_ids=[problem["_id"]],
+            submitted_at=datetime(2026, 1, 15, tzinfo=UTC),
+            item_grading_statuses=["correct"],
+        )
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 1
+    assert data["firstPass"]["firstPassCorrectProblems"] == 1
+    assert data["firstPass"]["percentage"] == 100
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_pending_review_counts_in_denominator_only(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Pending-review first attempt counts in denominator, not numerator."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(
+            user_id, problem["_id"],
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            grading_status="pending-review",
+        ),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 1
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+    assert data["firstPass"]["percentage"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_ungraded_exam_counts_in_denominator_only(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Ungraded exam item first attempt counts in denominator, not numerator."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("exams", [
+        make_submitted_exam(
+            user_id,
+            problem_ids=[problem["_id"]],
+            submitted_at=datetime(2026, 1, 15, tzinfo=UTC),
+            item_grading_statuses=["ungraded"],
+        )
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 1
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+    assert data["firstPass"]["percentage"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_deleted_problems_excluded(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Deleted problems' attempts do not count in firstPass."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    active = make_problem(user_id)
+    deleted = make_problem(user_id, is_deleted=True)
+    database.seed("problems", [active, deleted])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, deleted["_id"], created_at=datetime(2026, 1, 1, tzinfo=UTC), grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 0
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+    assert data["firstPass"]["percentage"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_other_users_excluded(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Other users' attempts do not count in firstPass."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    other_user_id = ObjectId()
+    own = make_problem(user_id)
+    other = make_problem(other_user_id)
+    database.seed("problems", [own, other])
+    database.seed("practice_attempts", [
+        make_practice_attempt(other_user_id, other["_id"], created_at=datetime(2026, 1, 1, tzinfo=UTC), grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 0
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_discarded_in_progress_excluded(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Discarded and in-progress exams do not count in firstPass."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    in_progress_exam = make_submitted_exam(user_id, problem_ids=[problem["_id"]], submitted_at=now)
+    in_progress_exam["state"] = "in-progress"
+    in_progress_exam["submittedAt"] = None
+    discarded_exam = make_submitted_exam(user_id, problem_ids=[problem["_id"]], submitted_at=now)
+    discarded_exam["state"] = "discarded"
+    database.seed("exams", [in_progress_exam, discarded_exam])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 0
+    assert data["firstPass"]["firstPassCorrectProblems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_first_pass_mixed_correct_and_incorrect(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """One first-correct and one first-incorrect: 50%."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem_a = make_problem(user_id)
+    problem_b = make_problem(user_id)
+    database.seed("problems", [problem_a, problem_b])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem_a["_id"], created_at=datetime(2026, 1, 1, tzinfo=UTC), grading_status="correct"),
+        make_practice_attempt(user_id, problem_b["_id"], created_at=datetime(2026, 1, 1, tzinfo=UTC), grading_status="incorrect"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["firstPass"]["attemptedProblems"] == 2
+    assert data["firstPass"]["firstPassCorrectProblems"] == 1
+    assert data["firstPass"]["percentage"] == 50
