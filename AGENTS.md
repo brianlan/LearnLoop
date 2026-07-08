@@ -54,3 +54,6 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Development Environment
+
+Run `docker compose up` if the containers (i.e. learnloop-app, learnloop-frontend, learnloop-mongodb, learnloop-rustfs) are not started. Use the environment (has all the dependencies) inside the container if running tests or code snippets are needed.
