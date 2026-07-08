@@ -16,6 +16,12 @@ interface HomeConquest {
   percentage: number;
 }
 
+interface HomeFirstPass {
+  attemptedProblems: number;
+  firstPassCorrectProblems: number;
+  percentage: number;
+}
+
 interface HomeActivityDay {
   date: string;
   count: number;
@@ -30,6 +36,7 @@ interface HomeActivity {
 interface HomeSummaryResponse {
   coverage: HomeCoverage;
   conquest: HomeConquest;
+  firstPass: HomeFirstPass;
   activity: HomeActivity;
 }
 
@@ -156,7 +163,7 @@ export function HomePage() {
     return <main style={pageCanvasStyle} />;
   }
 
-  const { coverage, conquest, activity } = data;
+  const { coverage, conquest, firstPass, activity } = data;
   const maxCount = activity.days.reduce((max, day) => Math.max(max, day.count), 0);
   const weekColumns = buildWeekColumns(activity.days);
   const monthLabels = buildMonthLabels(weekColumns);
@@ -217,6 +224,24 @@ export function HomePage() {
             ) : (
               <>
                 {conquest.masteredProblems} of {conquest.totalProblems} problems mastered
+              </>
+            )}
+          </div>
+        </section>
+
+        <section style={statCardStyle}>
+          <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            First-Pass Rate
+          </div>
+          <div data-testid="home-firstpass-percentage" style={{ fontSize: "3.5rem", fontWeight: 800, lineHeight: 1, color: "var(--color-primary)" }}>
+            {firstPass.percentage}%
+          </div>
+          <div data-testid="home-firstpass-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+            {firstPass.attemptedProblems === 0 ? (
+              "No attempts yet. Try problems to start tracking first-pass rate."
+            ) : (
+              <>
+                {firstPass.firstPassCorrectProblems} of {firstPass.attemptedProblems} attempted problems correct on first try
               </>
             )}
           </div>
