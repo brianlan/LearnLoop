@@ -3,6 +3,49 @@ import unicodedata
 from .models import CorrectAnswer, ProblemType
 
 
+# Matches single-dollar inline math ($...$) while avoiding display math ($$...$$):
+# neither delimiter may be adjacent to another ``$``.
+_INLINE_MATH_PATTERN = r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)"
+_INLINE_MATH_RE = re.compile(_INLINE_MATH_PATTERN)
+_UNSIGNED_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def normalize_extracted_problem_text(text: str) -> str:
+    """Normalize inline LaTeX in extracted problem text.
+
+    Applied to VLM-extracted draft text only; the raw extraction text must be
+    preserved separately. Two rules run in order:
+
+    1. Unwrap pure unsigned numbers: ``$45$`` -> ``45``, ``$3.14$`` -> ``3.14``.
+       Negatives, comma-grouped numbers, percentages, fractions, variables and
+       expressions are left wrapped.
+    2. Normalize spacing around remaining inline ``$...$``: exactly one ASCII
+       space before and after the expression unless it is at the start or end of
+       a line.
+    """
+    text = _unwrap_numeric_inline_math(text)
+    text = _normalize_inline_math_spacing(text)
+    return text
+
+
+def _unwrap_numeric_inline_math(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        inner = match.group(1).strip()
+        if _UNSIGNED_NUMBER_RE.fullmatch(inner):
+            return inner
+        return match.group(0)
+
+    return _INLINE_MATH_RE.sub(_replace, text)
+
+
+def _normalize_inline_math_spacing(text: str) -> str:
+    # Exactly one space before ``$`` when preceded by a non-space character.
+    text = re.sub(r"(?<=\S)[ \t]*(" + _INLINE_MATH_PATTERN + r")", r" \1", text)
+    # Exactly one space after ``$`` when followed by a non-space character.
+    text = re.sub(r"(" + _INLINE_MATH_PATTERN + r")[ \t]*(?=\S)", r"\1 ", text)
+    return text
+
+
 def compare_answers(normalized: CorrectAnswer, stored_answer: dict, problem_type: ProblemType) -> bool:
     """Compare a normalized answer against the stored correct answer."""
     if problem_type == ProblemType.MULTI_CHOICE:
