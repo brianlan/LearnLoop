@@ -16,6 +16,7 @@ vi.mock("@/api/client", () => ({
     patch: vi.fn(),
     delete: vi.fn(),
     verifyTeacherPassword: vi.fn(),
+    setProblemDisabled: vi.fn(),
     getSolutionStatus: vi.fn(),
     regenerateSolution: vi.fn(),
   },
@@ -69,6 +70,7 @@ const baseProblem = {
   correctAnswer: { display: "4", normalizedText: "4", normalizedSet: ["4"], format: "single" },
   imageUrl: null,
   isDeleted: false,
+  isDisabled: false,
   createdAt: "2024-01-01",
   updatedAt: "2024-01-01",
 };
@@ -96,6 +98,7 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.patch).mockReset();
     vi.mocked(api.delete).mockReset();
     vi.mocked(api.verifyTeacherPassword).mockReset();
+    vi.mocked(api.setProblemDisabled).mockReset();
     vi.mocked(api.getSolutionStatus).mockReset();
     vi.mocked(api.regenerateSolution).mockReset();
     mockNavigate.mockReset();
@@ -829,5 +832,114 @@ describe("ProblemDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("Server error");
     });
+  });
+
+  it("renders Disable button between Edit and Delete for enabled problems", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+
+    const editButton = screen.getByRole("button", { name: "Edit" });
+    const disableButton = screen.getByTestId("toggle-disabled-button");
+    const deleteButton = screen.getByRole("button", { name: "Delete" });
+
+    expect(disableButton).toHaveTextContent("Disable");
+    // Disable is positioned between Edit and Delete in the DOM
+    expect(
+      editButton.compareDocumentPosition(disableButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      disableButton.compareDocumentPosition(deleteButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByTestId("disabled-badge")).not.toBeInTheDocument();
+  });
+
+  it("renders Enable button and Disabled badge for disabled problems", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, isDisabled: true } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("disabled-badge")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("toggle-disabled-button")).toHaveTextContent("Enable");
+  });
+
+  it("disables a problem via teacher password modal and refreshes state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, isDisabled: true } });
+
+    vi.mocked(api.setProblemDisabled).mockResolvedValueOnce({
+      problem: { ...baseProblem, isDisabled: true },
+    });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-disabled-button")).toHaveTextContent("Disable");
+    });
+
+    await user.click(screen.getByTestId("toggle-disabled-button"));
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
+
+    await user.type(screen.getByTestId("teacher-password-input"), "teacher-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    await waitFor(() => {
+      expect(api.setProblemDisabled).toHaveBeenCalledWith(
+        "abc123",
+        true,
+        "teacher-password",
+      );
+    });
+
+    // After success, problem is refreshed: Enable button + Disabled badge
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-disabled-button")).toHaveTextContent("Enable");
+      expect(screen.getByTestId("disabled-badge")).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces error in modal on incorrect teacher password and leaves state unchanged", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+
+    vi.mocked(api.setProblemDisabled).mockRejectedValueOnce(
+      new Error("Incorrect teacher password"),
+    );
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-disabled-button")).toHaveTextContent("Disable");
+    });
+
+    await user.click(screen.getByTestId("toggle-disabled-button"));
+    await user.type(screen.getByTestId("teacher-password-input"), "wrong-password");
+    await user.click(screen.getByTestId("teacher-password-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("teacher-password-error")).toHaveTextContent(
+        "Incorrect teacher password",
+      );
+    });
+
+    // Modal stays open and problem state is unchanged
+    expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
+    expect(screen.getByTestId("toggle-disabled-button")).toHaveTextContent("Disable");
+    expect(screen.queryByTestId("disabled-badge")).not.toBeInTheDocument();
   });
 });

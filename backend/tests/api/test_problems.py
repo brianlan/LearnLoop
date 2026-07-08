@@ -78,6 +78,7 @@ def make_problem(
     last_tested_at: Any = DEFAULT_LAST_TESTED,
     tags: list[str] | None = None,
     is_deleted: bool = False,
+    is_disabled: bool = False,
     folder_id: str | None = None,
 ) -> dict[str, Any]:
     now = updated_at or datetime.now(UTC)
@@ -119,6 +120,7 @@ def make_problem(
         },
         "isDeleted": is_deleted,
         "deletedAt": now if is_deleted else None,
+        "isDisabled": is_disabled,
         "folderId": folder_id,
         "createdAt": created,
         "updatedAt": now,
@@ -487,6 +489,132 @@ async def test_problem_routes_require_authentication(problems_app: FastAPI) -> N
     assert response.json() == {
         "error": {"code": "UNAUTHENTICATED", "message": "Authentication required"}
     }
+
+
+@pytest.mark.asyncio
+async def test_problem_payloads_include_is_disabled(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    enabled = make_problem(user_id, text="Enabled")
+    disabled = make_problem(user_id, text="Disabled", is_disabled=True)
+    database["problems"].seed(enabled, disabled)
+
+    list_response = await client.get("/api/v1/problems")
+    assert list_response.status_code == 200
+    by_text = {item["text"]: item for item in list_response.json()["items"]}
+    assert by_text["Enabled"]["isDisabled"] is False
+    assert by_text["Disabled"]["isDisabled"] is True
+
+    detail_response = await client.get(f"/api/v1/problems/{disabled['_id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["problem"]["isDisabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_toggle_disables_problem_with_correct_teacher_password(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="To disable")
+    database["problems"].seed(problem)
+
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/disabled",
+        json={"isDisabled": True, "teacherPassword": "default-teacher-password"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()["problem"]
+    assert body["isDisabled"] is True
+
+    stored = database["problems"]._documents[0]
+    assert stored["isDisabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_toggle_enables_disabled_problem_with_correct_teacher_password(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="To enable", is_disabled=True)
+    database["problems"].seed(problem)
+
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/disabled",
+        json={"isDisabled": False, "teacherPassword": "default-teacher-password"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["problem"]["isDisabled"] is False
+
+    stored = database["problems"]._documents[0]
+    assert stored["isDisabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_toggle_rejects_incorrect_teacher_password_and_leaves_state_unchanged(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Protected")
+    database["problems"].seed(problem)
+
+    response = await client.patch(
+        f"/api/v1/problems/{problem['_id']}/disabled",
+        json={"isDisabled": True, "teacherPassword": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error": {"code": "UNAUTHENTICATED", "message": "Incorrect teacher password"}
+    }
+
+    stored = database["problems"]._documents[0]
+    assert stored.get("isDisabled") is False
+
+
+@pytest.mark.asyncio
+async def test_toggle_rejects_missing_deleted_and_other_user_problems(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    other_user_id = problems_app.state.secondary_user["_id"]
+    deleted = make_problem(user_id, text="Deleted", is_deleted=True)
+    other_user = make_problem(other_user_id, text="Other user")
+    database["problems"].seed(deleted, other_user)
+    body = {"isDisabled": True, "teacherPassword": "default-teacher-password"}
+
+    missing_response = await client.patch(
+        f"/api/v1/problems/{ObjectId()}/disabled",
+        json=body,
+    )
+    assert missing_response.status_code == 404
+    assert missing_response.json()["error"]["code"] == "NOT_FOUND"
+
+    deleted_response = await client.patch(
+        f"/api/v1/problems/{deleted['_id']}/disabled",
+        json=body,
+    )
+    assert deleted_response.status_code == 404
+    assert deleted_response.json()["error"]["code"] == "NOT_FOUND"
+
+    forbidden_response = await client.patch(
+        f"/api/v1/problems/{other_user['_id']}/disabled",
+        json=body,
+    )
+    assert forbidden_response.status_code == 403
+    assert forbidden_response.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio

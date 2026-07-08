@@ -6,12 +6,17 @@ interface TeacherPasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
   onVerified: () => void;
+  /** Optional submit handler. Defaults to teacher-password verification. When
+   * provided (e.g. for disable/enable toggle), the password is submitted to
+   * this handler instead of the standalone verify endpoint. */
+  submitPassword?: (password: string) => Promise<unknown>;
 }
 
 export function TeacherPasswordModal({
   isOpen,
   onClose,
   onVerified,
+  submitPassword,
 }: TeacherPasswordModalProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +43,8 @@ export function TeacherPasswordModal({
 
     setIsSubmitting(true);
     try {
-      await api.verifyTeacherPassword(password);
+      const submit = submitPassword ?? ((pw: string) => api.verifyTeacherPassword(pw));
+      await submit(password);
       onVerified();
       onClose();
     } catch (err) {

@@ -199,6 +199,7 @@ class Problem(BaseModel):
     tracking: Tracking = Field(default_factory=Tracking)
     isDeleted: bool = False
     deletedAt: Optional[datetime] = None
+    isDisabled: bool = False
     createdAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

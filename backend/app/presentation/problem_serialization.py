@@ -35,6 +35,7 @@ class ProblemSummaryPayload(BaseModel):
     tracking: TrackingPayload
     isDeleted: bool
     deletedAt: UTCDatetime | None
+    isDisabled: bool
     createdAt: UTCDatetime
     updatedAt: UTCDatetime
     imageUrl: str | None = None
@@ -131,6 +132,7 @@ def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload
         tracking=_serialize_tracking(problem),
         isDeleted=bool(problem.get("isDeleted", False)),
         deletedAt=problem.get("deletedAt"),
+        isDisabled=bool(problem.get("isDisabled", False)),
         createdAt=problem["createdAt"],
         updatedAt=problem["updatedAt"],
         imageUrl=build_problem_image_url(str(problem["_id"]))

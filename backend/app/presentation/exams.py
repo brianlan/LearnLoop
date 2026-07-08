@@ -76,7 +76,11 @@ async def create_exam(
             raise ApiError(409, "ACTIVE_EXAM_EXISTS", "An active exam already exists")
 
         problem_documents = await database["problems"].find(
-            {"userId": current_user["_id"], "isDeleted": False},
+            {
+                "userId": current_user["_id"],
+                "isDeleted": False,
+                "isDisabled": {"$ne": True},
+            },
             session=session,
         ).to_list(length=None)
         eligible_documents = [

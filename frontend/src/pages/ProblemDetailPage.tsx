@@ -101,6 +101,7 @@ export function ProblemDetailPage() {
   const [showAnswer, setShowAnswer] = useState(false);
   const [showTeacherPasswordModal, setShowTeacherPasswordModal] = useState(false);
   const [showAnswerEdit, setShowAnswerEdit] = useState(false);
+  const [toggleTarget, setToggleTarget] = useState<boolean | null>(null);
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
   const [error, setError] = useState<string | null>(null);
   const tagSuggestions = useTagSuggestions();
@@ -211,6 +212,11 @@ export function ProblemDetailPage() {
     }
   };
 
+  const handleDisableToggle = (nextDisabled: boolean) => {
+    setToggleTarget(nextDisabled);
+    setShowTeacherPasswordModal(true);
+  };
+
   const pageCanvasStyle: React.CSSProperties = {
     minHeight: "calc(100vh - 60px)",
     backgroundColor: "var(--color-bg)",
@@ -316,6 +322,22 @@ export function ProblemDetailPage() {
                 }}
               >
                 Deleted
+              </span>
+            )}
+            {problem.isDisabled && (
+              <span
+                data-testid="disabled-badge"
+                className="badge badge-warning"
+                style={{
+                  fontSize: "0.75rem",
+                  padding: "0.15rem 0.5rem",
+                  borderRadius: "var(--radius-sm)",
+                  fontWeight: 600,
+                  textTransform: "none",
+                  letterSpacing: "normal"
+                }}
+              >
+                Disabled
               </span>
             )}
             {solutionStatus && (
@@ -587,6 +609,14 @@ export function ProblemDetailPage() {
             <>
               <button onClick={handleEdit} className="btn btn-secondary" style={{ padding: "0.5rem 1.25rem", borderRadius: "var(--radius-md)", fontSize: "0.875rem" }}>Edit</button>
               <button
+                onClick={() => handleDisableToggle(!problem.isDisabled)}
+                className="btn btn-secondary"
+                style={{ padding: "0.5rem 1.25rem", borderRadius: "var(--radius-md)", fontSize: "0.875rem" }}
+                data-testid="toggle-disabled-button"
+              >
+                {problem.isDisabled ? "Enable" : "Disable"}
+              </button>
+              <button
                 onClick={handleDelete}
                 disabled={deleteMutation.isPending || problem.isDeleted}
                 className="btn btn-danger"
@@ -650,8 +680,26 @@ export function ProblemDetailPage() {
 
       <TeacherPasswordModal
         isOpen={showTeacherPasswordModal}
-        onClose={() => setShowTeacherPasswordModal(false)}
+        onClose={() => {
+          setShowTeacherPasswordModal(false);
+          setToggleTarget(null);
+        }}
+        submitPassword={
+          toggleTarget !== null
+            ? (password) =>
+                api
+                  .setProblemDisabled<ProblemResponse>(problemId, toggleTarget, password)
+                  .then(() => undefined)
+            : undefined
+        }
         onVerified={() => {
+          if (toggleTarget !== null) {
+            queryClient.invalidateQueries({ queryKey: ["problem", problemId] });
+            setToggleTarget(null);
+            setShowTeacherPasswordModal(false);
+            setError(null);
+            return;
+          }
           if (isEditing) {
             setShowAnswerEdit(true);
             setEditForm((prev) => ({

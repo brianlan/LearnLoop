@@ -20,6 +20,7 @@ from app.domain.selection import (
 def create_test_problem(
     problem_id: str,
     is_deleted: bool = False,
+    is_disabled: bool = False,
     last_tested_at: datetime | None = None,
     failed_count: int = 0,
     exposure_count: int = 1,
@@ -46,6 +47,7 @@ def create_test_problem(
         problemType=ProblemType.SINGLE_CHOICE,
         correctAnswer=CorrectAnswer(display="a", normalizedText="a", normalizedSet=[], format="single"),
         isDeleted=is_deleted,
+        isDisabled=is_disabled,
         tracking=tracking,
         createdAt=created_at or datetime.now(timezone.utc) - timedelta(days=30),
     )
@@ -58,6 +60,20 @@ def test_exclude_deleted_problems():
     ]
     config = ProblemSelectionConfig(recency_weight=1.0, failure_rate_weight=1.0)
     now = datetime.now(timezone.utc)
+    selected = select_problems(problems, 2, config, now=now)
+    assert len(selected) == 1
+    assert selected[0].id == "1"
+
+
+def test_exclude_disabled_problems():
+    problems = [
+        create_test_problem("1", is_disabled=False),
+        create_test_problem("2", is_disabled=True),
+    ]
+    config = ProblemSelectionConfig(recency_weight=1.0, failure_rate_weight=1.0)
+    now = datetime.now(timezone.utc)
+    eligible = get_eligible_problems(problems, config, now)
+    assert [p.id for p in eligible] == ["1"]
     selected = select_problems(problems, 2, config, now=now)
     assert len(selected) == 1
     assert selected[0].id == "1"

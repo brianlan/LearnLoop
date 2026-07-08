@@ -149,6 +149,59 @@ async def test_deleted_problems_excluded(
 
 
 @pytest.mark.asyncio
+async def test_disabled_problems_excluded_from_next(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    disabled = make_problem(user_id, text="Disabled", correct_answer_display="4", is_disabled=True)
+    database.seed("problems", [disabled])
+
+    response = await client.post("/api/v1/practice/next")
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_problems"
+
+
+@pytest.mark.asyncio
+async def test_disabled_problems_never_selected_when_enabled_available(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    disabled = make_problem(user_id, text="Disabled", correct_answer_display="disabled", is_disabled=True)
+    enabled = make_problem(user_id, text="Enabled", correct_answer_display="enabled")
+    database.seed("problems", [disabled, enabled])
+
+    selected_texts: set[str] = set()
+    for _ in range(10):
+        response = await client.post("/api/v1/practice/next")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        selected_texts.add(data["problem"]["text"])
+
+    assert selected_texts == {"Enabled"}
+
+
+@pytest.mark.asyncio
+async def test_stats_excludes_disabled_problems(
+    practice_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    disabled = make_problem(user_id, text="Disabled", correct_answer_display="4", is_disabled=True)
+    enabled = make_problem(user_id, text="Enabled", correct_answer_display="4")
+    database.seed("problems", [disabled, enabled])
+
+    response = await client.get("/api/v1/practice/stats")
+    assert response.status_code == 200
+    assert response.json()["practiceableCount"] == 1
+
+
+@pytest.mark.asyncio
 async def test_empty_answer_excluded(
     practice_app: FastAPI,
     client: AsyncClient,

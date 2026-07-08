@@ -114,6 +114,21 @@ export const api = {
     return this.post<{ status: string }>(`/problems/${problemId}/solution-regeneration`, {});
   },
 
+  /**
+   * Toggle a problem's disabled state. Requires teacher password validation,
+   * enforced server-side.
+   */
+  async setProblemDisabled<T>(
+    problemId: string,
+    isDisabled: boolean,
+    teacherPassword: string
+  ): Promise<T> {
+    return this.patch<T>(`/problems/${problemId}/disabled`, {
+      isDisabled,
+      teacherPassword,
+    });
+  },
+
   async get<T>(path: string): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",

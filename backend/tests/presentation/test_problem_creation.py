@@ -67,9 +67,11 @@ async def test_create_problem_inserts_problem_and_enqueues_solution() -> None:
     assert problem["sourceImage"] == source_image
     assert problem["tags"] == ["tag-a"]
     assert problem["isDeleted"] is False
+    assert problem["isDisabled"] is False
 
     problems = database["problems"]._documents
     assert len(problems) == 1
+    assert problems[0]["isDisabled"] is False
 
     tasks = database["solution_generation_tasks"]._documents
     assert len(tasks) == 1

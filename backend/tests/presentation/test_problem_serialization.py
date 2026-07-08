@@ -90,6 +90,7 @@ def test_problem_summary_payload_key_order() -> None:
         "tracking",
         "isDeleted",
         "deletedAt",
+        "isDisabled",
         "createdAt",
         "updatedAt",
         "imageUrl",
@@ -110,6 +111,7 @@ def test_problem_detail_payload_key_order() -> None:
         "tracking",
         "isDeleted",
         "deletedAt",
+        "isDisabled",
         "createdAt",
         "updatedAt",
         "imageUrl",
@@ -238,6 +240,25 @@ def test_serialized_detail_nested_shapes() -> None:
 
 
 # ---- edge cases that must survive extraction ----
+
+
+def test_serialize_summary_defaults_missing_is_disabled_to_false() -> None:
+    problem = _make_problem()
+    summary = _serialize_problem_summary(problem)
+
+    assert summary.model_dump()["isDisabled"] is False
+
+
+def test_serialize_summary_reflects_disabled_state() -> None:
+    summary = _serialize_problem_summary(_make_problem(isDisabled=True))
+
+    assert summary.model_dump()["isDisabled"] is True
+
+
+def test_serialize_detail_reflects_disabled_state() -> None:
+    detail = _serialize_problem_detail(_make_problem(isDisabled=True))
+
+    assert detail.model_dump()["isDisabled"] is True
 
 
 def test_serialize_summary_without_source_image() -> None:

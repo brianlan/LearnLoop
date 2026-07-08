@@ -35,6 +35,7 @@ def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
                 "tracking": problem.get("tracking", {}),
                 "isDeleted": problem.get("isDeleted", False),
                 "deletedAt": problem.get("deletedAt"),
+                "isDisabled": problem.get("isDisabled", False),
                 "createdAt": problem["createdAt"],
                 "updatedAt": problem["updatedAt"],
             }
