@@ -96,7 +96,7 @@ async def get_practice_stats(
     settings: SettingsDependency,
 ) -> PracticeStatsResponse:
     problem_documents = await database["problems"].find(
-        {"userId": current_user["_id"], "isDeleted": False}
+        {"userId": current_user["_id"], "isDeleted": False, "isDisabled": {"$ne": True}}
     ).to_list(length=None)
 
     problem_models = [problem_document_to_model(p) for p in problem_documents]
@@ -117,7 +117,7 @@ async def get_next_practice_problem(
     settings: SettingsDependency,
 ) -> PracticeNextResponse:
     problem_documents = await database["problems"].find(
-        {"userId": current_user["_id"], "isDeleted": False}
+        {"userId": current_user["_id"], "isDeleted": False, "isDisabled": {"$ne": True}}
     ).to_list(length=None)
 
     eligible_documents = [

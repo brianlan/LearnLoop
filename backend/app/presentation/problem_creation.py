@@ -94,6 +94,7 @@ async def create_problem_from_draft(
         },
         "isDeleted": False,
         "deletedAt": None,
+        "isDisabled": False,
         "createdAt": current,
         "updatedAt": current,
     }

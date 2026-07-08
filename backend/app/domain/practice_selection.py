@@ -67,7 +67,14 @@ def compute_problem_weight_breakdown(
 
 
 def _has_practiceable_answer(problems: List[Problem]) -> list[Problem]:
-    return [p for p in problems if not p.isDeleted and p.correctAnswer and p.correctAnswer.normalizedText]
+    return [
+        p
+        for p in problems
+        if not p.isDeleted
+        and not p.isDisabled
+        and p.correctAnswer
+        and p.correctAnswer.normalizedText
+    ]
 
 
 def select_practice_problem(

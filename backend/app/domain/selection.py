@@ -39,6 +39,8 @@ def get_eligible_problems(
     for p in problems:
         if p.isDeleted:
             continue
+        if p.isDisabled:
+            continue
         if not p.correctAnswer or not p.correctAnswer.normalizedText:
             continue
         if config.min_problem_age_days > 0:

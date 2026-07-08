@@ -33,6 +33,7 @@ def make_problem(
     correct_answer_display: str = "4",
     subject: str = "math",
     is_deleted: bool = False,
+    is_disabled: bool = False,
     last_tested_at: datetime | None = None,
     exposure_count: int = 0,
 ) -> dict[str, Any]:
@@ -62,6 +63,7 @@ def make_problem(
         },
         "isDeleted": is_deleted,
         "deletedAt": None,
+        "isDisabled": is_disabled,
         "createdAt": now,
         "updatedAt": now,
     }

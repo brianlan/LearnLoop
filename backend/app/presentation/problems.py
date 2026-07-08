@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
 from app.domain.practice_selection import PracticeSelectionConfig, compute_problem_weight_breakdown
+from app.infrastructure.auth.password import verify_password
 from app.infrastructure.config.settings import Settings, get_settings
+from app.observability import log_teacher_password_event
 from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
 from app.presentation.exam_helpers import problem_document_to_model
@@ -33,6 +35,7 @@ from app.presentation.problem_serialization import (
 )
 from app.solution_generation import regenerate_solution_task_for_problem
 from app.presentation.tag_registration import _register_tags
+from app.presentation.teacher_password import _ensure_teacher_password_hash
 
 router = APIRouter(prefix="/problems", tags=["problems"])
 
@@ -52,6 +55,11 @@ class SetProblemFolderRequest(BaseModel):
 class BulkSetFolderRequest(BaseModel):
     problemIds: list[str] = Field(min_length=1)
     folderId: str | None = None
+
+
+class ToggleProblemDisabledRequest(BaseModel):
+    isDisabled: bool
+    teacherPassword: str = Field(min_length=1, max_length=1024)
 
 
 CurrentUserDependency = Annotated[dict[str, Any], Depends(get_current_user)]
@@ -366,6 +374,44 @@ async def set_problem_folder(
 
     updated_problem = deepcopy(problem)
     updated_problem["folderId"] = target_folder_id
+    updated_problem["updatedAt"] = now
+    return ProblemResponse(problem=_serialize_problem_detail(updated_problem))
+
+
+@router.patch("/{problem_id}/disabled", response_model=ProblemResponse)
+async def set_problem_disabled(
+    problem_id: str,
+    payload: ToggleProblemDisabledRequest,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ProblemResponse:
+    """Enable or disable a problem, protected by teacher password validation."""
+    problem = await get_owned_problem(
+        database, problem_id, current_user["_id"], allow_deleted=False
+    )
+
+    teacher_password_hash = await _ensure_teacher_password_hash(
+        current_user, database, settings
+    )
+    ok = verify_password(payload.teacherPassword, teacher_password_hash)
+    log_teacher_password_event(
+        "disable_verify_attempt",
+        user_id=str(current_user["_id"]),
+        username=current_user["username"],
+        success=ok,
+    )
+    if not ok:
+        raise ApiError(401, "UNAUTHENTICATED", "Incorrect teacher password")
+
+    now = datetime.now(UTC)
+    await database["problems"].update_one(
+        {"_id": problem["_id"]},
+        {"$set": {"isDisabled": payload.isDisabled, "updatedAt": now}},
+    )
+
+    updated_problem = deepcopy(problem)
+    updated_problem["isDisabled"] = payload.isDisabled
     updated_problem["updatedAt"] = now
     return ProblemResponse(problem=_serialize_problem_detail(updated_problem))
 

@@ -111,6 +111,7 @@ def make_problem(
     normalized_text: str | None = None,
     normalized_set: list[str] | None = None,
     is_deleted: bool = False,
+    is_disabled: bool = False,
     source_image: bool = True,
     tracking: dict[str, Any] | None = None,
     last_tested_at: datetime | None = None,
@@ -152,6 +153,7 @@ def make_problem(
         },
         "isDeleted": is_deleted,
         "deletedAt": now if is_deleted else None,
+        "isDisabled": is_disabled,
         "createdAt": now,
         "updatedAt": now,
     }
@@ -295,6 +297,50 @@ async def test_create_exam_rejects_when_no_eligible_problems(exams_app: FastAPI,
     ineligible = make_problem(user_id, text="Deleted", problem_type="fill-in-the-blank", correct_answer="4", is_deleted=True)
     answerless = make_problem(user_id, text="No answer", problem_type="fill-in-the-blank", correct_answer="")
     database["problems"].seed(ineligible, answerless)
+
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": 2})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "NO_ELIGIBLE_PROBLEMS"
+
+
+@pytest.mark.asyncio
+async def test_create_exam_excludes_disabled_problems(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    user_id = exams_app.state.primary_user["_id"]
+    disabled = make_problem(
+        user_id, text="Disabled", problem_type="fill-in-the-blank", correct_answer="4", is_disabled=True
+    )
+    enabled = make_problem(
+        user_id, text="Enabled", problem_type="short-answer", correct_answer="Paris"
+    )
+    database["problems"].seed(disabled, enabled)
+    storage.seed(disabled["sourceImage"]["bucket"], disabled["sourceImage"]["objectKey"], b"img")
+    storage.seed(enabled["sourceImage"]["bucket"], enabled["sourceImage"]["objectKey"], b"img")
+
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": 2})
+
+    assert response.status_code == 201
+    body = response.json()["exam"]
+    assert len(body["items"]) == 1
+    assert body["items"][0]["problem"]["text"] == "Enabled"
+
+
+@pytest.mark.asyncio
+async def test_create_exam_no_eligible_when_all_disabled(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    disabled = make_problem(
+        user_id, text="Disabled", problem_type="fill-in-the-blank", correct_answer="4", is_disabled=True
+    )
+    database["problems"].seed(disabled)
 
     response = await client.post("/api/v1/exams", json={"maxProblemCount": 2})
 

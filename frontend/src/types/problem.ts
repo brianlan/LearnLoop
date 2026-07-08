@@ -9,6 +9,7 @@ export interface ProblemDetail {
   imageUrl?: string;
   correctAnswer?: CorrectAnswer;
   isDeleted: boolean;
+  isDisabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -31,6 +32,7 @@ export interface ProblemListItem {
     lastAttemptCorrect?: boolean;
   };
   isDeleted: boolean;
+  isDisabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
