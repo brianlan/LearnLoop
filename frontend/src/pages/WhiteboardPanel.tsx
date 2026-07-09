@@ -3,7 +3,7 @@ import { GraphSandbox } from "@/components/GraphSandbox";
 
 interface WhiteboardPanelProps {
   isWhiteboardCollapsed: boolean;
-  setIsWhiteboardCollapsed: (value: boolean) => void;
+  setIsWhiteboardCollapsed: Dispatch<SetStateAction<boolean>>;
   dslPages: string[];
   currentPageIndex: number;
   setCurrentPageIndex: Dispatch<SetStateAction<number>>;
