@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import mimetypes
 from collections.abc import Mapping
 from io import BytesIO
-from pathlib import Path
 from typing import Any, Annotated
 
 from bson import ObjectId
@@ -27,7 +25,7 @@ from app.presentation.deps import (
     StorageDependency,
 )
 from app.presentation.errors import ApiError
-from app.presentation.helpers import normalize_tags, parse_object_id
+from app.presentation.helpers import guess_upload_extension, normalize_tags, parse_object_id
 from app.presentation.ingestion_serialization import ProblemResponse, PreviewResponse, serialize_preview, serialize_problem, _enum_value
 from app.presentation.problem_creation import create_problem_from_draft
 from app.presentation.ingestion_workflow import (
@@ -80,18 +78,6 @@ def _ensure_status(preview: Mapping[str, Any], allowed: set[str]) -> None:
         raise ApiError(409, "INVALID_PREVIEW_STATE", "Preview is not in a valid state for this operation")
 
 
-def _guess_extension(upload: UploadFile) -> str:
-    if upload.filename:
-        suffix = Path(upload.filename).suffix
-        if suffix:
-            return suffix
-    if upload.content_type:
-        guessed = mimetypes.guess_extension(upload.content_type)
-        if guessed:
-            return guessed
-    return ".bin"
-
-
 @router.post("", response_model=PreviewResponse, status_code=201)
 async def create_preview(
     image: Annotated[UploadFile, File(...)],
@@ -112,7 +98,7 @@ async def create_preview(
         raise ApiError(400, "INVALID_IMAGE", "Uploaded image is empty")
 
     now = utc_now()
-    object_key = s3_storage.build_object_key(str(user["_id"]), _guess_extension(image))
+    object_key = s3_storage.build_object_key(str(user["_id"]), guess_upload_extension(image))
     s3_storage.put_object(settings.s3_bucket, object_key, image_bytes, image.content_type)
 
     preview: Document = {
