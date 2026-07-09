@@ -801,3 +801,48 @@ async def test_submit_items_and_complete_batch_completes_only_when_all_submitted
     )
     assert result["status"] == BatchState.COMPLETED.value
     assert result["updatedAt"] == later
+
+
+# ---------------------------------------------------------------------------
+# ValueError path tests for _load_batch_for_update (missing batch) and
+# commit_image_boxes (missing image). All repository mutation functions that
+# use _load_batch_for_update should raise the same ValueError for a
+# non-existent batch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_missing_batch_raises_value_error(
+    database: FakeDatabase, user_id: ObjectId
+) -> None:
+    missing_batch_id = ObjectId()
+
+    with pytest.raises(ValueError, match="Batch not found"):
+        await start_image_detection(database, missing_batch_id, user_id, "img-1", now=NOW)
+
+    with pytest.raises(ValueError, match="Batch not found"):
+        await save_item_extraction_success(
+            database, missing_batch_id, user_id, "item-1",
+            crop={}, draft={}, extraction={}, now=NOW,
+        )
+
+    with pytest.raises(ValueError, match="Batch not found"):
+        await reset_item_for_retry(database, missing_batch_id, user_id, "item-1", now=NOW)
+
+    with pytest.raises(ValueError, match="Batch not found"):
+        await delete_batch_image(database, missing_batch_id, user_id, "img-1", now=NOW)
+
+    with pytest.raises(ValueError, match="Batch not found"):
+        await submit_items_and_complete_batch(
+            database, missing_batch_id, user_id, item_results=[], now=NOW,
+        )
+
+
+@pytest.mark.asyncio
+async def test_commit_image_boxes_raises_image_not_found(
+    database: FakeDatabase, user_id: ObjectId, settings: Settings
+) -> None:
+    batch = await create_batch(database, user_id, settings, now=NOW)
+
+    with pytest.raises(ValueError, match="Image not found"):
+        await commit_image_boxes(database, batch["_id"], user_id, "nonexistent", now=NOW)
