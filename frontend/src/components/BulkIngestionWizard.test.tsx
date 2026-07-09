@@ -567,6 +567,74 @@ describe("BulkIngestionWizard", () => {
     });
   });
 
+  it("surfaces mutation error message when detection fails", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "uploaded",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.detectImageBoxes.mockRejectedValue(new Error("VLM timeout"));
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-detect-run-img-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-error")).toBeInTheDocument();
+    });
+    expect(screen.getByText("VLM timeout")).toBeInTheDocument();
+  });
+
+  it("transitions to expired UX when a common mutation returns BATCH_EXPIRED", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "uploaded",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.detectImageBoxes.mockRejectedValue(
+      new ApiError("Batch has expired", 409, "BATCH_EXPIRED"),
+    );
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({ status: "expired" }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-detect-run-img-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-expired")).toBeInTheDocument();
+    });
+  });
+
   it("surfaces upload validation failures", async () => {
     mocks.getActiveBatch.mockRejectedValue(
       new ApiError("No active batch found", 404, "NOT_FOUND"),
