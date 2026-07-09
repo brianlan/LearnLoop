@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import base64
-from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,6 @@ from app.infrastructure.ingestion.repository import (
     update_item_draft,
 )
 from app.infrastructure.storage.mongo import Document
-from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.base_client import BaseVLMError
 from app.presentation.deps import (
     CurrentUserDependency,
@@ -69,6 +67,7 @@ from app.presentation.helpers import (
     guess_upload_extension,
     normalize_tags,
     parse_object_id,
+    stream_storage_metadata,
 )
 from app.presentation.problem_creation import create_problem_from_draft
 
@@ -706,19 +705,11 @@ async def stream_source_image(
     batch = await _load_owned_batch(database, batch_id, user["_id"])
     image = _find_image_or_404(batch, image_id)
     source_image = dict(image.get("sourceImage") or {})
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        raise ApiError(404, "NOT_FOUND", "Source image not found")
-
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError as exc:
-        raise ApiError(404, "NOT_FOUND", "Source image not found") from exc
-
-    return StreamingResponse(
-        BytesIO(image_bytes),
-        media_type=str(source_image.get("contentType") or "application/octet-stream"),
+    return stream_storage_metadata(
+        source_image,
+        storage,
+        missing_metadata_code="NOT_FOUND",
+        missing_metadata_message="Source image not found",
     )
 
 
@@ -733,17 +724,9 @@ async def stream_item_crop(
     batch = await _load_owned_batch(database, batch_id, user["_id"])
     item = _find_item_or_404(batch, item_id)
     crop = dict(item.get("crop") or {})
-    bucket = crop.get("bucket")
-    object_key = crop.get("objectKey")
-    if not bucket or not object_key:
-        raise ApiError(404, "CROP_NOT_FOUND", "Crop image not found")
-
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError as exc:
-        raise ApiError(404, "NOT_FOUND", "Crop image not found") from exc
-
-    return StreamingResponse(
-        BytesIO(image_bytes),
-        media_type=str(crop.get("contentType") or "application/octet-stream"),
+    return stream_storage_metadata(
+        crop,
+        storage,
+        missing_metadata_code="CROP_NOT_FOUND",
+        missing_metadata_message="Crop image not found",
     )

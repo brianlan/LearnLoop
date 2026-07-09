@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import mimetypes
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from bson import ObjectId
 from fastapi import UploadFile
+from fastapi.responses import StreamingResponse
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.infrastructure.storage.mongo import Document
+from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
 from app.presentation.errors import ApiError
 
 
@@ -116,3 +119,30 @@ async def get_all_descendant_folder_ids(
     return descendants
 
 
+def stream_storage_metadata(
+    metadata: dict[str, Any],
+    storage: S3StorageAdapter,
+    *,
+    missing_metadata_code: str,
+    missing_metadata_message: str,
+) -> StreamingResponse:
+    """Stream already-authorized storage metadata as a response.
+
+    Reads bytes from storage and returns a StreamingResponse with the stored
+    content type.  Raises ``missing_metadata_code`` when bucket/objectKey are
+    absent, and ``NOT_FOUND`` when the storage object itself is missing.
+    """
+    bucket = metadata.get("bucket")
+    object_key = metadata.get("objectKey")
+    if not bucket or not object_key:
+        raise ApiError(404, missing_metadata_code, missing_metadata_message)
+
+    try:
+        image_bytes = storage.get_object(str(bucket), str(object_key))
+    except StorageObjectNotFoundError as exc:
+        raise ApiError(404, "NOT_FOUND", missing_metadata_message) from exc
+
+    return StreamingResponse(
+        BytesIO(image_bytes),
+        media_type=str(metadata.get("contentType") or "application/octet-stream"),
+    )
