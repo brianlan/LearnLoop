@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import mimetypes
+from pathlib import Path
 from typing import Any
 
 from bson import ObjectId
+from fastapi import UploadFile
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.infrastructure.storage.mongo import Document
@@ -39,6 +42,18 @@ def parse_object_id(raw_id: str, *, resource_name: str) -> ObjectId:
     if not ObjectId.is_valid(raw_id):
         raise ApiError(404, "NOT_FOUND", f"{resource_name} not found")
     return ObjectId(raw_id)
+
+
+def guess_upload_extension(upload: UploadFile) -> str:
+    if upload.filename:
+        suffix = Path(upload.filename).suffix
+        if suffix:
+            return suffix
+    if upload.content_type:
+        guessed = mimetypes.guess_extension(upload.content_type)
+        if guessed:
+            return guessed
+    return ".bin"
 
 
 async def get_owned_problem(

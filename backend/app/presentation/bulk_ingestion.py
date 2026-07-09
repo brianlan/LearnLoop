@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import mimetypes
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, File, UploadFile
@@ -68,24 +66,13 @@ from app.presentation.bulk_serialization import (
 )
 from app.presentation.errors import ApiError
 from app.presentation.helpers import (
+    guess_upload_extension,
     normalize_tags,
     parse_object_id,
 )
 from app.presentation.problem_creation import create_problem_from_draft
 
 router = APIRouter(prefix="/ingestion-batches", tags=["bulk-ingestion"])
-
-
-def _guess_extension(upload: UploadFile) -> str:
-    if upload.filename:
-        suffix = Path(upload.filename).suffix
-        if suffix:
-            return suffix
-    if upload.content_type:
-        guessed = mimetypes.guess_extension(upload.content_type)
-        if guessed:
-            return guessed
-    return ".bin"
 
 
 def _find_image_or_404(batch: Document, image_id: str) -> dict[str, Any]:
@@ -159,7 +146,7 @@ async def _expand_upload(
                 f"Image exceeds maximum size of {settings.bulk_ingestion_max_image_bytes} bytes",
             )
         width, height = get_image_size(image_bytes) or (None, None)
-        return [_UploadPayload(image_bytes, content_type, width, height, _guess_extension(upload))]
+        return [_UploadPayload(image_bytes, content_type, width, height, guess_upload_extension(upload))]
 
     if content_type == "application/pdf" or filename.endswith(".pdf"):
         pdf_bytes = await upload.read()
