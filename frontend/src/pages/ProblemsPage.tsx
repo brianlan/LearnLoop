@@ -9,6 +9,12 @@ import { TagList } from "@/components/TagPill";
 import type { ProblemListItem, ProblemsResponse } from "@/types/problem";
 import type { FolderNode, FolderTreeResponse } from "@/types/folder";
 import { PROBLEM_TYPE_FILTER_OPTIONS } from "@/constants/problemTypes";
+import {
+  buildAncestorMap,
+  findFolder,
+  flattenFolders,
+  getDescendantIds,
+} from "./ProblemsPage.folderHelpers";
 
 const SIDEBAR_COLLAPSED_KEY = "problems.folderSidebarCollapsed";
 const UNFILED_FOLDER_ID = "unfiled";
@@ -64,41 +70,6 @@ let problemsPagePreferences: ProblemsPagePreferences = { ...DEFAULT_PREFERENCES 
 // Test-only helper to reset the in-memory preferences between test runs.
 export function _resetProblemsPagePreferencesForTests() {
   problemsPagePreferences = { ...DEFAULT_PREFERENCES };
-}
-
-function flattenFolders(folders: FolderNode[], depth = 0): Array<FolderNode & { depth: number }> {
-  return folders.flatMap((folder) => [
-    { ...folder, depth },
-    ...flattenFolders(folder.children, depth + 1),
-  ]);
-}
-
-function getDescendantIds(folder: FolderNode): Set<string> {
-  const ids = new Set<string>();
-  for (const child of folder.children) {
-    ids.add(child.id);
-    for (const id of getDescendantIds(child)) ids.add(id);
-  }
-  return ids;
-}
-
-function findFolder(folders: FolderNode[], folderId: string): FolderNode | undefined {
-  for (const folder of folders) {
-    if (folder.id === folderId) return folder;
-    const found = findFolder(folder.children, folderId);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-function buildAncestorMap(folders: FolderNode[]) {
-  const map = new Map<string, string[]>();
-  const visit = (folder: FolderNode, ancestors: string[]) => {
-    map.set(folder.id, ancestors);
-    folder.children.forEach((child) => visit(child, [...ancestors, folder.id]));
-  };
-  folders.forEach((folder) => visit(folder, []));
-  return map;
 }
 
 function getErrorMessage(error: unknown) {
