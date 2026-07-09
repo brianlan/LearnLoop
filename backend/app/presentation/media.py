@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from io import BytesIO
-
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency, StorageDependency
-from app.presentation.errors import ApiError
-from app.presentation.helpers import get_owned_problem
+from app.presentation.helpers import get_owned_problem, stream_storage_metadata
 
 router = APIRouter(tags=["media"])
 
@@ -27,17 +23,9 @@ async def stream_problem_image(
         allow_deleted=False,
     )
     source_image = dict(problem.get("sourceImage") or {})
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        raise ApiError(404, "NOT_FOUND", "Problem image not found")
-
-    try:
-        image_bytes = storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError as exc:
-        raise ApiError(404, "NOT_FOUND", "Problem image not found") from exc
-
-    return StreamingResponse(
-        BytesIO(image_bytes),
-        media_type=str(source_image.get("contentType") or "application/octet-stream"),
+    return stream_storage_metadata(
+        source_image,
+        storage,
+        missing_metadata_code="NOT_FOUND",
+        missing_metadata_message="Problem image not found",
     )

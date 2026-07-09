@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 from collections.abc import Mapping
-from io import BytesIO
 from typing import Any, Annotated
 
 from bson import ObjectId
@@ -13,7 +12,6 @@ from pydantic import BaseModel
 
 from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType
 from app.infrastructure.storage.mongo import Document
-from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import VLMError
 from app.presentation.deps import (
     CurrentUserDependency,
@@ -25,7 +23,12 @@ from app.presentation.deps import (
     StorageDependency,
 )
 from app.presentation.errors import ApiError
-from app.presentation.helpers import guess_upload_extension, normalize_tags, parse_object_id
+from app.presentation.helpers import (
+    guess_upload_extension,
+    normalize_tags,
+    parse_object_id,
+    stream_storage_metadata,
+)
 from app.presentation.ingestion_serialization import ProblemResponse, PreviewResponse, serialize_preview, serialize_problem, _enum_value
 from app.presentation.problem_creation import create_problem_from_draft
 from app.presentation.ingestion_workflow import (
@@ -410,17 +413,9 @@ async def stream_preview_image(
 ) -> StreamingResponse:
     preview = await _get_owned_preview(database, preview_id, user)
     source_image = dict(preview.get("sourceImage") or {})
-    bucket = source_image.get("bucket")
-    object_key = source_image.get("objectKey")
-    if not bucket or not object_key:
-        raise ApiError(404, "NOT_FOUND", "Preview image not found")
-
-    try:
-        image_bytes = s3_storage.get_object(str(bucket), str(object_key))
-    except StorageObjectNotFoundError as exc:
-        raise ApiError(404, "NOT_FOUND", "Preview image not found") from exc
-
-    return StreamingResponse(
-        BytesIO(image_bytes),
-        media_type=str(source_image.get("contentType") or "application/octet-stream"),
+    return stream_storage_metadata(
+        source_image,
+        s3_storage,
+        missing_metadata_code="NOT_FOUND",
+        missing_metadata_message="Preview image not found",
     )

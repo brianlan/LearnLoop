@@ -1648,6 +1648,59 @@ async def test_stream_crop_rejects_missing_crop(
     assert response.json()["error"]["code"] == "CROP_NOT_FOUND"
 
 
+@pytest.mark.asyncio
+async def test_stream_source_image_returns_404_for_missing_metadata(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    database: FakeDatabase = bulk_app.state.fake_database
+    batch_id, image_id, _item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+
+    await database["ingestion_batches"].update_one(
+        {"_id": ObjectId(batch_id), "images.imageId": image_id},
+        {"$set": {"images.$.sourceImage": {}}},
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
+    )
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "NOT_FOUND", "message": "Source image not found"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_crop_returns_404_when_storage_object_missing(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    database: FakeDatabase = bulk_app.state.fake_database
+    batch_id, _image_id, item_id = await create_committed_item(
+        authenticated_bulk_client, helper_vlm
+    )
+
+    await database["ingestion_batches"].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {"$set": {"items.$.crop": {
+            "bucket": "test-bucket",
+            "objectKey": "missing-crop.png",
+            "contentType": "image/png",
+        }}},
+    )
+
+    response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+    assert response.json()["error"]["message"] == "Crop image not found"
+
+
 async def create_ready_item_with_draft(
     client: AsyncClient,
     bulk_app: FastAPI,
