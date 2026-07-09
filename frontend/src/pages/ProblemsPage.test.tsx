@@ -183,9 +183,9 @@ describe("ProblemsPage", () => {
     expect(screen.getByLabelText("All Problems count")).toHaveTextContent("4");
     expect(screen.getByRole("button", { name: "Show Unfiled" })).toBeInTheDocument();
     expect(screen.getByLabelText("Unfiled count")).toHaveTextContent("1");
-    expect(screen.getByRole("button", { name: "Select folder Chapter 1" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Select folder Chapter 1" })).toBeInTheDocument();
     expect(screen.getByLabelText("Chapter 1 count")).toHaveTextContent("3");
-    expect(screen.getByRole("button", { name: "Select folder Section 1" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Select folder Section 1" })).toBeInTheDocument();
     expect(screen.getByLabelText("Section 1 count")).toHaveTextContent("2");
   });
 
@@ -234,7 +234,7 @@ describe("ProblemsPage", () => {
     const { unmount } = renderProblemsPage();
     await screen.findByText("What is 2+2?");
 
-    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Section 1" }));
     await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
     await user.selectOptions(screen.getByLabelText("Filter by Type:"), "short-answer");
     await user.type(screen.getByLabelText("Search problems:"), "proof");
@@ -280,7 +280,7 @@ describe("ProblemsPage", () => {
     renderProblemsPage();
     await screen.findByText("What is 2+2?");
 
-    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Section 1" }));
 
     await waitFor(() => {
       const lastUrl = problemRequestUrls().at(-1) ?? "";
@@ -296,7 +296,7 @@ describe("ProblemsPage", () => {
     const { unmount } = renderProblemsPage();
     await screen.findByText("What is 2+2?");
 
-    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Section 1" }));
     await user.selectOptions(screen.getByLabelText("Filter by Tag:"), "algebra");
     await user.type(screen.getByLabelText("Search problems:"), "proof");
     await user.selectOptions(screen.getByLabelText("Sort by:"), "selectionScore");
@@ -385,7 +385,7 @@ describe("ProblemsPage", () => {
     renderProblemsPage();
     await screen.findByText("What is 2+2?");
 
-    await user.click(screen.getByRole("button", { name: "Select folder Chapter 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Chapter 1" }));
     await user.click(screen.getByRole("button", { name: "Hide" }));
 
     expect(window.sessionStorage.getItem("problems.folderSidebarCollapsed")).toBe("true");
@@ -398,7 +398,7 @@ describe("ProblemsPage", () => {
 
     const { unmount } = renderProblemsPage();
     await screen.findByText("What is 2+2?");
-    await user.click(screen.getByRole("button", { name: "Select folder Section 1" }));
+    await user.click(await screen.findByRole("button", { name: "Select folder Section 1" }));
     await waitFor(() => {
       expect(problemRequestUrls().at(-1) ?? "").toContain("folderId=section-1");
     });
