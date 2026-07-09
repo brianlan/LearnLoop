@@ -52,6 +52,31 @@ def _object_id(value: str | ObjectId) -> ObjectId:
     return ObjectId(value) if isinstance(value, str) else value
 
 
+async def _load_batch_for_update(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+) -> Document:
+    batch = await _collection(database).find_one(
+        {"_id": _object_id(batch_id), "userId": user_id}
+    )
+    if batch is None:
+        raise ValueError("Batch not found")
+    return batch
+
+
+async def _persist_batch(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    set_fields: dict[str, Any],
+) -> None:
+    await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {"$set": set_fields},
+    )
+
+
 def is_batch_expired(batch: Document, *, now: datetime | None = None) -> bool:
     expires_at = batch.get("expiresAt")
     if not isinstance(expires_at, datetime):
@@ -125,18 +150,11 @@ async def add_source_image(
         now=current,
     )
 
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     images.append(image_document)
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "updatedAt": current}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": current})
     return image_document
 
 
@@ -151,11 +169,7 @@ async def add_items_for_image(
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     current = now or _now()
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     new_items: list[dict[str, Any]] = []
@@ -179,10 +193,7 @@ async def add_items_for_image(
             image["updatedAt"] = current
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "items": items, "updatedAt": current}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "items": items, "updatedAt": current})
     return new_items
 
 
@@ -194,11 +205,7 @@ async def start_image_detection(
     *,
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     for image in images:
@@ -207,10 +214,7 @@ async def start_image_detection(
             image["updatedAt"] = now
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
 
 
 async def save_image_detection_success(
@@ -225,11 +229,7 @@ async def save_image_detection_success(
     raw_provider_response: dict[str, Any] | None,
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     for image in images:
@@ -246,10 +246,7 @@ async def save_image_detection_success(
             image["updatedAt"] = now
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
 
 
 async def save_image_detection_failure(
@@ -262,11 +259,7 @@ async def save_image_detection_failure(
     failure_message: str,
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     for image in images:
@@ -281,10 +274,7 @@ async def save_image_detection_failure(
             image["updatedAt"] = now
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
 
 
 async def save_image_boxes_and_subject(
@@ -297,11 +287,7 @@ async def save_image_boxes_and_subject(
     boxes: list[dict[str, Any]],
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     for image in images:
@@ -313,10 +299,7 @@ async def save_image_boxes_and_subject(
             image["updatedAt"] = now
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
 
 
 async def delete_batch_image(
@@ -327,11 +310,7 @@ async def delete_batch_image(
     *,
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     for image in images:
@@ -346,10 +325,7 @@ async def delete_batch_image(
             item["status"] = ItemState.DELETED.value
             item["updatedAt"] = now
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "items": items, "updatedAt": now})
 
 
 async def commit_image_boxes(
@@ -360,11 +336,7 @@ async def commit_image_boxes(
     *,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     images = list(batch.get("images", []))
     target_image = None
@@ -407,10 +379,7 @@ async def commit_image_boxes(
     target_image["committedAt"] = now
     target_image["updatedAt"] = now
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"images": images, "items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"images": images, "items": items, "updatedAt": now})
     return new_items
 
 
@@ -471,11 +440,7 @@ async def save_item_extraction_success(
     extraction: dict[str, Any],
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     for item in items:
@@ -488,10 +453,7 @@ async def save_item_extraction_success(
             item["updatedAt"] = now
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
 
 
 async def save_item_extraction_failure(
@@ -503,11 +465,7 @@ async def save_item_extraction_failure(
     extraction: dict[str, Any],
     now: datetime,
 ) -> None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     for item in items:
@@ -518,10 +476,7 @@ async def save_item_extraction_failure(
             item["updatedAt"] = now
             break
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
 
 
 async def reset_item_for_retry(
@@ -532,11 +487,7 @@ async def reset_item_for_retry(
     *,
     now: datetime,
 ) -> bool:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     changed = False
@@ -563,10 +514,7 @@ async def reset_item_for_retry(
     if not changed:
         return False
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
     return True
 
 
@@ -579,11 +527,7 @@ async def update_item_draft(
     draft_update: dict[str, Any],
     now: datetime,
 ) -> dict[str, Any] | None:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     updated_item: dict[str, Any] | None = None
@@ -603,10 +547,7 @@ async def update_item_draft(
     if updated_item is None:
         return None
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
     return updated_item
 
 
@@ -618,11 +559,7 @@ async def mark_item_deleted(
     *,
     now: datetime,
 ) -> bool:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     changed = False
@@ -642,10 +579,7 @@ async def mark_item_deleted(
     if not changed:
         return False
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
     return True
 
 
@@ -657,11 +591,7 @@ async def undo_item_deletion(
     *,
     now: datetime,
 ) -> bool:
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     items = list(batch.get("items", []))
     changed = False
@@ -682,10 +612,7 @@ async def undo_item_deletion(
     if not changed:
         return False
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": {"items": items, "updatedAt": now}},
-    )
+    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
     return True
 
 
@@ -703,11 +630,7 @@ async def submit_items_and_complete_batch(
     ``submitted``. Items in other states (including ``submit-failed``) keep the
     batch active so they can be retried or deleted.
     """
-    batch = await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
-    if batch is None:
-        raise ValueError("Batch not found")
+    batch = await _load_batch_for_update(database, batch_id, user_id)
 
     result_by_item = {result["itemId"]: result for result in item_results}
     items = list(batch.get("items", []))
@@ -734,10 +657,7 @@ async def submit_items_and_complete_batch(
     if all_submitted and has_submitted:
         update["status"] = BatchState.COMPLETED.value
 
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": update},
-    )
+    await _persist_batch(database, batch_id, user_id, update)
     return await _collection(database).find_one(
         {"_id": _object_id(batch_id), "userId": user_id}
     )
