@@ -125,15 +125,12 @@ def stream_storage_metadata(
     *,
     missing_metadata_code: str,
     missing_metadata_message: str,
-    storage_not_found_code: str = "NOT_FOUND",
-    storage_not_found_message: str | None = None,
 ) -> StreamingResponse:
     """Stream already-authorized storage metadata as a response.
 
     Reads bytes from storage and returns a StreamingResponse with the stored
     content type.  Raises ``missing_metadata_code`` when bucket/objectKey are
-    absent, and ``storage_not_found_code`` (default ``NOT_FOUND``) when the
-    storage object itself is missing.
+    absent, and ``NOT_FOUND`` when the storage object itself is missing.
     """
     bucket = metadata.get("bucket")
     object_key = metadata.get("objectKey")
@@ -143,11 +140,7 @@ def stream_storage_metadata(
     try:
         image_bytes = storage.get_object(str(bucket), str(object_key))
     except StorageObjectNotFoundError as exc:
-        raise ApiError(
-            404,
-            storage_not_found_code,
-            storage_not_found_message or missing_metadata_message,
-        ) from exc
+        raise ApiError(404, "NOT_FOUND", missing_metadata_message) from exc
 
     return StreamingResponse(
         BytesIO(image_bytes),
