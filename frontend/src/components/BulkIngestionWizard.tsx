@@ -57,7 +57,7 @@ function deriveStep(batch: BulkBatch): BulkWizardStep {
   if (batch.images.length === 0) {
     return "upload";
   }
-  if (batch.images.some((image) => image.status !== "committed")) {
+  if (hasPendingImages(batch)) {
     return "detect";
   }
   if (
@@ -81,9 +81,15 @@ function deriveStep(batch: BulkBatch): BulkWizardStep {
   return "complete";
 }
 
+function hasPendingImages(batch: BulkBatch): boolean {
+  return batch.images.some(
+    (image) => image.status !== "committed" && image.status !== "deleted",
+  );
+}
+
 function canPreserveSubmitStep(batch: BulkBatch): boolean {
   if (batch.status !== "active") return false;
-  if (batch.images.some((image) => image.status !== "committed")) return false;
+  if (hasPendingImages(batch)) return false;
   return batch.items.some(
     (item) =>
       item.status === "ready" ||
@@ -94,7 +100,7 @@ function canPreserveSubmitStep(batch: BulkBatch): boolean {
 
 function canPreserveReviewStep(batch: BulkBatch): boolean {
   if (batch.status !== "active") return false;
-  if (batch.images.some((image) => image.status !== "committed")) return false;
+  if (hasPendingImages(batch)) return false;
   return batch.items.some(
     (item) => item.status !== "deleted" && item.status !== "submitted",
   );
