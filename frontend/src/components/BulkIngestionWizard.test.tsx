@@ -66,6 +66,10 @@ function committedImage(overrides: Partial<BulkImage> = {}): BulkImage {
   };
 }
 
+function deletedImage(overrides: Partial<BulkImage> = {}): BulkImage {
+  return committedImage({ status: "deleted", ...overrides });
+}
+
 function queuedItem(overrides: Partial<BulkItem> = {}): BulkItem {
   return {
     itemId: "item-1",
@@ -1483,6 +1487,138 @@ describe("BulkIngestionWizard", () => {
     await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
     });
+  });
+
+  it("enters review when deleted images accompany a committed image and a queued item", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          deletedImage({ imageId: "img-2" }),
+          deletedImage({ imageId: "img-3" }),
+          committedImage({ imageId: "img-4" }),
+        ],
+        items: [queuedItem({ imageId: "img-4" })],
+      }),
+    });
+    mocks.startBatchExtraction.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          deletedImage({ imageId: "img-2" }),
+          deletedImage({ imageId: "img-3" }),
+          committedImage({ imageId: "img-4" }),
+        ],
+        items: [queuedItem({ imageId: "img-4" })],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+  });
+
+  it("does not return to detect after a detail refresh that includes deleted images", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          deletedImage({ imageId: "img-2" }),
+          deletedImage({ imageId: "img-3" }),
+          committedImage({ imageId: "img-4" }),
+        ],
+        items: [queuedItem({ imageId: "img-4" })],
+      }),
+    });
+    mocks.startBatchExtraction.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          deletedImage({ imageId: "img-2" }),
+          deletedImage({ imageId: "img-3" }),
+          committedImage({ imageId: "img-4" }),
+        ],
+        items: [queuedItem({ imageId: "img-4" })],
+      }),
+    });
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          deletedImage({ imageId: "img-2" }),
+          deletedImage({ imageId: "img-3" }),
+          committedImage({ imageId: "img-4" }),
+        ],
+        items: [queuedItem({ imageId: "img-4" })],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    expect(mocks.startBatchExtraction).toHaveBeenCalledTimes(1);
+
+    // detail refresh via getBatch returns deleted images; stage must stay in review
+    await waitFor(() => {
+      expect(mocks.getBatch).toHaveBeenCalledWith("batch-1");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("bulk-wizard-detect-step")).not.toBeInTheDocument();
+  });
+
+  it("still requires detect when a non-deleted uncommitted image is present alongside deleted images", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          {
+            imageId: "img-2",
+            status: "uploaded",
+            order: 1,
+            sourceImage: { bucket: "b", objectKey: "k" },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-detect-step")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps review-to-submit preservation intact when deleted images are present", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          deletedImage({ imageId: "img-1" }),
+          committedImage({ imageId: "img-2" }),
+        ],
+        items: [readyItem({ imageId: "img-2" })],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("bulk-wizard-detect-step")).not.toBeInTheDocument();
   });
 
   it("transitions to expired UX when a review poll returns BATCH_EXPIRED", async () => {
