@@ -805,6 +805,325 @@ describe("BulkIngestionWizard", () => {
     });
   });
 
+  it("saves pending bounding-box edits via the s shortcut", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.saveImageBoxes.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "math",
+            boxes: [],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    const editor = screen.getByTestId("box-editor");
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 100,
+      top: 0,
+      left: 0,
+      right: 200,
+      bottom: 100,
+      toJSON: () => "",
+    });
+    fireEvent.resize(window);
+
+    fireEvent.mouseDown(editor, { clientX: 15, clientY: 15 });
+    fireEvent.mouseUp(editor);
+    fireEvent.click(screen.getByTestId("delete-box-box-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-save-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "s" });
+
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledWith("batch-1", "img-1", [], "math");
+    });
+  });
+
+  it("saves all changed cards via a single s press", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+          {
+            imageId: "img-2",
+            status: "ready",
+            order: 1,
+            sourceImage: { bucket: "b", objectKey: "k2", width: 200, height: 100, mediaUrl: "http://example.com/img2.png" },
+            subject: "math",
+            boxes: [{ boxId: "box-2", x: 30, y: 30, width: 40, height: 40 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.saveImageBoxes.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "english",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+          {
+            imageId: "img-2",
+            status: "ready",
+            order: 1,
+            sourceImage: { bucket: "b", objectKey: "k2", width: 200, height: 100, mediaUrl: "http://example.com/img2.png" },
+            subject: "english",
+            boxes: [{ boxId: "box-2", x: 30, y: 30, width: 40, height: 40 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+      expect(screen.getByTestId("bulk-detect-image-img-2")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("bulk-detect-subject-img-1"), {
+      target: { value: "english" },
+    });
+    fireEvent.change(screen.getByTestId("bulk-detect-subject-img-2"), {
+      target: { value: "english" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-save-img-1")).toBeInTheDocument();
+      expect(screen.getByTestId("bulk-detect-save-img-2")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "s" });
+
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.saveImageBoxes).toHaveBeenNthCalledWith(
+      1,
+      "batch-1",
+      "img-1",
+      [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+      "english",
+    );
+    expect(mocks.saveImageBoxes).toHaveBeenNthCalledWith(
+      2,
+      "batch-1",
+      "img-2",
+      [{ boxId: "box-2", x: 30, y: 30, width: 40, height: 40 }],
+      "english",
+    );
+  });
+
+  it("does not save when s is pressed with no pending changes", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "s" });
+    });
+    expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
+  });
+
+  it("ignores repeated, modified, and editable-origin s key events", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("bulk-detect-subject-img-1"), {
+      target: { value: "english" },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-save-img-1")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "s", repeat: true });
+    });
+    expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    });
+    expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "S" });
+    });
+    expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.keyDown(screen.getByTestId("bulk-detect-subject-img-1"), { key: "s" });
+    });
+    expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
+  });
+
+  it("prevents a second save sequence while one is in progress", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    let resolveSave!: (value: BatchResponse) => void;
+    mocks.saveImageBoxes.mockReturnValue(
+      new Promise<BatchResponse>((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("bulk-detect-subject-img-1"), {
+      target: { value: "english" },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-save-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "s" });
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.keyDown(window, { key: "s" });
+    await act(async () => {});
+    expect(mocks.saveImageBoxes).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSave({
+        batch: makeBatch({
+          images: [
+            {
+              imageId: "img-1",
+              status: "ready",
+              order: 0,
+              sourceImage: { bucket: "b", objectKey: "k", width: 200, height: 100, mediaUrl: "http://example.com/img.png" },
+              subject: "english",
+              boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+              detection: { model: "model" },
+              createdAt: "2026-07-03T00:00:00Z",
+              updatedAt: "2026-07-03T00:00:00Z",
+            },
+          ],
+        }),
+      });
+    });
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("keeps ready items in review until the user continues to submit", async () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({

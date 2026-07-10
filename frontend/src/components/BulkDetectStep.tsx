@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BulkBatch, BulkImageBox } from "@/types/bulkIngestion";
 import { BoxEditor } from "./BoxEditor";
 
@@ -46,6 +46,7 @@ export function BulkDetectStep({
   const [workingImageId, setWorkingImageId] = useState<string | null>(null);
   const [pendingBoxes, setPendingBoxes] = useState<Record<string, BulkImageBox[]>>({});
   const [pendingSubjects, setPendingSubjects] = useState<Record<string, string>>({});
+  const shortcutSavingRef = useRef(false);
 
   const withImageLoader = useCallback(
     async (imageId: string, action: () => void | Promise<void>) => {
@@ -79,6 +80,58 @@ export function BulkDetectStep({
   const actionableImages = batch.images.filter(
     (image) => image.status !== "committed" && image.status !== "deleted",
   );
+
+  const handleShortcutSave = useCallback(async () => {
+    if (shortcutSavingRef.current) return;
+
+    const pending: { imageId: string; boxes: BulkImageBox[]; subject: string }[] =
+      [];
+    for (const image of actionableImages) {
+      const boxes = pendingBoxes[image.imageId] ?? image.boxes;
+      const currentSubject = image.subject ?? "math";
+      const subject = pendingSubjects[image.imageId] ?? currentSubject;
+      if (
+        JSON.stringify(boxes) !== JSON.stringify(image.boxes) ||
+        subject !== currentSubject
+      ) {
+        pending.push({ imageId: image.imageId, boxes, subject });
+      }
+    }
+
+    if (pending.length === 0) return;
+
+    shortcutSavingRef.current = true;
+    try {
+      for (const card of pending) {
+        await withImageLoader(card.imageId, () =>
+          handleSave(card.imageId, card.boxes, card.subject),
+        );
+      }
+    } finally {
+      shortcutSavingRef.current = false;
+    }
+  }, [actionableImages, pendingBoxes, pendingSubjects, withImageLoader, handleSave]);
+
+  useEffect(() => {
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key !== "s" || event.repeat) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void handleShortcutSave();
+    }
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, [handleShortcutSave]);
 
   return (
     <div data-testid="bulk-wizard-detect-step">
