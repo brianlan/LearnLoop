@@ -9,8 +9,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
-from app.domain.selection import ProblemSelectionConfig, ensure_utc
+from app.domain.selection import ProblemSelectionConfig, compute_score_breakdown
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
+from app.presentation.exam_helpers import problem_document_to_model
 
 router = APIRouter(prefix="/home", tags=["home"])
 
@@ -74,70 +75,30 @@ def _selection_config_from_settings(settings: Any) -> ProblemSelectionConfig:
     )
 
 
-def _raw_score(problem: Any, config: ProblemSelectionConfig, now: datetime) -> float | None:
-    """Raw, pre-clamp weighted score for a problem document.
-
-    Mirrors the component math of ``compute_score_breakdown`` (recency +
-    failure + last_wrong) without the ``max(0, ...)`` floor used for selection,
-    so negative score buckets are meaningful. Returns ``None`` when a required
-    timestamp is missing or unparseable.
-    """
-    tracking = problem.get("tracking") or {}
-
-    last_tested = tracking.get("lastTestedAt")
-    created_at = problem.get("createdAt")
-    last_dt = last_tested if last_tested is not None else created_at
-    if isinstance(last_dt, datetime):
-        days_since = (now - ensure_utc(last_dt)).days
-        recency_score = 1.0 + days_since / 30.0
-    elif last_dt is None:
-        recency_score = 1.0
-    else:
-        return None
-
-    failed_count = tracking.get("failedCount", 0) or 0
-    correct_count = tracking.get("correctCount", 0) or 0
-    if failed_count > correct_count and correct_count > 0:
-        failure_score = failed_count / correct_count
-    else:
-        diff = failed_count - correct_count
-        if diff == 0:
-            failure_score = 0.0
-        else:
-            failure_score = math.copysign(math.sqrt(abs(diff)), diff)
-
-    last_attempt_correct = tracking.get("lastAttemptCorrect")
-    if last_tested is None:
-        last_wrong_score = 1.0
-    elif last_attempt_correct is True:
-        last_wrong_score = 0.5
-    elif last_attempt_correct is False:
-        last_wrong_score = 2.0
-    else:
-        last_wrong_score = 1.0
-
-    return (
-        recency_score * config.recency_weight
-        + failure_score * config.failure_rate_weight
-        + last_wrong_score * config.last_wrong_weight
-    )
-
-
 def _build_score_distribution(
     problem_documents: list[dict[str, Any]],
     config: ProblemSelectionConfig,
     now: datetime,
 ) -> ScoreDistribution:
+    """Bucket problems by their raw pre-clamp selection score.
+
+    Reuses ``compute_score_breakdown`` for the component math and sums the
+    three components before the ``max(0, ...)`` floor so negative buckets are
+    meaningful. Problems that fail model validation are skipped so a malformed
+    document does not break the home summary.
+    """
     counts: dict[int, list[int]] = {}
     for doc in problem_documents:
-        raw = _raw_score(doc, config, now)
-        if raw is None:
+        try:
+            problem = problem_document_to_model(doc)
+        except Exception:
             continue
+        breakdown = compute_score_breakdown(problem, config, now)
+        raw = breakdown.recency + breakdown.failure + breakdown.last_wrong
         bucket = math.floor(raw)
         if bucket not in counts:
             counts[bucket] = [0, 0]
-        tracking = doc.get("tracking") or {}
-        if tracking.get("lastTestedAt") is None:
+        if problem.tracking.lastTestedAt is None:
             counts[bucket][0] += 1
         else:
             counts[bucket][1] += 1
