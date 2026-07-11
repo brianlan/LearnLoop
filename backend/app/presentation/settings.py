@@ -27,42 +27,50 @@ async def get_settings_info() -> dict:
         "helper_vlm": {
             "endpoint": settings.helper_vlm_endpoint,
             "model": settings.helper_vlm_model,
+            "provider": settings.helper_vlm_provider,
             "timeout_seconds": settings.helper_vlm_timeout_seconds,
         },
         "math_ingestion_vlm": {
             "endpoint": settings.math_ingestion_vlm_endpoint,
             "model": settings.math_ingestion_vlm_model,
+            "provider": settings.math_ingestion_vlm_provider,
             "timeout_seconds": settings.math_ingestion_vlm_timeout_seconds,
         },
         "english_ingestion_vlm": {
             "endpoint": settings.english_ingestion_vlm_endpoint,
             "model": settings.english_ingestion_vlm_model,
+            "provider": settings.english_ingestion_vlm_provider,
             "timeout_seconds": settings.english_ingestion_vlm_timeout_seconds,
         },
         "preview_extracting_window_seconds": settings.preview_extracting_window_seconds,
         "grading_vlm": {
             "endpoint": settings.grading_vlm_endpoint,
             "model": settings.grading_vlm_model,
+            "provider": settings.grading_vlm_provider,
             "timeout_seconds": settings.grading_vlm_timeout_seconds,
         },
         "math_solution_vlm": {
             "endpoint": settings.math_solution_vlm_endpoint,
             "model": settings.math_solution_vlm_model,
+            "provider": settings.math_solution_vlm_provider,
             "timeout_seconds": settings.math_solution_vlm_timeout_seconds,
         },
         "english_solution_vlm": {
             "endpoint": settings.english_solution_vlm_endpoint,
             "model": settings.english_solution_vlm_model,
+            "provider": settings.english_solution_vlm_provider,
             "timeout_seconds": settings.english_solution_vlm_timeout_seconds,
         },
         "math_coaching_vlm": {
             "endpoint": settings.math_coaching_vlm_endpoint,
             "model": settings.math_coaching_vlm_model,
+            "provider": settings.math_coaching_vlm_provider,
             "timeout_seconds": settings.math_coaching_vlm_timeout_seconds,
         },
         "english_coaching_vlm": {
             "endpoint": settings.english_coaching_vlm_endpoint,
             "model": settings.english_coaching_vlm_model,
+            "provider": settings.english_coaching_vlm_provider,
             "timeout_seconds": settings.english_coaching_vlm_timeout_seconds,
         },
         "session": {

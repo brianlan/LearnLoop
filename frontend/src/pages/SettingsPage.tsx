@@ -24,41 +24,49 @@ interface SettingsResponse {
   helper_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   math_ingestion_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   english_ingestion_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   grading_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   math_solution_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   english_solution_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   math_coaching_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   english_coaching_vlm: {
     endpoint: string;
     model: string;
+    provider: string;
     timeout_seconds: number;
   };
   session: {
@@ -124,12 +132,13 @@ function VlmSection({
   vlm,
 }: {
   title: string;
-  vlm: { endpoint: string; model: string; timeout_seconds: number };
+  vlm: { endpoint: string; model: string; provider: string; timeout_seconds: number };
 }) {
   return (
     <SettingSection title={title}>
       <SettingRow label="Endpoint" value={vlm.endpoint} />
       <SettingRow label="Model" value={vlm.model} />
+      <SettingRow label="Provider" value={vlm.provider} />
       <SettingRow label="Timeout (seconds)" value={vlm.timeout_seconds} />
     </SettingSection>
   );

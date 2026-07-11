@@ -36,41 +36,49 @@ const mockSettings = {
   helper_vlm: {
     endpoint: "https://helper.example.com",
     model: "helper-model",
+    provider: "openai",
     timeout_seconds: 30,
   },
   math_ingestion_vlm: {
     endpoint: "https://math-ingestion.example.com",
     model: "math-ingestion-model",
+    provider: "ollama",
     timeout_seconds: 120,
   },
   english_ingestion_vlm: {
     endpoint: "https://english-ingestion.example.com",
     model: "english-ingestion-model",
+    provider: "openai",
     timeout_seconds: 120,
   },
   grading_vlm: {
     endpoint: "https://grading.example.com",
     model: "grading-model",
+    provider: "openai",
     timeout_seconds: 60,
   },
   math_solution_vlm: {
     endpoint: "https://math-solution.example.com",
     model: "math-solution-model",
+    provider: "openai",
     timeout_seconds: 90,
   },
   english_solution_vlm: {
     endpoint: "https://english-solution.example.com",
     model: "english-solution-model",
+    provider: "openai",
     timeout_seconds: 90,
   },
   math_coaching_vlm: {
     endpoint: "https://math-coaching.example.com",
     model: "math-coaching-model",
+    provider: "openai",
     timeout_seconds: 45,
   },
   english_coaching_vlm: {
     endpoint: "https://english-coaching.example.com",
     model: "english-coaching-model",
+    provider: "openai",
     timeout_seconds: 45,
   },
   session: { cookie_name: "ll_session", secure: false, samesite: "lax" },
@@ -131,6 +139,12 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("english-solution-model")).toBeInTheDocument();
     expect(await screen.findByText("math-coaching-model")).toBeInTheDocument();
     expect(await screen.findByText("english-coaching-model")).toBeInTheDocument();
+  });
+
+  it("renders VLM provider values", async () => {
+    renderWithProviders();
+    expect(await screen.findAllByText("Provider")).toHaveLength(8);
+    expect(await screen.findByText("ollama")).toBeInTheDocument();
   });
 
   it("does not reference stale VLM keys", async () => {

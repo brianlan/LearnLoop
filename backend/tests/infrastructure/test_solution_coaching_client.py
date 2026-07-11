@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import Any, Callable
 
-import httpx
 import pytest
+
+from litellm.exceptions import (
+    APIConnectionError,
+    InternalServerError,
+)
 
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.solution_coaching_client import (
@@ -23,48 +29,43 @@ from app.infrastructure.vlm.solution_coaching_prompts import (
 )
 
 
-def _build_solution_client(handler) -> SolutionVLMClient:
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://solution.example/api",
-        timeout=5,
-        headers={"Authorization": "Bearer solution-key", "Content-Type": "application/json"},
+def _mock_response(content: str, reasoning_content: str | None = None) -> Any:
+    message = SimpleNamespace(
+        role="assistant",
+        content=content,
+        reasoning_content=reasoning_content,
+        provider_specific_fields=None,
     )
+    choice = SimpleNamespace(index=0, message=message)
+    return SimpleNamespace(choices=[choice])
+
+
+def _build_solution_client(completion_fn: Callable[..., Any]) -> SolutionVLMClient:
     settings = Settings(
         math_solution_vlm_endpoint="https://solution.example/api",
         math_solution_vlm_model="solution-model",
         math_solution_vlm_api_key="solution-key",
         math_solution_vlm_timeout_seconds=7,
     )
-    return SolutionVLMClient(settings=settings, http_client=http_client)
+    return SolutionVLMClient(settings=settings, completion_fn=completion_fn)
 
 
-def _build_coaching_client(handler) -> CoachingVLMClient:
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://coaching.example/api",
-        timeout=5,
-        headers={"Authorization": "Bearer coaching-key", "Content-Type": "application/json"},
-    )
+def _build_coaching_client(completion_fn: Callable[..., Any]) -> CoachingVLMClient:
     settings = Settings(
         math_coaching_vlm_endpoint="https://coaching.example/api",
         math_coaching_vlm_model="coaching-model",
         math_coaching_vlm_api_key="coaching-key",
         math_coaching_vlm_timeout_seconds=9,
     )
-    return CoachingVLMClient(settings=settings, http_client=http_client)
+    return CoachingVLMClient(settings=settings, completion_fn=completion_fn)
 
 
 def test_solution_coaching_vlm_clients_use_capability_specific_timeouts() -> None:
     solution_client = SolutionVLMClient(
         settings=Settings(math_solution_vlm_timeout_seconds=123),
-        http_client=httpx.AsyncClient(),
     )
     coaching_client = CoachingVLMClient(
         settings=Settings(math_coaching_vlm_timeout_seconds=45),
-        http_client=httpx.AsyncClient(),
     )
 
     assert solution_client._timeout_seconds == 123
@@ -78,7 +79,7 @@ def test_solution_vlm_client_selects_english_settings_and_prompt() -> None:
         english_solution_vlm_api_key="english-key",
         english_solution_vlm_timeout_seconds=99,
     )
-    client = SolutionVLMClient(settings=settings, subject="english", http_client=httpx.AsyncClient())
+    client = SolutionVLMClient(settings=settings, subject="english")
 
     assert client._endpoint == "https://english-solution.example/api"
     assert client._model == "english-model"
@@ -98,29 +99,19 @@ def test_solution_vlm_client_selects_english_settings_and_prompt() -> None:
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_selects_english_settings_and_prompt() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(await request.aread())
-        assert payload["model"] == "english-model"
-        assert payload["messages"][0]["role"] == "system"
-        assert "English" in payload["messages"][0]["content"]
-        return httpx.Response(
-            200,
-            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps({"text": "hi"})}}]},
-        )
+    async def completion_fn(**kwargs):
+        assert kwargs["model"] == "openai/english-model"
+        assert kwargs["messages"][0]["role"] == "system"
+        assert "English" in kwargs["messages"][0]["content"]
+        return _mock_response(json.dumps({"text": "hi"}))
 
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://english-coaching.example/api",
-        timeout=5,
-    )
     settings = Settings(
         english_coaching_vlm_endpoint="https://english-coaching.example/api",
         english_coaching_vlm_model="english-model",
         english_coaching_vlm_api_key="english-key",
         english_coaching_vlm_timeout_seconds=88,
     )
-    client = CoachingVLMClient(settings=settings, subject="english", http_client=http_client)
+    client = CoachingVLMClient(settings=settings, subject="english", completion_fn=completion_fn)
 
     assert client._endpoint == "https://english-coaching.example/api"
     assert client._model == "english-model"
@@ -139,20 +130,18 @@ async def test_coaching_vlm_client_selects_english_settings_and_prompt() -> None
         )
     )
     assert result.text == "hi"
-    await client.aclose()
 
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/chat/completions"
-        assert request.headers["Authorization"] == "Bearer solution-key"
-        payload = json.loads(await request.aread())
-        assert payload["model"] == "solution-model"
-        assert payload["messages"][0]["role"] == "system"
-        assert payload["messages"][1]["role"] == "user"
-        system_prompt = payload["messages"][0]["content"]
-        user_content = payload["messages"][1]["content"]
+    async def completion_fn(**kwargs):
+        assert kwargs["model"] == "openai/solution-model"
+        assert kwargs["api_key"] == "solution-key"
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        system_prompt = messages[0]["content"]
+        user_content = messages[1]["content"]
         user_prompt = user_content[0]["text"]
         assert "written in Simplified Chinese" in system_prompt
         assert "Do not use advanced or out-of-scope methods" in system_prompt
@@ -160,29 +149,18 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
         assert "Return valid JSON only" in system_prompt
         assert "已知 x + 3 = 5" in user_prompt
         assert '"answerKey": "2"' in user_prompt
-        assert payload["messages"][1]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "steps_markdown": "1. 两边同时减 3。\n2. 得到 x = 2。",
-                                    "final_answer": "x = 2",
-                                    "level_classification": "middle-school",
-                                }
-                            ),
-                        },
-                    }
-                ]
-            },
+        assert messages[1]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
+        return _mock_response(
+            json.dumps(
+                {
+                    "steps_markdown": "1. 两边同时减 3。\n2. 得到 x = 2。",
+                    "final_answer": "x = 2",
+                    "level_classification": "middle-school",
+                }
+            )
         )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
     result = await client.generate_solution(
         SolutionVLMRequest(
             problem_text="已知 x + 3 = 5，求 x。",
@@ -190,7 +168,6 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
             image_url="https://example.com/problem.png",
         )
     )
-    await client.aclose()
 
     assert result.model == "solution-model"
     assert result.final_answer == "x = 2"
@@ -199,27 +176,15 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_accepts_fenced_json_response() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "```json\n{\"steps_markdown\":\"步骤\",\"final_answer\":\"42\",\"level_classification\":\"primary\"}\n```",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "```json\n{\"steps_markdown\":\"步骤\",\"final_answer\":\"42\",\"level_classification\":\"primary\"}\n```"
         )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
     result = await client.generate_solution(
         SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
     )
-    await client.aclose()
 
     assert result.steps_markdown == "步骤"
     assert result.final_answer == "42"
@@ -227,98 +192,67 @@ async def test_solution_vlm_client_accepts_fenced_json_response() -> None:
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_rejects_malformed_response() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "not-json"}}]},
-        )
+    async def completion_fn(**kwargs):
+        return _mock_response("not-json")
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
 
     with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
-
-
-@pytest.mark.asyncio
-async def test_solution_vlm_parser_rejects_invalid_chat_completion_shape() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"unexpected": "shape"})
-
-    client = _build_solution_client(handler)
-
-    with pytest.raises(SolutionCoachingVLMError) as exc_info:
-        await client.generate_solution(
-            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
-        )
-    await client.aclose()
-
-    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
-    assert exc_info.value.retryable is False
-    assert str(exc_info.value) == "VLM provider response failed chat completion validation"
-    assert exc_info.value.raw_provider_response == {"unexpected": "shape"}
 
 
 @pytest.mark.asyncio
 async def test_solution_vlm_parser_rejects_empty_choices() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": []})
+    async def completion_fn(**kwargs):
+        return SimpleNamespace(choices=[])
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
 
     with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
     assert str(exc_info.value) == "VLM provider returned no choices"
-    assert exc_info.value.raw_provider_response == {"choices": []}
 
 
 @pytest.mark.asyncio
 async def test_solution_vlm_parser_rejects_empty_content() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]},
-        )
+    async def completion_fn(**kwargs):
+        return _mock_response("")
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
 
     with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
     assert str(exc_info.value) == "VLM provider response content was empty"
-    assert exc_info.value.raw_provider_response == {
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]
-    }
 
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_classifies_provider_failure_as_retryable() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, json={"detail": "overloaded"})
+    async def completion_fn(**kwargs):
+        raise InternalServerError(
+            message="overloaded", model="solution-model", llm_provider="openai"
+        )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
 
     with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.generate_solution(
             SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
         )
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_PROVIDER
     assert exc_info.value.retryable is True
@@ -326,15 +260,14 @@ async def test_solution_vlm_client_classifies_provider_failure_as_retryable() ->
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_config() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/chat/completions"
-        assert request.headers["Authorization"] == "Bearer coaching-key"
-        payload = json.loads(await request.aread())
-        assert payload["model"] == "coaching-model"
-        assert payload["messages"][0]["role"] == "system"
-        assert payload["messages"][1]["role"] == "user"
-        system_prompt = payload["messages"][0]["content"]
-        user_prompt = payload["messages"][1]["content"]
+    async def completion_fn(**kwargs):
+        assert kwargs["model"] == "openai/coaching-model"
+        assert kwargs["api_key"] == "coaching-key"
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        system_prompt = messages[0]["content"]
+        user_prompt = messages[1]["content"]
         assert "Write this student-facing tutoring reply in Simplified Chinese" in system_prompt
         assert "Be warm, encouraging, and patient" in system_prompt
         assert "canonicalSolutionSteps" in user_prompt
@@ -346,22 +279,9 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
         assert "可以给我一个提示吗？" not in system_prompt
         assert "tracking" not in user_prompt
         assert "exposureCount" not in user_prompt
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"text": "先看等式两边同时减 3。"}),
-                        },
-                    }
-                ]
-            },
-        )
+        return _mock_response(json.dumps({"text": "先看等式两边同时减 3。"}))
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="已知 x + 3 = 5，求 x。",
@@ -376,7 +296,6 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
             new_message="可以给我一个提示吗？",
         )
     )
-    await client.aclose()
 
     assert result.model == "coaching-model"
     assert result.text == "先看等式两边同时减 3。"
@@ -384,25 +303,12 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_parses_optional_whiteboard_dsl() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {"text": "看图示。", "whiteboard_dsl": "board.create('point', [0, 0]);"}
-                            ),
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps({"text": "看图示。", "whiteboard_dsl": "board.create('point', [0, 0]);"})
         )
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="题目",
@@ -413,7 +319,6 @@ async def test_coaching_vlm_client_parses_optional_whiteboard_dsl() -> None:
             new_message="请画图",
         )
     )
-    await client.aclose()
 
     assert result.whiteboard_dsl == "board.create('point', [0, 0]);"
 
@@ -428,23 +333,10 @@ async def test_coaching_vlm_client_preserves_allowed_whiteboard_dsl() -> None:
         "board.create('text', [2.5, 0.3, '490米'], {anchorX:'middle', fontSize:12});"
     )
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"text": "看图示。", "whiteboard_dsl": allowed_dsl}),
-                        },
-                    }
-                ]
-            },
-        )
+    async def completion_fn(**kwargs):
+        return _mock_response(json.dumps({"text": "看图示。", "whiteboard_dsl": allowed_dsl}))
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="题目",
@@ -455,7 +347,6 @@ async def test_coaching_vlm_client_preserves_allowed_whiteboard_dsl() -> None:
             new_message="请画图",
         )
     )
-    await client.aclose()
 
     assert result.whiteboard_dsl == allowed_dsl
 
@@ -474,23 +365,10 @@ async def test_coaching_vlm_client_preserves_allowed_whiteboard_dsl() -> None:
     ],
 )
 async def test_coaching_vlm_client_drops_unsafe_whiteboard_dsl(unsafe_dsl: str) -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"text": "看图示。", "whiteboard_dsl": unsafe_dsl}),
-                        },
-                    }
-                ]
-            },
-        )
+    async def completion_fn(**kwargs):
+        return _mock_response(json.dumps({"text": "看图示。", "whiteboard_dsl": unsafe_dsl}))
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="题目",
@@ -501,7 +379,6 @@ async def test_coaching_vlm_client_drops_unsafe_whiteboard_dsl(unsafe_dsl: str) 
             new_message="请画图",
         )
     )
-    await client.aclose()
 
     assert result.whiteboard_dsl is None
 
@@ -514,23 +391,12 @@ def test_coaching_prompts_exclude_functiongraph_and_disallow_dynamic_javascript(
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_extracts_json_from_wrapped_markdown() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "下面是回复：\n```json\n{\"text\":\"先想想已知条件。\",\"whiteboard_dsl\":null}\n```",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "下面是回复：\n```json\n{\"text\":\"先想想已知条件。\",\"whiteboard_dsl\":null}\n```"
         )
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="题目",
@@ -541,7 +407,6 @@ async def test_coaching_vlm_client_extracts_json_from_wrapped_markdown() -> None
             new_message="请提示一下",
         )
     )
-    await client.aclose()
 
     assert result.text == "先想想已知条件。"
     assert result.whiteboard_dsl is None
@@ -549,10 +414,10 @@ async def test_coaching_vlm_client_extracts_json_from_wrapped_markdown() -> None
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("boom")
+    async def completion_fn(**kwargs):
+        raise APIConnectionError(message="boom", model="coaching-model", llm_provider="openai")
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
 
     with pytest.raises(SolutionCoachingVLMError) as exc_info:
         await client.send_message(
@@ -565,7 +430,6 @@ async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
                 new_message="你好",
             )
         )
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_NETWORK
     assert exc_info.value.retryable is True
@@ -573,24 +437,13 @@ async def test_coaching_vlm_client_network_failure_is_catchable() -> None:
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_parses_reasoning_content() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"text": "答案是 x=2。"}),
-                            "reasoning_content": "先分析等式，两边减3得到x=2。",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps({"text": "答案是 x=2。"}),
+            reasoning_content="先分析等式，两边减3得到x=2。",
         )
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="x + 3 = 5",
@@ -601,7 +454,6 @@ async def test_coaching_vlm_client_parses_reasoning_content() -> None:
             new_message="怎么做？",
         )
     )
-    await client.aclose()
 
     assert result.text == "答案是 x=2。"
     assert result.reasoning_content == "先分析等式，两边减3得到x=2。"
@@ -609,23 +461,10 @@ async def test_coaching_vlm_client_parses_reasoning_content() -> None:
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_reasoning_content_none_when_absent() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"text": "简单回答。"}),
-                        },
-                    }
-                ]
-            },
-        )
+    async def completion_fn(**kwargs):
+        return _mock_response(json.dumps({"text": "简单回答。"}))
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="题目",
@@ -636,7 +475,6 @@ async def test_coaching_vlm_client_reasoning_content_none_when_absent() -> None:
             new_message="你好",
         )
     )
-    await client.aclose()
 
     assert result.text == "简单回答。"
     assert result.reasoning_content is None
@@ -696,27 +534,15 @@ def test_solution_coaching_strip_json_code_fences_strips_multiline_json_content(
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_extracts_embedded_json_without_fences() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "Here is the solution:\n{\"steps_markdown\":\"Step 1\\nStep 2\",\"final_answer\":\"42\",\"level_classification\":\"primary\"}\nHope this helps!",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "Here is the solution:\n{\"steps_markdown\":\"Step 1\\nStep 2\",\"final_answer\":\"42\",\"level_classification\":\"primary\"}\nHope this helps!"
         )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
     result = await client.generate_solution(
         SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
     )
-    await client.aclose()
 
     assert result.steps_markdown == "Step 1\nStep 2"
     assert result.final_answer == "42"
@@ -725,23 +551,12 @@ async def test_solution_vlm_client_extracts_embedded_json_without_fences() -> No
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_extracts_embedded_json_without_fences() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "Here is the reply:\n{\"text\":\"先想想已知条件。\"}\nDone",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "Here is the reply:\n{\"text\":\"先想想已知条件。\"}\nDone"
         )
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="题目",
@@ -752,65 +567,40 @@ async def test_coaching_vlm_client_extracts_embedded_json_without_fences() -> No
             new_message="请提示一下",
         )
     )
-    await client.aclose()
 
     assert result.text == "先想想已知条件。"
 
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_preserves_reasoning_content_in_raw_response() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"steps_markdown":"步骤","final_answer":"42","level_classification":"primary"}),
-                            "reasoning_content": "推理过程",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps({"steps_markdown":"步骤","final_answer":"42","level_classification":"primary"}),
+            reasoning_content="推理过程",
         )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
     result = await client.generate_solution(
         SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
     )
-    await client.aclose()
 
     assert result.raw_provider_response["reasoning_content"] == "推理过程"
 
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_normalizes_leading_think_block() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "<think>internal reasoning</think>\n"
-                            + json.dumps(
-                                {"steps_markdown": "步骤", "final_answer": "42", "level_classification": "primary"}
-                            ),
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "<think>internal reasoning</think>\n"
+            + json.dumps(
+                {"steps_markdown": "步骤", "final_answer": "42", "level_classification": "primary"}
+            )
         )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
     result = await client.generate_solution(
         SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
     )
-    await client.aclose()
 
     assert result.steps_markdown == "步骤"
     assert result.raw_provider_response["reasoning_content"] == "internal reasoning"
@@ -818,24 +608,13 @@ async def test_solution_vlm_client_normalizes_leading_think_block() -> None:
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_normalizes_leading_think_block() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "<think>internal reasoning</think>"
-                            + json.dumps({"text": "先看等式两边同时减 3。"}),
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "<think>internal reasoning</think>"
+            + json.dumps({"text": "先看等式两边同时减 3。"})
         )
 
-    client = _build_coaching_client(handler)
+    client = _build_coaching_client(completion_fn)
     result = await client.send_message(
         CoachingVLMRequest(
             problem_text="x + 3 = 5",
@@ -846,7 +625,6 @@ async def test_coaching_vlm_client_normalizes_leading_think_block() -> None:
             new_message="怎么做？",
         )
     )
-    await client.aclose()
 
     assert result.text == "先看等式两边同时减 3。"
     assert result.reasoning_content == "internal reasoning"
@@ -854,30 +632,18 @@ async def test_coaching_vlm_client_normalizes_leading_think_block() -> None:
 
 @pytest.mark.asyncio
 async def test_solution_vlm_client_explicit_reasoning_wins_over_think_block() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "<think>think reasoning</think>"
-                            + json.dumps(
-                                {"steps_markdown": "步骤", "final_answer": "42", "level_classification": "primary"}
-                            ),
-                            "reasoning_content": "explicit reasoning",
-                        },
-                    }
-                ]
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "<think>think reasoning</think>"
+            + json.dumps(
+                {"steps_markdown": "步骤", "final_answer": "42", "level_classification": "primary"}
+            ),
+            reasoning_content="explicit reasoning",
         )
 
-    client = _build_solution_client(handler)
+    client = _build_solution_client(completion_fn)
     result = await client.generate_solution(
         SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
     )
-    await client.aclose()
 
     assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
