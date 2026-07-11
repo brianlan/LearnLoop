@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -8,7 +9,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
-from app.presentation.deps import CurrentUserDependency, DatabaseDependency
+from app.domain.selection import ProblemSelectionConfig, ensure_utc
+from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
 
 router = APIRouter(prefix="/home", tags=["home"])
 
@@ -44,17 +46,123 @@ class HomeActivity(BaseModel):
     days: list[HomeActivityDay]
 
 
+class ScoreDistributionBucket(BaseModel):
+    start: int
+    neverTested: int
+    tested: int
+
+
+class ScoreDistribution(BaseModel):
+    buckets: list[ScoreDistributionBucket]
+
+
 class HomeSummaryResponse(BaseModel):
     coverage: HomeCoverage
     conquest: HomeConquest
     firstPass: HomeFirstPass
     activity: HomeActivity
+    scoreDistribution: ScoreDistribution
+
+
+def _selection_config_from_settings(settings: Any) -> ProblemSelectionConfig:
+    return ProblemSelectionConfig(
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
+
+
+def _raw_score(problem: Any, config: ProblemSelectionConfig, now: datetime) -> float | None:
+    """Raw, pre-clamp weighted score for a problem document.
+
+    Mirrors the component math of ``compute_score_breakdown`` (recency +
+    failure + last_wrong) without the ``max(0, ...)`` floor used for selection,
+    so negative score buckets are meaningful. Returns ``None`` when a required
+    timestamp is missing or unparseable.
+    """
+    tracking = problem.get("tracking") or {}
+
+    last_tested = tracking.get("lastTestedAt")
+    created_at = problem.get("createdAt")
+    last_dt = last_tested if last_tested is not None else created_at
+    if isinstance(last_dt, datetime):
+        days_since = (now - ensure_utc(last_dt)).days
+        recency_score = 1.0 + days_since / 30.0
+    elif last_dt is None:
+        recency_score = 1.0
+    else:
+        return None
+
+    failed_count = tracking.get("failedCount", 0) or 0
+    correct_count = tracking.get("correctCount", 0) or 0
+    if failed_count > correct_count and correct_count > 0:
+        failure_score = failed_count / correct_count
+    else:
+        diff = failed_count - correct_count
+        if diff == 0:
+            failure_score = 0.0
+        else:
+            failure_score = math.copysign(math.sqrt(abs(diff)), diff)
+
+    last_attempt_correct = tracking.get("lastAttemptCorrect")
+    if last_tested is None:
+        last_wrong_score = 1.0
+    elif last_attempt_correct is True:
+        last_wrong_score = 0.5
+    elif last_attempt_correct is False:
+        last_wrong_score = 2.0
+    else:
+        last_wrong_score = 1.0
+
+    return (
+        recency_score * config.recency_weight
+        + failure_score * config.failure_rate_weight
+        + last_wrong_score * config.last_wrong_weight
+    )
+
+
+def _build_score_distribution(
+    problem_documents: list[dict[str, Any]],
+    config: ProblemSelectionConfig,
+    now: datetime,
+) -> ScoreDistribution:
+    counts: dict[int, list[int]] = {}
+    for doc in problem_documents:
+        raw = _raw_score(doc, config, now)
+        if raw is None:
+            continue
+        bucket = math.floor(raw)
+        if bucket not in counts:
+            counts[bucket] = [0, 0]
+        tracking = doc.get("tracking") or {}
+        if tracking.get("lastTestedAt") is None:
+            counts[bucket][0] += 1
+        else:
+            counts[bucket][1] += 1
+
+    if not counts:
+        return ScoreDistribution(buckets=[])
+
+    lowest = min(counts)
+    highest = max(counts)
+    buckets = [
+        ScoreDistributionBucket(
+            start=start,
+            neverTested=counts.get(start, [0, 0])[0],
+            tested=counts.get(start, [0, 0])[1],
+        )
+        for start in range(lowest, highest + 1)
+    ]
+    return ScoreDistribution(buckets=buckets)
 
 
 @router.get("/summary", response_model=HomeSummaryResponse)
 async def get_home_summary(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    settings: SettingsDependency,
     timezone: Annotated[str | None, Query()] = None,
 ) -> HomeSummaryResponse:
     if timezone is not None:
@@ -184,6 +292,11 @@ async def get_home_summary(
         for date_str, count in daily_counts.items()
     ]
 
+    selection_config = _selection_config_from_settings(settings)
+    score_distribution = _build_score_distribution(
+        problem_documents, selection_config, datetime.now(UTC)
+    )
+
     return HomeSummaryResponse(
         coverage=HomeCoverage(
             totalProblems=total_problems,
@@ -205,4 +318,5 @@ async def get_home_summary(
             endDate=today.strftime("%Y-%m-%d"),
             days=days,
         ),
+        scoreDistribution=score_distribution,
     )

@@ -35,9 +35,13 @@ def make_problem(
     is_deleted: bool = False,
     is_disabled: bool = False,
     last_tested_at: datetime | None = None,
+    last_attempt_correct: bool | None = None,
     exposure_count: int = 0,
+    correct_count: int = 0,
+    failed_count: int = 0,
+    created_at: datetime | None = None,
 ) -> dict[str, Any]:
-    now = datetime.now(UTC)
+    now = created_at if created_at is not None else datetime.now(UTC)
     return {
         "_id": ObjectId(),
         "userId": user_id,
@@ -56,10 +60,10 @@ def make_problem(
         "origin": {},
         "tracking": {
             "exposureCount": exposure_count,
-            "correctCount": 0,
-            "failedCount": 0,
+            "correctCount": correct_count,
+            "failedCount": failed_count,
             "lastTestedAt": last_tested_at,
-            "lastAttemptCorrect": None,
+            "lastAttemptCorrect": last_attempt_correct,
         },
         "isDeleted": is_deleted,
         "deletedAt": None,

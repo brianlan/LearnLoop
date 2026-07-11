@@ -40,6 +40,7 @@ function summaryResponse(overrides: Partial<{
   firstPassCorrect: number;
   firstPassPercentage: number;
   days: { date: string; count: number }[];
+  scoreDistributionBuckets: { start: number; neverTested: number; tested: number }[];
 }> = {}) {
   const today = new Date();
   const days: { date: string; count: number }[] = [];
@@ -69,6 +70,9 @@ function summaryResponse(overrides: Partial<{
       startDate: days[0].date,
       endDate: days[days.length - 1].date,
       days: overrides.days ?? days,
+    },
+    scoreDistribution: {
+      buckets: overrides.scoreDistributionBuckets ?? [],
     },
   };
 }
@@ -534,6 +538,82 @@ describe("HomePage", () => {
     expect(screen.getByTestId("home-activity-tooltip").textContent).toBe(`${todayStr}: 3 events`);
 
     vi.useRealTimers();
+  });
+
+  it("renders the score distribution card after the activity card", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: [{ start: 0, neverTested: 0, tested: 1 }] }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution")).toBeInTheDocument();
+    });
+    const activity = screen.getByTestId("home-activity-grid");
+    const distribution = screen.getByTestId("home-score-distribution");
+    expect(activity.compareDocumentPosition(distribution))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("renders score distribution bucket labels and stacked counts in ascending order", async () => {
+    const buckets = [
+      { start: -1, neverTested: 1, tested: 0 },
+      { start: 0, neverTested: 0, tested: 2 },
+      { start: 2, neverTested: 3, tested: 1 },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: buckets }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-plot")).toBeInTheDocument();
+    });
+
+    const labels = screen.getAllByTestId("home-score-distribution-bucket-label").map((el) => el.textContent?.trim());
+    expect(labels).toEqual(["-1–0", "0–+1", "+2–+3"]);
+
+    const columns = screen.getAllByTestId("home-score-distribution-column");
+    expect(columns.map((c) => c.getAttribute("data-start"))).toEqual(["-1", "0", "2"]);
+
+    const legend = screen.getAllByTestId("home-score-distribution-legend").map((el) => el.textContent?.trim());
+    expect(legend).toEqual(["Tested", "Never tested"]);
+
+    const testedSwatch = screen.getByTestId("home-score-distribution-legend-tested");
+    const neverTestedSwatch = screen.getByTestId("home-score-distribution-legend-never-tested");
+    expect(testedSwatch.style.backgroundColor).toBe("var(--color-primary)");
+    expect(neverTestedSwatch.style.backgroundColor).toBe("var(--color-border)");
+  });
+
+  it("renders score distribution count values for tested and never-tested counts", async () => {
+    const buckets = [
+      { start: 0, neverTested: 2, tested: 3 },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: buckets }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-plot")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-tested-count-value").textContent).toBe("3");
+    });
+    expect(screen.getByTestId("home-score-distribution-never-tested-count-value").textContent).toBe("2");
+  });
+
+  it("renders an empty state when there are no score distribution buckets", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: [] }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-empty")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("home-score-distribution-plot")).not.toBeInTheDocument();
   });
 });
 
