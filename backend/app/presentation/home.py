@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -8,7 +9,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
-from app.presentation.deps import CurrentUserDependency, DatabaseDependency
+from app.domain.selection import ProblemSelectionConfig, compute_score_breakdown
+from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
+from app.presentation.exam_helpers import problem_document_to_model
 
 router = APIRouter(prefix="/home", tags=["home"])
 
@@ -44,17 +47,83 @@ class HomeActivity(BaseModel):
     days: list[HomeActivityDay]
 
 
+class ScoreDistributionBucket(BaseModel):
+    start: int
+    neverTested: int
+    tested: int
+
+
+class ScoreDistribution(BaseModel):
+    buckets: list[ScoreDistributionBucket]
+
+
 class HomeSummaryResponse(BaseModel):
     coverage: HomeCoverage
     conquest: HomeConquest
     firstPass: HomeFirstPass
     activity: HomeActivity
+    scoreDistribution: ScoreDistribution
+
+
+def _selection_config_from_settings(settings: Any) -> ProblemSelectionConfig:
+    return ProblemSelectionConfig(
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
+
+
+def _build_score_distribution(
+    problem_documents: list[dict[str, Any]],
+    config: ProblemSelectionConfig,
+    now: datetime,
+) -> ScoreDistribution:
+    """Bucket problems by their raw pre-clamp selection score.
+
+    Reuses ``compute_score_breakdown`` for the component math and sums the
+    three components before the ``max(0, ...)`` floor so negative buckets are
+    meaningful. Problems that fail model validation are skipped so a malformed
+    document does not break the home summary.
+    """
+    counts: dict[int, list[int]] = {}
+    for doc in problem_documents:
+        try:
+            problem = problem_document_to_model(doc)
+        except Exception:
+            continue
+        breakdown = compute_score_breakdown(problem, config, now)
+        raw = breakdown.recency + breakdown.failure + breakdown.last_wrong
+        bucket = math.floor(raw)
+        if bucket not in counts:
+            counts[bucket] = [0, 0]
+        if problem.tracking.lastTestedAt is None:
+            counts[bucket][0] += 1
+        else:
+            counts[bucket][1] += 1
+
+    if not counts:
+        return ScoreDistribution(buckets=[])
+
+    lowest = min(counts)
+    highest = max(counts)
+    buckets = [
+        ScoreDistributionBucket(
+            start=start,
+            neverTested=counts.get(start, [0, 0])[0],
+            tested=counts.get(start, [0, 0])[1],
+        )
+        for start in range(lowest, highest + 1)
+    ]
+    return ScoreDistribution(buckets=buckets)
 
 
 @router.get("/summary", response_model=HomeSummaryResponse)
 async def get_home_summary(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
+    settings: SettingsDependency,
     timezone: Annotated[str | None, Query()] = None,
 ) -> HomeSummaryResponse:
     if timezone is not None:
@@ -184,6 +253,11 @@ async def get_home_summary(
         for date_str, count in daily_counts.items()
     ]
 
+    selection_config = _selection_config_from_settings(settings)
+    score_distribution = _build_score_distribution(
+        problem_documents, selection_config, datetime.now(UTC)
+    )
+
     return HomeSummaryResponse(
         coverage=HomeCoverage(
             totalProblems=total_problems,
@@ -205,4 +279,5 @@ async def get_home_summary(
             endDate=today.strftime("%Y-%m-%d"),
             days=days,
         ),
+        scoreDistribution=score_distribution,
     )

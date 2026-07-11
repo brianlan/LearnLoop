@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -770,3 +770,184 @@ async def test_summary_first_pass_mixed_correct_and_incorrect(
     assert data["firstPass"]["attemptedProblems"] == 2
     assert data["firstPass"]["firstPassCorrectProblems"] == 1
     assert data["firstPass"]["percentage"] == 50
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_no_problems_returns_empty(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    response = await client.get("/api/v1/home/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["scoreDistribution"]["buckets"] == []
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_negative_zero_positive_buckets(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    now = datetime.now(UTC)
+    sixty_days_ago = now - timedelta(days=60)  # recency = 1.0 + 60/30 = 3.0
+
+    # Never-tested: recency=1.0 (createdAt ~now), failure=0.0, last_wrong=1.0 -> raw=2.0 (bucket 2)
+    never_tested = make_problem(user_id, created_at=now)
+
+    # Tested correct: recency=3.0, failure=0.0, last_wrong=0.5 -> raw=3.5 (bucket 3)
+    tested_correct = make_problem(
+        user_id,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=True,
+        created_at=sixty_days_ago,
+    )
+
+    # Tested incorrect, more failures than corrects: failure=2.0, last_wrong=2.0 -> raw=3.0+2.0+2.0=7.0 (bucket 7)
+    tested_incorrect = make_problem(
+        user_id,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=False,
+        correct_count=1,
+        failed_count=2,
+        created_at=sixty_days_ago,
+    )
+
+    database.seed("problems", [never_tested, tested_correct, tested_incorrect])
+
+    response = await client.get("/api/v1/home/summary")
+    assert response.status_code == 200
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    by_start = {b["start"]: b for b in buckets}
+    assert list(b["start"] for b in buckets) == sorted(b["start"] for b in buckets)
+
+    # Bucket range spans 2..7 with contiguous empty buckets at 4, 5, 6.
+    assert list(by_start.keys()) == [2, 3, 4, 5, 6, 7]
+
+    # Raw score 2.0 lands in bucket 2 (boundary: exact integer belongs to its own bucket).
+    assert by_start[2] == {"start": 2, "neverTested": 1, "tested": 0}
+
+    # Raw score 3.5 lands in bucket 3.
+    assert by_start[3] == {"start": 3, "neverTested": 0, "tested": 1}
+
+    # Raw score 7.0 lands in bucket 7 (exact integer boundary).
+    assert by_start[7] == {"start": 7, "neverTested": 0, "tested": 1}
+
+    # Empty intermediate buckets emitted contiguously.
+    assert by_start[4] == {"start": 4, "neverTested": 0, "tested": 0}
+    assert by_start[5] == {"start": 5, "neverTested": 0, "tested": 0}
+    assert by_start[6] == {"start": 6, "neverTested": 0, "tested": 0}
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_never_tested_vs_tested(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    now = datetime.now(UTC)
+    sixty_days_ago = now - timedelta(days=60)
+
+    tested = make_problem(
+        user_id,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=True,
+        created_at=sixty_days_ago,
+    )
+    never = make_problem(user_id, created_at=now)
+    database.seed("problems", [tested, never])
+
+    response = await client.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    never_bucket = next(b for b in buckets if b["neverTested"] > 0)
+    tested_bucket = next(b for b in buckets if b["tested"] > 0)
+    assert never_bucket["neverTested"] == 1
+    assert tested_bucket["tested"] == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_includes_disabled_excludes_deleted_and_other_users(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    other_user_id = ObjectId()
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    now = datetime.now(UTC)
+    sixty_days_ago = now - timedelta(days=60)
+
+    # Disabled but tested problem must be included.
+    disabled = make_problem(
+        user_id,
+        is_disabled=True,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=True,
+        created_at=sixty_days_ago,
+    )
+    # Deleted problem must be excluded (query filters out isDeleted).
+    deleted = make_problem(
+        user_id,
+        is_deleted=True,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=True,
+        created_at=sixty_days_ago,
+    )
+    # Other user's problem must be excluded.
+    other = make_problem(other_user_id, created_at=now)
+    database.seed("problems", [disabled, deleted, other])
+
+    response = await client.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    tested_total = sum(b["tested"] for b in buckets)
+    never_total = sum(b["neverTested"] for b in buckets)
+    assert tested_total == 1
+    assert never_total == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_raw_not_clamped_regression(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Raw score must equal the pre-clamp component sum, so non-positive buckets appear."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    now = datetime.now(UTC)
+    sixty_days_ago = now - timedelta(days=60)
+
+    # Tested correct with many more corrects than failures -> negative failure score.
+    # correctCount=10, failedCount=0 -> failure = -sqrt(10) ~ -3.162.
+    # lastTestedAt 60d ago -> recency=3.0; lastAttemptCorrect -> last_wrong=0.5.
+    # raw = 3.0 + (-3.162) + 0.5 ~ 0.338 -> floor 0.
+    problem = make_problem(
+        user_id,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=True,
+        correct_count=10,
+        failed_count=0,
+        created_at=sixty_days_ago,
+    )
+    database.seed("problems", [problem])
+
+    response = await client.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    assert len(buckets) == 1
+    assert buckets[0]["start"] == 0
+    assert buckets[0]["tested"] == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_single_bucket_for_one_problem(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Buckets only range across observed problems."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    now = datetime.now(UTC)
+
+    # Never-tested -> recency=1.0 (createdAt ~now), failure=0.0, last_wrong=1.0 -> raw=2.0 (bucket 2).
+    problem = make_problem(user_id, created_at=now)
+    database.seed("problems", [problem])
+
+    response = await client.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    assert len(buckets) == 1
+    assert buckets[0]["start"] == 2
+    assert buckets[0]["neverTested"] == 1

@@ -33,11 +33,22 @@ interface HomeActivity {
   days: HomeActivityDay[];
 }
 
+interface ScoreDistributionBucket {
+  start: number;
+  neverTested: number;
+  tested: number;
+}
+
+interface ScoreDistribution {
+  buckets: ScoreDistributionBucket[];
+}
+
 interface HomeSummaryResponse {
   coverage: HomeCoverage;
   conquest: HomeConquest;
   firstPass: HomeFirstPass;
   activity: HomeActivity;
+  scoreDistribution: ScoreDistribution;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -163,7 +174,7 @@ export function HomePage() {
     return <main style={pageCanvasStyle} />;
   }
 
-  const { coverage, conquest, firstPass, activity } = data;
+  const { coverage, conquest, firstPass, activity, scoreDistribution } = data;
   const maxCount = activity.days.reduce((max, day) => Math.max(max, day.count), 0);
   const weekColumns = buildWeekColumns(activity.days);
   const monthLabels = buildMonthLabels(weekColumns);
@@ -390,7 +401,120 @@ export function HomePage() {
           </div>
         </div>
       </section>
+
+      <ScoreDistributionCard buckets={scoreDistribution?.buckets ?? []} />
     </div>
     </main>
+  );
+}
+
+const PLOT_HEIGHT_PX = 160;
+const DIST_COLUMN_WIDTH_PX = 40;
+
+function bucketLabel(start: number): string {
+  return `${formatBucketNum(start)}\u2013${formatBucketNum(start + 1)}`;
+}
+
+function formatBucketNum(n: number): string {
+  return n <= 0 ? n.toString() : `+${n}`;
+}
+
+function ScoreDistributionCard({ buckets }: { buckets: ScoreDistributionBucket[] }) {
+  const maxTotal = buckets.reduce(
+    (max, b) => Math.max(max, b.neverTested + b.tested),
+    0,
+  );
+
+  return (
+    <section
+      data-testid="home-score-distribution"
+      style={{
+        marginTop: "1.5rem",
+        padding: "1.5rem",
+        backgroundColor: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-lg)",
+        boxShadow: "var(--shadow-sm)",
+      }}
+    >
+      <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.75rem" }}>
+        Problem score distribution
+      </div>
+
+      {buckets.length === 0 ? (
+        <div data-testid="home-score-distribution-empty" style={{ color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+          No problems to score yet. Add problems to see their score distribution.
+        </div>
+      ) : (
+        <>
+          <div
+            role="list"
+            aria-label="Legend: problem test status"
+            style={{ display: "flex", gap: "1rem", marginBottom: "0.75rem", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+          >
+            <span role="listitem" data-testid="home-score-distribution-legend" style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem" }}>
+              <span data-testid="home-score-distribution-legend-tested" style={{ width: "0.75rem", height: "0.75rem", backgroundColor: "var(--color-primary)", borderRadius: "2px", display: "inline-block" }} />
+              Tested
+            </span>
+            <span role="listitem" data-testid="home-score-distribution-legend" style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem" }}>
+              <span data-testid="home-score-distribution-legend-never-tested" style={{ width: "0.75rem", height: "0.75rem", backgroundColor: "var(--color-border)", borderRadius: "2px", display: "inline-block" }} />
+              Never tested
+            </span>
+          </div>
+
+          <div data-testid="home-score-distribution-plot" style={{ overflowX: "auto" }}>
+            <div style={{ display: "inline-flex", gap: "0.25rem", alignItems: "flex-end", height: `${PLOT_HEIGHT_PX}px`, minWidth: "100%" }}>
+              {buckets.map((bucket) => {
+                const total = bucket.neverTested + bucket.tested;
+                const heightPct = maxTotal > 0 ? total / maxTotal : 0;
+                const testedPct = total > 0 ? (bucket.tested / total) * 100 : 0;
+                const neverTestedPct = total > 0 ? (bucket.neverTested / total) * 100 : 0;
+                const label = bucketLabel(bucket.start);
+                return (
+                  <div
+                    key={bucket.start}
+                    data-testid="home-score-distribution-column"
+                    data-start={bucket.start}
+                    role="figure"
+                    aria-label={`${label}: ${bucket.tested} tested, ${bucket.neverTested} never tested`}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "flex-end",
+                      width: `${DIST_COLUMN_WIDTH_PX}px`,
+                      height: "100%",
+                    }}
+                  >
+                    <div
+                      data-testid="home-score-distribution-tested-count"
+                      style={{ width: "100%", height: `${heightPct * (testedPct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: "var(--color-primary)", borderRadius: "2px 2px 0 0", minHeight: total > 0 ? "1px" : "0" }}
+                    >
+                      {bucket.tested > 0 && (
+                        <span data-testid="home-score-distribution-tested-count-value" style={{ display: "block", textAlign: "center", fontSize: "0.625rem", color: "var(--color-text)" }}>
+                          {bucket.tested}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      data-testid="home-score-distribution-never-tested-count"
+                      style={{ width: "100%", height: `${heightPct * (neverTestedPct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: "var(--color-border)", borderRadius: total > 0 && testedPct === 0 ? "2px 2px 0 0" : "0", minHeight: total > 0 ? "1px" : "0" }}
+                    >
+                      {bucket.neverTested > 0 && (
+                        <span data-testid="home-score-distribution-never-tested-count-value" style={{ display: "block", textAlign: "center", fontSize: "0.625rem", color: "var(--color-text)" }}>
+                          {bucket.neverTested}
+                        </span>
+                      )}
+                    </div>
+                    <div data-testid="home-score-distribution-bucket-label" style={{ marginTop: "0.25rem", fontSize: "0.625rem", color: "var(--color-text-muted)", textAlign: "center", whiteSpace: "nowrap" }}>
+                      {label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
