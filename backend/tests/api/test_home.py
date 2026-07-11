@@ -18,9 +18,12 @@ from tests.api.conftest import FakeDatabase, make_problem, make_user
 
 @pytest.fixture
 def home_app() -> FastAPI:
+    return _build_home_application(Settings(problem_selection_min_age_days=0))
+
+
+def _build_home_application(settings: Settings) -> FastAPI:
     application = create_app()
     database = FakeDatabase()
-    settings = Settings(problem_selection_min_age_days=0)
     user = make_user(ObjectId(), "student")
 
     application.state.fake_database = database
@@ -35,6 +38,18 @@ def home_app() -> FastAPI:
 @pytest_asyncio.fixture
 async def client(home_app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=home_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest.fixture
+def home_app_with_min_age() -> FastAPI:
+    return _build_home_application(Settings(problem_selection_min_age_days=3))
+
+
+@pytest_asyncio.fixture
+async def client_with_min_age(home_app_with_min_age: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=home_app_with_min_age)
     async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
         yield async_client
 
@@ -824,18 +839,18 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
     assert list(by_start.keys()) == [2, 3, 4, 5, 6, 7]
 
     # Raw score 2.0 lands in bucket 2 (boundary: exact integer belongs to its own bucket).
-    assert by_start[2] == {"start": 2, "neverTested": 1, "tested": 0}
+    assert by_start[2] == {"start": 2, "neverTested": 1, "minAged": 0, "tested": 0, "cooldown": 0}
 
     # Raw score 3.5 lands in bucket 3.
-    assert by_start[3] == {"start": 3, "neverTested": 0, "tested": 1}
+    assert by_start[3] == {"start": 3, "neverTested": 0, "minAged": 0, "tested": 1, "cooldown": 0}
 
     # Raw score 7.0 lands in bucket 7 (exact integer boundary).
-    assert by_start[7] == {"start": 7, "neverTested": 0, "tested": 1}
+    assert by_start[7] == {"start": 7, "neverTested": 0, "minAged": 0, "tested": 1, "cooldown": 0}
 
     # Empty intermediate buckets emitted contiguously.
-    assert by_start[4] == {"start": 4, "neverTested": 0, "tested": 0}
-    assert by_start[5] == {"start": 5, "neverTested": 0, "tested": 0}
-    assert by_start[6] == {"start": 6, "neverTested": 0, "tested": 0}
+    assert by_start[4] == {"start": 4, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
+    assert by_start[5] == {"start": 5, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
+    assert by_start[6] == {"start": 6, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
 
 
 @pytest.mark.asyncio
@@ -951,3 +966,164 @@ async def test_summary_score_distribution_single_bucket_for_one_problem(
     assert len(buckets) == 1
     assert buckets[0]["start"] == 2
     assert buckets[0]["neverTested"] == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_four_categories(
+    home_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    """Each of Cooldown, Tested, Min aged, and Never tested gets one problem."""
+    database: FakeDatabase = home_app_with_min_age.state.fake_database
+    user_id = home_app_with_min_age.state.user["_id"]
+    now = datetime.now(UTC)
+    one_day_ago = now - timedelta(days=1)       # newer than now-3d -> min aged (untested only)
+    three_days_ago = now - timedelta(days=3)     # newer than now-7d -> cooldown
+    thirty_days_ago = now - timedelta(days=30)  # older than now-7d -> tested
+    hundred_days_ago = now - timedelta(days=100)  # older than now-3d -> never tested
+
+    cooldown_p = make_problem(
+        user_id,
+        last_tested_at=three_days_ago,
+        last_attempt_correct=True,
+        created_at=hundred_days_ago,
+    )
+    tested_p = make_problem(
+        user_id,
+        last_tested_at=thirty_days_ago,
+        last_attempt_correct=True,
+        created_at=thirty_days_ago,
+    )
+    min_aged_p = make_problem(user_id, created_at=one_day_ago)
+    never_tested_p = make_problem(user_id, created_at=hundred_days_ago)
+    database.seed("problems", [cooldown_p, tested_p, min_aged_p, never_tested_p])
+
+    response = await client_with_min_age.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+
+    assert sum(b["cooldown"] for b in buckets) == 1
+    assert sum(b["tested"] for b in buckets) == 1
+    assert sum(b["minAged"] for b in buckets) == 1
+    assert sum(b["neverTested"] for b in buckets) == 1
+    # Invariant: each problem counted exactly once across all buckets.
+    bucket_total = sum(
+        b["neverTested"] + b["minAged"] + b["tested"] + b["cooldown"] for b in buckets
+    )
+    assert bucket_total == 4
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_cooldown_cutoff_boundary(
+    home_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    """At exact cooldown cutoff classify as Tested; just newer -> Cooldown (strict >)."""
+    database: FakeDatabase = home_app_with_min_age.state.fake_database
+    user_id = home_app_with_min_age.state.user["_id"]
+    now = datetime.now(UTC)
+    deep_past = now - timedelta(days=100)
+
+    exactly_cutoff = make_problem(
+        user_id,
+        last_tested_at=now - timedelta(days=7),
+        last_attempt_correct=True,
+        created_at=deep_past,
+    )
+    just_inside = make_problem(
+        user_id,
+        last_tested_at=now - timedelta(days=7) + timedelta(minutes=5),
+        last_attempt_correct=True,
+        created_at=deep_past,
+    )
+    database.seed("problems", [exactly_cutoff, just_inside])
+
+    response = await client_with_min_age.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    assert sum(b["tested"] for b in buckets) == 1
+    assert sum(b["cooldown"] for b in buckets) == 1
+    assert sum(b["minAged"] for b in buckets) == 0
+    assert sum(b["neverTested"] for b in buckets) == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_min_age_cutoff_boundary(
+    home_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    """At exact min-age cutoff classify as Never tested; just newer -> Min aged (strict >)."""
+    database: FakeDatabase = home_app_with_min_age.state.fake_database
+    user_id = home_app_with_min_age.state.user["_id"]
+    now = datetime.now(UTC)
+
+    exactly_cutoff = make_problem(user_id, created_at=now - timedelta(days=3))
+    just_inside = make_problem(
+        user_id,
+        created_at=now - timedelta(days=3) + timedelta(minutes=5),
+    )
+    database.seed("problems", [exactly_cutoff, just_inside])
+
+    response = await client_with_min_age.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    assert sum(b["neverTested"] for b in buckets) == 1
+    assert sum(b["minAged"] for b in buckets) == 1
+    assert sum(b["tested"] for b in buckets) == 0
+    assert sum(b["cooldown"] for b in buckets) == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_recently_created_tested_problem_not_min_aged(
+    home_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    """A recently created and recently tested problem stays in the tested parent split (Cooldown)."""
+    database: FakeDatabase = home_app_with_min_age.state.fake_database
+    user_id = home_app_with_min_age.state.user["_id"]
+    one_day_ago = datetime.now(UTC) - timedelta(days=1)
+
+    problem = make_problem(
+        user_id,
+        last_tested_at=one_day_ago,
+        last_attempt_correct=True,
+        created_at=one_day_ago,
+    )
+    database.seed("problems", [problem])
+
+    response = await client_with_min_age.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    assert sum(b["cooldown"] for b in buckets) == 1
+    assert sum(b["minAged"] for b in buckets) == 0
+    assert sum(b["tested"] for b in buckets) == 0
+    assert sum(b["neverTested"] for b in buckets) == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_score_distribution_disabled_included_deleted_other_users_excluded_categories(
+    home_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    """Disabled problems are bucketed by category; deleted/other-user problems are excluded."""
+    database: FakeDatabase = home_app_with_min_age.state.fake_database
+    user_id = home_app_with_min_age.state.user["_id"]
+    other_user_id = ObjectId()
+    one_day_ago = datetime.now(UTC) - timedelta(days=1)
+
+    disabled_cooldown = make_problem(
+        user_id,
+        is_disabled=True,
+        last_tested_at=one_day_ago,
+        last_attempt_correct=True,
+        created_at=one_day_ago,
+    )
+    deleted_cooldown = make_problem(
+        user_id,
+        is_deleted=True,
+        last_tested_at=one_day_ago,
+        last_attempt_correct=True,
+        created_at=one_day_ago,
+    )
+    other_min_aged = make_problem(other_user_id, created_at=one_day_ago)
+    database.seed("problems", [disabled_cooldown, deleted_cooldown, other_min_aged])
+
+    response = await client_with_min_age.get("/api/v1/home/summary")
+    buckets = response.json()["scoreDistribution"]["buckets"]
+    bucket_total = sum(
+        b["neverTested"] + b["minAged"] + b["tested"] + b["cooldown"] for b in buckets
+    )
+    assert bucket_total == 1
+    assert sum(b["cooldown"] for b in buckets) == 1
+    assert sum(b["minAged"] for b in buckets) == 0

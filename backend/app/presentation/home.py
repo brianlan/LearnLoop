@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
-from app.domain.selection import ProblemSelectionConfig, compute_score_breakdown
+from app.domain.selection import ProblemSelectionConfig, compute_score_breakdown, ensure_utc
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
 from app.presentation.exam_helpers import problem_document_to_model
 
@@ -50,7 +50,9 @@ class HomeActivity(BaseModel):
 class ScoreDistributionBucket(BaseModel):
     start: int
     neverTested: int
+    minAged: int
     tested: int
+    cooldown: int
 
 
 class ScoreDistribution(BaseModel):
@@ -87,6 +89,9 @@ def _build_score_distribution(
     meaningful. Problems that fail model validation are skipped so a malformed
     document does not break the home summary.
     """
+    # Category indexes: 0=neverTested, 1=minAged, 2=tested, 3=cooldown.
+    cooldown_cutoff = now - timedelta(days=config.cooldown_days)
+    age_cutoff = now - timedelta(days=config.min_problem_age_days)
     counts: dict[int, list[int]] = {}
     for doc in problem_documents:
         try:
@@ -97,11 +102,16 @@ def _build_score_distribution(
         raw = breakdown.recency + breakdown.failure + breakdown.last_wrong
         bucket = math.floor(raw)
         if bucket not in counts:
-            counts[bucket] = [0, 0]
-        if problem.tracking.lastTestedAt is None:
-            counts[bucket][0] += 1
+            counts[bucket] = [0, 0, 0, 0]
+        last_tested = problem.tracking.lastTestedAt
+        if last_tested is not None:
+            # Parent-status split: tested problems never classify as Min aged.
+            idx = 3 if ensure_utc(last_tested) > cooldown_cutoff else 2
+        elif ensure_utc(problem.createdAt) > age_cutoff:
+            idx = 1
         else:
-            counts[bucket][1] += 1
+            idx = 0
+        counts[bucket][idx] += 1
 
     if not counts:
         return ScoreDistribution(buckets=[])
@@ -111,8 +121,10 @@ def _build_score_distribution(
     buckets = [
         ScoreDistributionBucket(
             start=start,
-            neverTested=counts.get(start, [0, 0])[0],
-            tested=counts.get(start, [0, 0])[1],
+            neverTested=counts.get(start, [0, 0, 0, 0])[0],
+            minAged=counts.get(start, [0, 0, 0, 0])[1],
+            tested=counts.get(start, [0, 0, 0, 0])[2],
+            cooldown=counts.get(start, [0, 0, 0, 0])[3],
         )
         for start in range(lowest, highest + 1)
     ]

@@ -40,7 +40,7 @@ function summaryResponse(overrides: Partial<{
   firstPassCorrect: number;
   firstPassPercentage: number;
   days: { date: string; count: number }[];
-  scoreDistributionBuckets: { start: number; neverTested: number; tested: number }[];
+  scoreDistributionBuckets: { start: number; neverTested: number; minAged: number; tested: number; cooldown: number }[];
 }> = {}) {
   const today = new Date();
   const days: { date: string; count: number }[] = [];
@@ -543,7 +543,7 @@ describe("HomePage", () => {
   it("renders the score distribution card after the activity card", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => summaryResponse({ scoreDistributionBuckets: [{ start: 0, neverTested: 0, tested: 1 }] }),
+      json: async () => summaryResponse({ scoreDistributionBuckets: [{ start: 0, neverTested: 0, minAged: 0, tested: 1, cooldown: 0 }] }),
     });
     renderHomePage();
     await waitFor(() => {
@@ -557,9 +557,9 @@ describe("HomePage", () => {
 
   it("renders score distribution bucket labels and stacked counts in ascending order", async () => {
     const buckets = [
-      { start: -1, neverTested: 1, tested: 0 },
-      { start: 0, neverTested: 0, tested: 2 },
-      { start: 2, neverTested: 3, tested: 1 },
+      { start: -1, neverTested: 1, minAged: 0, tested: 0, cooldown: 0 },
+      { start: 0, neverTested: 0, minAged: 0, tested: 2, cooldown: 0 },
+      { start: 2, neverTested: 3, minAged: 1, tested: 1, cooldown: 0 },
     ];
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -577,17 +577,21 @@ describe("HomePage", () => {
     expect(columns.map((c) => c.getAttribute("data-start"))).toEqual(["-1", "0", "2"]);
 
     const legend = screen.getAllByTestId("home-score-distribution-legend").map((el) => el.textContent?.trim());
-    expect(legend).toEqual(["Tested", "Never tested"]);
+    expect(legend).toEqual(["Never tested", "Min aged", "Tested", "Cooldown"]);
 
-    const testedSwatch = screen.getByTestId("home-score-distribution-legend-tested");
     const neverTestedSwatch = screen.getByTestId("home-score-distribution-legend-never-tested");
-    expect(testedSwatch.style.backgroundColor).toBe("var(--color-primary)");
+    const minAgedSwatch = screen.getByTestId("home-score-distribution-legend-min-aged");
+    const testedSwatch = screen.getByTestId("home-score-distribution-legend-tested");
+    const cooldownSwatch = screen.getByTestId("home-score-distribution-legend-cooldown");
     expect(neverTestedSwatch.style.backgroundColor).toBe("var(--color-border)");
+    expect(minAgedSwatch.style.backgroundColor).toBe("var(--color-text-muted)");
+    expect(testedSwatch.style.backgroundColor).toBe("var(--color-primary)");
+    expect(cooldownSwatch.style.backgroundColor).toBe("var(--color-warning)");
   });
 
   it("renders score distribution count values for tested and never-tested counts", async () => {
     const buckets = [
-      { start: 0, neverTested: 2, tested: 3 },
+      { start: 0, neverTested: 2, minAged: 0, tested: 3, cooldown: 0 },
     ];
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -602,6 +606,28 @@ describe("HomePage", () => {
       expect(screen.getByTestId("home-score-distribution-tested-count-value").textContent).toBe("3");
     });
     expect(screen.getByTestId("home-score-distribution-never-tested-count-value").textContent).toBe("2");
+  });
+
+  it("renders all four category segments with count values and accessible labels", async () => {
+    const buckets = [
+      { start: 0, neverTested: 1, minAged: 1, tested: 1, cooldown: 1 },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: buckets }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-plot")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("home-score-distribution-cooldown-count-value").textContent).toBe("1");
+    expect(screen.getByTestId("home-score-distribution-tested-count-value").textContent).toBe("1");
+    expect(screen.getByTestId("home-score-distribution-min-aged-count-value").textContent).toBe("1");
+    expect(screen.getByTestId("home-score-distribution-never-tested-count-value").textContent).toBe("1");
+
+    const column = screen.getByTestId("home-score-distribution-column");
+    expect(column.getAttribute("aria-label")).toBe("0\u2013+1: 1 cooldown, 1 tested, 1 min aged, 1 never tested");
   });
 
   it("renders an empty state when there are no score distribution buckets", async () => {

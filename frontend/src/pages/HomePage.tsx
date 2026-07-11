@@ -36,7 +36,9 @@ interface HomeActivity {
 interface ScoreDistributionBucket {
   start: number;
   neverTested: number;
+  minAged: number;
   tested: number;
+  cooldown: number;
 }
 
 interface ScoreDistribution {
@@ -421,7 +423,8 @@ function formatBucketNum(n: number): string {
 
 function ScoreDistributionCard({ buckets }: { buckets: ScoreDistributionBucket[] }) {
   const maxTotal = buckets.reduce(
-    (max, b) => Math.max(max, b.neverTested + b.tested),
+    (max, b) =>
+      Math.max(max, b.neverTested + b.minAged + b.tested + b.cooldown),
     0,
   );
 
@@ -452,31 +455,29 @@ function ScoreDistributionCard({ buckets }: { buckets: ScoreDistributionBucket[]
             aria-label="Legend: problem test status"
             style={{ display: "flex", gap: "1rem", marginBottom: "0.75rem", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
           >
-            <span role="listitem" data-testid="home-score-distribution-legend" style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem" }}>
-              <span data-testid="home-score-distribution-legend-tested" style={{ width: "0.75rem", height: "0.75rem", backgroundColor: "var(--color-primary)", borderRadius: "2px", display: "inline-block" }} />
-              Tested
-            </span>
-            <span role="listitem" data-testid="home-score-distribution-legend" style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem" }}>
-              <span data-testid="home-score-distribution-legend-never-tested" style={{ width: "0.75rem", height: "0.75rem", backgroundColor: "var(--color-border)", borderRadius: "2px", display: "inline-block" }} />
-              Never tested
-            </span>
+            {LEGEND.map((item) => (
+              <span key={item.label} role="listitem" data-testid="home-score-distribution-legend" style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem" }}>
+                <span data-testid={`home-score-distribution-legend-${item.swatchTestIdSuffix}`} style={{ width: "0.75rem", height: "0.75rem", backgroundColor: item.color, borderRadius: "2px", display: "inline-block" }} />
+                {item.label}
+              </span>
+            ))}
           </div>
 
           <div data-testid="home-score-distribution-plot" style={{ overflowX: "auto" }}>
             <div style={{ display: "inline-flex", gap: "0.25rem", alignItems: "flex-end", height: `${PLOT_HEIGHT_PX}px`, minWidth: "100%" }}>
               {buckets.map((bucket) => {
-                const total = bucket.neverTested + bucket.tested;
+                const total =
+                  bucket.neverTested + bucket.minAged + bucket.tested + bucket.cooldown;
                 const heightPct = maxTotal > 0 ? total / maxTotal : 0;
-                const testedPct = total > 0 ? (bucket.tested / total) * 100 : 0;
-                const neverTestedPct = total > 0 ? (bucket.neverTested / total) * 100 : 0;
                 const label = bucketLabel(bucket.start);
+                const topFilledIdx = STACK_ORDER.findIndex((seg) => bucket[seg.key] > 0);
                 return (
                   <div
                     key={bucket.start}
                     data-testid="home-score-distribution-column"
                     data-start={bucket.start}
                     role="figure"
-                    aria-label={`${label}: ${bucket.tested} tested, ${bucket.neverTested} never tested`}
+                    aria-label={`${label}: ${bucket.cooldown} cooldown, ${bucket.tested} tested, ${bucket.minAged} min aged, ${bucket.neverTested} never tested`}
                     style={{
                       display: "flex",
                       flexDirection: "column",
@@ -485,26 +486,24 @@ function ScoreDistributionCard({ buckets }: { buckets: ScoreDistributionBucket[]
                       height: "100%",
                     }}
                   >
-                    <div
-                      data-testid="home-score-distribution-tested-count"
-                      style={{ width: "100%", height: `${heightPct * (testedPct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: "var(--color-primary)", borderRadius: "2px 2px 0 0", minHeight: total > 0 ? "1px" : "0" }}
-                    >
-                      {bucket.tested > 0 && (
-                        <span data-testid="home-score-distribution-tested-count-value" style={{ display: "block", textAlign: "center", fontSize: "0.625rem", color: "var(--color-text)" }}>
-                          {bucket.tested}
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      data-testid="home-score-distribution-never-tested-count"
-                      style={{ width: "100%", height: `${heightPct * (neverTestedPct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: "var(--color-border)", borderRadius: total > 0 && testedPct === 0 ? "2px 2px 0 0" : "0", minHeight: total > 0 ? "1px" : "0" }}
-                    >
-                      {bucket.neverTested > 0 && (
-                        <span data-testid="home-score-distribution-never-tested-count-value" style={{ display: "block", textAlign: "center", fontSize: "0.625rem", color: "var(--color-text)" }}>
-                          {bucket.neverTested}
-                        </span>
-                      )}
-                    </div>
+                    {STACK_ORDER.map((seg, idx) => {
+                      const count = bucket[seg.key];
+                      const pct = total > 0 ? (count / total) * 100 : 0;
+                      const rounded = idx === topFilledIdx;
+                      return (
+                        <div
+                          key={seg.key}
+                          data-testid={`home-score-distribution-${seg.testIdSuffix}-count`}
+                          style={{ width: "100%", height: `${heightPct * (pct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: seg.color, borderRadius: rounded ? "2px 2px 0 0" : "0", minHeight: total > 0 ? "1px" : "0" }}
+                        >
+                          {count > 0 && (
+                            <span data-testid={`home-score-distribution-${seg.testIdSuffix}-count-value`} style={{ display: "block", textAlign: "center", fontSize: "0.625rem", color: "var(--color-text)" }}>
+                              {count}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                     <div data-testid="home-score-distribution-bucket-label" style={{ marginTop: "0.25rem", fontSize: "0.625rem", color: "var(--color-text-muted)", textAlign: "center", whiteSpace: "nowrap" }}>
                       {label}
                     </div>
@@ -518,3 +517,21 @@ function ScoreDistributionCard({ buckets }: { buckets: ScoreDistributionBucket[]
     </section>
   );
 }
+
+type CategoryKey = "cooldown" | "tested" | "minAged" | "neverTested";
+
+// Stack order from top to bottom of each column. Matches the bottom-to-top
+// order Never tested -> Min aged -> Tested -> Cooldown requested in the spec.
+const STACK_ORDER: { key: CategoryKey; testIdSuffix: string; color: string }[] = [
+  { key: "cooldown", testIdSuffix: "cooldown", color: "var(--color-warning)" },
+  { key: "tested", testIdSuffix: "tested", color: "var(--color-primary)" },
+  { key: "minAged", testIdSuffix: "min-aged", color: "var(--color-text-muted)" },
+  { key: "neverTested", testIdSuffix: "never-tested", color: "var(--color-border)" },
+];
+
+const LEGEND = [
+  { swatchTestIdSuffix: "never-tested", label: "Never tested", color: "var(--color-border)" },
+  { swatchTestIdSuffix: "min-aged", label: "Min aged", color: "var(--color-text-muted)" },
+  { swatchTestIdSuffix: "tested", label: "Tested", color: "var(--color-primary)" },
+  { swatchTestIdSuffix: "cooldown", label: "Cooldown", color: "var(--color-warning)" },
+];
