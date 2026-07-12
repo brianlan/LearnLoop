@@ -56,6 +56,14 @@ RUN cd frontend && npm ci
 # Preinstall Chromium and its system dependencies for Playwright E2E tests.
 RUN cd frontend && npx playwright install --with-deps chromium
 
+# Make Playwright browsers available to the non-root host user at runtime.
+# The install step above places them under /root/.cache as root; copy them
+# to /opt/learnloop so the tools service can read them with a different UID.
+RUN chmod -R a+rX /root/.cache/ms-playwright \
+    && cp -a /root/.cache/ms-playwright /opt/learnloop/ms-playwright \
+    && chmod -R a+rX /opt/learnloop/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/learnloop/ms-playwright
+
 # Make the Python venv writable by the non-root host user so uv can install the
 # worktree's project package into it at runtime. Everything else only needs to
 # be readable/executable.
