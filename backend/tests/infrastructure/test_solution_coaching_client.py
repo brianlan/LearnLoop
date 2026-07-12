@@ -113,6 +113,7 @@ async def test_coaching_vlm_client_selects_english_settings_and_prompt() -> None
         english_coaching_vlm_model="english-model",
         english_coaching_vlm_api_key="english-key",
         english_coaching_vlm_timeout_seconds=88,
+        english_coaching_vlm_api_mode="responses",
     )
     client = CoachingVLMClient(
         settings=settings, subject="english", responses_fn=responses_fn
