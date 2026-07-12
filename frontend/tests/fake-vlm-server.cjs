@@ -266,7 +266,7 @@ const server = http.createServer((req, res) => {
     handleControl(req, res);
     return;
   }
-  if (req.url === "/chat/completions") {
+  if (req.url === "/chat/completions" || req.url === "/v1/chat/completions") {
     handleChatCompletion(req, res);
     return;
   }
