@@ -20,6 +20,8 @@ export interface GraphSandboxProps {
   onRender?: () => void;
 }
 
+const MAX_DSL_LENGTH = 16384;
+
 /**
  * Validates JSXGraph DSL with lightweight checks.
  * Returns null if valid, error message if invalid.
@@ -29,7 +31,7 @@ export function validateDsl(dsl: string): string | null {
   if (!stripped) {
     return null;
   }
-  if (stripped.length > 5000) {
+  if (stripped.length > MAX_DSL_LENGTH) {
     return "DSL is too long";
   }
   return null;
