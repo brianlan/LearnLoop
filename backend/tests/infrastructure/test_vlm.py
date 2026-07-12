@@ -1116,7 +1116,7 @@ def test_vlm_client_factory_passes_api_mode_chat() -> None:
 
 def test_vlm_client_factory_passes_api_mode_responses() -> None:
     """Dependency provider should pass responses api_mode from settings."""
-    from app.presentation.deps import create_grading_vlm_client
+    from app.presentation.deps import get_grading_vlm_client
     
     settings = Settings(
         grading_vlm_endpoint="https://grading.example/api",
@@ -1127,13 +1127,16 @@ def test_vlm_client_factory_passes_api_mode_responses() -> None:
         grading_vlm_api_mode="responses",
     )
     
-    # Note: create_grading_vlm_client is an async generator, so we need to handle it
+    # Note: get_grading_vlm_client is an async generator, so we need to handle it
     import asyncio
     
     async def get_client():
-        gen = create_grading_vlm_client(settings)
+        gen = get_grading_vlm_client(settings)
         client = await gen.__anext__()
-        return client
+        try:
+            return client
+        finally:
+            await gen.aclose()
     
     client = asyncio.run(get_client())
     
