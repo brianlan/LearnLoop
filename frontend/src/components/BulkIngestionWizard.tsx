@@ -22,6 +22,7 @@ import type {
   BulkImageBox,
   BulkWizardStep,
 } from "@/types/bulkIngestion";
+import { expandBoxWithMargins } from "@/utils/boxGeometry";
 import { BulkUploadStep } from "./BulkUploadStep";
 import { BulkDetectStep } from "./BulkDetectStep";
 import { BulkReviewStep } from "./BulkReviewStep";
@@ -242,7 +243,38 @@ export function BulkIngestionWizard({
       setError("");
       try {
         const response = await detectImageBoxes(batch.id, imageId);
-        setBatchAndStep(response.batch);
+        const detectedImage = response.batch.images.find(
+          (image) => image.imageId === imageId,
+        );
+        const imageWidth = detectedImage?.sourceImage?.width;
+        const imageHeight = detectedImage?.sourceImage?.height;
+
+        if (
+          detectedImage &&
+          detectedImage.status === "ready" &&
+          detectedImage.boxes.length > 0 &&
+          typeof imageWidth === "number" &&
+          typeof imageHeight === "number"
+        ) {
+          const expandedBoxes = detectedImage.boxes.map((box) =>
+            expandBoxWithMargins(box, imageWidth, imageHeight),
+          );
+          try {
+            const saveResponse = await saveImageBoxes(
+              batch.id,
+              imageId,
+              expandedBoxes,
+              detectedImage.subject,
+            );
+            setBatchAndStep(saveResponse.batch);
+          } catch (saveErr) {
+            // Retain the unexpanded detection response and surface the save error.
+            setBatchAndStep(response.batch);
+            await handleMutationError(saveErr, "Failed to save expanded boxes");
+          }
+        } else {
+          setBatchAndStep(response.batch);
+        }
       } catch (err) {
         await handleMutationError(err, "Failed to detect boxes");
       }
