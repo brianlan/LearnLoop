@@ -3,6 +3,7 @@ import type { BulkImageBox } from "@/types/bulkIngestion";
 import {
   clampBox,
   createBox,
+  expandBoxWithMargins,
   naturalBoxToRender,
   naturalPointToRender,
   resetBoxIdCounter,
@@ -69,6 +70,71 @@ describe("boxGeometry", () => {
       y: 40,
       width: 50,
       height: 40,
+    });
+  });
+
+  describe("expandBoxWithMargins", () => {
+    it("expands a centered box by 5% horizontal and 2% vertical margin per side", () => {
+      const box: BulkImageBox = {
+        boxId: "box-1",
+        x: 100,
+        y: 50,
+        width: 100,
+        height: 50,
+      };
+      expect(expandBoxWithMargins(box, 400, 200)).toEqual({
+        boxId: "box-1",
+        x: 80,
+        y: 46,
+        width: 140,
+        height: 58,
+      });
+    });
+
+    it("clamps expansion to image bounds on every side", () => {
+      const box: BulkImageBox = {
+        boxId: "box-edge",
+        x: 4,
+        y: 1,
+        width: 92,
+        height: 49,
+      };
+      expect(expandBoxWithMargins(box, 100, 50)).toEqual({
+        boxId: "box-edge",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+      });
+    });
+
+    it("preserves extra box properties", () => {
+      const box: BulkImageBox = {
+        boxId: "box-extra",
+        x: 50,
+        y: 50,
+        width: 20,
+        height: 20,
+        page: 2,
+        label: "problem",
+      };
+      const expanded = expandBoxWithMargins(box, 200, 200);
+      expect(expanded.boxId).toBe("box-extra");
+      expect(expanded.page).toBe(2);
+      expect(expanded.label).toBe("problem");
+    });
+
+    it("returns the same box when image dimensions are missing or invalid", () => {
+      const box: BulkImageBox = {
+        boxId: "box-missing",
+        x: 10,
+        y: 10,
+        width: 20,
+        height: 20,
+      };
+      expect(expandBoxWithMargins(box, 0, 100)).toEqual(box);
+      expect(expandBoxWithMargins(box, 100, 0)).toEqual(box);
+      expect(expandBoxWithMargins(box, -10, 100)).toEqual(box);
     });
   });
 });

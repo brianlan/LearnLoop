@@ -463,7 +463,7 @@ describe("BulkIngestionWizard", () => {
     expect(mocks.uploadBatchImages).toHaveBeenCalledWith("batch-new", [file]);
   });
 
-  it("runs detection for an uploaded image", async () => {
+  it("runs detection, expands boxes, and persists them", async () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         images: [
@@ -488,7 +488,25 @@ describe("BulkIngestionWizard", () => {
             status: "ready",
             order: 0,
             sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            subject: "math",
             boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.saveImageBoxes.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 5, y: 8, width: 30, height: 24 }],
             detection: { model: "model" },
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
@@ -507,6 +525,74 @@ describe("BulkIngestionWizard", () => {
     await waitFor(() => {
       expect(mocks.detectImageBoxes).toHaveBeenCalledWith("batch-1", "img-1");
     });
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledWith(
+        "batch-1",
+        "img-1",
+        [{ boxId: "box-1", x: 5, y: 8, width: 30, height: 24 }],
+        "math",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-commit-img-1")).toBeInTheDocument();
+    });
+  });
+
+  it("retains the detection response when saving expanded boxes fails", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "uploaded",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            boxes: [],
+            detection: {},
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.detectImageBoxes.mockResolvedValue({
+      batch: makeBatch({
+        images: [
+          {
+            imageId: "img-1",
+            status: "ready",
+            order: 0,
+            sourceImage: { bucket: "b", objectKey: "k", width: 100, height: 100 },
+            subject: "math",
+            boxes: [{ boxId: "box-1", x: 10, y: 10, width: 20, height: 20 }],
+            detection: { model: "model" },
+            createdAt: "2026-07-03T00:00:00Z",
+            updatedAt: "2026-07-03T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    mocks.saveImageBoxes.mockRejectedValue(new Error("Save failed"));
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-detect-image-img-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-detect-run-img-1"));
+
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledWith(
+        "batch-1",
+        "img-1",
+        [{ boxId: "box-1", x: 5, y: 8, width: 30, height: 24 }],
+        "math",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-error")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Save failed")).toBeInTheDocument();
   });
 
   it("commits an image after reviewing boxes", async () => {

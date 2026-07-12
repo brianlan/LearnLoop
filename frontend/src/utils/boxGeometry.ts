@@ -42,6 +42,38 @@ export function naturalBoxToRender(
   };
 }
 
+const HORIZONTAL_MARGIN_RATIO = 0.05;
+const VERTICAL_MARGIN_RATIO = 0.02;
+
+export function expandBoxWithMargins(
+  box: BulkImageBox,
+  imageWidth: number,
+  imageHeight: number,
+): BulkImageBox {
+  if (imageWidth <= 0 || imageHeight <= 0) {
+    return box;
+  }
+
+  const horizontalMargin = imageWidth * HORIZONTAL_MARGIN_RATIO;
+  const verticalMargin = imageHeight * VERTICAL_MARGIN_RATIO;
+
+  let x = box.x - horizontalMargin;
+  let y = box.y - verticalMargin;
+  let width = box.width + horizontalMargin * 2;
+  let height = box.height + verticalMargin * 2;
+
+  x = Math.max(0, x);
+  y = Math.max(0, y);
+  if (x + width > imageWidth) {
+    width = imageWidth - x;
+  }
+  if (y + height > imageHeight) {
+    height = imageHeight - y;
+  }
+
+  return { ...box, x, y, width, height };
+}
+
 const MIN_BOX_SIZE = 4;
 
 export function clampBox(
