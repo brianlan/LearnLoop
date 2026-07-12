@@ -479,8 +479,11 @@ def _validate_dsl_create_call(call: str, declared_names: set[str]) -> bool:
     return True
 
 
+_MAX_DSL_LENGTH = 16384
+
+
 def _is_allowed_graph_dsl(dsl: str) -> bool:
-    if len(dsl) > 5000:
+    if len(dsl) > _MAX_DSL_LENGTH:
         return False
     unquoted = _strip_quoted_strings(dsl)
     if re.search(r"=>|`|//|/\*|\*/|\+\+|--", unquoted):
