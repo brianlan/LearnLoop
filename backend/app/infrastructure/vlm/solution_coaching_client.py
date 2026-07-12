@@ -347,7 +347,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
 
         return {
             "instructions": instructions,
-            "input": input_items,
+            "input": [{"role": "user", "content": input_items}],
             "text": {
                 "format": {
                     "type": "json_object",
@@ -611,7 +611,12 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
         if self._api_mode == "responses":
             payload = {
                 "instructions": system_prompt,
-                "input": [{"type": "input_text", "text": user_prompt}],
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": user_prompt}],
+                    }
+                ],
                 "text": {"format": {"type": "json_object"}},
             }
             raw_provider_response = await self._send_responses_request(payload)

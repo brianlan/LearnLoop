@@ -99,25 +99,32 @@ def test_solution_vlm_client_selects_english_settings_and_prompt() -> None:
 
 @pytest.mark.asyncio
 async def test_coaching_vlm_client_selects_english_settings_and_prompt() -> None:
-    async def completion_fn(**kwargs):
+    async def responses_fn(**kwargs):
         assert kwargs["model"] == "openai/english-model"
-        assert kwargs["messages"][0]["role"] == "system"
-        assert "English" in kwargs["messages"][0]["content"]
-        return _mock_response(json.dumps({"text": "hi"}))
+        assert "instructions" in kwargs
+        assert kwargs["input"][0]["role"] == "user"
+        assert kwargs["input"][0]["content"][0]["type"] == "input_text"
+        assert "English" in kwargs["instructions"]
+        assert kwargs["text"] == {"format": {"type": "json_object"}}
+        return _mock_responses_response(json.dumps({"text": "hi"}))
 
     settings = Settings(
         english_coaching_vlm_endpoint="https://english-coaching.example/api",
         english_coaching_vlm_model="english-model",
         english_coaching_vlm_api_key="english-key",
         english_coaching_vlm_timeout_seconds=88,
+        english_coaching_vlm_api_mode="responses",
     )
-    client = CoachingVLMClient(settings=settings, subject="english", completion_fn=completion_fn)
+    client = CoachingVLMClient(
+        settings=settings, subject="english", responses_fn=responses_fn
+    )
 
     assert client._endpoint == "https://english-coaching.example/api"
     assert client._model == "english-model"
     assert client._api_key == "english-key"
     assert client._timeout_seconds == 88
     assert client._subject == "english"
+    assert client._api_mode == "responses"
 
     result = await client.send_message(
         CoachingVLMRequest(
@@ -691,7 +698,9 @@ async def test_solution_vlm_client_responses_mode_happy_path() -> None:
         # Verify Responses API structure
         assert "instructions" in kwargs
         assert "input" in kwargs
-        assert kwargs["input"][0]["type"] == "input_text"
+        assert kwargs["input"][0]["role"] == "user"
+        assert kwargs["input"][0]["content"][0]["type"] == "input_text"
+        assert kwargs["text"] == {"format": {"type": "json_object"}}
         
         return _mock_responses_response(
             json.dumps({
@@ -734,6 +743,9 @@ async def test_coaching_vlm_client_responses_mode_happy_path() -> None:
         # Verify Responses API structure
         assert "instructions" in kwargs
         assert "input" in kwargs
+        assert kwargs["input"][0]["role"] == "user"
+        assert kwargs["input"][0]["content"][0]["type"] == "input_text"
+        assert kwargs["text"] == {"format": {"type": "json_object"}}
         
         return _mock_responses_response(
             json.dumps({

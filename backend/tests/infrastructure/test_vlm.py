@@ -970,9 +970,12 @@ async def test_vlm_responses_mode_extraction_happy_path() -> None:
         # Verify Responses API structure
         assert "instructions" in kwargs
         assert "input" in kwargs
-        assert kwargs["input"][0]["type"] == "input_text"
-        assert kwargs["input"][1]["type"] == "input_image"
-        assert "image_url" in kwargs["input"][1]
+        assert kwargs["input"][0]["role"] == "user"
+        content = kwargs["input"][0]["content"]
+        assert content[0]["type"] == "input_text"
+        assert content[1]["type"] == "input_image"
+        assert "image_url" in content[1]
+        assert kwargs["text"] == {"format": {"type": "json_object"}}
         
         return _mock_responses_response(
             json.dumps(
@@ -1002,9 +1005,9 @@ async def test_vlm_responses_mode_extraction_happy_path() -> None:
 async def test_vlm_responses_mode_with_base64_image() -> None:
     """Responses mode with base64 image should use input_image with data URL."""
     async def responses_fn(**kwargs):
-        input_items = kwargs["input"]
-        assert input_items[1]["type"] == "input_image"
-        assert input_items[1]["image_url"].startswith("data:image/png;base64,")
+        content = kwargs["input"][0]["content"]
+        assert content[1]["type"] == "input_image"
+        assert content[1]["image_url"].startswith("data:image/png;base64,")
         
         return _mock_responses_response(
             json.dumps(
