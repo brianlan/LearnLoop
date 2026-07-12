@@ -119,7 +119,15 @@ class TestIsAllowedGraphDsl:
     def test_rejects_arithmetic_expressions(self) -> None:
         assert _is_allowed_graph_dsl("board.create('point', [1 + 2, 0]);") is False
 
-    def test_rejects_too_long_dsl(self) -> None:
+    def test_allows_dsl_at_maximum_length(self) -> None:
+        prefix = "board.create('text', [0, 0, '"
+        suffix = "']);"
+        padding_length = 16384 - len(prefix) - len(suffix)
+        dsl = f"{prefix}{'x' * padding_length}{suffix}"
+        assert len(dsl) == 16384
+        assert _is_allowed_graph_dsl(dsl) is True
+
+    def test_rejects_dsl_above_maximum_length(self) -> None:
         assert _is_allowed_graph_dsl("board.create('point', [0, 0]);" * 1000) is False
 
     def test_rejects_arrow_function_syntax(self) -> None:

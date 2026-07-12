@@ -104,8 +104,13 @@ describe("GraphSandbox", () => {
     expect(validateDsl(dsl)).toBeNull();
   });
 
-  it("rejects DSL that is too long", () => {
-    const dsl = "x".repeat(5001);
+  it("accepts DSL at the maximum length", () => {
+    const dsl = "x".repeat(16384);
+    expect(validateDsl(dsl)).toBeNull();
+  });
+
+  it("rejects DSL that exceeds the maximum length", () => {
+    const dsl = "x".repeat(16385);
     expect(validateDsl(dsl)).toBe("DSL is too long");
   });
 
