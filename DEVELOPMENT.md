@@ -203,42 +203,50 @@ The canonical template lives in `.env.example`.
 | `HELPER_VLM_API_KEY` | Helper VLM credential | `replace-me` |
 | `HELPER_VLM_TIMEOUT_SECONDS` | Helper VLM request timeout | `60` |
 | `HELPER_VLM_PROVIDER` | Helper VLM LiteLLM provider | `openai` |
+| `HELPER_VLM_API_MODE` | Helper VLM API contract (`chat` or `responses`) | `chat` |
 | `MATH_INGESTION_VLM_ENDPOINT` | Math ingestion VLM endpoint for math problem extraction | example placeholder |
 | `MATH_INGESTION_VLM_MODEL` | Math ingestion VLM model identifier | `replace-me` |
 | `MATH_INGESTION_VLM_API_KEY` | Math ingestion VLM credential | `replace-me` |
 | `MATH_INGESTION_VLM_TIMEOUT_SECONDS` | Math ingestion VLM request timeout | `120` |
 | `MATH_INGESTION_VLM_PROVIDER` | Math ingestion VLM LiteLLM provider | `openai` |
+| `MATH_INGESTION_VLM_API_MODE` | Math ingestion VLM API contract (`chat` or `responses`) | `chat` |
 | `ENGLISH_INGESTION_VLM_ENDPOINT` | English ingestion VLM endpoint for English problem extraction | example placeholder |
 | `ENGLISH_INGESTION_VLM_MODEL` | English ingestion VLM model identifier | `replace-me` |
 | `ENGLISH_INGESTION_VLM_API_KEY` | English ingestion VLM credential | `replace-me` |
 | `ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS` | English ingestion VLM request timeout | `120` |
 | `ENGLISH_INGESTION_VLM_PROVIDER` | English ingestion VLM LiteLLM provider | `openai` |
+| `ENGLISH_INGESTION_VLM_API_MODE` | English ingestion VLM API contract (`chat` or `responses`) | `chat` |
 | `GRADING_VLM_ENDPOINT` | Grading VLM endpoint for short-answer judging in practice and exams | example placeholder |
 | `GRADING_VLM_MODEL` | Grading VLM model identifier | `replace-me` |
 | `GRADING_VLM_API_KEY` | Grading VLM credential | `replace-me` |
 | `GRADING_VLM_TIMEOUT_SECONDS` | Grading VLM request timeout | `60` |
 | `GRADING_VLM_PROVIDER` | Grading VLM LiteLLM provider | `openai` |
+| `GRADING_VLM_API_MODE` | Grading VLM API contract (`chat` or `responses`) | `chat` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
 | `MATH_SOLUTION_VLM_ENDPOINT` | Math solution generation VLM endpoint | example placeholder |
 | `MATH_SOLUTION_VLM_MODEL` | Math solution generation VLM model identifier | `replace-me` |
 | `MATH_SOLUTION_VLM_API_KEY` | Math solution generation VLM credential | `replace-me` |
 | `MATH_SOLUTION_VLM_TIMEOUT_SECONDS` | Math solution generation VLM request timeout | `120` |
 | `MATH_SOLUTION_VLM_PROVIDER` | Math solution generation VLM LiteLLM provider | `openai` |
+| `MATH_SOLUTION_VLM_API_MODE` | Math solution VLM API contract (`chat` or `responses`) | `chat` |
 | `ENGLISH_SOLUTION_VLM_ENDPOINT` | English solution generation VLM endpoint | example placeholder |
 | `ENGLISH_SOLUTION_VLM_MODEL` | English solution generation VLM model identifier | `replace-me` |
 | `ENGLISH_SOLUTION_VLM_API_KEY` | English solution generation VLM credential | `replace-me` |
 | `ENGLISH_SOLUTION_VLM_TIMEOUT_SECONDS` | English solution generation VLM request timeout | `120` |
 | `ENGLISH_SOLUTION_VLM_PROVIDER` | English solution generation VLM LiteLLM provider | `openai` |
+| `ENGLISH_SOLUTION_VLM_API_MODE` | English solution VLM API contract (`chat` or `responses`) | `chat` |
 | `MATH_COACHING_VLM_ENDPOINT` | Math coaching VLM endpoint | example placeholder |
 | `MATH_COACHING_VLM_MODEL` | Math coaching VLM model identifier | `replace-me` |
 | `MATH_COACHING_VLM_API_KEY` | Math coaching VLM credential | `replace-me` |
 | `MATH_COACHING_VLM_TIMEOUT_SECONDS` | Math coaching VLM request timeout | `60` |
 | `MATH_COACHING_VLM_PROVIDER` | Math coaching VLM LiteLLM provider | `openai` |
+| `MATH_COACHING_VLM_API_MODE` | Math coaching VLM API contract (`chat` or `responses`) | `chat` |
 | `ENGLISH_COACHING_VLM_ENDPOINT` | English coaching VLM endpoint | example placeholder |
 | `ENGLISH_COACHING_VLM_MODEL` | English coaching VLM model identifier | `replace-me` |
 | `ENGLISH_COACHING_VLM_API_KEY` | English coaching VLM credential | `replace-me` |
 | `ENGLISH_COACHING_VLM_TIMEOUT_SECONDS` | English coaching VLM request timeout | `60` |
 | `ENGLISH_COACHING_VLM_PROVIDER` | English coaching VLM LiteLLM provider | `openai` |
+| `ENGLISH_COACHING_VLM_API_MODE` | English coaching VLM API contract (`chat` or `responses`) | `chat` |
 | `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
 | `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
 | `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |
@@ -253,13 +261,40 @@ The canonical template lives in `.env.example`.
 
 ### AI tutoring VLM notes
 
-- All VLM requests go through LiteLLM (`litellm.acompletion`). Each role's `*_VLM_PROVIDER` setting selects the LiteLLM provider prefix; the effective model sent to LiteLLM is `<provider>/<model>`.
+- All VLM requests go through LiteLLM. Each role's `*_VLM_PROVIDER` setting selects the LiteLLM provider prefix; the effective model sent to LiteLLM is `<provider>/<model>`.
+- Each role's `*_VLM_API_MODE` setting independently selects the API contract:
+  - `chat` (default): Uses LiteLLM's `acompletion()` with OpenAI Chat Completions payload (`messages`, `image_url` content parts).
+  - `responses`: Uses LiteLLM's `aresponses()` with native Responses API payload (`instructions`, `input` with `input_text`/`input_image`, structured-output schema).
 - The `*_ENDPOINT` variable is forwarded as LiteLLM's `api_base`. For the default `openai` provider it must be an OpenAI-compatible base URL.
 - Helper VLM classifies uploaded images as math or English and routes to the matching ingestion VLM.
 - Math and English ingestion VLMs handle subject-specific image extraction and problem structuring.
 - Grading VLM is used for short-answer correctness judgement in practice and exams (generic, not subject-specific).
 - Math and English solution VLMs generate background canonical solutions per subject.
 - Math and English coaching VLMs provide live tutoring responses per subject.
+
+#### Responses API example
+
+To configure a role for an endpoint that requires the Responses API (e.g., `gpt-5.6-luna`):
+
+```bash
+GRADING_VLM_ENDPOINT=https://codex.photonmark.com/openai/v1
+GRADING_VLM_MODEL=gpt-5.6-luna
+GRADING_VLM_API_KEY=your-key
+GRADING_VLM_PROVIDER=openai
+GRADING_VLM_API_MODE=responses
+```
+
+#### Chat API example (default)
+
+The default `chat` mode preserves existing behavior for MiniMax, Kimi, and Ollama models:
+
+```bash
+GRADING_VLM_ENDPOINT=https://api.minimax.example/v1
+GRADING_VLM_MODEL=MiniMax-M3
+GRADING_VLM_API_KEY=your-key
+GRADING_VLM_PROVIDER=openai
+GRADING_VLM_API_MODE=chat
+```
 
 #### Ollama example
 

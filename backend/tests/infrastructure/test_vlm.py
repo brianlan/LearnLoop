@@ -14,6 +14,7 @@ from litellm.exceptions import (
     Timeout,
 )
 
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
@@ -27,6 +28,10 @@ from app.infrastructure.vlm.client import (
     GradingResult,
     VLMClient,
     VLMError,
+)
+from app.infrastructure.vlm.solution_coaching_client import (
+    CoachingVLMClient,
+    SolutionVLMClient,
 )
 from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
@@ -47,9 +52,11 @@ def _mock_response(content: str, reasoning_content: str | None = None) -> Any:
 
 
 def _build_client(
-    completion_fn: Callable[..., Any],
+    completion_fn: Callable[..., Any] | None = None,
+    responses_fn: Callable[..., Any] | None = None,
     *,
     provider: str = "openai",
+    api_mode: Literal["chat", "responses"] = "chat",
     **kwargs: Any,
 ) -> VLMClient:
     return VLMClient(
@@ -58,7 +65,9 @@ def _build_client(
         api_key="demo",
         timeout_seconds=5,
         provider=provider,
+        api_mode=api_mode,
         completion_fn=completion_fn,
+        responses_fn=responses_fn,
         **kwargs,
     )
 
@@ -945,3 +954,222 @@ async def test_vlm_detection_prompt_includes_subject_and_boxes_schema() -> None:
     result = await client.detect_problem_boxes(image_url="s3://bucket/key")
 
     assert result.subject == "math"
+
+
+# Tests for Responses API mode
+
+def _mock_responses_response(content: str) -> Any:
+    """Mock a Responses API response using the SDK's output_text accessor."""
+    return SimpleNamespace(output_text=content)
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_extraction_happy_path() -> None:
+    """Responses mode should use Responses API contract with input_image."""
+    async def responses_fn(**kwargs):
+        # Verify Responses API structure
+        assert "instructions" in kwargs
+        assert "input" in kwargs
+        assert kwargs["input"][0]["type"] == "input_text"
+        assert kwargs["input"][1]["type"] == "input_image"
+        assert "image_url" in kwargs["input"][1]
+        
+        return _mock_responses_response(
+            json.dumps(
+                {
+                    "text": "Solve x + 1 = 2",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    result = await client.extract(image_url="s3://bucket/key")
+
+    assert isinstance(result, ExtractionResult)
+    assert result.request_type == "ingestion"
+    assert result.text == "Solve x + 1 = 2"
+    assert result.problem_type == "short-answer"
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_with_base64_image() -> None:
+    """Responses mode with base64 image should use input_image with data URL."""
+    async def responses_fn(**kwargs):
+        input_items = kwargs["input"]
+        assert input_items[1]["type"] == "input_image"
+        assert input_items[1]["image_url"].startswith("data:image/png;base64,")
+        
+        return _mock_responses_response(
+            json.dumps(
+                {
+                    "text": "Test problem",
+                    "problemType": "single-choice",
+                    "graphDsl": None,
+                    "providerMetadata": {},
+                }
+            )
+        )
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    result = await client.extract(image_base64="YWJjMTIz")  # dummy base64
+
+    assert result.text == "Test problem"
+    assert result.problem_type == "single-choice"
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_timeout_error() -> None:
+    """Responses mode timeout should map to VLMError."""
+    async def responses_fn(**kwargs):
+        raise Timeout(message="timed out", model="demo", llm_provider="openai")
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert exc_info.value.code == FAILURE_CODE_TIMEOUT
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_invalid_json() -> None:
+    """Responses mode should handle invalid JSON in output_text."""
+    async def responses_fn(**kwargs):
+        return _mock_responses_response("not valid json")
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_vlm_chat_mode_unchanged_behavior() -> None:
+    """Chat mode should retain existing behavior (default)."""
+    async def completion_fn(**kwargs):
+        # Verify chat completion structure
+        assert "messages" in kwargs
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert any(part.get("type") == "image_url" for part in messages[1]["content"])
+        
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Chat mode problem",
+                    "problemType": "fill-in-the-blank",
+                    "graphDsl": None,
+                    "providerMetadata": {},
+                }
+            )
+        )
+
+    # Default api_mode is "chat"
+    client = _build_client(completion_fn)
+
+    result = await client.extract(image_url="s3://bucket/key")
+
+    assert result.text == "Chat mode problem"
+    assert result.problem_type == "fill-in-the-blank"
+
+
+# Integration construction tests
+
+def test_vlm_client_factory_passes_api_mode_chat() -> None:
+    """Dependency provider should pass chat api_mode from settings."""
+    from app.presentation.deps import create_math_ingestion_vlm_client
+    
+    settings = Settings(
+        math_ingestion_vlm_endpoint="https://test.example/api",
+        math_ingestion_vlm_model="test-model",
+        math_ingestion_vlm_api_key="test-key",
+        math_ingestion_vlm_timeout_seconds=60,
+        math_ingestion_vlm_provider="openai",
+        math_ingestion_vlm_api_mode="chat",
+    )
+    
+    client = create_math_ingestion_vlm_client(settings)
+    
+    assert client._api_mode == "chat"
+
+
+def test_vlm_client_factory_passes_api_mode_responses() -> None:
+    """Dependency provider should pass responses api_mode from settings."""
+    from app.presentation.deps import get_grading_vlm_client
+    
+    settings = Settings(
+        grading_vlm_endpoint="https://grading.example/api",
+        grading_vlm_model="grading-model",
+        grading_vlm_api_key="grading-key",
+        grading_vlm_timeout_seconds=60,
+        grading_vlm_provider="openai",
+        grading_vlm_api_mode="responses",
+    )
+    
+    # Note: get_grading_vlm_client is an async generator, so we need to handle it
+    import asyncio
+    
+    async def get_client():
+        gen = get_grading_vlm_client(settings)
+        client = await gen.__anext__()
+        try:
+            return client
+        finally:
+            await gen.aclose()
+    
+    client = asyncio.run(get_client())
+    
+    assert client._api_mode == "responses"
+
+
+def test_solution_client_reads_api_mode_from_settings() -> None:
+    """SolutionVLMClient should read api_mode from settings."""
+    settings = Settings(
+        math_solution_vlm_endpoint="https://solution.example/api",
+        math_solution_vlm_model="solution-model",
+        math_solution_vlm_api_key="solution-key",
+        math_solution_vlm_timeout_seconds=120,
+        math_solution_vlm_provider="openai",
+        math_solution_vlm_api_mode="responses",
+    )
+    
+    client = SolutionVLMClient(settings=settings)
+    
+    assert client._api_mode == "responses"
+
+
+def test_coaching_client_reads_api_mode_from_settings() -> None:
+    """CoachingVLMClient should read api_mode from settings."""
+    settings = Settings(
+        english_coaching_vlm_endpoint="https://coaching.example/api",
+        english_coaching_vlm_model="coaching-model",
+        english_coaching_vlm_api_key="coaching-key",
+        english_coaching_vlm_timeout_seconds=60,
+        english_coaching_vlm_provider="openai",
+        english_coaching_vlm_api_mode="responses",
+    )
+    
+    client = CoachingVLMClient(settings=settings, subject="english")
+    
+    assert client._api_mode == "responses"

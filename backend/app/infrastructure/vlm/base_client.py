@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import litellm
 import openai
@@ -45,7 +45,9 @@ class BaseVLMClient:
         api_key: str,
         timeout_seconds: float,
         provider: str = "openai",
+        api_mode: Literal["chat", "responses"] = "chat",
         completion_fn: Callable[..., Any] | None = None,
+        responses_fn: Callable[..., Any] | None = None,
         error_factory: Callable[..., BaseException] | None = None,
     ) -> None:
         self._endpoint = endpoint
@@ -53,8 +55,10 @@ class BaseVLMClient:
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
         self._provider = provider
+        self._api_mode = api_mode
         self._effective_model = f"{provider}/{model}"
         self._completion_fn = completion_fn or litellm.acompletion
+        self._responses_fn = responses_fn or litellm.aresponses
         self._error_factory = error_factory or BaseVLMError
 
     async def aclose(self) -> None:
@@ -105,6 +109,62 @@ class BaseVLMClient:
             ) from exc
 
         return self._completion_to_dict(response)
+
+    async def _send_responses_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = await self._responses_fn(
+                model=self._effective_model,
+                instructions=payload.get("instructions"),
+                input=payload.get("input"),
+                api_base=self._endpoint,
+                api_key=self._api_key,
+                timeout=self._timeout_seconds,
+                num_retries=0,
+            )
+        except Timeout as exc:
+            raise self._make_error(
+                "VLM request timed out",
+                code=FAILURE_CODE_TIMEOUT,
+                retryable=True,
+            ) from exc
+        except APIConnectionError as exc:
+            raise self._make_error(
+                "VLM network request failed",
+                code=FAILURE_CODE_NETWORK,
+                retryable=True,
+            ) from exc
+        except (LiteLLMAPIError, openai.APIError) as exc:
+            status_code = getattr(exc, "status_code", None)
+            if status_code is not None and 500 <= status_code:
+                raise self._make_error(
+                    f"VLM provider returned server error {status_code}",
+                    code=FAILURE_CODE_PROVIDER,
+                    retryable=True,
+                    status_code=status_code,
+                ) from exc
+            if status_code is not None and 400 <= status_code:
+                raise self._make_error(
+                    f"VLM provider rejected request with status {status_code}",
+                    code=FAILURE_CODE_PROVIDER_REJECTED,
+                    retryable=False,
+                    status_code=status_code,
+                ) from exc
+            raise self._make_error(
+                "VLM provider error",
+                code=FAILURE_CODE_PROVIDER,
+                retryable=True,
+            ) from exc
+
+        return self._responses_to_dict(response)
+
+    @staticmethod
+    def _responses_to_dict(response: Any) -> dict[str, Any]:
+        # Use the SDK's canonical output_text accessor
+        output_text = getattr(response, "output_text", None)
+        if output_text is None:
+            # Fallback for non-standard implementations
+            output_text = str(response)
+        return {"output_text": output_text}
 
     @staticmethod
     def _completion_to_dict(response: Any) -> dict[str, Any]:
