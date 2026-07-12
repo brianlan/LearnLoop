@@ -647,3 +647,133 @@ async def test_solution_vlm_client_explicit_reasoning_wins_over_think_block() ->
     )
 
     assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
+
+
+# Tests for Responses API mode
+
+def _mock_responses_response(content: str) -> Any:
+    """Mock a Responses API response using the SDK's output_text accessor."""
+    return SimpleNamespace(output_text=content)
+
+
+def _build_solution_client_responses(
+    responses_fn: Callable[..., Any],
+    api_mode: str = "responses",
+) -> SolutionVLMClient:
+    settings = Settings(
+        math_solution_vlm_endpoint="https://solution.example/api",
+        math_solution_vlm_model="solution-model",
+        math_solution_vlm_api_key="solution-key",
+        math_solution_vlm_timeout_seconds=7,
+        math_solution_vlm_api_mode=api_mode,
+    )
+    return SolutionVLMClient(settings=settings, responses_fn=responses_fn)
+
+
+def _build_coaching_client_responses(
+    responses_fn: Callable[..., Any],
+    api_mode: str = "responses",
+) -> CoachingVLMClient:
+    settings = Settings(
+        math_coaching_vlm_endpoint="https://coaching.example/api",
+        math_coaching_vlm_model="coaching-model",
+        math_coaching_vlm_api_key="coaching-key",
+        math_coaching_vlm_timeout_seconds=9,
+        math_coaching_vlm_api_mode=api_mode,
+    )
+    return CoachingVLMClient(settings=settings, responses_fn=responses_fn)
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_responses_mode_happy_path() -> None:
+    """Responses mode should parse output_text and validate solution schema."""
+    async def responses_fn(**kwargs):
+        # Verify Responses API structure
+        assert "instructions" in kwargs
+        assert "input" in kwargs
+        assert kwargs["input"][0]["type"] == "input_text"
+        
+        return _mock_responses_response(
+            json.dumps({
+                "steps_markdown": "步骤 1: x + 3 = 5\\n步骤 2: x = 2",
+                "final_answer": "2",
+                "level_classification": "primary",
+            })
+        )
+
+    client = _build_solution_client_responses(responses_fn)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="x + 3 = 5", correct_answer="2")
+    )
+
+    assert result.steps_markdown == "步骤 1: x + 3 = 5\\n步骤 2: x = 2"
+    assert result.final_answer == "2"
+    assert result.level_classification == "primary"
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_responses_mode_invalid_json() -> None:
+    """Responses mode should handle invalid JSON in output_text."""
+    async def responses_fn(**kwargs):
+        return _mock_responses_response("not valid json")
+
+    client = _build_solution_client_responses(responses_fn)
+
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
+        await client.generate_solution(
+            SolutionVLMRequest(problem_text="x + 3 = 5", correct_answer="2")
+        )
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_responses_mode_happy_path() -> None:
+    """Responses mode should parse output_text and validate coaching schema."""
+    async def responses_fn(**kwargs):
+        # Verify Responses API structure
+        assert "instructions" in kwargs
+        assert "input" in kwargs
+        
+        return _mock_responses_response(
+            json.dumps({
+                "text": "先看等式两边同时减 3。",
+                "whiteboard_dsl": None,
+            })
+        )
+
+    client = _build_coaching_client_responses(responses_fn)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="x + 3 = 5",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            new_message="怎么做？",
+        )
+    )
+
+    assert result.text == "先看等式两边同时减 3。"
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_responses_mode_with_thinking() -> None:
+    """Responses mode should strip leading think blocks from output_text."""
+    async def responses_fn(**kwargs):
+        # Use proper think block syntax
+        think_block = "<think>internal reasoning</think>"
+        return _mock_responses_response(
+            think_block + json.dumps({
+                "steps_markdown": "步骤",
+                "final_answer": "42",
+                "level_classification": "primary",
+            })
+        )
+
+    client = _build_solution_client_responses(responses_fn)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="题目", correct_answer="42")
+    )
+
+    assert result.steps_markdown == "步骤"
+    assert result.raw_provider_response["reasoning_content"] == "internal reasoning"

@@ -159,25 +159,11 @@ class BaseVLMClient:
 
     @staticmethod
     def _responses_to_dict(response: Any) -> dict[str, Any]:
-        # Responses API returns a single output text in the response
-        # Extract it and structure it similar to chat completion for compatibility
-        output = getattr(response, "output", None)
-        if output is None:
-            # Fallback: some implementations may use different structure
-            return {"output_text": str(response)}
-        
-        # Extract text from output
-        output_text = getattr(output, "text", None)
-        if output_text is None and hasattr(output, "__iter__"):
-            # output might be a list of content items
-            for item in output:
-                if hasattr(item, "text"):
-                    output_text = item.text
-                    break
-        
+        # Use the SDK's canonical output_text accessor
+        output_text = getattr(response, "output_text", None)
         if output_text is None:
-            output_text = str(output)
-        
+            # Fallback for non-standard implementations
+            output_text = str(response)
         return {"output_text": output_text}
 
     @staticmethod

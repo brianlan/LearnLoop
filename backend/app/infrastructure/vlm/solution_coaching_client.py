@@ -196,6 +196,23 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
         raw_body = await super()._send_chat_completion(payload)
         return self._parse_chat_completion_response(raw_body)
 
+    async def _send_responses_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_body = await super()._send_responses_request(payload)
+        # Parse the output_text similar to chat completion
+        output_text = raw_body.get("output_text")
+        if not output_text:
+            raise self._make_error(
+                "VLM provider response output_text was empty",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+        stripped_content, extracted_reasoning = self._strip_thinking_content(output_text)
+        parsed = self._load_json_content(stripped_content)
+        if extracted_reasoning is not None:
+            parsed["reasoning_content"] = extracted_reasoning
+        return parsed
+
 
 class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
     def __init__(

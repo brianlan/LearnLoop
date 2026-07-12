@@ -14,6 +14,7 @@ from litellm.exceptions import (
     Timeout,
 )
 
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
@@ -27,6 +28,10 @@ from app.infrastructure.vlm.client import (
     GradingResult,
     VLMClient,
     VLMError,
+)
+from app.infrastructure.vlm.solution_coaching_client import (
+    CoachingVLMClient,
+    SolutionVLMClient,
 )
 from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
@@ -954,10 +959,8 @@ async def test_vlm_detection_prompt_includes_subject_and_boxes_schema() -> None:
 # Tests for Responses API mode
 
 def _mock_responses_response(content: str) -> Any:
-    """Mock a Responses API response."""
-    output = SimpleNamespace(text=content)
-    response = SimpleNamespace(output=output)
-    return response
+    """Mock a Responses API response using the SDK's output_text accessor."""
+    return SimpleNamespace(output_text=content)
 
 
 @pytest.mark.asyncio
@@ -1089,3 +1092,81 @@ async def test_vlm_chat_mode_unchanged_behavior() -> None:
 
     assert result.text == "Chat mode problem"
     assert result.problem_type == "fill-in-the-blank"
+
+
+# Integration construction tests
+
+def test_vlm_client_factory_passes_api_mode_chat() -> None:
+    """Dependency provider should pass chat api_mode from settings."""
+    from app.presentation.deps import create_math_ingestion_vlm_client
+    
+    settings = Settings(
+        math_ingestion_vlm_endpoint="https://test.example/api",
+        math_ingestion_vlm_model="test-model",
+        math_ingestion_vlm_api_key="test-key",
+        math_ingestion_vlm_timeout_seconds=60,
+        math_ingestion_vlm_provider="openai",
+        math_ingestion_vlm_api_mode="chat",
+    )
+    
+    client = create_math_ingestion_vlm_client(settings)
+    
+    assert client._api_mode == "chat"
+
+
+def test_vlm_client_factory_passes_api_mode_responses() -> None:
+    """Dependency provider should pass responses api_mode from settings."""
+    from app.presentation.deps import create_grading_vlm_client
+    
+    settings = Settings(
+        grading_vlm_endpoint="https://grading.example/api",
+        grading_vlm_model="grading-model",
+        grading_vlm_api_key="grading-key",
+        grading_vlm_timeout_seconds=60,
+        grading_vlm_provider="openai",
+        grading_vlm_api_mode="responses",
+    )
+    
+    # Note: create_grading_vlm_client is an async generator, so we need to handle it
+    import asyncio
+    
+    async def get_client():
+        gen = create_grading_vlm_client(settings)
+        client = await gen.__anext__()
+        return client
+    
+    client = asyncio.run(get_client())
+    
+    assert client._api_mode == "responses"
+
+
+def test_solution_client_reads_api_mode_from_settings() -> None:
+    """SolutionVLMClient should read api_mode from settings."""
+    settings = Settings(
+        math_solution_vlm_endpoint="https://solution.example/api",
+        math_solution_vlm_model="solution-model",
+        math_solution_vlm_api_key="solution-key",
+        math_solution_vlm_timeout_seconds=120,
+        math_solution_vlm_provider="openai",
+        math_solution_vlm_api_mode="responses",
+    )
+    
+    client = SolutionVLMClient(settings=settings)
+    
+    assert client._api_mode == "responses"
+
+
+def test_coaching_client_reads_api_mode_from_settings() -> None:
+    """CoachingVLMClient should read api_mode from settings."""
+    settings = Settings(
+        english_coaching_vlm_endpoint="https://coaching.example/api",
+        english_coaching_vlm_model="coaching-model",
+        english_coaching_vlm_api_key="coaching-key",
+        english_coaching_vlm_timeout_seconds=60,
+        english_coaching_vlm_provider="openai",
+        english_coaching_vlm_api_mode="responses",
+    )
+    
+    client = CoachingVLMClient(settings=settings, subject="english")
+    
+    assert client._api_mode == "responses"
