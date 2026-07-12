@@ -47,9 +47,11 @@ def _mock_response(content: str, reasoning_content: str | None = None) -> Any:
 
 
 def _build_client(
-    completion_fn: Callable[..., Any],
+    completion_fn: Callable[..., Any] | None = None,
+    responses_fn: Callable[..., Any] | None = None,
     *,
     provider: str = "openai",
+    api_mode: Literal["chat", "responses"] = "chat",
     **kwargs: Any,
 ) -> VLMClient:
     return VLMClient(
@@ -58,7 +60,9 @@ def _build_client(
         api_key="demo",
         timeout_seconds=5,
         provider=provider,
+        api_mode=api_mode,
         completion_fn=completion_fn,
+        responses_fn=responses_fn,
         **kwargs,
     )
 
@@ -945,3 +949,143 @@ async def test_vlm_detection_prompt_includes_subject_and_boxes_schema() -> None:
     result = await client.detect_problem_boxes(image_url="s3://bucket/key")
 
     assert result.subject == "math"
+
+
+# Tests for Responses API mode
+
+def _mock_responses_response(content: str) -> Any:
+    """Mock a Responses API response."""
+    output = SimpleNamespace(text=content)
+    response = SimpleNamespace(output=output)
+    return response
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_extraction_happy_path() -> None:
+    """Responses mode should use Responses API contract with input_image."""
+    async def responses_fn(**kwargs):
+        # Verify Responses API structure
+        assert "instructions" in kwargs
+        assert "input" in kwargs
+        assert kwargs["input"][0]["type"] == "input_text"
+        assert kwargs["input"][1]["type"] == "input_image"
+        assert "image_url" in kwargs["input"][1]
+        
+        return _mock_responses_response(
+            json.dumps(
+                {
+                    "text": "Solve x + 1 = 2",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    result = await client.extract(image_url="s3://bucket/key")
+
+    assert isinstance(result, ExtractionResult)
+    assert result.request_type == "ingestion"
+    assert result.text == "Solve x + 1 = 2"
+    assert result.problem_type == "short-answer"
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_with_base64_image() -> None:
+    """Responses mode with base64 image should use input_image with data URL."""
+    async def responses_fn(**kwargs):
+        input_items = kwargs["input"]
+        assert input_items[1]["type"] == "input_image"
+        assert input_items[1]["image_url"].startswith("data:image/png;base64,")
+        
+        return _mock_responses_response(
+            json.dumps(
+                {
+                    "text": "Test problem",
+                    "problemType": "single-choice",
+                    "graphDsl": None,
+                    "providerMetadata": {},
+                }
+            )
+        )
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    result = await client.extract(image_base64="YWJjMTIz")  # dummy base64
+
+    assert result.text == "Test problem"
+    assert result.problem_type == "single-choice"
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_timeout_error() -> None:
+    """Responses mode timeout should map to VLMError."""
+    async def responses_fn(**kwargs):
+        raise Timeout(message="timed out", model="demo", llm_provider="openai")
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert exc_info.value.code == FAILURE_CODE_TIMEOUT
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_mode_invalid_json() -> None:
+    """Responses mode should handle invalid JSON in output_text."""
+    async def responses_fn(**kwargs):
+        return _mock_responses_response("not valid json")
+
+    client = _build_client(
+        responses_fn=responses_fn,
+        api_mode="responses",
+    )
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_vlm_chat_mode_unchanged_behavior() -> None:
+    """Chat mode should retain existing behavior (default)."""
+    async def completion_fn(**kwargs):
+        # Verify chat completion structure
+        assert "messages" in kwargs
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert any(part.get("type") == "image_url" for part in messages[1]["content"])
+        
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Chat mode problem",
+                    "problemType": "fill-in-the-blank",
+                    "graphDsl": None,
+                    "providerMetadata": {},
+                }
+            )
+        )
+
+    # Default api_mode is "chat"
+    client = _build_client(completion_fn)
+
+    result = await client.extract(image_url="s3://bucket/key")
+
+    assert result.text == "Chat mode problem"
+    assert result.problem_type == "fill-in-the-blank"

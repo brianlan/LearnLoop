@@ -189,7 +189,9 @@ class VLMClient(BaseVLMClient):
         api_key: str,
         timeout_seconds: float,
         provider: str = "openai",
+        api_mode: Literal["chat", "responses"] = "chat",
         completion_fn: Callable[..., Any] | None = None,
+        responses_fn: Callable[..., Any] | None = None,
         extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
         request_correct_answer: bool = False,
     ) -> None:
@@ -199,7 +201,9 @@ class VLMClient(BaseVLMClient):
             api_key=api_key,
             timeout_seconds=timeout_seconds,
             provider=provider,
+            api_mode=api_mode,
             completion_fn=completion_fn,
+            responses_fn=responses_fn,
             error_factory=VLMError,
         )
         self._extraction_system_prompt = extraction_system_prompt
@@ -366,9 +370,14 @@ class VLMClient(BaseVLMClient):
         )
 
     async def _send_request(self, request: _RequestBase) -> dict[str, Any]:
-        payload = self._build_chat_completion_payload(request)
-        raw_body = await self._send_chat_completion(payload)
-        return self._parse_chat_completion_response(raw_body)
+        if self._api_mode == "responses":
+            payload = self._build_responses_payload(request)
+            raw_body = await self._send_responses_request(payload)
+            return self._parse_responses_response(raw_body)
+        else:
+            payload = self._build_chat_completion_payload(request)
+            raw_body = await self._send_chat_completion(payload)
+            return self._parse_chat_completion_response(raw_body)
 
     # _strip_json_code_fences inherited from BaseVLMClient
 
@@ -434,3 +443,68 @@ class VLMClient(BaseVLMClient):
             ],
         )
         return chat_request.model_dump(exclude_none=True)
+
+    def _build_responses_payload(self, request: _RequestBase) -> dict[str, Any]:
+        # Build user prompt text
+        if isinstance(request, GradingRequest):
+            user_prompt = build_grading_user_prompt(
+                problem_text=request.problem_text,
+                user_answer=request.user_answer,
+                correct_answer=request.correct_answer,
+                subject=request.subject,
+                expected_response_schema=request.expected_response_schema,
+            )
+        elif isinstance(request, ClassificationRequest):
+            user_prompt = build_subject_classification_user_prompt(
+                expected_response_schema=request.expected_response_schema,
+            )
+        elif isinstance(request, DetectionRequest):
+            user_prompt = build_problem_detection_user_prompt(
+                expected_response_schema=request.expected_response_schema,
+            )
+        else:
+            user_prompt = build_extraction_user_prompt(
+                expected_response_schema=request.expected_response_schema,
+                include_correct_answer=self._request_correct_answer,
+            )
+
+        # Build input items for Responses API
+        input_items: list[dict[str, Any]] = [
+            {"type": "input_text", "text": user_prompt}
+        ]
+
+        # Add image if present
+        if request.image_base64:
+            input_items.append(
+                {"type": "input_image", "image_url": f"data:image/png;base64,{request.image_base64}"}
+            )
+        elif request.image_url:
+            input_items.append(
+                {"type": "input_image", "image_url": request.image_url}
+            )
+
+        return {
+            "instructions": request.prompt,
+            "input": input_items,
+            "text": {
+                "format": {
+                    "type": "json_object",
+                }
+            },
+        }
+
+    def _parse_responses_response(self, raw_body: dict[str, Any]) -> dict[str, Any]:
+        output_text = raw_body.get("output_text")
+        if not output_text:
+            raise self._make_error(
+                "VLM provider response output_text was empty",
+                code=FAILURE_CODE_INVALID_RESPONSE,
+                retryable=False,
+                raw_provider_response=raw_body,
+            )
+
+        stripped_content, extracted_reasoning = self._strip_thinking_content(output_text)
+        parsed = self._load_json_content(stripped_content)
+        if extracted_reasoning is not None:
+            parsed["reasoning_content"] = extracted_reasoning
+        return parsed

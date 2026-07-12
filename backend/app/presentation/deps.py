@@ -140,6 +140,7 @@ def create_helper_vlm_client(
         api_key=settings.helper_vlm_api_key,
         timeout_seconds=settings.helper_vlm_timeout_seconds,
         provider=settings.helper_vlm_provider,
+        api_mode=settings.helper_vlm_api_mode,
     )
 
 
@@ -152,6 +153,7 @@ def create_math_ingestion_vlm_client(
         api_key=settings.math_ingestion_vlm_api_key,
         timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
         provider=settings.math_ingestion_vlm_provider,
+        api_mode=settings.math_ingestion_vlm_api_mode,
     )
 
 
@@ -164,6 +166,7 @@ def create_english_ingestion_vlm_client(
         api_key=settings.english_ingestion_vlm_api_key,
         timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
         provider=settings.english_ingestion_vlm_provider,
+        api_mode=settings.english_ingestion_vlm_api_mode,
         extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
         request_correct_answer=True,
     )
@@ -178,6 +181,7 @@ async def get_grading_vlm_client(
         api_key=settings.grading_vlm_api_key,
         timeout_seconds=settings.grading_vlm_timeout_seconds,
         provider=settings.grading_vlm_provider,
+        api_mode=settings.grading_vlm_api_mode,
     )
     try:
         yield client
