@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.infrastructure.config.settings import Settings, get_settings
@@ -176,14 +175,16 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
         model: str,
         api_key: str,
         timeout_seconds: float,
-        http_client: httpx.AsyncClient | None = None,
+        provider: str = "openai",
+        completion_fn: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__(
             endpoint=endpoint,
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            http_client=http_client,
+            provider=provider,
+            completion_fn=completion_fn,
             error_factory=SolutionCoachingVLMError,
         )
 
@@ -197,7 +198,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
         self,
         settings: Settings | None = None,
         subject: str = "math",
-        http_client: httpx.AsyncClient | None = None,
+        completion_fn: Callable[..., Any] | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._subject = subject
@@ -206,17 +207,20 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             model = self._settings.english_solution_vlm_model
             api_key = self._settings.english_solution_vlm_api_key
             timeout_seconds = self._settings.english_solution_vlm_timeout_seconds
+            provider = self._settings.english_solution_vlm_provider
         else:
             endpoint = self._settings.math_solution_vlm_endpoint
             model = self._settings.math_solution_vlm_model
             api_key = self._settings.math_solution_vlm_api_key
             timeout_seconds = self._settings.math_solution_vlm_timeout_seconds
+            provider = self._settings.math_solution_vlm_provider
         super().__init__(
             endpoint=endpoint,
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            http_client=http_client,
+            provider=provider,
+            completion_fn=completion_fn,
         )
 
     async def generate_solution(self, request: SolutionVLMRequest) -> SolutionVLMResult:
@@ -479,7 +483,7 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
         self,
         settings: Settings | None = None,
         subject: str = "math",
-        http_client: httpx.AsyncClient | None = None,
+        completion_fn: Callable[..., Any] | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._subject = subject
@@ -488,17 +492,20 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             model = self._settings.english_coaching_vlm_model
             api_key = self._settings.english_coaching_vlm_api_key
             timeout_seconds = self._settings.english_coaching_vlm_timeout_seconds
+            provider = self._settings.english_coaching_vlm_provider
         else:
             endpoint = self._settings.math_coaching_vlm_endpoint
             model = self._settings.math_coaching_vlm_model
             api_key = self._settings.math_coaching_vlm_api_key
             timeout_seconds = self._settings.math_coaching_vlm_timeout_seconds
+            provider = self._settings.math_coaching_vlm_provider
         super().__init__(
             endpoint=endpoint,
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            http_client=http_client,
+            provider=provider,
+            completion_fn=completion_fn,
         )
 
     async def send_message(self, request: CoachingVLMRequest) -> CoachingVLMResult:

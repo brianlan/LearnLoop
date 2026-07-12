@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import json
+from types import SimpleNamespace
+from typing import Any, Callable
 
-import httpx
 import pytest
+
+from litellm.exceptions import (
+    APIConnectionError,
+    BadRequestError,
+    InternalServerError,
+    Timeout,
+)
 
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
@@ -26,56 +34,56 @@ from app.infrastructure.vlm.prompts import (
 )
 from app.domain.state import recover_stale_preview
 
-def _build_client(handler) -> VLMClient:
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://vlm.example/api",
-        timeout=5,
-        headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
+
+def _mock_response(content: str, reasoning_content: str | None = None) -> Any:
+    message = SimpleNamespace(
+        role="assistant",
+        content=content,
+        reasoning_content=reasoning_content,
+        provider_specific_fields=None,
     )
+    choice = SimpleNamespace(index=0, message=message)
+    return SimpleNamespace(choices=[choice])
+
+
+def _build_client(
+    completion_fn: Callable[..., Any],
+    *,
+    provider: str = "openai",
+    **kwargs: Any,
+) -> VLMClient:
     return VLMClient(
         endpoint="https://vlm.example/api",
         model="demo",
         api_key="demo",
         timeout_seconds=5,
-        http_client=http_client,
+        provider=provider,
+        completion_fn=completion_fn,
+        **kwargs,
     )
 
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_happy_path() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/chat/completions"
-        payload = await request.aread()
-        assert b'"messages"' in payload
-        assert b'"image_url"' in payload
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Solve x + 1 = 2",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                    "providerMetadata": {"provider": "demo"},
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert any(part.get("type") == "image_url" for part in messages[1]["content"])
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Solve x + 1 = 2",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert isinstance(result, ExtractionResult)
     assert result.request_type == "ingestion"
@@ -86,93 +94,62 @@ async def test_vlm_extraction_happy_path() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_prompt_includes_latex_spacing_guidance() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        assert payload["messages"][0]["role"] == "system"
-        assert payload["messages"][1]["role"] == "user"
-        prompt = payload["messages"][0]["content"]
+    async def completion_fn(**kwargs):
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        prompt = messages[0]["content"]
         assert "Use `$...$` for inline math" in prompt
         assert "Put one ASCII space before and after every inline `$...$`" in prompt
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Find $x$ when $x+1=2$",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Find $x$ when $x+1=2$",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.text == "Find $x$ when $x+1=2$"
 
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_prompt_includes_expected_response_schema() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        schema_prompt = payload["messages"][1]["content"][0]["text"]
+    async def completion_fn(**kwargs):
+        messages = kwargs["messages"]
+        schema_prompt = messages[1]["content"][0]["text"]
         assert "Expected JSON schema:" in schema_prompt
         assert '"required": ["text", "problemType"]' in schema_prompt
         assert '"graphDsl": {"type": ["string", "null"]}' in schema_prompt
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Find $x$ when $x+1=2$",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Find $x$ when $x+1=2$",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.text == "Find $x$ when $x+1=2$"
 
 
-def _build_english_client(handler) -> VLMClient:
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://vlm.example/api",
-        timeout=5,
-        headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
-    )
+def _build_english_client(completion_fn: Callable[..., Any]) -> VLMClient:
     return VLMClient(
         endpoint="https://vlm.example/api",
         model="demo",
         api_key="demo",
         timeout_seconds=5,
-        http_client=http_client,
+        completion_fn=completion_fn,
         extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
         request_correct_answer=True,
     )
@@ -182,29 +159,14 @@ def _build_english_client(handler) -> VLMClient:
 async def test_vlm_extraction_math_does_not_request_correct_answer() -> None:
     captured: dict = {}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        captured["user_prompt"] = payload["messages"][1]["content"][0]["text"]
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {"text": "x", "problemType": "short-answer", "graphDsl": None}
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        captured["user_prompt"] = kwargs["messages"][1]["content"][0]["text"]
+        return _mock_response(
+            json.dumps({"text": "x", "problemType": "short-answer", "graphDsl": None})
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert '"correctAnswer"' not in captured["user_prompt"]
     assert "nullable \"correctAnswer\"" not in captured["user_prompt"]
@@ -214,34 +176,21 @@ async def test_vlm_extraction_math_does_not_request_correct_answer() -> None:
 async def test_vlm_extraction_english_requests_correct_answer() -> None:
     captured: dict = {}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        captured["user_prompt"] = payload["messages"][1]["content"][0]["text"]
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "I go to school by ___.",
-                                    "problemType": "fill-in-the-blank",
-                                    "graphDsl": None,
-                                    "correctAnswer": "bus",
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        captured["user_prompt"] = kwargs["messages"][1]["content"][0]["text"]
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "I go to school by ___.",
+                    "problemType": "fill-in-the-blank",
+                    "graphDsl": None,
+                    "correctAnswer": "bus",
+                }
+            )
         )
 
-    client = _build_english_client(handler)
+    client = _build_english_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert '"correctAnswer": {"type": ["string", "null"]}' in captured["user_prompt"]
     assert 'nullable "correctAnswer"' in captured["user_prompt"]
@@ -250,139 +199,89 @@ async def test_vlm_extraction_english_requests_correct_answer() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_parses_null_correct_answer() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Write a sentence.",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                    "correctAnswer": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Write a sentence.",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "correctAnswer": None,
+                }
+            )
         )
 
-    client = _build_english_client(handler)
+    client = _build_english_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.correct_answer is None
 
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_tolerates_omitted_correct_answer() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Write a sentence.",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Write a sentence.",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    client = _build_english_client(handler)
+    client = _build_english_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.correct_answer is None
 
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_prompt_includes_keepaspectratio_guidance() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        prompt = payload["messages"][0]["content"]
+    async def completion_fn(**kwargs):
+        prompt = kwargs["messages"][0]["content"]
         assert "setBoundingBox([xMin, yMax, xMax, yMin], true)" in prompt
         assert "preserve the source diagram" in prompt
         assert "JXG.JSXGraph.initBoard" in prompt
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Triangle problem",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Triangle problem",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.text == "Triangle problem"
 
 
 @pytest.mark.asyncio
 async def test_vlm_grading_happy_path() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/chat/completions"
-        payload = json.loads((await request.aread()).decode())
-        assert "messages" in payload
-        assert payload["messages"][0]["role"] == "system"
-        assert payload["messages"][1]["role"] == "user"
-        assert payload["messages"][1]["content"][1]["type"] == "image_url"
-        grading_context = payload["messages"][1]["content"][0]["text"]
+    async def completion_fn(**kwargs):
+        messages = kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"][1]["type"] == "image_url"
+        grading_context = messages[1]["content"][0]["text"]
         assert '"problemText": "What is 1 + 1?"' in grading_context
         assert '"userAnswer": "1"' in grading_context
         assert '"correctAnswer": "1"' in grading_context
         assert '"subject": "math"' in grading_context
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "isCorrect": True,
-                                    "feedback": "Correct.",
-                                    "providerMetadata": {"provider": "demo"},
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        return _mock_response(
+            json.dumps(
+                {
+                    "isCorrect": True,
+                    "feedback": "Correct.",
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     result = await client.grade_short_answer(
         image_url="s3://bucket/key",
@@ -390,7 +289,6 @@ async def test_vlm_grading_happy_path() -> None:
         user_answer="1",
         correct_answer="1",
     )
-    await client.aclose()
 
     assert isinstance(result, GradingResult)
     assert result.request_type == "short-answer-grading"
@@ -400,32 +298,20 @@ async def test_vlm_grading_happy_path() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_grading_includes_subject_in_task_data() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        grading_context = payload["messages"][1]["content"][0]["text"]
+    async def completion_fn(**kwargs):
+        grading_context = kwargs["messages"][1]["content"][0]["text"]
         assert '"subject": "english"' in grading_context
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "isCorrect": False,
-                                    "feedback": "Incorrect.",
-                                    "providerMetadata": {"provider": "demo"},
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        return _mock_response(
+            json.dumps(
+                {
+                    "isCorrect": False,
+                    "feedback": "Incorrect.",
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     result = await client.grade_short_answer(
         image_url="s3://bucket/key",
@@ -434,34 +320,20 @@ async def test_vlm_grading_includes_subject_in_task_data() -> None:
         correct_answer="Paris",
         subject="english",
     )
-    await client.aclose()
 
     assert result.is_correct is False
 
 
 @pytest.mark.asyncio
 async def test_vlm_extraction_accepts_fenced_json_content() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/chat/completions"
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "```json\n{\n  \"text\": \"Solve x + 1 = 2\",\n  \"problemType\": \"short-answer\",\n  \"graphDsl\": null,\n  \"providerMetadata\": {\"provider\": \"demo\"}\n}\n```",
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "```json\n{\n  \"text\": \"Solve x + 1 = 2\",\n  \"problemType\": \"short-answer\",\n  \"graphDsl\": null,\n  \"providerMetadata\": {\"provider\": \"demo\"}\n}\n```"
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.text == "Solve x + 1 = 2"
     assert result.problem_type == "short-answer"
@@ -469,14 +341,15 @@ async def test_vlm_extraction_accepts_fenced_json_content() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_retries_only_retryable_failures() -> None:
-    async def server_error_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, json={"detail": "overloaded"})
+    async def completion_fn(**kwargs):
+        raise InternalServerError(
+            message="overloaded", model="demo", llm_provider="openai"
+        )
 
-    client = _build_client(server_error_handler)
+    client = _build_client(completion_fn)
 
     with pytest.raises(VLMError) as exc_info:
         await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_PROVIDER
     assert exc_info.value.retryable is True
@@ -484,14 +357,15 @@ async def test_vlm_retries_only_retryable_failures() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_non_retryable_client_failure() -> None:
-    async def client_error_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"detail": "bad request"})
+    async def completion_fn(**kwargs):
+        raise BadRequestError(
+            message="bad request", model="demo", llm_provider="openai"
+        )
 
-    client = _build_client(client_error_handler)
+    client = _build_client(completion_fn)
 
     with pytest.raises(VLMError) as exc_info:
         await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_PROVIDER_REJECTED
     assert exc_info.value.retryable is False
@@ -499,73 +373,46 @@ async def test_vlm_non_retryable_client_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_invalid_response_shape_is_rejected() -> None:
-    async def invalid_shape_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "not json"}}]})
+    async def completion_fn(**kwargs):
+        return _mock_response("not json")
 
-    client = _build_client(invalid_shape_handler)
-
-    with pytest.raises(VLMError) as exc_info:
-        await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
-
-    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
-    assert exc_info.value.retryable is False
-
-
-@pytest.mark.asyncio
-async def test_vlm_parser_rejects_invalid_chat_completion_shape() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"unexpected": "shape"})
-
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     with pytest.raises(VLMError) as exc_info:
         await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
-    assert str(exc_info.value) == "VLM provider response failed chat completion validation"
-    assert exc_info.value.raw_provider_response == {"unexpected": "shape"}
-
-
-@pytest.mark.asyncio
-async def test_vlm_parser_rejects_empty_choices() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": []})
-
-    client = _build_client(handler)
-
-    with pytest.raises(VLMError) as exc_info:
-        await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
-
-    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
-    assert exc_info.value.retryable is False
-    assert str(exc_info.value) == "VLM provider returned no choices"
-    assert exc_info.value.raw_provider_response == {"choices": []}
 
 
 @pytest.mark.asyncio
 async def test_vlm_parser_rejects_empty_content() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]},
-        )
+    async def completion_fn(**kwargs):
+        return _mock_response("")
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
 
     with pytest.raises(VLMError) as exc_info:
         await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
     assert str(exc_info.value) == "VLM provider response content was empty"
-    assert exc_info.value.raw_provider_response == {
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": None}}]
-    }
+
+
+@pytest.mark.asyncio
+async def test_vlm_parser_rejects_empty_choices() -> None:
+    async def completion_fn(**kwargs):
+        return SimpleNamespace(choices=[])
+
+    client = _build_client(completion_fn)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "VLM provider returned no choices"
 
 
 def test_strip_json_code_fences_leaves_plain_json_unchanged() -> None:
@@ -628,14 +475,13 @@ def test_strip_json_code_fences_strips_multiline_json_content() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_timeout_is_classified_explicitly() -> None:
-    async def timeout_handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("timed out")
+    async def completion_fn(**kwargs):
+        raise Timeout(message="timed out", model="demo", llm_provider="openai")
 
-    client = _build_client(timeout_handler)
+    client = _build_client(completion_fn)
 
     with pytest.raises(VLMError) as exc_info:
         await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_TIMEOUT
     assert exc_info.value.retryable is True
@@ -643,14 +489,13 @@ async def test_vlm_timeout_is_classified_explicitly() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_network_error_is_retryable() -> None:
-    async def network_handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("boom")
+    async def completion_fn(**kwargs):
+        raise APIConnectionError(message="boom", model="demo", llm_provider="openai")
 
-    client = _build_client(network_handler)
+    client = _build_client(completion_fn)
 
     with pytest.raises(VLMError) as exc_info:
         await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_NETWORK
     assert exc_info.value.retryable is True
@@ -691,61 +536,35 @@ def test_recover_stale_preview_ignores_fresh_extractions() -> None:
     assert recover_stale_preview(preview, now=now, extracting_window_seconds=30) is None
 
 
-def _classification_handler(subject: str, confidence: float) -> VLMClient:
-    """Build a mock VLM client that returns a classification response."""
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "subject": subject,
-                                    "confidence": confidence,
-                                    "reason": "test",
-                                    "providerMetadata": {"provider": "demo"},
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+def _classification_completion(subject: str, confidence: float) -> Callable[..., Any]:
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "subject": subject,
+                    "confidence": confidence,
+                    "reason": "test",
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
         )
 
-    return _build_client(handler)
+    return completion_fn
 
 
-def _detection_handler(subject: str, boxes: list[dict[str, Any]]) -> VLMClient:
-    """Build a mock VLM client that returns a problem-box detection response."""
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "subject": subject,
-                                    "boxes": boxes,
-                                    "providerMetadata": {"provider": "demo"},
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+def _detection_completion(subject: str, boxes: list[dict[str, Any]]) -> Callable[..., Any]:
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "subject": subject,
+                    "boxes": boxes,
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
         )
 
-    return _build_client(handler)
+    return completion_fn
 
 
 def test_math_extraction_prompt_contains_math_guidance() -> None:
@@ -828,48 +647,28 @@ def test_english_extraction_prompt_instructs_options_on_own_line() -> None:
 async def test_vlm_client_uses_custom_extraction_prompt() -> None:
     custom_prompt = "Custom extraction prompt for testing"
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        assert payload["messages"][0]["content"] == custom_prompt
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Test problem",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        assert kwargs["messages"][0]["content"] == custom_prompt
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Test problem",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://vlm.example/api",
-        timeout=5,
-        headers={"Authorization": "Bearer demo", "Content-Type": "application/json"},
-    )
     client = VLMClient(
         endpoint="https://vlm.example/api",
         model="demo",
         api_key="demo",
         timeout_seconds=5,
-        http_client=http_client,
+        completion_fn=completion_fn,
         extraction_system_prompt=custom_prompt,
     )
 
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.text == "Test problem"
 
@@ -878,43 +677,29 @@ async def test_vlm_client_uses_custom_extraction_prompt() -> None:
 async def test_vlm_client_defaults_to_math_extraction_prompt() -> None:
     captured_prompt = None
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def completion_fn(**kwargs):
         nonlocal captured_prompt
-        payload = json.loads((await request.aread()).decode())
-        captured_prompt = payload["messages"][0]["content"]
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Test",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        captured_prompt = kwargs["messages"][0]["content"]
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Test",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert captured_prompt == MATH_EXTRACTION_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
 async def test_vlm_classification_happy_path_math() -> None:
-    client = _classification_handler("math", 0.95)
+    client = _build_client(_classification_completion("math", 0.95))
     result = await client.classify_subject(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert isinstance(result, ClassificationResult)
     assert result.subject == "math"
@@ -923,9 +708,8 @@ async def test_vlm_classification_happy_path_math() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_classification_happy_path_english() -> None:
-    client = _classification_handler("english", 0.8)
+    client = _build_client(_classification_completion("english", 0.8))
     result = await client.classify_subject(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert isinstance(result, ClassificationResult)
     assert result.subject == "english"
@@ -934,11 +718,10 @@ async def test_vlm_classification_happy_path_english() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_classification_rejects_invalid_subject() -> None:
-    client = _classification_handler("science", 0.9)
+    client = _build_client(_classification_completion("science", 0.9))
 
     with pytest.raises(VLMError) as exc_info:
         await client.classify_subject(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
@@ -946,11 +729,10 @@ async def test_vlm_classification_rejects_invalid_subject() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_classification_rejects_confidence_below_zero() -> None:
-    client = _classification_handler("math", -0.1)
+    client = _build_client(_classification_completion("math", -0.1))
 
     with pytest.raises(VLMError) as exc_info:
         await client.classify_subject(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
@@ -958,11 +740,10 @@ async def test_vlm_classification_rejects_confidence_below_zero() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_classification_rejects_confidence_above_one() -> None:
-    client = _classification_handler("english", 1.5)
+    client = _build_client(_classification_completion("english", 1.5))
 
     with pytest.raises(VLMError) as exc_info:
         await client.classify_subject(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.retryable is False
@@ -970,32 +751,20 @@ async def test_vlm_classification_rejects_confidence_above_one() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_extract_normalizes_leading_think_block() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "<think>internal reasoning</think>\n"
-                            + json.dumps(
-                                {
-                                    "text": "Solve x + 1 = 2",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "<think>internal reasoning</think>\n"
+            + json.dumps(
+                {
+                    "text": "Solve x + 1 = 2",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.text == "Solve x + 1 = 2"
     assert result.raw_provider_response["reasoning_content"] == "internal reasoning"
@@ -1003,65 +772,41 @@ async def test_vlm_extract_normalizes_leading_think_block() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_extract_preserves_explicit_reasoning_content() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "text": "Find x",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                            "reasoning_content": "explicit reasoning",
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Find x",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            ),
+            reasoning_content="explicit reasoning",
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
 
 
 @pytest.mark.asyncio
 async def test_vlm_extract_explicit_reasoning_wins_over_think_block() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "<think>think reasoning</think>"
-                            + json.dumps(
-                                {
-                                    "text": "Find x",
-                                    "problemType": "short-answer",
-                                    "graphDsl": None,
-                                }
-                            ),
-                            "reasoning_content": "explicit reasoning",
-                        },
-                    }
-                ],
-            },
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            "<think>think reasoning</think>"
+            + json.dumps(
+                {
+                    "text": "Find x",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                }
+            ),
+            reasoning_content="explicit reasoning",
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     result = await client.extract(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.raw_provider_response["reasoning_content"] == "explicit reasoning"
 
@@ -1091,16 +836,17 @@ def test_strip_thinking_content_leaves_incomplete_block_unchanged() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_detection_happy_path_with_multiple_boxes() -> None:
-    client = _detection_handler(
-        "math",
-        [
-            {"x": 10, "y": 20, "width": 100, "height": 50},
-            {"x": 10, "y": 80, "width": 100, "height": 50},
-        ],
+    client = _build_client(
+        _detection_completion(
+            "math",
+            [
+                {"x": 10, "y": 20, "width": 100, "height": 50},
+                {"x": 10, "y": 80, "width": 100, "height": 50},
+            ],
+        )
     )
 
     result = await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert isinstance(result, DetectionResult)
     assert result.request_type == "problem-box-detection"
@@ -1118,10 +864,9 @@ async def test_vlm_detection_happy_path_with_multiple_boxes() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_detection_accepts_zero_boxes() -> None:
-    client = _detection_handler("english", [])
+    client = _build_client(_detection_completion("english", []))
 
     result = await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.subject == "english"
     assert result.boxes == []
@@ -1129,11 +874,12 @@ async def test_vlm_detection_accepts_zero_boxes() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_detection_rejects_invalid_subject() -> None:
-    client = _detection_handler("science", [{"x": 0, "y": 0, "width": 10, "height": 10}])
+    client = _build_client(
+        _detection_completion("science", [{"x": 0, "y": 0, "width": 10, "height": 10}])
+    )
 
     with pytest.raises(VLMError) as exc_info:
         await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
     assert exc_info.value.raw_provider_response is not None
@@ -1141,70 +887,61 @@ async def test_vlm_detection_rejects_invalid_subject() -> None:
 
 @pytest.mark.asyncio
 async def test_vlm_detection_rejects_missing_box_coordinate() -> None:
-    client = _detection_handler("math", [{"x": 0, "y": 0, "width": 10}])
+    client = _build_client(
+        _detection_completion("math", [{"x": 0, "y": 0, "width": 10}])
+    )
 
     with pytest.raises(VLMError) as exc_info:
         await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
 
 
 @pytest.mark.asyncio
 async def test_vlm_detection_rejects_negative_box_coordinate() -> None:
-    client = _detection_handler("math", [{"x": -1, "y": 0, "width": 10, "height": 10}])
+    client = _build_client(
+        _detection_completion("math", [{"x": -1, "y": 0, "width": 10, "height": 10}])
+    )
 
     with pytest.raises(VLMError) as exc_info:
         await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
 
 
 @pytest.mark.asyncio
 async def test_vlm_detection_rejects_zero_box_area() -> None:
-    client = _detection_handler("math", [{"x": 0, "y": 0, "width": 0, "height": 10}])
+    client = _build_client(
+        _detection_completion("math", [{"x": 0, "y": 0, "width": 0, "height": 10}])
+    )
 
     with pytest.raises(VLMError) as exc_info:
         await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
 
 
 @pytest.mark.asyncio
 async def test_vlm_detection_prompt_includes_subject_and_boxes_schema() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads((await request.aread()).decode())
-        system_prompt = payload["messages"][0]["content"]
-        user_prompt = payload["messages"][1]["content"][0]["text"]
+    async def completion_fn(**kwargs):
+        messages = kwargs["messages"]
+        system_prompt = messages[0]["content"]
+        user_prompt = messages[1]["content"][0]["text"]
         assert "boxes" in system_prompt
         assert "subject" in system_prompt
         assert "natural-image pixel coordinates" in user_prompt
         assert '"subject": {"type": "string", "enum": ["math", "english"]}' in user_prompt
         assert '"boxes":' in user_prompt
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "subject": "math",
-                                    "boxes": [{"x": 0, "y": 0, "width": 10, "height": 10}],
-                                }
-                            ),
-                        },
-                    }
-                ],
-            },
+        return _mock_response(
+            json.dumps(
+                {
+                    "subject": "math",
+                    "boxes": [{"x": 0, "y": 0, "width": 10, "height": 10}],
+                }
+            )
         )
 
-    client = _build_client(handler)
+    client = _build_client(completion_fn)
     result = await client.detect_problem_boxes(image_url="s3://bucket/key")
-    await client.aclose()
 
     assert result.subject == "math"

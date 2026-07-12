@@ -4,9 +4,8 @@ from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import json
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.domain.state import FAILURE_CODE_STALE_PREVIEW as FAILURE_CODE_STALE_PREVIEW
@@ -189,7 +188,8 @@ class VLMClient(BaseVLMClient):
         model: str,
         api_key: str,
         timeout_seconds: float,
-        http_client: httpx.AsyncClient | None = None,
+        provider: str = "openai",
+        completion_fn: Callable[..., Any] | None = None,
         extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
         request_correct_answer: bool = False,
     ) -> None:
@@ -198,7 +198,8 @@ class VLMClient(BaseVLMClient):
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            http_client=http_client,
+            provider=provider,
+            completion_fn=completion_fn,
             error_factory=VLMError,
         )
         self._extraction_system_prompt = extraction_system_prompt

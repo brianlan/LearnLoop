@@ -202,35 +202,43 @@ The canonical template lives in `.env.example`.
 | `HELPER_VLM_MODEL` | Helper VLM model identifier | `replace-me` |
 | `HELPER_VLM_API_KEY` | Helper VLM credential | `replace-me` |
 | `HELPER_VLM_TIMEOUT_SECONDS` | Helper VLM request timeout | `60` |
+| `HELPER_VLM_PROVIDER` | Helper VLM LiteLLM provider | `openai` |
 | `MATH_INGESTION_VLM_ENDPOINT` | Math ingestion VLM endpoint for math problem extraction | example placeholder |
 | `MATH_INGESTION_VLM_MODEL` | Math ingestion VLM model identifier | `replace-me` |
 | `MATH_INGESTION_VLM_API_KEY` | Math ingestion VLM credential | `replace-me` |
 | `MATH_INGESTION_VLM_TIMEOUT_SECONDS` | Math ingestion VLM request timeout | `120` |
+| `MATH_INGESTION_VLM_PROVIDER` | Math ingestion VLM LiteLLM provider | `openai` |
 | `ENGLISH_INGESTION_VLM_ENDPOINT` | English ingestion VLM endpoint for English problem extraction | example placeholder |
 | `ENGLISH_INGESTION_VLM_MODEL` | English ingestion VLM model identifier | `replace-me` |
 | `ENGLISH_INGESTION_VLM_API_KEY` | English ingestion VLM credential | `replace-me` |
 | `ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS` | English ingestion VLM request timeout | `120` |
+| `ENGLISH_INGESTION_VLM_PROVIDER` | English ingestion VLM LiteLLM provider | `openai` |
 | `GRADING_VLM_ENDPOINT` | Grading VLM endpoint for short-answer judging in practice and exams | example placeholder |
 | `GRADING_VLM_MODEL` | Grading VLM model identifier | `replace-me` |
 | `GRADING_VLM_API_KEY` | Grading VLM credential | `replace-me` |
 | `GRADING_VLM_TIMEOUT_SECONDS` | Grading VLM request timeout | `60` |
+| `GRADING_VLM_PROVIDER` | Grading VLM LiteLLM provider | `openai` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
 | `MATH_SOLUTION_VLM_ENDPOINT` | Math solution generation VLM endpoint | example placeholder |
 | `MATH_SOLUTION_VLM_MODEL` | Math solution generation VLM model identifier | `replace-me` |
 | `MATH_SOLUTION_VLM_API_KEY` | Math solution generation VLM credential | `replace-me` |
 | `MATH_SOLUTION_VLM_TIMEOUT_SECONDS` | Math solution generation VLM request timeout | `120` |
+| `MATH_SOLUTION_VLM_PROVIDER` | Math solution generation VLM LiteLLM provider | `openai` |
 | `ENGLISH_SOLUTION_VLM_ENDPOINT` | English solution generation VLM endpoint | example placeholder |
 | `ENGLISH_SOLUTION_VLM_MODEL` | English solution generation VLM model identifier | `replace-me` |
 | `ENGLISH_SOLUTION_VLM_API_KEY` | English solution generation VLM credential | `replace-me` |
 | `ENGLISH_SOLUTION_VLM_TIMEOUT_SECONDS` | English solution generation VLM request timeout | `120` |
+| `ENGLISH_SOLUTION_VLM_PROVIDER` | English solution generation VLM LiteLLM provider | `openai` |
 | `MATH_COACHING_VLM_ENDPOINT` | Math coaching VLM endpoint | example placeholder |
 | `MATH_COACHING_VLM_MODEL` | Math coaching VLM model identifier | `replace-me` |
 | `MATH_COACHING_VLM_API_KEY` | Math coaching VLM credential | `replace-me` |
 | `MATH_COACHING_VLM_TIMEOUT_SECONDS` | Math coaching VLM request timeout | `60` |
+| `MATH_COACHING_VLM_PROVIDER` | Math coaching VLM LiteLLM provider | `openai` |
 | `ENGLISH_COACHING_VLM_ENDPOINT` | English coaching VLM endpoint | example placeholder |
 | `ENGLISH_COACHING_VLM_MODEL` | English coaching VLM model identifier | `replace-me` |
 | `ENGLISH_COACHING_VLM_API_KEY` | English coaching VLM credential | `replace-me` |
 | `ENGLISH_COACHING_VLM_TIMEOUT_SECONDS` | English coaching VLM request timeout | `60` |
+| `ENGLISH_COACHING_VLM_PROVIDER` | English coaching VLM LiteLLM provider | `openai` |
 | `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
 | `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
 | `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |
@@ -245,12 +253,24 @@ The canonical template lives in `.env.example`.
 
 ### AI tutoring VLM notes
 
-- All `*_ENDPOINT` VLM variables must be OpenAI-compatible base URLs. The backend posts to `/chat/completions` relative to the base.
+- All VLM requests go through LiteLLM (`litellm.acompletion`). Each role's `*_VLM_PROVIDER` setting selects the LiteLLM provider prefix; the effective model sent to LiteLLM is `<provider>/<model>`.
+- The `*_ENDPOINT` variable is forwarded as LiteLLM's `api_base`. For the default `openai` provider it must be an OpenAI-compatible base URL.
 - Helper VLM classifies uploaded images as math or English and routes to the matching ingestion VLM.
 - Math and English ingestion VLMs handle subject-specific image extraction and problem structuring.
 - Grading VLM is used for short-answer correctness judgement in practice and exams (generic, not subject-specific).
 - Math and English solution VLMs generate background canonical solutions per subject.
 - Math and English coaching VLMs provide live tutoring responses per subject.
+
+#### Ollama example
+
+To point a role at a local Ollama instance with a vision-capable model (e.g. `llama3.2-vision`):
+
+```bash
+MATH_INGESTION_VLM_PROVIDER=ollama
+MATH_INGESTION_VLM_MODEL=llama3.2-vision
+MATH_INGESTION_VLM_ENDPOINT=http://localhost:11434
+MATH_INGESTION_VLM_API_KEY=ollama
+```
 
 ## Health checks and parity notes
 

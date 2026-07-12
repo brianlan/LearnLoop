@@ -4,7 +4,10 @@ import json
 import re
 from typing import Any, Callable
 
-import httpx
+import litellm
+import openai
+from litellm.exceptions import APIError as LiteLLMAPIError
+from litellm.exceptions import APIConnectionError, Timeout
 from pydantic import ValidationError
 
 from app.infrastructure.vlm._models import _ChatCompletionResponse
@@ -41,88 +44,86 @@ class BaseVLMClient:
         model: str,
         api_key: str,
         timeout_seconds: float,
-        http_client: httpx.AsyncClient | None = None,
+        provider: str = "openai",
+        completion_fn: Callable[..., Any] | None = None,
         error_factory: Callable[..., BaseException] | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._model = model
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
-        self._http_client = http_client
-        self._owns_client = http_client is None
+        self._provider = provider
+        self._effective_model = f"{provider}/{model}"
+        self._completion_fn = completion_fn or litellm.acompletion
         self._error_factory = error_factory or BaseVLMError
 
-    @property
-    def http_client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(
-                base_url=self._endpoint,
-                timeout=self._timeout_seconds,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-        return self._http_client
-
     async def aclose(self) -> None:
-        if self._owns_client and self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        pass
 
     async def _send_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            response = await self.http_client.post("/chat/completions", json=payload)
-        except httpx.TimeoutException as exc:
+            response = await self._completion_fn(
+                model=self._effective_model,
+                messages=payload["messages"],
+                api_base=self._endpoint,
+                api_key=self._api_key,
+                timeout=self._timeout_seconds,
+                num_retries=0,
+            )
+        except Timeout as exc:
             raise self._make_error(
                 "VLM request timed out",
                 code=FAILURE_CODE_TIMEOUT,
                 retryable=True,
             ) from exc
-        except httpx.NetworkError as exc:
+        except APIConnectionError as exc:
             raise self._make_error(
                 "VLM network request failed",
                 code=FAILURE_CODE_NETWORK,
                 retryable=True,
             ) from exc
-
-        raw_body = self._decode_raw_response(response)
-
-        if 500 <= response.status_code:
+        except (LiteLLMAPIError, openai.APIError) as exc:
+            status_code = getattr(exc, "status_code", None)
+            if status_code is not None and 500 <= status_code:
+                raise self._make_error(
+                    f"VLM provider returned server error {status_code}",
+                    code=FAILURE_CODE_PROVIDER,
+                    retryable=True,
+                    status_code=status_code,
+                ) from exc
+            if status_code is not None and 400 <= status_code:
+                raise self._make_error(
+                    f"VLM provider rejected request with status {status_code}",
+                    code=FAILURE_CODE_PROVIDER_REJECTED,
+                    retryable=False,
+                    status_code=status_code,
+                ) from exc
             raise self._make_error(
-                f"VLM provider returned server error {response.status_code}",
+                "VLM provider error",
                 code=FAILURE_CODE_PROVIDER,
                 retryable=True,
-                status_code=response.status_code,
-                raw_provider_response=raw_body,
-            )
+            ) from exc
 
-        if 400 <= response.status_code:
-            raise self._make_error(
-                f"VLM provider rejected request with status {response.status_code}",
-                code=FAILURE_CODE_PROVIDER_REJECTED,
-                retryable=False,
-                status_code=response.status_code,
-                raw_provider_response=raw_body,
-            )
-
-        if not isinstance(raw_body, dict):
-            raise self._make_error(
-                "VLM provider response must be a JSON object",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                status_code=response.status_code,
-                raw_provider_response=raw_body,
-            )
-
-        return raw_body
+        return self._completion_to_dict(response)
 
     @staticmethod
-    def _decode_raw_response(response: httpx.Response) -> Any:
-        try:
-            return response.json()
-        except ValueError:
-            return response.text
+    def _completion_to_dict(response: Any) -> dict[str, Any]:
+        choices = []
+        for choice in response.choices:
+            message = choice.message
+            msg: dict[str, Any] = {
+                "role": message.role,
+                "content": message.content,
+            }
+            reasoning = getattr(message, "reasoning_content", None)
+            if reasoning is None:
+                psf = getattr(message, "provider_specific_fields", None)
+                if isinstance(psf, dict):
+                    reasoning = psf.get("reasoning_content")
+            if reasoning is not None:
+                msg["reasoning_content"] = reasoning
+            choices.append({"index": choice.index, "message": msg})
+        return {"choices": choices}
 
     def _make_error(
         self,

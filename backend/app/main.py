@@ -51,12 +51,14 @@ async def _run_extraction_worker_with_logging(database, storage, settings, stop_
             model=settings.math_ingestion_vlm_model,
             api_key=settings.math_ingestion_vlm_api_key,
             timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
+            provider=settings.math_ingestion_vlm_provider,
         )
         english_client = VLMClient(
             endpoint=settings.english_ingestion_vlm_endpoint,
             model=settings.english_ingestion_vlm_model,
             api_key=settings.english_ingestion_vlm_api_key,
             timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
+            provider=settings.english_ingestion_vlm_provider,
             extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
             request_correct_answer=True,
         )
