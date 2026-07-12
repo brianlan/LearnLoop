@@ -116,6 +116,7 @@ class BaseVLMClient:
                 model=self._effective_model,
                 instructions=payload.get("instructions"),
                 input=payload.get("input"),
+                text=payload.get("text"),
                 api_base=self._endpoint,
                 api_key=self._api_key,
                 timeout=self._timeout_seconds,

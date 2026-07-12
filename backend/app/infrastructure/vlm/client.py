@@ -485,7 +485,7 @@ class VLMClient(BaseVLMClient):
 
         return {
             "instructions": request.prompt,
-            "input": input_items,
+            "input": [{"role": "user", "content": input_items}],
             "text": {
                 "format": {
                     "type": "json_object",
