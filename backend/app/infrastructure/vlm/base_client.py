@@ -68,6 +68,7 @@ class BaseVLMClient:
                 api_base=self._endpoint,
                 api_key=self._api_key,
                 timeout=self._timeout_seconds,
+                num_retries=0,
             )
         except Timeout as exc:
             raise self._make_error(
