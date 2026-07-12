@@ -56,4 +56,18 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5. Development Environment
 
-Run `docker compose up` if the containers (i.e. learnloop-app, learnloop-frontend, learnloop-mongodb, learnloop-rustfs) are not started. Use the environment (has all the dependencies) inside the container if running tests or code snippets are needed.
+For local development or the legacy all-in-one stack, run `docker compose up` if the containers (`learnloop-app`, `learnloop-frontend`, `learnloop-mongodb`, `learnloop-rustfs`) are not started.
+
+For a reproducible, isolated test environment from any clean Git worktree, use the agent environment:
+
+```bash
+./scripts/agent-env.sh build            # build the reusable tools image once per fingerprint
+./scripts/agent-env.sh test backend     # run backend pytest suite
+./scripts/agent-env.sh test frontend    # run frontend unit/component tests
+./scripts/agent-env.sh test e2e         # run frontend Playwright e2e tests
+./scripts/agent-env.sh shell            # open an interactive shell with services running
+./scripts/agent-env.sh down             # tear down this worktree's stack
+./scripts/agent-env.sh down --volumes   # tear down and remove volumes
+```
+
+The agent environment is the preferred way to run LearnLoop tests as an agent or reviewer. It provides a pre-seeded Python venv and `node_modules` stored under `/opt/learnloop`, isolated MongoDB/RustFS per worktree, and no host port conflicts. See `DEVELOPMENT.md` for full details.

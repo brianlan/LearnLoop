@@ -1,84 +1,70 @@
-# Stage 1: Extract external binaries
-FROM rustfs/rustfs:1.0.0-beta.4 AS rustfs-bin
-FROM minio/mc:RELEASE.2025-08-13T08-35-41Z AS mc-bin
+# Reusable, worktree-isolated tools image for LearnLoop agents and reviewers.
+#
+# This image does NOT contain or start MongoDB or RustFS. It provides Python
+# 3.11, Node 20, backend dependencies, frontend dependencies, and Playwright
+# browsers so that a bind-mounted worktree can run tests without installing
+# anything on the host.
 
-# Stage 2: Unified agent image build
-FROM ubuntu:20.04
+FROM node:20-slim
 
-# Avoid interactive prompts during apt installs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install essential system utilities
+# Use the same PyPI mirror as the production backend image for reproducible,
+# fast dependency installation in this environment.
+ENV UV_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
+
+# Keep uv-managed Python outside /root so it can be made readable by the
+# non-root tools service that runs with the host UID/GID.
+ENV UV_PYTHON_INSTALL_DIR=/opt/learnloop/uv-python
+
+# Minimal runtime and download dependencies. We prefer prebuilt Python wheels so
+# a full compiler toolchain is not required, keeping the image lean.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    wget \
-    git \
-    gnupg \
     ca-certificates \
-    build-essential \
     libssl-dev \
-    software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (astral)
+# Install uv (astral) and make it available system-wide.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     mv /root/.local/bin/uv /usr/local/bin/uv
 
-# Install Python 3.11 via uv and symlink it as default python/python3
+# Install Python 3.11 via uv. It lands under UV_PYTHON_INSTALL_DIR.
 RUN uv python install 3.11 && \
-    ln -sf $(uv python find 3.11) /usr/local/bin/python3 && \
+    ln -sf "$(uv python find 3.11)" /usr/local/bin/python3 && \
     ln -sf /usr/local/bin/python3 /usr/local/bin/python
 
-# Install Node.js 20
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
+# Keep all preinstalled dependencies outside /workspace so a worktree bind mount
+# cannot hide them.
+ENV VIRTUAL_ENV=/opt/learnloop/.venv
+ENV UV_FROZEN=1
 
-# Install MongoDB 4.4
-RUN curl -fsSL https://www.mongodb.org/static/pgp/server-4.4.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-4.4.gpg && \
-    echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-4.4.gpg ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-4.4.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    mongodb-org \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy binaries from Stage 1
-COPY --from=rustfs-bin /usr/bin/rustfs /usr/local/bin/rustfs
-COPY --from=mc-bin /usr/bin/mc /usr/local/bin/mc
-
-# Setup workspace directory
-WORKDIR /workspace
-
-# Copy backend dependencies structure and install them globally/cached
+# Backend dependencies are installed from the lockfile into /opt/learnloop/.venv.
+# The project source itself is not copied into the image; it is bind-mounted at
+# /workspace at runtime.
+WORKDIR /opt/learnloop
 COPY backend/pyproject.toml backend/uv.lock backend/README.md ./backend/
-RUN cd backend && uv sync --frozen --no-install-project
+RUN cd backend && \
+    uv venv --python 3.11 /opt/learnloop/.venv && \
+    uv sync --frozen --no-install-project --active --extra dev
 
-# Copy frontend dependencies structure and install them (including Playwright system dependencies)
+# Frontend dependencies are seeded into /opt/learnloop/frontend so they can be
+# copied into the per-worktree node_modules volume at runtime.
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 RUN cd frontend && npm ci
 
-# Pre-install Playwright browsers and system dependencies inside the image
+# Preinstall Chromium and its system dependencies for Playwright E2E tests.
 RUN cd frontend && npx playwright install --with-deps chromium
 
-# Copy the rest of the application files
-COPY . .
+# Make the Python venv writable by the non-root host user so uv can install the
+# worktree's project package into it at runtime. Everything else only needs to
+# be readable/executable.
+RUN chmod -R a+rX /opt/learnloop \
+    && chmod -R a+w /opt/learnloop/.venv/lib/python3.11/site-packages \
+    && chmod a+w /opt/learnloop/.venv/lib/python3.11
 
-# Setup entrypoint script
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Runtime worktree mount point.
+WORKDIR /workspace
 
-# Default environment configuration (matching docker-compose.yml values)
-ENV APP_ENV=development \
-    MONGODB_URI="mongodb://127.0.0.1:27017/learnloop?replicaSet=rs0&directConnection=true" \
-    MONGODB_DATABASE=learnloop \
-    S3_ENDPOINT=http://127.0.0.1:9000 \
-    S3_ACCESS_KEY=learnloop-local \
-    S3_SECRET_KEY=learnloop-secret \
-    S3_BUCKET=learnloop-media \
-    S3_REGION=us-east-1 \
-    S3_FORCE_PATH_STYLE=true
-
-# Expose ports if running interactive dev servers
-EXPOSE 8000 8080 9000 9001 27017
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT []
 CMD ["bash"]

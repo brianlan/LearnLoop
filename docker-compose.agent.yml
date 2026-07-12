@@ -1,0 +1,98 @@
+# Agent-specific Docker Compose overlay.
+#
+# Do not use this file directly. It is consumed by scripts/agent-env.sh together
+# with docker-compose.yml so that each worktree gets an isolated project, no
+# host-published infrastructure ports, and a pre-seeded frontend dependency volume.
+
+services:
+  # Remove host port publishing for all infrastructure and deployment services
+  # that the agent workflow starts. This lets multiple worktrees run isolated
+  # stacks concurrently without port collisions.
+  mongodb:
+    ports: !reset []
+
+  rustfs-volume-init:
+    ports: !reset []
+
+  rustfs:
+    ports: !reset []
+
+  rustfs-bootstrap:
+    ports: !reset []
+
+  app:
+    ports: !reset []
+    env_file: !reset []
+
+  frontend:
+    ports: !reset []
+
+  # One-shot initializer that seeds the per-worktree frontend dependency volume
+  # from the preinstalled image tree and records the dependency fingerprint.
+  # It runs as root so it can chown the image-installed dependencies to the host
+  # UID before the tools service (which runs as the host user) uses them.
+  init-deps:
+    image: ${AGENT_IMAGE:?AGENT_IMAGE is required}
+    environment:
+      FINGERPRINT: ${AGENT_FINGERPRINT:?AGENT_FINGERPRINT is required}
+      HOST_UID: ${HOST_UID:?HOST_UID is required}
+      HOST_GID: ${HOST_GID:?HOST_GID is required}
+      HOME: /tmp/agent-home
+    working_dir: /workspace
+    volumes:
+      - type: bind
+        source: ${AGENT_WORKTREE:?AGENT_WORKTREE is required}
+        target: /workspace
+      - frontend_deps:/workspace/frontend/node_modules
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        set -eu
+        # Ensure the image-installed Python venv is usable by the non-root
+        # tools service. Each container has its own writable layer, so this
+        # does not affect other concurrent worktrees using the same image.
+        chown -R "$$HOST_UID:$$HOST_GID" /opt/learnloop/.venv
+        marker=/workspace/frontend/node_modules/.learnloop-deps-fingerprint
+        if [ -f "$$marker" ] && [ "$$(cat "$$marker")" = "$$FINGERPRINT" ]; then
+          exit 0
+        fi
+        rm -rf /workspace/frontend/node_modules/*
+        cp -a /opt/learnloop/frontend/node_modules/. /workspace/frontend/node_modules/
+        chown -R "$$HOST_UID:$$HOST_GID" /workspace/frontend/node_modules
+        printf '%s' "$$FINGERPRINT" > "$$marker"
+        chown "$$HOST_UID:$$HOST_GID" "$$marker"
+    restart: "no"
+
+  # Main tools service. The worktree is bind-mounted read-write and the frontend
+  # dependency volume is layered on top of it.
+  tools:
+    image: ${AGENT_IMAGE:?AGENT_IMAGE is required}
+    user: "${HOST_UID:?HOST_UID is required}:${HOST_GID:?HOST_GID is required}"
+    environment:
+      HOME: /tmp/agent-home
+      VIRTUAL_ENV: /opt/learnloop/.venv
+      UV_FROZEN: 1
+      # Docker-internal service hostnames for the agent stack.
+      APP_ENV: development
+      MONGODB_URI: mongodb://mongodb:27017/learnloop?replicaSet=rs0&directConnection=true
+      MONGODB_DATABASE: learnloop
+      S3_ENDPOINT: http://rustfs:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-learnloop-local}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-learnloop-secret}
+      S3_BUCKET: ${S3_BUCKET:-learnloop-media}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_FORCE_PATH_STYLE: "true"
+
+    working_dir: /workspace
+    volumes:
+      - type: bind
+        source: ${AGENT_WORKTREE:?AGENT_WORKTREE is required}
+        target: /workspace
+      - frontend_deps:/workspace/frontend/node_modules
+    depends_on:
+      init-deps:
+        condition: service_completed_successfully
+
+volumes:
+  frontend_deps:

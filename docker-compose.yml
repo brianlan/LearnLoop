@@ -3,7 +3,6 @@ name: learnloop
 services:
   mongodb:
     image: mongo:4.4
-    container_name: learnloop-mongodb
     restart: unless-stopped
     ports:
       - "27017:27017"
@@ -25,7 +24,6 @@ services:
 
   rustfs-volume-init:
     image: alpine:3.20
-    container_name: learnloop-rustfs-volume-init
     restart: "no"
     command:
       [
@@ -41,7 +39,6 @@ services:
 
   rustfs:
     image: rustfs/rustfs:1.0.0-beta.4
-    container_name: learnloop-rustfs
     restart: unless-stopped
     depends_on:
       rustfs-volume-init:
@@ -78,7 +75,6 @@ services:
 
   rustfs-bootstrap:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    container_name: learnloop-rustfs-bootstrap
     profiles: ["bootstrap"]
     restart: "no"
     depends_on:
@@ -101,7 +97,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: learnloop-app
     restart: unless-stopped
     depends_on:
       mongodb:
@@ -109,7 +104,8 @@ services:
       rustfs:
         condition: service_healthy
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment:
       # Docker-specific overrides for service hostnames (not in .env)
       MONGODB_URI: mongodb://mongodb:27017/learnloop?replicaSet=rs0&directConnection=true
@@ -192,7 +188,6 @@ services:
       args:
         ALPINE_MIRROR: ${ALPINE_MIRROR:-http://dl-cdn.alpinelinux.org}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
-    container_name: learnloop-frontend
     restart: unless-stopped
     depends_on:
       app:
