@@ -162,6 +162,45 @@ Frontend browser tests:
 cd frontend && npm run test:ui
 ```
 
+### Agent test environment
+
+`scripts/agent-env.sh` gives agents and reviewers a reproducible, worktree-isolated test environment with pre-seeded dependencies, isolated MongoDB/RustFS, and no host port conflicts. It can be run from any clean Git worktree.
+
+Prerequisites:
+
+- Docker with Docker Compose v2+.
+- The worktree is a clean Git checkout (the script bind-mounts the worktree root into the container).
+
+Commands:
+
+```bash
+# Build the lockfile-keyed tools image (only needed once per dependency fingerprint)
+./scripts/agent-env.sh build
+
+# Open an interactive shell with isolated MongoDB and RustFS running
+./scripts/agent-env.sh shell
+
+# Run tests
+./scripts/agent-env.sh test backend     # backend pytest suite
+./scripts/agent-env.sh test frontend    # frontend unit/component tests
+./scripts/agent-env.sh test e2e         # frontend Playwright e2e with isolated services
+./scripts/agent-env.sh test all         # backend, frontend, and e2e in sequence
+
+# Tear down this worktree's agent stack
+./scripts/agent-env.sh down
+
+# Tear down and remove all named volumes for this worktree
+./scripts/agent-env.sh down --volumes
+```
+
+The agent environment:
+
+- Uses a reusable image tagged by a fingerprint derived from `Dockerfile.agent`, `backend/pyproject.toml`, `backend/uv.lock`, `frontend/package.json`, and `frontend/package-lock.json`.
+- Stores the Python venv and a pristine copy of `frontend/node_modules` under `/opt/learnloop` so a `/workspace` bind mount cannot hide them.
+- Runs each worktree in a separate Compose project so multiple worktrees can run concurrently.
+- Publishes no host ports for infrastructure, avoiding collisions with the normal development stack or other worktrees.
+- Runs the tools service as the host UID/GID so files created in bind-mounted paths have the same ownership as the host checkout.
+
 Docker Compose smoke validation tests (requires running Compose stack):
 
 ```bash
