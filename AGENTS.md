@@ -56,7 +56,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5. Development Environment
 
-For local development or the legacy all-in-one stack, run `docker compose up` if the containers (`learnloop-app`, `learnloop-frontend`, `learnloop-mongodb`, `learnloop-rustfs`) are not started.
+For local development or the legacy all-in-one stack, run `docker compose up` if the containers are not started.
 
 For a reproducible, isolated test environment from any clean Git worktree, use the agent environment:
 
