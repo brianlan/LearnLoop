@@ -65,7 +65,7 @@ volume_in_use() {
 
 # List agent volumes (matching learnloop-agent-) not in use by any container.
 list_unused_agent_volumes() {
-  local vol in_use
+  local vol
   while IFS= read -r vol; do
     [[ -z "$vol" ]] && continue
     if volume_in_use "$vol"; then
