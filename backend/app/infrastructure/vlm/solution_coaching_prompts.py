@@ -42,7 +42,7 @@ def build_solution_user_prompt(*, problem_text: str, correct_answer: str, graph_
         "answerKey": correct_answer,
         "graphDsl": graph_section,
     }
-    return "Solve the problem using the following task data:\n" f"{json.dumps(data, ensure_ascii=False)}"
+    return "Solve the problem and return valid JSON using the following task data:\n" f"{json.dumps(data, ensure_ascii=False)}"
 
 
 MATH_COACHING_SYSTEM_PROMPT = """You are a Chinese primary-school / middle-school math tutor.
