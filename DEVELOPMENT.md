@@ -201,21 +201,6 @@ The agent environment:
 - Publishes no host ports for infrastructure, avoiding collisions with the normal development stack or other worktrees.
 - Runs the tools service as the host UID/GID so files created in bind-mounted paths have the same ownership as the host checkout.
 
-### Agent environment disk cleanup
-
-Over time, agent sessions accumulate Docker volumes, old tools images, dangling layers, and build cache. `scripts/agent-env-cleanup.sh` reclaims this space:
-
-```bash
-# Preview what would be removed (no changes made)
-./scripts/agent-env-cleanup.sh --dry-run
-
-# Remove unused agent volumes, dangling images, old tools images (keep 2), build cache, stale worktrees
-./scripts/agent-env-cleanup.sh
-
-# Keep more image history
-./scripts/agent-env-cleanup.sh --keep-images 5
-```
-
 Docker Compose smoke validation tests (requires running Compose stack):
 
 ```bash
