@@ -701,6 +701,8 @@ async def test_solution_vlm_client_responses_mode_happy_path() -> None:
         assert kwargs["input"][0]["role"] == "user"
         assert kwargs["input"][0]["content"][0]["type"] == "input_text"
         assert kwargs["text"] == {"format": {"type": "json_object"}}
+        input_text = kwargs["input"][0]["content"][0]["text"]
+        assert "json" in input_text.lower()
         
         return _mock_responses_response(
             json.dumps({
