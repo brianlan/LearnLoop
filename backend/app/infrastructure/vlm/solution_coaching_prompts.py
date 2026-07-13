@@ -170,4 +170,4 @@ def build_coaching_user_prompt(
         "conversationHistory": conversation_history,
         "studentNewMessage": new_message,
     }
-    return "Tutor the student using the following task data:\n" f"{json.dumps(data, ensure_ascii=False)}"
+    return "Tutor the student and return valid JSON using the following task data:\n" f"{json.dumps(data, ensure_ascii=False)}"
