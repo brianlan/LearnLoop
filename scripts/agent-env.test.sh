@@ -254,6 +254,71 @@ test_cleanup_scoped_to_worktree() {
   trap - RETURN
 }
 
+test_cleanup_help_exits_zero() {
+  printf '%s\n' "test_cleanup_help_exits_zero"
+  local rc=0
+  bash "$script_dir/agent-env-cleanup.sh" --help && rc=$? || rc=$?
+  if [ "$rc" -eq 0 ]; then pass "cleanup --help exits zero"; else fail "cleanup --help exits zero (rc=$rc)"; fi
+}
+
+test_cleanup_invalid_args_nonzero() {
+  printf '%s\n' "test_cleanup_invalid_args_nonzero"
+  local rc=0
+  bash "$script_dir/agent-env-cleanup.sh" --bad-option && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "cleanup with bad option exits non-zero"; else fail "cleanup with bad option exits non-zero (rc=$rc)"; fi
+
+  rc=0
+  bash "$script_dir/agent-env-cleanup.sh" --keep-images && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "cleanup --keep-images without value exits non-zero"; else fail "cleanup --keep-images without value exits non-zero (rc=$rc)"; fi
+
+  rc=0
+  bash "$script_dir/agent-env-cleanup.sh" --keep-images abc && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "cleanup --keep-images with non-numeric exits non-zero"; else fail "cleanup --keep-images with non-numeric exits non-zero (rc=$rc)"; fi
+}
+
+test_cleanup_dry_run_no_changes() {
+  printf '%s\n' "test_cleanup_dry_run_no_changes"
+  local output
+  output="$(bash "$script_dir/agent-env-cleanup.sh" --dry-run 2>&1)" || true
+  if grep -q '\[dry-run\]' <<< "$output"; then
+    pass "dry-run output contains [dry-run] markers"
+  else
+    fail "dry-run output contains [dry-run] markers"
+  fi
+  if grep -q 'would remove\|would run' <<< "$output"; then
+    pass "dry-run output shows intended actions"
+  else
+    fail "dry-run output shows intended actions"
+  fi
+}
+
+test_cleanup_dry_run_help_text() {
+  printf '%s\n' "test_cleanup_dry_run_help_text"
+  local output
+  output="$(bash "$script_dir/agent-env-cleanup.sh" --help 2>&1)" || true
+  if grep -q 'dry-run' <<< "$output"; then
+    pass "help text mentions --dry-run"
+  else
+    fail "help text mentions --dry-run"
+  fi
+  if grep -q 'keep-images' <<< "$output"; then
+    pass "help text mentions --keep-images"
+  else
+    fail "help text mentions --keep-images"
+  fi
+}
+
+test_cleanup_keep_images_logic() {
+  printf '%s\n' "test_cleanup_keep_images_logic"
+  local output
+  output="$(bash "$script_dir/agent-env-cleanup.sh" --dry-run --keep-images 5 2>&1)" || true
+  if grep -qi 'keep.*5' <<< "$output"; then
+    pass "dry-run shows keep-images=5"
+  else
+    fail "dry-run shows keep-images=5"
+  fi
+}
+
 main() {
   printf 'Running agent-env.sh regression tests in %s\n' "$repo_root"
   reset_repo_root
@@ -264,6 +329,11 @@ main() {
   test_config_no_fixed_names_no_host_ports
   test_image_build_and_exit_code
   test_cleanup_scoped_to_worktree
+  test_cleanup_help_exits_zero
+  test_cleanup_invalid_args_nonzero
+  test_cleanup_dry_run_no_changes
+  test_cleanup_dry_run_help_text
+  test_cleanup_keep_images_logic
 
   printf '\nResults: %d passed, %d failed\n' "$passed" "$failed"
   if [ "$failed" -gt 0 ]; then

@@ -201,6 +201,28 @@ The agent environment:
 - Publishes no host ports for infrastructure, avoiding collisions with the normal development stack or other worktrees.
 - Runs the tools service as the host UID/GID so files created in bind-mounted paths have the same ownership as the host checkout.
 
+#### Disk cleanup
+
+Over time, agent sessions accumulate Docker volumes, old `learnloop-agent-tools:*` images, dangling layers, and build cache. Use `scripts/agent-env-cleanup.sh` to reclaim disk space:
+
+```bash
+# Preview what would be cleaned up without removing anything
+./scripts/agent-env-cleanup.sh --dry-run
+
+# Remove unused agent volumes, old tools images (keeping 2 most recent),
+# dangling images, build cache, and stale git worktrees
+./scripts/agent-env-cleanup.sh
+
+# Keep a different number of recent tools images
+./scripts/agent-env-cleanup.sh --keep-images 3
+```
+
+The script:
+- Removes volumes matching `learnloop-agent-*` that are not in use by any container.
+- Keeps the N most recent `learnloop-agent-tools:*` images (default 2) and removes the rest.
+- Prunes dangling images and build cache via native Docker commands.
+- Prunes stale git worktrees via `git worktree prune`.
+
 Docker Compose smoke validation tests (requires running Compose stack):
 
 ```bash
