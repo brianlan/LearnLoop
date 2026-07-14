@@ -145,6 +145,7 @@ def serialize_exam_item(
     item: Mapping[str, Any],
     *,
     include_correct_answer: bool,
+    redact_grading_details: bool = False,
 ) -> ExamItemPayload:
     snapshot = dict(item.get("problemSnapshot", {}))
     source_image = snapshot.get("sourceImage")
@@ -177,12 +178,12 @@ def serialize_exam_item(
         ),
         grading=ExamGradingPayload(
             status=GradingStatus(grading.get("status", GradingStatus.UNGRADED.value)),
-            method=grading.get("method"),
-            isCorrect=grading.get("isCorrect"),
-            score=grading.get("score"),
-            feedback=grading.get("feedback"),
-            providerModel=grading.get("providerModel"),
-            rawProviderResponse=grading.get("rawProviderResponse"),
+            method=grading.get("method") if not redact_grading_details else None,
+            isCorrect=grading.get("isCorrect") if not redact_grading_details else None,
+            score=grading.get("score") if not redact_grading_details else None,
+            feedback=grading.get("feedback") if not redact_grading_details else None,
+            providerModel=grading.get("providerModel") if not redact_grading_details else None,
+            rawProviderResponse=grading.get("rawProviderResponse") if not redact_grading_details else None,
             gradedAt=grading.get("gradedAt"),
             retryCount=int(grading.get("retryCount", 0)),
             selfReportedCorrect=grading.get("selfReportedCorrect"),
@@ -191,7 +192,9 @@ def serialize_exam_item(
 
 
 def serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
-    include_correct_answer = str(exam.get("state")) == ExamState.SUBMITTED.value
+    state_value = str(exam.get("state"))
+    include_correct_answer = state_value == ExamState.SUBMITTED.value
+    redact_grading_details = state_value == ExamState.GRADING.value
     config_snapshot = dict(exam.get("configSnapshot", {}))
     selection_policy = dict(config_snapshot.get("selectionPolicy", {}))
     # Backward compatibility: historical snapshots may use failureWeight instead of failureRateWeight
@@ -213,7 +216,11 @@ def serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
             generatedAt=config_snapshot["generatedAt"],
         ),
         items=[
-            serialize_exam_item(item, include_correct_answer=include_correct_answer)
+            serialize_exam_item(
+                item,
+                include_correct_answer=include_correct_answer,
+                redact_grading_details=redact_grading_details,
+            )
             for item in exam.get("items", [])
         ],
         summary=serialize_exam_summary(dict(exam.get("summary", {}))),

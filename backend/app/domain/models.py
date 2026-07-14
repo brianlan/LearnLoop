@@ -19,6 +19,7 @@ class ProblemSubject(str, Enum):
 
 class ExamState(str, Enum):
     IN_PROGRESS = "in-progress"
+    GRADING = "grading"
     SUBMITTED = "submitted"
     DISCARDED = "discarded"
 

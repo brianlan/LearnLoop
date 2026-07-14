@@ -8,11 +8,31 @@ from bson import ObjectId
 from pydantic import ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 
-from app.domain.models import ExamItem, GradingStatus, Problem
+from app.domain.models import ExamItem, GradingStatus, Problem, ProblemType
 from app.domain.scoring import compute_summary
 from app.infrastructure.storage.mongo import Document
 from app.presentation.errors import ApiError
 from app.presentation.helpers import parse_object_id
+
+# Terminal item grading statuses: once set, the item should not be re-graded.
+TERMINAL_GRADING_STATUSES = frozenset({
+    GradingStatus.CORRECT.value,
+    GradingStatus.INCORRECT.value,
+    GradingStatus.PENDING_REVIEW.value,
+})
+
+
+def requires_vlm_grading(item: Mapping[str, Any]) -> bool:
+    """A short-answer item with a stored non-null answer requires VLM grading."""
+    snapshot = dict(item.get("problemSnapshot", {}))
+    if snapshot.get("problemType") != ProblemType.SHORT_ANSWER.value:
+        return False
+    answer = dict(item.get("answer", {}))
+    return answer.get("raw") is not None
+
+
+def exam_requires_vlm_grading(items: list[Mapping[str, Any]]) -> bool:
+    return any(requires_vlm_grading(item) for item in items)
 
 def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
     try:

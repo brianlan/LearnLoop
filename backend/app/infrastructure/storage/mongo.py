@@ -17,6 +17,7 @@ SOLUTION_GENERATION_TASKS_COLLECTION = "solution_generation_tasks"
 CANONICAL_SOLUTIONS_COLLECTION = "canonical_solutions"
 COACHING_CONVERSATIONS_COLLECTION = "coaching_conversations"
 FOLDERS_COLLECTION = "folders"
+EXAM_GRADING_TASKS_COLLECTION = "exam_grading_tasks"
 
 
 def _safe_get_collection(database: Any, name: str) -> Any | None:
@@ -107,9 +108,18 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
         COACHING_CONVERSATIONS_COLLECTION,
         FOLDERS_COLLECTION,
         INGESTION_BATCHES_COLLECTION,
+        EXAM_GRADING_TASKS_COLLECTION,
     ):
         if collection_name not in existing_collections and hasattr(database, "create_collection"):
             await database.create_collection(collection_name)
+
+    create_exam_grading_task_index = getattr(database[EXAM_GRADING_TASKS_COLLECTION], "create_index", None)
+    if callable(create_exam_grading_task_index):
+        await create_exam_grading_task_index(
+            [("examId", ASCENDING)],
+            unique=True,
+            name="exam_grading_task_exam_unique",
+        )
 
     create_index = getattr(database[TAGS_COLLECTION], "create_index", None)
     if callable(create_index):

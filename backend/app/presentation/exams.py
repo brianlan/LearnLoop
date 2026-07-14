@@ -14,10 +14,12 @@ from app.domain.state import transition_exam_state
 from app.presentation.exam_grading import build_tracking_update, grade_item
 from app.presentation.exam_helpers import (
     build_exam_summary,
+    exam_requires_vlm_grading,
     find_item,
     get_owned_exam,
     make_exam_item,
     problem_document_to_model,
+    requires_vlm_grading,
 )
 from app.presentation.deps import (
     AdapterDependency,
@@ -54,7 +56,10 @@ async def create_exam(
     adapter: AdapterDependency,
     settings: SettingsDependency,
 ) -> CreateExamResponse:
-    query = {"userId": current_user["_id"], "state": ExamState.IN_PROGRESS.value}
+    query = {
+        "userId": current_user["_id"],
+        "state": {"$in": [ExamState.IN_PROGRESS.value, ExamState.GRADING.value]},
+    }
     selection_config = ProblemSelectionConfig(
         cooldown_days=settings.problem_selection_cooldown_days,
         last_wrong_weight=settings.problem_selection_last_wrong_weight,
@@ -144,12 +149,15 @@ async def get_active_exam(
     current_user: CurrentUserDependency,
 ) -> ExamResponse:
     exam = await database["exams"].find_one(
-        {"userId": current_user["_id"], "state": ExamState.IN_PROGRESS.value}
+        {
+            "userId": current_user["_id"],
+            "state": {"$in": [ExamState.IN_PROGRESS.value, ExamState.GRADING.value]},
+        }
     )
     if exam is None:
         raise ApiError(404, "NOT_FOUND", "Active exam not found")
 
-    if exam.get("startedAt") is None:
+    if exam.get("state") == ExamState.IN_PROGRESS.value and exam.get("startedAt") is None:
         now = datetime.now(UTC)
         await database["exams"].update_one(
             {"_id": exam["_id"], "startedAt": None},
@@ -185,14 +193,18 @@ async def save_exam_answer(
 
     item_index, item = find_item(exam, item_id)
     now = datetime.now(UTC)
-    item["answer"] = {
-        "raw": payload.answer,
-        "savedAt": now,
-    }
+    new_answer = {"raw": payload.answer, "savedAt": now}
+    # Conditional write: only persists if the exam is still in-progress,
+    # so a submission that raced with this request cannot be overwritten.
+    updated_item = deepcopy(item)
+    updated_item["answer"] = new_answer
     items = deepcopy(list(exam.get("items", [])))
-    items[item_index] = item
-    await database["exams"].update_one(
-        {"_id": exam["_id"]},
+    items[item_index] = updated_item
+    result = await database["exams"].update_one(
+        {
+            "_id": exam["_id"],
+            "state": ExamState.IN_PROGRESS.value,
+        },
         {
             "$set": {
                 "items": items,
@@ -201,7 +213,14 @@ async def save_exam_answer(
             }
         },
     )
-    return SaveAnswerResponse(item=serialize_exam_item(item, include_correct_answer=False))
+    if result.modified_count == 0:
+        # The exam transitioned out of in-progress between read and write.
+        current = await database["exams"].find_one({"_id": exam["_id"]})
+        if current is not None and current.get("state") != ExamState.IN_PROGRESS.value:
+            raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
+        # State matched but item disappeared or another issue; treat as not found.
+        raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
+    return SaveAnswerResponse(item=serialize_exam_item(updated_item, include_correct_answer=False))
 
 
 @router.post("/{exam_id}/submit", response_model=ExamResponse)
@@ -214,12 +233,38 @@ async def submit_exam(
     storage: StorageDependency,
 ) -> ExamResponse:
     exam = await get_owned_exam(database, exam_id, current_user["_id"])
-    if exam.get("state") != ExamState.IN_PROGRESS.value:
+    state = exam.get("state")
+    if state == ExamState.GRADING.value:
+        # Idempotent retry: return the already-grading exam without creating a new task.
+        return ExamResponse(exam=serialize_exam(exam))
+    if state == ExamState.SUBMITTED.value:
+        # Idempotent retry: return the already-submitted exam.
+        return ExamResponse(exam=serialize_exam(exam))
+    if state != ExamState.IN_PROGRESS.value:
         raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
 
+    items = list(exam.get("items", []))
+    if not exam_requires_vlm_grading(items):
+        return await _submit_exam_synchronous(
+            exam, items, database, current_user, adapter, vlm_client, storage
+        )
+    return await _submit_exam_asynchronous(
+        exam, database, current_user, adapter
+    )
+
+
+async def _submit_exam_synchronous(
+    exam: dict[str, Any],
+    items: list[dict[str, Any]],
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    adapter: AdapterDependency,
+    vlm_client: GradingVLMDependency,
+    storage: StorageDependency,
+) -> ExamResponse:
     grading_time = datetime.now(UTC)
     graded_items: list[dict[str, Any]] = []
-    for item in exam.get("items", []):
+    for item in items:
         graded_items.append(
             await grade_item(item, vlm_client=vlm_client, storage=storage, now=grading_time)
         )
@@ -319,6 +364,77 @@ async def submit_exam(
     return ExamResponse(exam=serialize_exam(submitted_exam))
 
 
+async def _submit_exam_asynchronous(
+    exam: dict[str, Any],
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    adapter: AdapterDependency,
+) -> ExamResponse:
+    """Atomically freeze the exam to `grading` and insert its durable grading task."""
+
+    async def _transaction(session: Any) -> dict[str, Any]:
+        current_exam = await database["exams"].find_one(
+            {"_id": exam["_id"], "userId": current_user["_id"]},
+            session=session,
+        )
+        if current_exam is None:
+            raise ApiError(404, "NOT_FOUND", "Exam not found")
+        current_state = current_exam.get("state")
+        if current_state == ExamState.GRADING.value:
+            return current_exam
+        if current_state == ExamState.SUBMITTED.value:
+            return current_exam
+        if current_state != ExamState.IN_PROGRESS.value:
+            raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
+
+        grading_at = datetime.now(UTC)
+        next_state = transition_exam_state(
+            ExamState(current_state), ExamState.GRADING
+        )
+        await database["exams"].update_one(
+            {"_id": current_exam["_id"], "state": ExamState.IN_PROGRESS.value},
+            {
+                "$set": {
+                    "state": next_state.value,
+                    "updatedAt": grading_at,
+                }
+            },
+            session=session,
+        )
+        from app.infrastructure.storage.mongo import EXAM_GRADING_TASKS_COLLECTION
+
+        await database[EXAM_GRADING_TASKS_COLLECTION].insert_one(
+            {
+                "_id": ObjectId(),
+                "examId": current_exam["_id"],
+                "userId": current_user["_id"],
+                "status": "pending",
+                "claimToken": None,
+                "leaseUntil": None,
+                "error": None,
+                "createdAt": grading_at,
+                "updatedAt": grading_at,
+            },
+            session=session,
+        )
+
+        updated_exam = deepcopy(current_exam)
+        updated_exam.update(
+            {"state": next_state.value, "updatedAt": grading_at}
+        )
+        return updated_exam
+
+    try:
+        async with adapter.start_session() as session:
+            grading_exam = await session.with_transaction(_transaction)
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(500, "SUBMISSION_FAILED", "Failed to submit exam") from exc
+
+    return ExamResponse(exam=serialize_exam(grading_exam))
+
+
 @router.post("/{exam_id}/discard", response_model=ExamResponse)
 async def discard_exam(
     exam_id: str,
@@ -326,7 +442,8 @@ async def discard_exam(
     current_user: CurrentUserDependency,
 ) -> ExamResponse:
     exam = await get_owned_exam(database, exam_id, current_user["_id"])
-    if exam.get("state") != ExamState.IN_PROGRESS.value:
+    state = exam.get("state")
+    if state not in (ExamState.IN_PROGRESS.value, ExamState.GRADING.value):
         raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not in progress")
 
     discarded_at = datetime.now(UTC)
@@ -439,7 +556,7 @@ async def list_exam_history(
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     include_discarded: bool = Query(default=False, alias="includeDiscarded"),
 ) -> ExamHistoryResponse:
-    states = [ExamState.SUBMITTED.value]
+    states = [ExamState.SUBMITTED.value, ExamState.GRADING.value]
     if include_discarded:
         states.append(ExamState.DISCARDED.value)
     query = {

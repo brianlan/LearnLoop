@@ -15,6 +15,7 @@ from app.infrastructure.storage.mongo import (
     AsyncMongoClientFactory,
     CANONICAL_SOLUTIONS_COLLECTION,
     COACHING_CONVERSATIONS_COLLECTION,
+    EXAM_GRADING_TASKS_COLLECTION,
     FOLDERS_COLLECTION,
     MongoClientAdapter,
     SOLUTION_GENERATION_TASKS_COLLECTION,
@@ -146,6 +147,7 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
         COACHING_CONVERSATIONS_COLLECTION,
         FOLDERS_COLLECTION,
         INGESTION_BATCHES_COLLECTION,
+        EXAM_GRADING_TASKS_COLLECTION,
     ]
     assert database[TAGS_COLLECTION].index_calls == [
         {
@@ -172,4 +174,10 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
     assert database[INGESTION_BATCHES_COLLECTION].index_calls == [
         {"keys": list(index["keys"]), "kwargs": {"name": index["name"]}}
         for index in BATCH_INDEXES
+    ]
+    assert database[EXAM_GRADING_TASKS_COLLECTION].index_calls == [
+        {
+            "keys": [("examId", 1)],
+            "kwargs": {"unique": True, "name": "exam_grading_task_exam_unique"},
+        }
     ]
