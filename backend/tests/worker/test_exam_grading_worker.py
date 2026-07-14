@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,6 +26,17 @@ from app.infrastructure.worker.exam_grading_worker import (
     run_exam_grading_worker,
 )
 from tests.test_utils.db_fakes import FakeDatabase
+
+
+class FakeSession:
+    async def with_transaction(self, callback: Any) -> Any:
+        return await callback(self)
+
+
+class FakeMongoAdapter:
+    @asynccontextmanager
+    async def start_session(self) -> AsyncIterator[FakeSession]:
+        yield FakeSession()
 
 
 class FakeGradingResult:
@@ -175,6 +188,11 @@ async def settings() -> Settings:
     return _make_settings()
 
 
+@pytest_asyncio.fixture
+async def adapter() -> FakeMongoAdapter:
+    return FakeMongoAdapter()
+
+
 @pytest.mark.asyncio
 async def test_claim_task_picks_pending(db: FakeDatabase) -> None:
     now = datetime.now(UTC)
@@ -233,7 +251,7 @@ async def test_release_task_makes_claimable_again(db: FakeDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_worker_grades_mixed_exam_and_finalizes(
-    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings,
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
 ) -> None:
     user_id = ObjectId()
     objective = _make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
@@ -252,7 +270,7 @@ async def test_worker_grades_mixed_exam_and_finalizes(
     task = _make_task(exam["_id"], user_id)
     db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
 
-    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=adapter)
 
     stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
     assert stored_exam["state"] == ExamState.SUBMITTED.value
@@ -271,7 +289,7 @@ async def test_worker_grades_mixed_exam_and_finalizes(
 
 @pytest.mark.asyncio
 async def test_worker_per_item_failure_becomes_pending_review_and_continues(
-    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings,
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
 ) -> None:
     user_id = ObjectId()
     short_a = _make_problem(user_id, text="Explain A", problem_type="short-answer", correct_answer="A")
@@ -291,7 +309,7 @@ async def test_worker_per_item_failure_becomes_pending_review_and_continues(
     task = _make_task(exam["_id"], user_id)
     db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
 
-    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=adapter)
 
     stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
     assert stored_exam["state"] == ExamState.SUBMITTED.value
@@ -308,7 +326,7 @@ async def test_worker_per_item_failure_becomes_pending_review_and_continues(
 
 @pytest.mark.asyncio
 async def test_worker_resumes_skipping_terminal_items(
-    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings,
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
 ) -> None:
     """After a restart, the worker skips already-terminal items and finalizes."""
     user_id = ObjectId()
@@ -339,7 +357,7 @@ async def test_worker_resumes_skipping_terminal_items(
     task = _make_task(exam["_id"], user_id)
     db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
 
-    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=adapter)
 
     stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
     assert stored_exam["state"] == ExamState.SUBMITTED.value
@@ -351,7 +369,7 @@ async def test_worker_resumes_skipping_terminal_items(
 
 @pytest.mark.asyncio
 async def test_worker_stale_worker_cannot_persist_after_ownership_change(
-    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings,
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
 ) -> None:
     user_id = ObjectId()
     short = _make_problem(user_id, text="Explain X", problem_type="short-answer", correct_answer="X")
@@ -371,7 +389,7 @@ async def test_worker_stale_worker_cannot_persist_after_ownership_change(
     )
 
     # The first worker (token "tok1") should not persist results.
-    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=adapter)
 
     stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
     assert stored_exam["state"] == ExamState.GRADING.value  # Not finalized by stale worker.
@@ -380,7 +398,7 @@ async def test_worker_stale_worker_cannot_persist_after_ownership_change(
 
 @pytest.mark.asyncio
 async def test_worker_does_not_double_count_tracking_on_rerun(
-    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings,
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
 ) -> None:
     """If the worker resumes after finalization already happened, tracking is not double-counted."""
     user_id = ObjectId()
@@ -406,7 +424,7 @@ async def test_worker_does_not_double_count_tracking_on_rerun(
     task = _make_task(exam["_id"], user_id, claim_token="tok")
     db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
 
-    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=adapter)
 
     # Tracking unchanged.
     doc = await db["problems"].find_one({"_id": objective["_id"]})
@@ -418,7 +436,7 @@ async def test_worker_does_not_double_count_tracking_on_rerun(
 
 @pytest.mark.asyncio
 async def test_worker_persists_items_incrementally(
-    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings,
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
 ) -> None:
     """Each completed item is persisted atomically with its recomputed partial summary."""
     user_id = ObjectId()
@@ -451,7 +469,7 @@ async def test_worker_persists_items_incrementally(
         ]
         task = _make_task(exam["_id"], user_id)
         db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
-        await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+        await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=adapter)
     finally:
         worker_mod._persist_item_result = original_persist  # type: ignore[assignment]
 
@@ -491,7 +509,7 @@ async def test_lease_refresh_extends_lease_during_long_task(
 
     vlm.grade_short_answer = _slow_grade  # type: ignore[assignment]
 
-    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION])
+    await process_exam_grading_task(task, db, vlm, storage, settings, db[EXAM_GRADING_TASKS_COLLECTION], adapter=FakeMongoAdapter())
 
     # The lease should have been refreshed past the original expiry.
     stored_task = await db[EXAM_GRADING_TASKS_COLLECTION].find_one({"_id": task["_id"]})
@@ -540,7 +558,7 @@ async def test_run_worker_loop_processes_task_and_exits(
         stop = asyncio.Event()
         # Run worker briefly; it should process the one task then idle.
         async def _run_briefly():
-            task_obj = asyncio.create_task(run_exam_grading_worker(db, storage, settings, stop))
+            task_obj = asyncio.create_task(run_exam_grading_worker(db, storage, settings, stop, adapter=FakeMongoAdapter()))
             await asyncio.sleep(0.5)
             stop.set()
             await asyncio.wait_for(task_obj, timeout=5.0)
@@ -551,3 +569,51 @@ async def test_run_worker_loop_processes_task_and_exits(
 
     stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
     assert stored_exam["state"] == ExamState.SUBMITTED.value
+
+
+@pytest.mark.asyncio
+async def test_finalize_exam_transactional_applies_all_or_nothing(
+    db: FakeDatabase, storage: FakeStorage, vlm: FakeVLMClient, settings: Settings, adapter: FakeMongoAdapter,
+) -> None:
+    """Finalization commits the exam transition, tracking updates, and task
+    completion in one transaction. A rerun after a simulated post-commit crash
+    (exam already submitted) does not double-apply tracking and merely marks
+    the task completed."""
+    user_id = ObjectId()
+    objective = _make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    db["problems"].seed(objective)
+    obj_item = _make_ungraded_item(objective, order=1, answer="4")
+    obj_item["grading"]["status"] = GradingStatus.CORRECT.value
+    obj_item["grading"]["isCorrect"] = True
+    obj_item["grading"]["method"] = "normalized-match"
+    obj_item["grading"]["score"] = 1.0
+
+    exam = _make_grading_exam(user_id, [obj_item])
+    db["exams"].seed(exam)
+
+    task = _make_task(exam["_id"], user_id, claim_token="tok")
+    db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
+
+    finalized = await _finalize_exam(
+        db, exam["_id"], user_id, task["_id"], "tok", db[EXAM_GRADING_TASKS_COLLECTION],
+        now=datetime.now(UTC), adapter=adapter,
+    )
+    assert finalized is True
+
+    stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
+    assert stored_exam["state"] == ExamState.SUBMITTED.value
+    doc = await db["problems"].find_one({"_id": objective["_id"]})
+    assert doc["tracking"]["exposureCount"] == 1
+    assert doc["tracking"]["correctCount"] == 1
+    stored_task = await db[EXAM_GRADING_TASKS_COLLECTION].find_one({"_id": task["_id"]})
+    assert stored_task["status"] == TASK_COMPLETED
+
+    # Rerun finalization: exam is already submitted, so tracking must not double-count.
+    finalized_again = await _finalize_exam(
+        db, exam["_id"], user_id, task["_id"], "tok", db[EXAM_GRADING_TASKS_COLLECTION],
+        now=datetime.now(UTC), adapter=adapter,
+    )
+    assert finalized_again is True
+    doc2 = await db["problems"].find_one({"_id": objective["_id"]})
+    assert doc2["tracking"]["exposureCount"] == 1
+    assert doc2["tracking"]["correctCount"] == 1

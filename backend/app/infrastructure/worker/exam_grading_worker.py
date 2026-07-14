@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 
 from app.domain.models import ExamState, GradingStatus, ProblemType
 from app.domain.state import transition_exam_state
@@ -51,12 +52,9 @@ async def _claim_task(
             }
         },
         sort=[("createdAt", 1)],
-        return_document=None,
+        return_document=ReturnDocument.AFTER,
     )
     if claimed is not None:
-        claimed["status"] = TASK_PROCESSING
-        claimed["claimToken"] = claim_token
-        claimed["leaseUntil"] = lease_until
         return claimed
 
     # Then reclaim a processing task whose lease has expired.
@@ -73,15 +71,9 @@ async def _claim_task(
             }
         },
         sort=[("createdAt", 1)],
-        return_document=None,
+        return_document=ReturnDocument.AFTER,
     )
-    if claimed is not None:
-        claimed["status"] = TASK_PROCESSING
-        claimed["claimToken"] = claim_token
-        claimed["leaseUntil"] = lease_until
-        return claimed
-
-    return None
+    return claimed
 
 
 async def _verify_ownership(
@@ -193,82 +185,99 @@ async def _finalize_exam(
     tasks_col: Any,
     *,
     now: datetime,
+    adapter: Any | None = None,
 ) -> bool:
-    """Transition the exam to submitted and mark the task completed, exactly once."""
+    """Transition the exam to submitted and mark the task completed, exactly once.
+
+    The exam state transition, problem-tracking updates, and task completion are
+    committed in a single MongoDB transaction when an adapter is available,
+    matching the issue's finalization contract.
+    """
     exams_col = _safe_get_collection(database, "exams")
     problems_col = _safe_get_collection(database, "problems")
     if exams_col is None or problems_col is None:
         return False
 
-    fresh_exam = await exams_col.find_one({"_id": exam_id})
-    if fresh_exam is None:
-        return False
-    if fresh_exam.get("state") == ExamState.SUBMITTED.value:
-        # Already finalized (e.g. after restart). Mark the task completed if we own it.
+    async def _finalize(session: Any) -> bool:
+        fresh_exam = await exams_col.find_one({"_id": exam_id}, session=session)
+        if fresh_exam is None:
+            return False
+        if fresh_exam.get("state") == ExamState.SUBMITTED.value:
+            # Already finalized (e.g. after restart). Mark the task completed if we own it.
+            await tasks_col.update_one(
+                {"_id": task_id, "status": TASK_PROCESSING, "claimToken": claim_token},
+                {"$set": {"status": TASK_COMPLETED, "updatedAt": now}},
+                session=session,
+            )
+            return True
+        if fresh_exam.get("state") != ExamState.GRADING.value:
+            return False
+
+        items = list(fresh_exam.get("items", []))
+        all_terminal = all(
+            str(dict(item.get("grading", {})).get("status", GradingStatus.UNGRADED.value))
+            in TERMINAL_GRADING_STATUSES
+            for item in items
+        )
+        if not all_terminal:
+            return False
+
+        summary = build_exam_summary(items)
+        submitted_at = now
+        next_state = transition_exam_state(ExamState.GRADING, ExamState.SUBMITTED)
+
+        # Transition the exam to submitted.
+        result = await exams_col.update_one(
+            {"_id": exam_id, "state": ExamState.GRADING.value},
+            {
+                "$set": {
+                    "state": next_state.value,
+                    "summary": summary,
+                    "submittedAt": submitted_at,
+                    "updatedAt": submitted_at,
+                }
+            },
+            session=session,
+        )
+        if result.modified_count == 0:
+            # Another worker finalized first.
+            return False
+
+        # Apply problem-tracking updates exactly once for non-pending-review items.
+        for item in items:
+            grading = dict(item.get("grading", {}))
+            if grading.get("status") == GradingStatus.PENDING_REVIEW.value:
+                continue
+            is_correct = bool(grading.get("isCorrect"))
+            problem = await problems_col.find_one(
+                {"_id": item["problemId"], "userId": user_id},
+                session=session,
+            )
+            if problem is None:
+                continue
+            tracking_update = build_tracking_update(
+                dict(problem.get("tracking", {})),
+                now=submitted_at,
+                is_correct=is_correct,
+            )
+            await problems_col.update_one(
+                {"_id": problem["_id"]},
+                {"$set": {"tracking": tracking_update, "updatedAt": submitted_at}},
+                session=session,
+            )
+
+        # Mark the task completed in the same transaction.
         await tasks_col.update_one(
             {"_id": task_id, "status": TASK_PROCESSING, "claimToken": claim_token},
             {"$set": {"status": TASK_COMPLETED, "updatedAt": now}},
+            session=session,
         )
         return True
-    if fresh_exam.get("state") != ExamState.GRADING.value:
-        return False
 
-    items = list(fresh_exam.get("items", []))
-    all_terminal = all(
-        str(dict(item.get("grading", {})).get("status", GradingStatus.UNGRADED.value))
-        in TERMINAL_GRADING_STATUSES
-        for item in items
-    )
-    if not all_terminal:
-        return False
-
-    summary = build_exam_summary(items)
-    submitted_at = now
-    next_state = transition_exam_state(ExamState.GRADING, ExamState.SUBMITTED)
-
-    # Transition the exam to submitted.
-    result = await exams_col.update_one(
-        {"_id": exam_id, "state": ExamState.GRADING.value},
-        {
-            "$set": {
-                "state": next_state.value,
-                "summary": summary,
-                "submittedAt": submitted_at,
-                "updatedAt": submitted_at,
-            }
-        },
-    )
-    if result.modified_count == 0:
-        # Another worker finalized first.
-        return False
-
-    # Apply problem-tracking updates exactly once for non-pending-review items.
-    for item in items:
-        grading = dict(item.get("grading", {}))
-        if grading.get("status") == GradingStatus.PENDING_REVIEW.value:
-            continue
-        is_correct = bool(grading.get("isCorrect"))
-        problem = await problems_col.find_one(
-            {"_id": item["problemId"], "userId": user_id}
-        )
-        if problem is None:
-            continue
-        tracking_update = build_tracking_update(
-            dict(problem.get("tracking", {})),
-            now=submitted_at,
-            is_correct=is_correct,
-        )
-        await problems_col.update_one(
-            {"_id": problem["_id"]},
-            {"$set": {"tracking": tracking_update, "updatedAt": submitted_at}},
-        )
-
-    # Mark the task completed.
-    await tasks_col.update_one(
-        {"_id": task_id, "status": TASK_PROCESSING, "claimToken": claim_token},
-        {"$set": {"status": TASK_COMPLETED, "updatedAt": now}},
-    )
-    return True
+    if adapter is not None:
+        async with adapter.start_session() as session:
+            return await session.with_transaction(_finalize)
+    return await _finalize(None)
 
 
 async def process_exam_grading_task(
@@ -278,6 +287,8 @@ async def process_exam_grading_task(
     storage: S3StorageAdapter,
     settings: Settings,
     tasks_col: Any,
+    *,
+    adapter: Any | None = None,
 ) -> None:
     """Grade all non-terminal items of one exam sequentially, then finalize."""
     task_id = task["_id"]
@@ -344,7 +355,7 @@ async def process_exam_grading_task(
                 # All items terminal: finalize.
                 finalized = await _finalize_exam(
                     database, exam_id, user_id, task_id, claim_token, tasks_col,
-                    now=_utc_now(),
+                    now=_utc_now(), adapter=adapter,
                 )
                 if not finalized:
                     logger.warning("Could not finalize exam %s for task %s", exam_id, task_id)
@@ -403,6 +414,8 @@ async def run_exam_grading_worker(
     storage: S3StorageAdapter,
     settings: Settings,
     stop_event: asyncio.Event | None = None,
+    *,
+    adapter: Any | None = None,
 ) -> None:
     """Poll for exam grading tasks and process them sequentially."""
     if not settings.exam_grading_worker_enabled:
@@ -445,7 +458,8 @@ async def run_exam_grading_worker(
         )
         try:
             await process_exam_grading_task(
-                task, database, vlm_client, storage, settings, tasks_col
+                task, database, vlm_client, storage, settings, tasks_col,
+                adapter=adapter,
             )
         except Exception:
             logger.exception("Exam grading task %s failed; releasing for retry", task.get("_id"))

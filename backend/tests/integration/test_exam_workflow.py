@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from app.infrastructure.vlm.client import VLMError
 from app.presentation.deps import get_app_settings
 
-from .conftest import FakeGradingResult
+from .conftest import FakeGradingResult, FakeMongoAdapter
 
 
 @pytest.mark.asyncio
@@ -181,7 +181,8 @@ async def test_wf_exam_3_submit_and_grade_updates_score_and_tracking(
         {"$set": {"status": "processing", "claimToken": "test-token"}},
     )
     await process_exam_grading_task(
-        task, database, app.state.fake_grading_vlm, storage, app.dependency_overrides[get_app_settings](), tasks_col
+        task, database, app.state.fake_grading_vlm, storage, app.dependency_overrides[get_app_settings](), tasks_col,
+        adapter=FakeMongoAdapter(),
     )
 
     detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
@@ -270,7 +271,8 @@ async def test_wf_exam_4_pending_review_then_self_report_updates_score(
         {"$set": {"status": "processing", "claimToken": "test-token"}},
     )
     await process_exam_grading_task(
-        task, database, app.state.fake_grading_vlm, storage, app.dependency_overrides[get_app_settings](), tasks_col
+        task, database, app.state.fake_grading_vlm, storage, app.dependency_overrides[get_app_settings](), tasks_col,
+        adapter=FakeMongoAdapter(),
     )
 
     detail_response = await client.get(f"/api/v1/exams/{exam['id']}")

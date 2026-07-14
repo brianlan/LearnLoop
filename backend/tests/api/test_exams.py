@@ -457,7 +457,7 @@ async def test_submit_exam_grades_items_updates_tracking_and_history(exams_app: 
         {"_id": task["_id"]},
         {"$set": {"status": "processing", "claimToken": "test-token"}},
     )
-    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col)
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
 
     detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
     submitted_exam = detail_response.json()["exam"]
@@ -524,7 +524,7 @@ async def test_submit_exam_passes_snapshot_subject_to_vlm(exams_app: FastAPI, cl
         {"_id": task["_id"]},
         {"$set": {"status": "processing", "claimToken": "test-token"}},
     )
-    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col)
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
 
     assert vlm.calls == 1
     assert vlm.last_call_kwargs["subject"] == "english"
@@ -615,7 +615,7 @@ async def test_submit_exam_marks_pending_review_after_vlm_retry_and_self_report_
         {"_id": task["_id"]},
         {"$set": {"status": "processing", "claimToken": "test-token"}},
     )
-    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col)
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
 
     detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
     submitted_exam = detail_response.json()["exam"]
@@ -896,7 +896,7 @@ async def _run_grading_worker_once(
         {"_id": task["_id"]},
         {"$set": {"status": "processing", "claimToken": "test-token"}},
     )
-    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col)
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
 
 
 @pytest.mark.asyncio
@@ -1163,3 +1163,44 @@ async def test_grading_state_serialization_redacts_answer_bearing_fields(
     assert submitted_item["problem"]["correctAnswer"]["display"] == "X"
     assert submitted_item["grading"]["feedback"] == "secret feedback"
     assert submitted_item["grading"]["method"] == "vlm"
+
+
+@pytest.mark.asyncio
+async def test_submit_sync_path_rejects_when_answers_modified_during_grading(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    """The synchronous no-VLM path still rejects if answers change between the
+    pre-submit read and the transactional finalization."""
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    objective = make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(objective)
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "4"})
+
+    # Mutate the stored answer between the pre-submit read and the transaction.
+    import app.presentation.exams as exams_mod
+    original_grade = exams_mod.grade_item
+
+    async def _mutate_then_grade(item, *, vlm_client, storage, now):
+        stored = await database["exams"].find_one({"_id": ObjectId(exam["id"])})
+        stored["items"][0]["answer"] = {"raw": "changed", "savedAt": datetime.now(UTC)}
+        await database["exams"].update_one(
+            {"_id": stored["_id"]},
+            {"$set": {"items": stored["items"], "updatedAt": datetime.now(UTC)}},
+        )
+        return await original_grade(item, vlm_client=vlm_client, storage=storage, now=now)
+
+    exams_mod.grade_item = _mutate_then_grade  # type: ignore[assignment]
+    try:
+        submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    finally:
+        exams_mod.grade_item = original_grade  # type: ignore[assignment]
+
+    assert submit_response.status_code == 409
+    assert submit_response.json()["error"]["code"] == "ANSWERS_MODIFIED_DURING_GRADING"
