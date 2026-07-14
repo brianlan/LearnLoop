@@ -34,11 +34,23 @@ def test_preview_invalid_transitions():
 
 def test_exam_valid_transitions():
     assert transition_exam_state(ExamState.IN_PROGRESS, ExamState.SUBMITTED) == ExamState.SUBMITTED
+    assert transition_exam_state(ExamState.IN_PROGRESS, ExamState.GRADING) == ExamState.GRADING
+    assert transition_exam_state(ExamState.IN_PROGRESS, ExamState.DISCARDED) == ExamState.DISCARDED
+    assert transition_exam_state(ExamState.GRADING, ExamState.SUBMITTED) == ExamState.SUBMITTED
+    assert transition_exam_state(ExamState.GRADING, ExamState.DISCARDED) == ExamState.DISCARDED
 
 
 def test_exam_invalid_transitions():
     with pytest.raises(InvalidStateTransitionError):
         transition_exam_state(ExamState.SUBMITTED, ExamState.IN_PROGRESS)
+    with pytest.raises(InvalidStateTransitionError):
+        transition_exam_state(ExamState.SUBMITTED, ExamState.GRADING)
+    with pytest.raises(InvalidStateTransitionError):
+        transition_exam_state(ExamState.GRADING, ExamState.IN_PROGRESS)
+    with pytest.raises(InvalidStateTransitionError):
+        transition_exam_state(ExamState.DISCARDED, ExamState.SUBMITTED)
+    with pytest.raises(InvalidStateTransitionError):
+        transition_exam_state(ExamState.IN_PROGRESS, ExamState.IN_PROGRESS)
 
 
 # ---------------------------------------------------------------------------

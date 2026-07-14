@@ -437,8 +437,30 @@ async def test_submit_exam_grades_items_updates_tracking_and_history(exams_app: 
 
     submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
 
+    # VLM-required exam returns promptly in the grading state.
     assert submit_response.status_code == 200
-    submitted_exam = submit_response.json()["exam"]
+    grading_exam = submit_response.json()["exam"]
+    assert grading_exam["state"] == "grading"
+    # A durable task was created.
+    assert len(database["exam_grading_tasks"]._documents) == 1
+    assert database["exam_grading_tasks"]._documents[0]["status"] == "pending"
+
+    # Run the worker to grade items and finalize.
+    from app.infrastructure.worker.exam_grading_worker import process_exam_grading_task
+    from app.infrastructure.config.settings import Settings as SettingsCls
+    settings = SettingsCls()
+    tasks_col = database["exam_grading_tasks"]
+    task = deepcopy(tasks_col._documents[0])
+    task["claimToken"] = "test-token"
+    task["status"] = "processing"
+    await tasks_col.update_one(
+        {"_id": task["_id"]},
+        {"$set": {"status": "processing", "claimToken": "test-token"}},
+    )
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
+
+    detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
+    submitted_exam = detail_response.json()["exam"]
     assert submitted_exam["state"] == "submitted"
     assert submitted_exam["summary"] == {
         "totalProblems": 2,
@@ -460,10 +482,6 @@ async def test_submit_exam_grades_items_updates_tracking_and_history(exams_app: 
     assert history_response.status_code == 200
     assert history_response.json()["total"] == 1
     assert history_response.json()["items"][0]["id"] == exam["id"]
-
-    detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
-    assert detail_response.status_code == 200
-    assert detail_response.json()["exam"]["summary"]["score"] == 1.0
 
 
 @pytest.mark.asyncio
@@ -492,15 +510,30 @@ async def test_submit_exam_passes_snapshot_subject_to_vlm(exams_app: FastAPI, cl
     submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
 
     assert submit_response.status_code == 200
+    assert submit_response.json()["exam"]["state"] == "grading"
+
+    # Run the worker to perform VLM grading.
+    from app.infrastructure.worker.exam_grading_worker import process_exam_grading_task
+    from app.infrastructure.config.settings import Settings as SettingsCls
+    settings = SettingsCls()
+    tasks_col = database["exam_grading_tasks"]
+    task = deepcopy(tasks_col._documents[0])
+    task["claimToken"] = "test-token"
+    task["status"] = "processing"
+    await tasks_col.update_one(
+        {"_id": task["_id"]},
+        {"$set": {"status": "processing", "claimToken": "test-token"}},
+    )
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
+
     assert vlm.calls == 1
     assert vlm.last_call_kwargs["subject"] == "english"
 
 
 @pytest.mark.asyncio
-async def test_submit_exam_rejects_when_answers_modified_during_grading(
-    exams_app: FastAPI,
-    client: AsyncClient,
-) -> None:
+async def test_submit_exam_rejects_late_answer_save_after_freeze(exams_app: FastAPI, client: AsyncClient) -> None:
+    """A save-answer request that reads in-progress but loses the write race with
+    submission is rejected after the exam is frozen to grading."""
     database: FakeDatabase = exams_app.state.fake_database
     storage: FakeStorage = exams_app.state.fake_storage
     vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
@@ -525,35 +558,17 @@ async def test_submit_exam_rejects_when_answers_modified_during_grading(
     )
     assert save_response.status_code == 200
 
-    async def mutate_answer_during_grading(
-        *,
-        image_url: str | None = None,
-        image_base64: str | None = None,
-        problem_text: str,
-        user_answer: str,
-        correct_answer: str,
-        subject: str = "math",
-    ) -> FakeGradingResult:
-        vlm.calls += 1
-        stored_exam = await database["exams"].find_one({"_id": ObjectId(exam["id"])})
-        assert stored_exam is not None
-        stored_exam["items"][0]["answer"] = {
-            "raw": "modified during grading",
-            "savedAt": datetime.now(UTC),
-        }
-        await database["exams"].update_one(
-            {"_id": stored_exam["_id"]},
-            {"$set": {"items": stored_exam["items"], "updatedAt": datetime.now(UTC)}},
-        )
-        return FakeGradingResult(is_correct=True, feedback="good")
-
-    vlm.grade_short_answer = mutate_answer_during_grading
-
     submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert submit_response.status_code == 200
+    assert submit_response.json()["exam"]["state"] == "grading"
 
-    assert submit_response.status_code == 409
-    body = submit_response.json()
-    assert body["error"]["code"] == "ANSWERS_MODIFIED_DURING_GRADING"
+    # A late answer save after the exam was frozen must be rejected.
+    late_save = await client.patch(
+        f"/api/v1/exams/{exam['id']}/items/{item_id}/answer",
+        json={"answer": "modified after submission"},
+    )
+    assert late_save.status_code == 409
+    assert late_save.json()["error"]["code"] == "INVALID_EXAM_STATE"
 
 
 @pytest.mark.asyncio
@@ -585,9 +600,26 @@ async def test_submit_exam_marks_pending_review_after_vlm_retry_and_self_report_
     await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "my answer"})
 
     submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
-
     assert submit_response.status_code == 200
-    submitted_exam = submit_response.json()["exam"]
+    assert submit_response.json()["exam"]["state"] == "grading"
+
+    # Run the worker to grade the item (VLM retry then pending-review).
+    from app.infrastructure.worker.exam_grading_worker import process_exam_grading_task
+    from app.infrastructure.config.settings import Settings as SettingsCls
+    settings = SettingsCls()
+    tasks_col = database["exam_grading_tasks"]
+    task = deepcopy(tasks_col._documents[0])
+    task["claimToken"] = "test-token"
+    task["status"] = "processing"
+    await tasks_col.update_one(
+        {"_id": task["_id"]},
+        {"$set": {"status": "processing", "claimToken": "test-token"}},
+    )
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
+
+    detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
+    submitted_exam = detail_response.json()["exam"]
+    assert submitted_exam["state"] == "submitted"
     assert submitted_exam["summary"] == {
         "totalProblems": 1,
         "answeredProblems": 1,
@@ -599,6 +631,7 @@ async def test_submit_exam_marks_pending_review_after_vlm_retry_and_self_report_
     }
     assert submitted_exam["items"][0]["grading"]["status"] == "pending-review"
     assert submitted_exam["items"][0]["grading"]["retryCount"] == 1
+    # pending-review items do not update tracking.
     assert database["problems"]._documents[0]["tracking"]["exposureCount"] == 4
 
     report_response = await client.post(
@@ -844,3 +877,330 @@ async def test_get_exam_prefers_failure_rate_weight_over_legacy_failure_weight(
     assert response.status_code == 200
     body = response.json()["exam"]
     assert body["configSnapshot"]["selectionPolicy"]["failureRateWeight"] == 2.3
+
+
+# ---------------------------------------------------------------------------
+# Async exam grading tests (#490)
+# ---------------------------------------------------------------------------
+
+async def _run_grading_worker_once(
+    database: FakeDatabase, vlm: FakeVLMClient, storage: FakeStorage, settings: Settings
+) -> None:
+    """Claim and process the single pending exam grading task in the fake database."""
+    from app.infrastructure.worker.exam_grading_worker import process_exam_grading_task
+    tasks_col = database["exam_grading_tasks"]
+    task = deepcopy(tasks_col._documents[0])
+    task["claimToken"] = "test-token"
+    task["status"] = "processing"
+    await tasks_col.update_one(
+        {"_id": task["_id"]},
+        {"$set": {"status": "processing", "claimToken": "test-token"}},
+    )
+    await process_exam_grading_task(task, database, vlm, storage, settings, tasks_col, adapter=FakeMongoAdapter())
+
+
+@pytest.mark.asyncio
+async def test_submit_vlm_exam_returns_grading_and_creates_single_task(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
+    user_id = exams_app.state.primary_user["_id"]
+
+    short = make_problem(user_id, text="Explain photosynthesis", problem_type="short-answer", correct_answer="Light energy")
+    database["problems"].seed(short)
+    storage.seed(short["sourceImage"]["bucket"], short["sourceImage"]["objectKey"], b"image")
+    vlm.responses = [FakeGradingResult(is_correct=True, feedback="good")]
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "my answer"})
+
+    submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert submit_response.status_code == 200
+    grading_exam = submit_response.json()["exam"]
+    assert grading_exam["state"] == "grading"
+    # Exactly one task for this exam.
+    assert len(database["exam_grading_tasks"]._documents) == 1
+    assert str(database["exam_grading_tasks"]._documents[0]["examId"]) == exam["id"]
+    assert database["exam_grading_tasks"]._documents[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_repeat_submit_for_grading_exam_is_idempotent(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
+    user_id = exams_app.state.primary_user["_id"]
+
+    short = make_problem(user_id, text="Explain X", problem_type="short-answer", correct_answer="X")
+    database["problems"].seed(short)
+    storage.seed(short["sourceImage"]["bucket"], short["sourceImage"]["objectKey"], b"image")
+    vlm.responses = [FakeGradingResult(is_correct=True)]
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "my answer"})
+
+    first = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert first.status_code == 200
+    assert first.json()["exam"]["state"] == "grading"
+    tasks_before = len(database["exam_grading_tasks"]._documents)
+
+    second = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert second.status_code == 200
+    assert second.json()["exam"]["state"] == "grading"
+    # No duplicate task created.
+    assert len(database["exam_grading_tasks"]._documents) == tasks_before
+
+
+@pytest.mark.asyncio
+async def test_repeat_submit_for_already_submitted_exam_is_idempotent(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
+    user_id = exams_app.state.primary_user["_id"]
+    settings: Settings = exams_app.dependency_overrides[get_app_settings]()
+
+    short = make_problem(user_id, text="Explain X", problem_type="short-answer", correct_answer="X")
+    database["problems"].seed(short)
+    storage.seed(short["sourceImage"]["bucket"], short["sourceImage"]["objectKey"], b"image")
+    vlm.responses = [FakeGradingResult(is_correct=True)]
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "my answer"})
+
+    await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    await _run_grading_worker_once(database, vlm, storage, settings)
+
+    # Second submit after completion returns the submitted exam without error.
+    second = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert second.status_code == 200
+    assert second.json()["exam"]["state"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_submit_objective_only_exam_uses_synchronous_path(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    """Exams with no VLM-required items return submitted directly."""
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    objective = make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(objective)
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "4"})
+
+    submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert submit_response.status_code == 200
+    submitted_exam = submit_response.json()["exam"]
+    assert submitted_exam["state"] == "submitted"
+    # No grading task created.
+    assert len(database["exam_grading_tasks"]._documents) == 0
+    assert submitted_exam["summary"]["correctProblems"] == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_short_answer_null_answer_uses_synchronous_path(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    """A short-answer item whose stored answer.raw is null is graded incorrect locally."""
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    short = make_problem(user_id, text="Explain X", problem_type="short-answer", correct_answer="X")
+    database["problems"].seed(short)
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    # Do not save an answer: answer.raw stays null.
+
+    submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    assert submit_response.status_code == 200
+    submitted_exam = submit_response.json()["exam"]
+    assert submitted_exam["state"] == "submitted"
+    assert submitted_exam["items"][0]["grading"]["status"] == "incorrect"
+    assert len(database["exam_grading_tasks"]._documents) == 0
+
+
+@pytest.mark.asyncio
+async def test_create_exam_blocked_by_grading_exam(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    database["exams"].seed(
+        {
+            "_id": ObjectId(),
+            "userId": user_id,
+            "state": "grading",
+            "configSnapshot": {"maxProblemCount": 1, "selectionPolicy": {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 0}, "generatedAt": datetime.now(UTC)},
+            "items": [],
+            "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC),
+            "startedAt": None,
+            "submittedAt": None,
+            "updatedAt": datetime.now(UTC),
+        }
+    )
+
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "ACTIVE_EXAM_EXISTS"
+
+
+@pytest.mark.asyncio
+async def test_get_active_returns_grading_exam(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    exam_id = ObjectId()
+    database["exams"].seed(
+        {
+            "_id": exam_id,
+            "userId": user_id,
+            "state": "grading",
+            "configSnapshot": {"maxProblemCount": 1, "selectionPolicy": {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 0}, "generatedAt": datetime.now(UTC)},
+            "items": [],
+            "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC),
+            "startedAt": datetime.now(UTC),
+            "submittedAt": None,
+            "updatedAt": datetime.now(UTC),
+        }
+    )
+
+    response = await client.get("/api/v1/exams/active")
+    assert response.status_code == 200
+    assert response.json()["exam"]["state"] == "grading"
+    assert response.json()["exam"]["id"] == str(exam_id)
+
+
+@pytest.mark.asyncio
+async def test_history_includes_grading_exam(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    exam_id = ObjectId()
+    database["exams"].seed(
+        {
+            "_id": exam_id,
+            "userId": user_id,
+            "state": "grading",
+            "configSnapshot": {"maxProblemCount": 1, "selectionPolicy": {"cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0, "recencyWeight": 1.0, "minProblemAgeDays": 0}, "generatedAt": datetime.now(UTC)},
+            "items": [],
+            "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
+            "createdAt": datetime.now(UTC),
+            "startedAt": datetime.now(UTC),
+            "submittedAt": None,
+            "updatedAt": datetime.now(UTC),
+        }
+    )
+
+    response = await client.get("/api/v1/exams")
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["state"] == "grading"
+
+
+@pytest.mark.asyncio
+async def test_grading_state_serialization_redacts_answer_bearing_fields(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    storage: FakeStorage = exams_app.state.fake_storage
+    vlm: FakeVLMClient = exams_app.state.fake_grading_vlm
+    user_id = exams_app.state.primary_user["_id"]
+    settings: Settings = exams_app.dependency_overrides[get_app_settings]()
+
+    short = make_problem(user_id, text="Explain X", problem_type="short-answer", correct_answer="X")
+    database["problems"].seed(short)
+    storage.seed(short["sourceImage"]["bucket"], short["sourceImage"]["objectKey"], b"image")
+    vlm.responses = [FakeGradingResult(is_correct=True, feedback="secret feedback")]
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "my answer"})
+    await client.post(f"/api/v1/exams/{exam['id']}/submit")
+
+    detail = await client.get(f"/api/v1/exams/{exam['id']}")
+    grading_exam = detail.json()["exam"]
+    assert grading_exam["state"] == "grading"
+    item = grading_exam["items"][0]
+    # Correct answer hidden.
+    assert item["problem"]["correctAnswer"] is None
+    # Answer-bearing grading details redacted.
+    assert item["grading"]["feedback"] is None
+    assert item["grading"]["rawProviderResponse"] is None
+    assert item["grading"]["method"] is None
+    assert item["grading"]["isCorrect"] is None
+    # Status remains visible for progress UI.
+    assert item["grading"]["status"] == "ungraded"
+
+    # Complete grading, then verify full details are exposed after submission.
+    await _run_grading_worker_once(database, vlm, storage, settings)
+    submitted_detail = await client.get(f"/api/v1/exams/{exam['id']}")
+    submitted_exam = submitted_detail.json()["exam"]
+    assert submitted_exam["state"] == "submitted"
+    submitted_item = submitted_exam["items"][0]
+    assert submitted_item["problem"]["correctAnswer"]["display"] == "X"
+    assert submitted_item["grading"]["feedback"] == "secret feedback"
+    assert submitted_item["grading"]["method"] == "vlm"
+
+
+@pytest.mark.asyncio
+async def test_submit_sync_path_rejects_when_answers_modified_during_grading(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    """The synchronous no-VLM path still rejects if answers change between the
+    pre-submit read and the transactional finalization."""
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    objective = make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(objective)
+
+    create_response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    exam = create_response.json()["exam"]
+    item_id = exam["items"][0]["itemId"]
+
+    await client.patch(f"/api/v1/exams/{exam['id']}/items/{item_id}/answer", json={"answer": "4"})
+
+    # Mutate the stored answer between the pre-submit read and the transaction.
+    import app.presentation.exams as exams_mod
+    original_grade = exams_mod.grade_item
+
+    async def _mutate_then_grade(item, *, vlm_client, storage, now):
+        stored = await database["exams"].find_one({"_id": ObjectId(exam["id"])})
+        stored["items"][0]["answer"] = {"raw": "changed", "savedAt": datetime.now(UTC)}
+        await database["exams"].update_one(
+            {"_id": stored["_id"]},
+            {"$set": {"items": stored["items"], "updatedAt": datetime.now(UTC)}},
+        )
+        return await original_grade(item, vlm_client=vlm_client, storage=storage, now=now)
+
+    exams_mod.grade_item = _mutate_then_grade  # type: ignore[assignment]
+    try:
+        submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
+    finally:
+        exams_mod.grade_item = original_grade  # type: ignore[assignment]
+
+    assert submit_response.status_code == 409
+    assert submit_response.json()["error"]["code"] == "ANSWERS_MODIFIED_DURING_GRADING"

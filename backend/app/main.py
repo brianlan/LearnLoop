@@ -8,13 +8,14 @@ from fastapi.exceptions import RequestValidationError
 from starlette.types import ExceptionHandler
 
 from app.infrastructure.config.settings import get_settings
-from app.infrastructure.storage.mongo import ensure_database_setup, get_database
+from app.infrastructure.storage.mongo import ensure_database_setup, get_database, get_mongo_adapter
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.observability import configure_logging
 from app.infrastructure.vlm.client import VLMClient
 from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
 from app.infrastructure.worker.extraction_worker import run_extraction_worker
 from app.infrastructure.worker.solution_worker import run_solution_worker
+from app.infrastructure.worker.exam_grading_worker import run_exam_grading_worker
 from app.solution_generation import backfill_solution_generation_tasks
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
@@ -82,6 +83,14 @@ async def _run_extraction_worker_with_logging(database, storage, settings, stop_
             await english_client.aclose()
 
 
+async def _run_exam_grading_worker_with_logging(database, storage, settings, stop_event, adapter):
+    try:
+        await run_exam_grading_worker(database, storage, settings, stop_event, adapter=adapter)
+    except Exception:
+        logger.exception("Exam grading worker crashed")
+        raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database = get_database()
@@ -101,6 +110,10 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(
                 _run_extraction_worker_with_logging(database, storage, settings, stop_event)
             )
+        )
+    if settings.exam_grading_worker_enabled:
+        worker_tasks.append(
+            asyncio.create_task(_run_exam_grading_worker_with_logging(database, storage, settings, stop_event, get_mongo_adapter()))
         )
     
     yield

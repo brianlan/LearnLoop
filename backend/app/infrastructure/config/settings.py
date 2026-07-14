@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     solution_task_timeout_minutes: int = Field(default=10, gt=0)
     solution_max_retries: int = Field(default=3, ge=0)
 
+    # Exam grading worker configuration
+    exam_grading_worker_enabled: bool = Field(default=True)
+    exam_grading_worker_poll_interval_seconds: float = Field(default=2.0, gt=0)
+    exam_grading_lease_seconds: float = Field(default=60.0, gt=0)
+    exam_grading_lease_refresh_seconds: float = Field(default=20.0, gt=0)
+
     session_cookie_name: str = Field(default="ll_session")
     session_secure: bool = Field(default=False)
     session_samesite: Literal["lax", "strict", "none"] = Field(default="lax")

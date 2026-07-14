@@ -8,8 +8,9 @@ import pytest
 from fastapi import FastAPI
 
 from app.infrastructure.vlm.client import VLMError
+from app.presentation.deps import get_app_settings
 
-from .conftest import FakeGradingResult
+from .conftest import FakeGradingResult, FakeMongoAdapter
 
 
 @pytest.mark.asyncio
@@ -163,7 +164,30 @@ async def test_wf_exam_3_submit_and_grade_updates_score_and_tracking(
 
     submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
     assert submit_response.status_code == 200
-    submitted_exam = submit_response.json()["exam"]
+    grading_exam = submit_response.json()["exam"]
+    assert grading_exam["state"] == "grading"
+
+    # Run the worker to grade items and finalize.
+    from app.infrastructure.worker.exam_grading_worker import process_exam_grading_task
+    from copy import deepcopy as _deepcopy
+    database = app.state.fake_database
+    storage = app.state.fake_storage
+    tasks_col = database["exam_grading_tasks"]
+    task = _deepcopy(tasks_col._documents[0])
+    task["claimToken"] = "test-token"
+    task["status"] = "processing"
+    await tasks_col.update_one(
+        {"_id": task["_id"]},
+        {"$set": {"status": "processing", "claimToken": "test-token"}},
+    )
+    await process_exam_grading_task(
+        task, database, app.state.fake_grading_vlm, storage, app.dependency_overrides[get_app_settings](), tasks_col,
+        adapter=FakeMongoAdapter(),
+    )
+
+    detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
+    assert detail_response.status_code == 200
+    submitted_exam = detail_response.json()["exam"]
     assert submitted_exam["state"] == "submitted"
     assert submitted_exam["summary"] == {
         "totalProblems": 2,
@@ -191,8 +215,6 @@ async def test_wf_exam_3_submit_and_grade_updates_score_and_tracking(
     assert short_document["tracking"]["correctCount"] == 1
     assert short_document["tracking"]["failedCount"] == 0
 
-    detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
-    assert detail_response.status_code == 200
     assert detail_response.json()["exam"]["summary"]["score"] == 1.0
 
 
@@ -232,7 +254,29 @@ async def test_wf_exam_4_pending_review_then_self_report_updates_score(
     )
     submit_response = await client.post(f"/api/v1/exams/{exam['id']}/submit")
     assert submit_response.status_code == 200
-    submitted_exam = submit_response.json()["exam"]
+    grading_exam = submit_response.json()["exam"]
+    assert grading_exam["state"] == "grading"
+
+    # Run the worker to grade the item (VLM retry then pending-review).
+    from app.infrastructure.worker.exam_grading_worker import process_exam_grading_task
+    from copy import deepcopy as _deepcopy
+    database = app.state.fake_database
+    storage = app.state.fake_storage
+    tasks_col = database["exam_grading_tasks"]
+    task = _deepcopy(tasks_col._documents[0])
+    task["claimToken"] = "test-token"
+    task["status"] = "processing"
+    await tasks_col.update_one(
+        {"_id": task["_id"]},
+        {"$set": {"status": "processing", "claimToken": "test-token"}},
+    )
+    await process_exam_grading_task(
+        task, database, app.state.fake_grading_vlm, storage, app.dependency_overrides[get_app_settings](), tasks_col,
+        adapter=FakeMongoAdapter(),
+    )
+
+    detail_response = await client.get(f"/api/v1/exams/{exam['id']}")
+    submitted_exam = detail_response.json()["exam"]
     submitted_item = submitted_exam["items"][0]
     assert submitted_item["grading"]["status"] == "pending-review"
     assert submitted_item["grading"]["retryCount"] == 1
