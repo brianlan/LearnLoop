@@ -105,7 +105,7 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
         </div>
         <div>
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>Incorrect</div>
-          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: isDiscarded || isGrading ? "var(--color-text-danger)" : "var(--color-text-danger)" }}>{isDiscarded || isGrading ? "—" : exam.summary.failedProblems}</div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: isDiscarded || isGrading ? "var(--color-text-muted)" : "var(--color-text-danger)" }}>{isDiscarded || isGrading ? "—" : exam.summary.failedProblems}</div>
         </div>
       </div>
     </button>
