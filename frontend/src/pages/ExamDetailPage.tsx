@@ -7,7 +7,7 @@ import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
-import type { ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
+import type { Exam, ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
 
 async function fetchExam(examId: string): Promise<ExamResponse> {
   return api.get<ExamResponse>(`/exams/${examId}`);
@@ -291,6 +291,109 @@ function ExamItemReview({
   );
 }
 
+function isVlmRequired(item: ExamItem): boolean {
+  return item.problem.problemType === "short-answer" && item.answer.raw != null;
+}
+
+function GradingChecklist({ exam }: { exam: Exam }) {
+  const vlmItems = exam.items
+    .filter(isVlmRequired)
+    .sort((a, b) => a.order - b.order);
+
+  const pageCanvasStyle: React.CSSProperties = {
+    minHeight: "calc(100vh - 60px)",
+    backgroundColor: "var(--color-bg)",
+    color: "var(--color-text)",
+    padding: "2rem 1.5rem",
+  };
+
+  const contentWrapperStyle: React.CSSProperties = {
+    maxWidth: "800px",
+    margin: "0 auto",
+  };
+
+  return (
+    <main style={pageCanvasStyle}>
+      <div style={contentWrapperStyle}>
+        <div style={{ marginBottom: "2rem" }}>
+          <h1 style={{ margin: 0, fontSize: "2rem", fontWeight: 800, letterSpacing: "-0.02em" }}>Grading in Progress</h1>
+          <p style={{ color: "var(--color-text-muted)", margin: "0.5rem 0 0", fontSize: "0.9rem", fontWeight: 500 }}>
+            Your answers are being graded. This page will update automatically.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {vlmItems.map((item) => {
+            const status = item.grading.status;
+            const isWaiting = status === "ungraded";
+            const isCompleted = status === "correct" || status === "incorrect";
+            const isFailed = status === "pending-review";
+
+            const indicatorColor = isCompleted
+              ? "var(--color-success)"
+              : isFailed
+                ? "var(--color-danger)"
+                : "var(--color-text-muted)";
+
+            const statusLabel = isWaiting
+              ? "Waiting for grading"
+              : isCompleted
+                ? "Grading completed"
+                : isFailed
+                  ? "Automatic grading failed; review will be available after submission"
+                  : status;
+
+            return (
+              <div
+                key={item.itemId}
+                className="card-premium"
+                style={{
+                  border: "1px solid var(--color-border)",
+                  background: "var(--color-surface)",
+                  padding: "1.25rem",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "1rem",
+                }}
+              >
+                <span
+                  aria-label={statusLabel}
+                  data-testid={`grading-indicator-${item.itemId}`}
+                  style={{
+                    display: "inline-block",
+                    width: "1.25rem",
+                    height: "1.25rem",
+                    borderRadius: "50%",
+                    border: `2px solid ${indicatorColor}`,
+                    backgroundColor: isCompleted || isFailed ? indicatorColor : "transparent",
+                    flexShrink: 0,
+                    marginTop: "0.125rem",
+                  }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: "0.8125rem", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>
+                    Question {item.order}
+                  </div>
+                  <LatexText
+                    text={item.problem.text}
+                    style={{ fontSize: "1rem", lineHeight: "1.5", whiteSpace: "pre-wrap", color: "var(--color-text)" }}
+                  />
+                  <div
+                    data-testid={`grading-status-${item.itemId}`}
+                    style={{ fontSize: "0.875rem", color: "var(--color-text-muted)", marginTop: "0.5rem", fontWeight: 500 }}
+                  >
+                    {statusLabel}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export function ExamDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -307,6 +410,10 @@ export function ExamDetailPage() {
     queryKey: ["exam", id],
     queryFn: () => fetchExam(id!),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const state = query.state.data?.exam?.state;
+      return state === "grading" ? 2000 : false;
+    },
   });
 
   const selfReportMutation = useMutation({
@@ -388,6 +495,10 @@ export function ExamDetailPage() {
         </div>
       </main>
     );
+  }
+
+  if (exam.state === "grading") {
+    return <GradingChecklist exam={exam} />;
   }
 
   const hasPendingReview = exam.items.some((item) => item.grading.status === "pending-review");

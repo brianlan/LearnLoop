@@ -18,6 +18,8 @@ function getStateStyleClass(state: string) {
       return "badge-success";
     case "discarded":
       return "badge-danger";
+    case "grading":
+      return "badge-warning";
     default:
       return "badge-warning";
   }
@@ -25,8 +27,10 @@ function getStateStyleClass(state: string) {
 
 function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () => void }) {
   const stateClass = getStateStyleClass(exam.state);
-  const completionDate = exam.state === "discarded" ? exam.discardedAt : exam.submittedAt;
-  const completionLabel = exam.state === "discarded" ? "Discarded" : "Submitted";
+  const isGrading = exam.state === "grading";
+  const isDiscarded = exam.state === "discarded";
+  const completionDate = isDiscarded ? exam.discardedAt : exam.submittedAt;
+  const completionLabel = isDiscarded ? "Discarded" : isGrading ? "Grading" : "Submitted";
 
   return (
     <button
@@ -85,11 +89,11 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
       >
         <div>
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>{completionLabel}</div>
-          <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{formatDate(completionDate)}</div>
+          <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{isGrading ? "—" : formatDate(completionDate)}</div>
         </div>
         <div>
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>Score</div>
-          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: exam.state === "discarded" ? "var(--color-text-muted)" : "var(--color-primary-text)" }}>{exam.state === "discarded" ? "—" : formatScore(exam.summary.score)}</div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: isDiscarded || isGrading ? "var(--color-text-muted)" : "var(--color-primary-text)" }}>{isDiscarded || isGrading ? "—" : formatScore(exam.summary.score)}</div>
         </div>
         <div>
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>Total</div>
@@ -97,11 +101,11 @@ function ExamHistoryCard({ exam, onOpen }: { exam: ExamHistoryItem; onOpen: () =
         </div>
         <div>
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>Correct</div>
-          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: exam.state === "discarded" ? "var(--color-text-muted)" : "var(--color-success)" }}>{exam.state === "discarded" ? "—" : exam.summary.correctProblems}</div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: isDiscarded || isGrading ? "var(--color-text-muted)" : "var(--color-success)" }}>{isDiscarded || isGrading ? "—" : exam.summary.correctProblems}</div>
         </div>
         <div>
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.725rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>Incorrect</div>
-          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: exam.state === "discarded" ? "var(--color-text-muted)" : "var(--color-text-danger)" }}>{exam.state === "discarded" ? "—" : exam.summary.failedProblems}</div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: isDiscarded || isGrading ? "var(--color-text-muted)" : "var(--color-text-danger)" }}>{isDiscarded || isGrading ? "—" : exam.summary.failedProblems}</div>
         </div>
       </div>
     </button>

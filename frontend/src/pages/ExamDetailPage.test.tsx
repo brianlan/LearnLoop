@@ -359,4 +359,270 @@ describe("ExamDetailPage", () => {
 
     expect(screen.queryByTestId("explain-button-item1")).not.toBeInTheDocument();
   });
+
+  it("renders grading checklist when exam state is grading", async () => {
+    const gradingExam = {
+      ...baseExam,
+      state: "grading",
+      items: [
+        {
+          itemId: "sa1",
+          order: 1,
+          problemId: "prob1",
+          problem: { text: "Explain photosynthesis", problemType: "short-answer" },
+          answer: { raw: "plants make food", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "ungraded", retryCount: 0 },
+        },
+        {
+          itemId: "sa2",
+          order: 2,
+          problemId: "prob2",
+          problem: { text: "Explain gravity", problemType: "short-answer" },
+          answer: { raw: "things fall", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "correct", retryCount: 0 },
+        },
+        {
+          itemId: "sa3",
+          order: 3,
+          problemId: "prob3",
+          problem: { text: "Explain relativity", problemType: "short-answer" },
+          answer: { raw: "e=mc2", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "incorrect", retryCount: 0 },
+        },
+        {
+          itemId: "sa4",
+          order: 4,
+          problemId: "prob4",
+          problem: { text: "Explain quantum", problemType: "short-answer" },
+          answer: { raw: "particles", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "pending-review", retryCount: 0 },
+        },
+        {
+          itemId: "mc1",
+          order: 5,
+          problemId: "prob5",
+          problem: { text: "What is 2+2?", problemType: "fill-in-the-blank", correctAnswer: { display: "4", normalizedText: "4", normalizedSet: ["4"], format: "single" } },
+          answer: { raw: "4", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "correct", retryCount: 0 },
+        },
+        {
+          itemId: "sa5",
+          order: 6,
+          problemId: "prob6",
+          problem: { text: "Explain nothing", problemType: "short-answer" },
+          answer: { raw: null, savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "ungraded", retryCount: 0 },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: gradingExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    // Only VLM-required items (short-answer with non-null raw answer) are listed
+    expect(screen.getByTestId("grading-indicator-sa1")).toBeInTheDocument();
+    expect(screen.getByTestId("grading-indicator-sa2")).toBeInTheDocument();
+    expect(screen.getByTestId("grading-indicator-sa3")).toBeInTheDocument();
+    expect(screen.getByTestId("grading-indicator-sa4")).toBeInTheDocument();
+    // Objective item (fill-in-the-blank) excluded
+    expect(screen.queryByTestId("grading-indicator-mc1")).not.toBeInTheDocument();
+    // Null-answer short-answer excluded
+    expect(screen.queryByTestId("grading-indicator-sa5")).not.toBeInTheDocument();
+  });
+
+  it("shows neutral indicator and 'Waiting for grading' for ungraded items", async () => {
+    const gradingExam = {
+      ...baseExam,
+      state: "grading",
+      items: [
+        {
+          itemId: "sa1",
+          order: 1,
+          problemId: "prob1",
+          problem: { text: "Explain photosynthesis", problemType: "short-answer" },
+          answer: { raw: "plants", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "ungraded", retryCount: 0 },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: gradingExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("grading-status-sa1")).toHaveTextContent("Waiting for grading");
+  });
+
+  it("shows green indicator for both correct and incorrect as 'Grading completed'", async () => {
+    const gradingExam = {
+      ...baseExam,
+      state: "grading",
+      items: [
+        {
+          itemId: "sa1",
+          order: 1,
+          problemId: "prob1",
+          problem: { text: "Correct answer", problemType: "short-answer" },
+          answer: { raw: "right", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "correct", retryCount: 0 },
+        },
+        {
+          itemId: "sa2",
+          order: 2,
+          problemId: "prob2",
+          problem: { text: "Incorrect answer", problemType: "short-answer" },
+          answer: { raw: "wrong", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "incorrect", retryCount: 0 },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: gradingExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    // Both correct and incorrect show "Grading completed" — not correctness
+    expect(screen.getByTestId("grading-status-sa1")).toHaveTextContent("Grading completed");
+    expect(screen.getByTestId("grading-status-sa2")).toHaveTextContent("Grading completed");
+    // The checklist must NOT reveal correctness via text
+    expect(screen.queryByText("Correct")).not.toBeInTheDocument();
+    expect(screen.queryByText("Incorrect")).not.toBeInTheDocument();
+  });
+
+  it("shows red indicator and failure message for pending-review items", async () => {
+    const gradingExam = {
+      ...baseExam,
+      state: "grading",
+      items: [
+        {
+          itemId: "sa1",
+          order: 1,
+          problemId: "prob1",
+          problem: { text: "Failed answer", problemType: "short-answer" },
+          answer: { raw: "something", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "pending-review", retryCount: 0 },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: gradingExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("grading-status-sa1")).toHaveTextContent("Automatic grading failed; review will be available after submission");
+  });
+
+  it("transitions from grading checklist to results view when exam becomes submitted", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({
+        exam: {
+          ...baseExam,
+          state: "grading",
+          items: [
+            {
+              itemId: "sa1",
+              order: 1,
+              problemId: "prob1",
+              problem: { text: "Explain something", problemType: "short-answer" },
+              answer: { raw: "answer", savedAt: "2024-01-01T00:00:00Z" },
+              grading: { status: "ungraded", retryCount: 0 },
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ exam: baseExam })
+      .mockResolvedValue({ exam: baseExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Results")).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    expect(screen.queryByText("Grading in Progress")).not.toBeInTheDocument();
+  });
+
+  it("does not show summary score or submitted date during grading", async () => {
+    const gradingExam = {
+      ...baseExam,
+      state: "grading",
+      items: [
+        {
+          itemId: "sa1",
+          order: 1,
+          problemId: "prob1",
+          problem: { text: "Explain something", problemType: "short-answer" },
+          answer: { raw: "answer", savedAt: "2024-01-01T00:00:00Z" },
+          grading: { status: "ungraded", retryCount: 0 },
+        },
+      ],
+    };
+    vi.mocked(api.get).mockResolvedValueOnce({ exam: gradingExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    // Should not show the submitted results view elements
+    expect(screen.queryByText("Exam Results")).not.toBeInTheDocument();
+    expect(screen.queryByText("Summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Questions")).not.toBeInTheDocument();
+  });
+
+  it("preserves submitted results view with self-report and reveal controls after grading completes", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({
+        exam: {
+          ...baseExam,
+          state: "grading",
+          items: [
+            {
+              itemId: "item3",
+              order: 3,
+              problemId: "prob3",
+              problem: { ...baseExam.items[0].problem },
+              answer: { raw: "test", savedAt: "2024-01-01T00:00:00Z" },
+              grading: { status: "pending-review", retryCount: 0 },
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ exam: baseExam })
+      .mockResolvedValue({ exam: baseExam });
+
+    renderExamDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Grading in Progress")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Results")).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    expect(screen.getByText("Summary")).toBeInTheDocument();
+    expect(screen.getByText("Questions")).toBeInTheDocument();
+    expect(screen.getByText("Pending Review:")).toBeInTheDocument();
+    expect(screen.getByText("I was correct")).toBeInTheDocument();
+    expect(screen.getByText("I was incorrect")).toBeInTheDocument();
+  });
 });

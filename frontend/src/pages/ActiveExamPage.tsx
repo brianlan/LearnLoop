@@ -63,6 +63,13 @@ export function ActiveExamPage() {
   });
 
   const exam = examData?.exam;
+
+  useEffect(() => {
+    if (exam?.state === "grading") {
+      navigate(`/exams/${exam.id}`, { replace: true });
+    }
+  }, [exam?.state, exam?.id, navigate]);
+
   const items = exam?.items || [];
   const currentItem: ExamItem | undefined = items[currentItemIndex];
 
@@ -86,6 +93,7 @@ export function ActiveExamPage() {
   const submitExamMutation = useMutation({
     mutationFn: (examId: string) => submitExam(examId),
     onSuccess: (data) => {
+      queryClient.removeQueries({ queryKey: ["active-exam"] });
       queryClient.invalidateQueries({ queryKey: ["exams"] });
       navigate(`/exams/${data.exam.id}`);
     },

@@ -9,6 +9,15 @@ import { ExamsPage } from "./ExamsPage";
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
+
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -72,6 +81,7 @@ function createExamResponse() {
 describe("ExamsPage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockNavigate.mockReset();
   });
 
   it("shows the discarded toggle even when submitted exam history is empty", async () => {
@@ -266,5 +276,117 @@ describe("ExamsPage", () => {
 
     expect(await screen.findByText("An active exam already exists. Would you like to continue it?")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renders grading exam card with grading label and hidden final metrics", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "exam-grading",
+            state: "grading",
+            createdAt: "2024-01-01T00:00:00Z",
+            summary: {
+              totalProblems: 3,
+              answeredProblems: 3,
+              gradedProblems: 1,
+              pendingProblems: 0,
+              correctProblems: 1,
+              failedProblems: 0,
+              score: 0.33,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 10,
+        total: 1,
+      }),
+    });
+
+    renderExamsPage();
+
+    expect(await screen.findByText("Exam exam-grading")).toBeInTheDocument();
+
+    // Badge should show "grading"
+    expect(screen.getByText("grading")).toBeInTheDocument();
+
+    // Should show "Grading" label, not "Submitted"
+    expect(screen.getByText("Grading")).toBeInTheDocument();
+    // Should not show submitted date — grading has no submittedAt
+    // The date and metric columns show "—" for grading
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("navigates to exam detail when clicking a grading exam card", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "exam-grading",
+            state: "grading",
+            createdAt: "2024-01-01T00:00:00Z",
+            summary: {
+              totalProblems: 1,
+              answeredProblems: 1,
+              gradedProblems: 0,
+              pendingProblems: 0,
+              correctProblems: 0,
+              failedProblems: 0,
+              score: null,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 10,
+        total: 1,
+      }),
+    });
+
+    renderExamsPage();
+
+    const card = await screen.findByText("Exam exam-grading");
+    await user.click(card.closest("button")!);
+
+    expect(mockNavigate).toHaveBeenCalledWith("/exams/exam-grading");
+  });
+
+  it("renders submitted exam card normally without grading label", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "exam-submitted",
+            state: "submitted",
+            createdAt: "2024-01-01T00:00:00Z",
+            submittedAt: "2024-01-01T01:00:00Z",
+            summary: {
+              totalProblems: 2,
+              answeredProblems: 2,
+              gradedProblems: 2,
+              pendingProblems: 0,
+              correctProblems: 1,
+              failedProblems: 1,
+              score: 0.5,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 10,
+        total: 1,
+      }),
+    });
+
+    renderExamsPage();
+
+    expect(await screen.findByText("Exam exam-submitted")).toBeInTheDocument();
+
+    // Should show "Submitted" label, not "Grading"
+    expect(screen.getByText("Submitted")).toBeInTheDocument();
+    // Should show the actual score
+    expect(screen.getByText("50%")).toBeInTheDocument();
   });
 });

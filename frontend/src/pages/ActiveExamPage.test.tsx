@@ -289,6 +289,10 @@ describe("ActiveExamPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ exam: { ...baseExam, state: "submitted" } }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ exam: { ...baseExam, state: "submitted" } }),
       });
 
     renderActiveExamPage();
@@ -306,12 +310,12 @@ describe("ActiveExamPage", () => {
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const submitCall = mockFetch.mock.calls.find((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/submit")
+      );
+      expect(submitCall).toBeDefined();
+      expect(submitCall![1].method).toBe("POST");
     });
-
-    const submitCall = mockFetch.mock.calls[1];
-    expect(submitCall[0]).toContain("/api/v1/exams/exam123/submit");
-    expect(submitCall[1].method).toBe("POST");
 
     expect(mockNavigate).toHaveBeenCalledWith("/exams/exam123");
   });
@@ -400,6 +404,49 @@ describe("ActiveExamPage", () => {
     expect(previewItems).toHaveLength(2);
     expect(previewItems[0]).toHaveTextContent("First question?");
     expect(previewItems[1]).toHaveTextContent("Second question?");
+  });
+
+  it("redirects to exam detail page when active exam is in grading state", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: { ...baseExam, state: "grading" } }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith("/exams/exam123", { replace: true });
+    });
+  });
+
+  it("invalidates active-exam cache and navigates to detail on submit success", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: baseExam }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: { ...baseExam, state: "submitted" } }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ exam: baseExam }),
+      });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Submit Exam" }));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith("/exams/exam123");
+    });
   });
 
   it("renders a graph preview for problems with graphDsl and full-width text for problems without", async () => {
