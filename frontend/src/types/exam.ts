@@ -4,7 +4,7 @@ export type ProblemType =
   | "fill-in-the-blank"
   | "short-answer";
 
-export type ExamState = "in-progress" | "submitted" | "discarded";
+export type ExamState = "in-progress" | "grading" | "submitted" | "discarded";
 
 export type GradingStatus =
   | "ungraded"
