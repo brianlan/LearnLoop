@@ -310,30 +310,32 @@ def test_problem_document_to_model_returns_problem() -> None:
 
 
 def test_problem_document_to_model_applies_defaults() -> None:
-    problem = _make_problem(
-        origin=None,
-        subject=None,
-        tags=None,
-        tracking=None,
-        isDeleted=None,
-        isDisabled=None,
-    )
+    problem = _make_problem(origin=None)
     del problem["subject"]
     del problem["graphDsl"]
     del problem["deletedAt"]
-    problem["tags"] = None
-    problem["isDeleted"] = None
-    problem["isDisabled"] = None
+    problem["tags"] = []
     model = problem_document_to_model(problem)
 
     assert model.subject == "math"
     assert model.graphDsl is None
     assert model.tags == []
-    assert model.tracking.exposureCount == 0
+    assert model.tracking.exposureCount == 3
     assert model.isDeleted is False
     assert model.isDisabled is False
     assert model.deletedAt is None
     assert model.origin.previewId is None
+
+
+def test_problem_document_to_model_uses_empty_tracking_default() -> None:
+    problem = _make_problem(tracking={})
+    model = problem_document_to_model(problem)
+
+    assert model.tracking.exposureCount == 0
+    assert model.tracking.correctCount == 0
+    assert model.tracking.failedCount == 0
+    assert model.tracking.lastTestedAt is None
+    assert model.tracking.lastAttemptCorrect is None
 
 
 def test_problem_document_to_model_raises_api_error_with_full_details() -> None:
