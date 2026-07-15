@@ -7,6 +7,11 @@ import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { LatexText } from "@/components/LatexText";
 import { AnswerInput, parseOptions } from "@/components/AnswerInput";
+import {
+  nextPracticeProblem,
+  submitPracticeAttempt,
+  PRACTICE_HISTORY_KEY,
+} from "@/api/practice";
 import type { PracticeProblem, PracticeNextResponse, PracticeAttemptResult } from "@/types/practice";
 
 type PracticePhase = "showing" | "grading" | "feedback";
@@ -45,7 +50,7 @@ export function ActivePracticePage() {
 
   const submitMutation = useMutation({
     mutationFn: ({ problemId, submittedAnswer }: { problemId: string; submittedAnswer: string }) =>
-      api.post<PracticeAttemptResult>("/practice/attempts", { problemId, submittedAnswer }),
+      submitPracticeAttempt(problemId, submittedAnswer),
     onSuccess: (result) => {
       setGradingResult(result);
       setPhase("feedback");
@@ -53,7 +58,7 @@ export function ActivePracticePage() {
   });
 
   const nextMutation = useMutation({
-    mutationFn: () => api.post<PracticeNextResponse>("/practice/next", {}),
+    mutationFn: nextPracticeProblem,
     onSuccess: (response) => {
       if (response.status === "ok" && response.problem) {
         setCurrentProblem(response.problem);
@@ -67,7 +72,7 @@ export function ActivePracticePage() {
       } else if (response.status === "no_problems") {
         setStatusMessage("Add some problems first to start practicing.");
       }
-      queryClient.invalidateQueries({ queryKey: ["practice-history"] });
+      queryClient.invalidateQueries({ queryKey: PRACTICE_HISTORY_KEY });
     },
   });
 
@@ -91,7 +96,7 @@ export function ActivePracticePage() {
   };
 
   const handleQuit = () => {
-    queryClient.invalidateQueries({ queryKey: ["practice-history"] });
+    queryClient.invalidateQueries({ queryKey: PRACTICE_HISTORY_KEY });
     navigate("/practice");
   };
 

@@ -47,3 +47,7 @@ export interface PracticeNextResponse {
 export interface PracticeHistoryResponse {
   items: PracticeHistoryItem[];
 }
+
+export interface PracticeStatsResponse {
+  practiceableCount: number;
+}

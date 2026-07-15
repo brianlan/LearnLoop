@@ -5,11 +5,14 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { formatDate } from "@/utils/format";
 import { LatexText } from "@/components/LatexText";
-import type { PracticeHistoryItem, PracticeHistoryResponse, PracticeNextResponse } from "@/types/practice";
-
-interface PracticeStatsResponse {
-  practiceableCount: number;
-}
+import {
+  getPracticeHistory,
+  getPracticeStats,
+  startPractice,
+  PRACTICE_HISTORY_KEY,
+  PRACTICE_STATS_KEY,
+} from "@/api/practice";
+import type { PracticeHistoryItem, PracticeNextResponse } from "@/types/practice";
 
 function getResultStyleClass(result: string) {
   switch (result) {
@@ -290,17 +293,17 @@ export function PracticePage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<PracticeHistoryResponse>({
-    queryKey: ["practice-history"],
-    queryFn: () => api.get<PracticeHistoryResponse>("/practice/history"),
+    queryKey: PRACTICE_HISTORY_KEY,
+    queryFn: getPracticeHistory,
   });
 
-  const { data: statsData } = useQuery<PracticeStatsResponse>({
-    queryKey: ["practice-stats"],
-    queryFn: () => api.get<PracticeStatsResponse>("/practice/stats"),
+  const { data: statsData } = useQuery({
+    queryKey: PRACTICE_STATS_KEY,
+    queryFn: getPracticeStats,
   });
 
   const startPracticeMutation = useMutation({
-    mutationFn: () => api.post<PracticeNextResponse>("/practice/next", {}),
+    mutationFn: startPractice,
     onSuccess: (response) => {
       if (response.status === "ok" && response.problem) {
         navigate("/practice/active", { state: { problem: response.problem } });
