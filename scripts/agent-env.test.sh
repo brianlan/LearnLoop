@@ -343,11 +343,15 @@ case "${1:-}" in
     ;;
   volume)
     case "${2:-}" in
-      ls) printf '%s\n' "${STUB_VOLUMES:-}" | sed '/^$/d' ;;
+      ls)
+        [[ "${STUB_VOLUME_LS_FAIL:-0}" == "1" ]] && { printf 'volume ls boom\n' >&2; exit 1; }
+        printf '%s\n' "${STUB_VOLUMES:-}" | sed '/^$/d'
+        ;;
       rm) printf 'docker volume rm %s\n' "${3:-}" >> "$MUT" ;;
     esac
     ;;
   ps)
+    [[ "${STUB_PS_FAIL:-0}" == "1" ]] && { printf 'ps boom\n' >&2; exit 1; }
     name=""
     for a in "$@"; do case "$a" in volume=*) name="${a#volume=}" ;; esac; done
     for v in ${STUB_INUSE_VOLUMES:-}; do
@@ -355,6 +359,7 @@ case "${1:-}" in
     done
     ;;
   images)
+    [[ "${STUB_IMAGES_FAIL:-0}" == "1" ]] && { printf 'images boom\n' >&2; exit 1; }
     dangling=false
     for a in "$@"; do case "$a" in dangling=true) dangling=true ;; esac; done
     if [[ "$dangling" == true ]]; then
@@ -420,13 +425,15 @@ GIT_EOF
   export PATH="$STUB_BIN_DIR:$PATH"
   export STUB_MUTATIONS STUB_DOCKER_INFO=0 STUB_VOLUMES="" STUB_INUSE_VOLUMES=""
   export STUB_IMAGES="" STUB_DANGLING="" STUB_BUILDX=0 STUB_BUILDER_KEEPSTORAGE=0
+  export STUB_VOLUME_LS_FAIL=0 STUB_PS_FAIL=0 STUB_IMAGES_FAIL=0
 }
 
 teardown_stub_env() {
   [ -n "${STUB_BIN_DIR:-}" ] && rm -rf "$STUB_BIN_DIR"
   [ -n "${STUB_MUTATIONS:-}" ] && rm -f "$STUB_MUTATIONS"
   unset STUB_BIN_DIR STUB_MUTATIONS STUB_DOCKER_INFO STUB_VOLUMES \
-    STUB_INUSE_VOLUMES STUB_IMAGES STUB_DANGLING STUB_BUILDX STUB_BUILDER_KEEPSTORAGE
+    STUB_INUSE_VOLUMES STUB_IMAGES STUB_DANGLING STUB_BUILDX STUB_BUILDER_KEEPSTORAGE \
+    STUB_VOLUME_LS_FAIL STUB_PS_FAIL STUB_IMAGES_FAIL
 }
 
 # Run the cleanup script under the stubbed PATH. Args passed through.
@@ -538,7 +545,8 @@ test_cleanup_buildx_capability_selection() {
   teardown_stub_env
 
   setup_stub_env
-  # Neither capacity flag available: must fail without pruning cache.
+  # Neither capacity flag available: must fail during planning before any
+  # global or scoped mutation, including docker image prune.
   local rc=0
   STUB_BUILDX=1 STUB_BUILDER_KEEPSTORAGE=1 run_cleanup_stubbed --global-prune >/dev/null 2>&1 && rc=$? || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -551,12 +559,12 @@ test_cleanup_buildx_capability_selection() {
   else
     pass "unsupported CLI runs no cache prune"
   fi
-  # image prune runs before cache selection per script order; ensure it did run
-  # but cache prune did not.
+  # With two-phase planning, capability selection happens BEFORE mutation, so
+  # docker image prune must NOT run when global cache capability is unsupported.
   if mutations_log | grep -q 'docker image prune'; then
-    pass "unsupported CLI still attempted image prune before cache selection"
+    fail "unsupported CLI must not run docker image prune before failing (planning aborts first)"
   else
-    fail "unsupported CLI still attempted image prune before cache selection"
+    pass "unsupported CLI runs no docker image prune (planning aborts before mutation)"
   fi
   teardown_stub_env
 }
@@ -748,6 +756,143 @@ test_cleanup_keep_images_stubbed() {
   teardown_stub_env
 }
 
+# Regression tests for post-preflight discovery failures. Each must exit
+# non-zero, perform zero Docker/Git mutations, and print no misleading
+# empty-resource or completion message. These would pass on the new
+# two-phase implementation and fail on the PR #495 process-substitution code.
+
+test_cleanup_volume_ls_failure_aborts() {
+  printf '%s\n' "test_cleanup_volume_ls_failure_aborts"
+  setup_stub_env
+  STUB_VOLUME_LS_FAIL=1
+  STUB_VOLUMES="learnloop-agent-abc"
+  local out rc
+  out="$(run_cleanup_stubbed 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "volume ls failure exits non-zero"; else fail "volume ls failure exits non-zero (rc=$rc)"; fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "volume ls failure must perform zero mutations (log: $(mutations_log))"
+  else
+    pass "volume ls failure performs zero mutations"
+  fi
+  if printf '%s' "$out" | grep -q 'No unused agent volumes found'; then
+    fail "volume ls failure must not print misleading empty-resource success"
+  else
+    pass "volume ls failure prints no misleading empty-resource success"
+  fi
+  if printf '%s' "$out" | grep -q '=== Done ==='; then
+    fail "volume ls failure must not print completion marker"
+  else
+    pass "volume ls failure prints no completion marker"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_images_failure_aborts_after_volume_discovery() {
+  printf '%s\n' "test_cleanup_images_failure_aborts_after_volume_discovery"
+  setup_stub_env
+  # Removable volume candidates are present and discoverable, but image
+  # discovery fails. No volumes may be removed and no later cleanup may run.
+  STUB_VOLUMES="learnloop-agent-abc"
+  STUB_IMAGES_FAIL=1
+  local out rc
+  out="$(run_cleanup_stubbed 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "images failure exits non-zero"; else fail "images failure exits non-zero (rc=$rc)"; fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "images failure must perform zero mutations (log: $(mutations_log))"
+  else
+    pass "images failure performs zero mutations"
+  fi
+  if printf '%s' "$out" | grep -q 'docker volume rm learnloop-agent-abc'; then
+    fail "images failure must not remove discovered volumes"
+  else
+    pass "images failure does not remove discovered volumes"
+  fi
+  if printf '%s' "$out" | grep -q '=== Done ==='; then
+    fail "images failure must not print completion marker"
+  else
+    pass "images failure prints no completion marker"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_ps_failure_aborts() {
+  printf '%s\n' "test_cleanup_ps_failure_aborts"
+  setup_stub_env
+  # volume_in_use calls docker ps -a; a failure there must abort planning
+  # rather than being treated as "in use" and continuing.
+  STUB_VOLUMES="learnloop-agent-abc"
+  STUB_PS_FAIL=1
+  local out rc
+  out="$(run_cleanup_stubbed 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "ps failure exits non-zero"; else fail "ps failure exits non-zero (rc=$rc)"; fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "ps failure must perform zero mutations (log: $(mutations_log))"
+  else
+    pass "ps failure performs zero mutations"
+  fi
+  if printf '%s' "$out" | grep -q 'docker volume rm learnloop-agent-abc'; then
+    fail "ps failure must not remove volumes"
+  else
+    pass "ps failure does not remove volumes"
+  fi
+  if printf '%s' "$out" | grep -q '=== Done ==='; then
+    fail "ps failure must not print completion marker"
+  else
+    pass "ps failure prints no completion marker"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_empty_discovery_success() {
+  printf '%s\n' "test_cleanup_empty_discovery_success"
+  setup_stub_env
+  # Successful empty discovery still prints the correct empty-resource message.
+  STUB_VOLUMES="" STUB_IMAGES=""
+  local out rc
+  out="$(run_cleanup_stubbed 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -eq 0 ]; then pass "empty discovery exits zero"; else fail "empty discovery exits zero (rc=$rc)"; fi
+  if printf '%s' "$out" | grep -q 'No unused agent volumes found'; then
+    pass "empty discovery prints empty-resource message"
+  else
+    fail "empty discovery prints empty-resource message"
+  fi
+  if printf '%s' "$out" | grep -q '=== Done ==='; then
+    pass "empty discovery prints completion marker"
+  else
+    fail "empty discovery prints completion marker"
+  fi
+  # Empty discovery removes no Docker resources; git worktree prune is the
+  # only expected mutation in normal mode.
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker volume rm\|docker rmi\|image prune\|buildx prune\|builder prune'; then
+    fail "empty discovery must not remove any Docker resources (log: $log)"
+  else
+    pass "empty discovery removes no Docker resources"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_dry_run_empty_discovery_success() {
+  printf '%s\n' "test_cleanup_dry_run_empty_discovery_success"
+  setup_stub_env
+  STUB_VOLUMES="" STUB_IMAGES=""
+  local out rc
+  out="$(run_cleanup_stubbed --dry-run 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -eq 0 ]; then pass "dry-run empty discovery exits zero"; else fail "dry-run empty discovery exits zero (rc=$rc)"; fi
+  if printf '%s' "$out" | grep -q 'No unused agent volumes found'; then
+    pass "dry-run empty discovery prints empty-resource message"
+  else
+    fail "dry-run empty discovery prints empty-resource message"
+  fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "dry-run empty discovery must not mutate (log: $(mutations_log))"
+  else
+    pass "dry-run empty discovery makes no mutations"
+  fi
+  teardown_stub_env
+}
+
 main() {
   printf 'Running agent-env.sh regression tests in %s\n' "$repo_root"
   reset_repo_root
@@ -776,6 +921,11 @@ main() {
   test_cleanup_normal_mode_worktree_prune
   test_cleanup_help_global_prune_documented
   test_cleanup_keep_images_stubbed
+  test_cleanup_volume_ls_failure_aborts
+  test_cleanup_images_failure_aborts_after_volume_discovery
+  test_cleanup_ps_failure_aborts
+  test_cleanup_empty_discovery_success
+  test_cleanup_dry_run_empty_discovery_success
 
   printf '\nResults: %d passed, %d failed\n' "$passed" "$failed"
   if [ "$failed" -gt 0 ]; then
