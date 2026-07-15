@@ -12,9 +12,10 @@ from pydantic import BaseModel, Field
 
 from app.domain.models import ProblemType
 from app.domain.normalization import normalize_answer
-from app.domain.practice_selection import PracticeSelectionConfig, compute_problem_weight_breakdown
+from app.domain.practice_selection import compute_problem_weight_breakdown
 from app.infrastructure.auth.password import verify_password
 from app.infrastructure.config.settings import Settings, get_settings
+from app.presentation.selection_config import practice_selection_config
 from app.observability import log_teacher_password_event
 from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
@@ -117,8 +118,8 @@ async def _solution_state_problem_ids(
     ]
 
 
-def _practice_selection_config(settings: Settings) -> PracticeSelectionConfig:
-    return PracticeSelectionConfig(
+def _practice_selection_config(settings: Settings):
+    return practice_selection_config(
         cooldown_days=settings.problem_selection_cooldown_days,
         last_wrong_weight=settings.problem_selection_last_wrong_weight,
         failure_rate_weight=settings.problem_selection_failure_rate_weight,
