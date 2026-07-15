@@ -13,6 +13,9 @@ from typing import Any
 
 from bson import ObjectId
 
+from app.domain.models import Problem, ProblemSubject, ProblemType
+from app.presentation.errors import ApiError
+import pytest
 from app.presentation.problem_serialization import (
     OriginPayload,
     ProblemDetailPayload,
@@ -22,6 +25,7 @@ from app.presentation.problem_serialization import (
     TrackingPayload,
     _serialize_problem_detail,
     _serialize_problem_summary,
+    problem_document_to_model,
 )
 from app.presentation.schemas import UTCDatetime, ensure_utc
 
@@ -291,6 +295,60 @@ def test_serialize_detail_origin_none() -> None:
 
 
 # ---- UTC timestamp serialization (timezone-naive Mongo datetimes) ----
+
+
+def test_problem_document_to_model_returns_problem() -> None:
+    problem = _make_problem(problemType=ProblemType.SINGLE_CHOICE.value)
+    model = problem_document_to_model(problem)
+    assert isinstance(model, Problem)
+    assert model.id == str(problem["_id"])
+    assert model.userId == str(problem["userId"])
+    assert model.text == problem["text"]
+    assert model.problemType == ProblemType.SINGLE_CHOICE
+    assert model.subject == ProblemSubject.MATH.value
+    assert model.origin.previewId == str(problem["origin"]["previewId"])
+
+
+def test_problem_document_to_model_applies_defaults() -> None:
+    problem = _make_problem(
+        origin=None,
+        subject=None,
+        tags=None,
+        tracking=None,
+        isDeleted=None,
+        isDisabled=None,
+    )
+    del problem["subject"]
+    del problem["graphDsl"]
+    del problem["deletedAt"]
+    problem["tags"] = None
+    problem["isDeleted"] = None
+    problem["isDisabled"] = None
+    model = problem_document_to_model(problem)
+
+    assert model.subject == "math"
+    assert model.graphDsl is None
+    assert model.tags == []
+    assert model.tracking.exposureCount == 0
+    assert model.isDeleted is False
+    assert model.isDisabled is False
+    assert model.deletedAt is None
+    assert model.origin.previewId is None
+
+
+def test_problem_document_to_model_raises_api_error_with_full_details() -> None:
+    problem = _make_problem(text=None)
+    with pytest.raises(ApiError) as exc_info:
+        problem_document_to_model(problem)
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.code == "INVALID_PROBLEM_DATA"
+    assert "Problem contains invalid data for exam creation" in exc_info.value.message
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["problemId"] == str(problem["_id"])
+    assert any(
+        error.get("loc") == ("text",)
+        for error in exc_info.value.details["errors"]
+    )
 
 
 def test_ensure_utc_treats_naive_datetime_as_utc() -> None:

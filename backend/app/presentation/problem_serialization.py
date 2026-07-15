@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from app.domain.models import ProblemType
+from app.domain.models import Problem, ProblemType
+from app.presentation.errors import ApiError
 from app.presentation.helpers import build_problem_image_url
 from app.presentation.schemas import CorrectAnswerPayload, UTCDatetime
 
@@ -118,6 +120,44 @@ def _serialize_correct_answer(problem: dict[str, Any]) -> CorrectAnswerPayload:
         normalizedSet=[str(item) for item in correct_answer.get("normalizedSet", [])],
         format=str(correct_answer.get("format", "single")),
     )
+
+
+def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
+    try:
+        origin = dict(problem.get("origin") or {})
+        preview_id = origin.get("previewId")
+        if preview_id is not None:
+            origin["previewId"] = str(preview_id)
+        return Problem.model_validate(
+            {
+                "id": str(problem["_id"]),
+                "userId": str(problem["userId"]),
+                "text": problem["text"],
+                "problemType": problem["problemType"],
+                "subject": problem.get("subject", "math"),
+                "graphDsl": problem.get("graphDsl"),
+                "correctAnswer": problem["correctAnswer"],
+                "tags": list(problem.get("tags") or []),
+                "sourceImage": problem.get("sourceImage"),
+                "origin": origin,
+                "tracking": problem.get("tracking") or {},
+                "isDeleted": problem.get("isDeleted") if problem.get("isDeleted") is not None else False,
+                "deletedAt": problem.get("deletedAt"),
+                "isDisabled": problem.get("isDisabled") if problem.get("isDisabled") is not None else False,
+                "createdAt": problem["createdAt"],
+                "updatedAt": problem["updatedAt"],
+            }
+        )
+    except ValidationError as exc:
+        raise ApiError(
+            422,
+            "INVALID_PROBLEM_DATA",
+            "Problem contains invalid data for exam creation",
+            details={
+                "problemId": str(problem.get("_id", "")),
+                "errors": exc.errors(include_url=False),
+            },
+        ) from exc
 
 
 def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload:

@@ -18,9 +18,9 @@ from app.presentation.exam_helpers import (
     find_item,
     get_owned_exam,
     make_exam_item,
-    problem_document_to_model,
     requires_vlm_grading,
 )
+from app.presentation.problem_serialization import problem_document_to_model
 from app.presentation.deps import (
     AdapterDependency,
     CurrentUserDependency,
