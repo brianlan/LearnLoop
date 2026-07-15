@@ -1,8 +1,8 @@
 import pytest
 
-from app.infrastructure.vlm.solution_coaching_client import (
+from app.domain.whiteboard.graph_dsl import (
+    sanitize_whiteboard_dsl,
     _is_allowed_graph_dsl,
-    _sanitize_whiteboard_dsl,
     _split_top_level,
     _strip_quoted_strings,
     _validate_dsl_create_call,
@@ -180,41 +180,41 @@ class TestIsAllowedGraphDsl:
 
 class TestSanitizeWhiteboardDsl:
     def test_returns_none_for_none(self) -> None:
-        assert _sanitize_whiteboard_dsl(None) is None
+        assert sanitize_whiteboard_dsl(None) is None
 
     def test_returns_none_for_empty_string(self) -> None:
-        assert _sanitize_whiteboard_dsl("") is None
+        assert sanitize_whiteboard_dsl("") is None
 
     def test_returns_none_for_whitespace_only(self) -> None:
-        assert _sanitize_whiteboard_dsl("   \n\t  ") is None
+        assert sanitize_whiteboard_dsl("   \n\t  ") is None
 
     def test_strips_markdown_code_fence(self) -> None:
         raw = "```js\nvar p = board.create('point', [0, 0]);\n```"
-        assert _sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
 
     def test_strips_plain_code_fence(self) -> None:
         raw = "```\nvar p = board.create('point', [0, 0]);\n```"
-        assert _sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
 
     def test_strips_initboard_call(self) -> None:
         raw = "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]}); var p = board.create('point', [0, 0]);"
-        assert _sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
 
     def test_returns_none_for_disallowed_dsl(self) -> None:
-        assert _sanitize_whiteboard_dsl("fetch('/api/private');") is None
+        assert sanitize_whiteboard_dsl("fetch('/api/private');") is None
 
     def test_returns_sanitized_dsl_for_allowed_input(self) -> None:
         raw = "var p = board.create('point', [0, 0]);"
-        assert _sanitize_whiteboard_dsl(raw) == raw
+        assert sanitize_whiteboard_dsl(raw) == raw
 
     def test_strips_initboard_without_semicolon(self) -> None:
         raw = "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]}) var p = board.create('point', [0, 0]);"
-        assert _sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
 
     def test_returns_none_after_initboard_strips_to_empty(self) -> None:
         raw = "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});"
-        assert _sanitize_whiteboard_dsl(raw) is None
+        assert sanitize_whiteboard_dsl(raw) is None
 
     def test_strips_initboard_with_extra_whitespace(self) -> None:
         raw = "var  board  =  JXG.JSXGraph.initBoard(  'box'  )  ;  var p = board.create('point', [0, 0]);"
-        assert _sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
