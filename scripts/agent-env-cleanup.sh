@@ -3,6 +3,7 @@
 # Disk cleanup for agent environment artifacts left by scripts/agent-env.sh.
 #
 # By default this script is SCOPED to LearnLoop agent resources only:
+# stopped containers from fully inactive learnloop-agent-* Compose projects,
 # unused volumes whose names start with "learnloop-agent-", old
 # learnloop-agent-tools images, and stale git worktree metadata in this repo.
 #
@@ -39,6 +40,7 @@ usage() {
 Usage: scripts/agent-env-cleanup.sh [options]
 
 By default only LearnLoop agent resources are cleaned up:
+stopped containers from fully inactive learnloop-agent-* Compose projects,
 unused learnloop-agent-* volumes, old learnloop-agent-tools images,
 and stale git worktree metadata in this repository.
 
@@ -108,6 +110,90 @@ volume_in_use() {
     return 2
   }
   [[ -n "$names" ]]
+}
+
+# Discover stopped containers from fully inactive LearnLoop agent Compose
+# projects. Ownership is determined by the exact `com.docker.compose.project`
+# label (not container name), which must strictly start with `learnloop-agent-`.
+# A project is eligible only if EVERY discovered member is in `exited`,
+# `created`, or `dead` state. If any member is active or has an unknown state,
+# the entire project is skipped. Output: tab-delimited candidate records on
+# stdout (id\tname\tstate\tstatus\tproject\tservice). Skipped projects are
+# reported on stderr. Returns non-zero on discovery failure. Never consume
+# this through process substitution; the exit status would not propagate.
+plan_inactive_agent_containers() {
+  local raw rc
+  raw="$(docker ps -a --filter 'label=com.docker.compose.project' \
+    --format '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}' 2>&1)" || {
+    rc=$?
+    printf 'Error: docker ps -a (container discovery) failed: %s\n' "$raw" >&2
+    return "$rc"
+  }
+
+  # Extract unique project labels that strictly start with the agent prefix.
+  local projects proj
+  projects="$(printf '%s\n' "$raw" | awk -F'\t' '$5 != "" {print $5}' | sort -u)"
+
+  local candidates="" active line id name state status project service
+  while IFS= read -r proj; do
+    [[ -z "$proj" ]] && continue
+    # Strict prefix check; Docker's label filter matches label existence, not
+    # value prefix. We validate the value to exclude substring false positives
+    # such as "backup-learnloop-agent-data".
+    case "$proj" in
+      "${VOLUME_PREFIX}"*) ;;
+      *) continue ;;
+    esac
+
+    # Gather all containers for this project and check if all are removable.
+    active=false
+    local proj_records=""
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      IFS=$'\t' read -r id name state status project service <<< "$line"
+      case "$state" in
+        exited|created|dead) proj_records="${proj_records}${line}"$'\n' ;;
+        *) active=true ;;
+      esac
+    done <<< "$(printf '%s\n' "$raw" | awk -F'\t' -v p="$proj" '$5 == p')"
+
+    if [[ "$active" == true ]]; then
+      printf '  Skip: project %s has active or unknown-state members; skipping all containers.\n' "$proj" >&2
+    else
+      candidates="${candidates}${proj_records}"
+    fi
+  done <<< "$projects"
+
+  printf '%s' "$candidates"
+}
+
+# Remove planned containers. Args: <newline-separated tab-delimited records>.
+# Uses only non-forced `docker container rm` without -f, --force, -v, or
+# --volumes. A removal failure (e.g. a container started between planning and
+# removal) propagates non-zero and stops all subsequent cleanup phases.
+prune_agent_containers() {
+  local count=0 line id name state status project service
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    IFS=$'\t' read -r id name state status project service <<< "$line"
+    if [[ "$DRY_RUN" == true ]]; then
+      printf '  [dry-run] would remove container: %s (%s, project=%s, service=%s, state=%s, %s)\n' \
+        "$id" "$name" "$project" "$service" "$state" "$status"
+    else
+      # Show status (includes exit code for exited containers) before removal.
+      printf '  Removing container: %s (%s, project=%s, %s)\n' "$id" "$name" "$project" "$status"
+      if docker container rm "$id" >/dev/null 2>&1; then
+        printf '  Removed container: %s\n' "$id"
+      else
+        printf 'Error: docker container rm %s failed; aborting subsequent cleanup.\n' "$id" >&2
+        return 1
+      fi
+    fi
+    count=$((count + 1))
+  done <<< "$1"
+  if [[ $count -eq 0 ]]; then
+    printf '  No inactive agent containers found.\n'
+  fi
 }
 
 # Discover unused agent volumes with a strict prefix check. Docker's volume
@@ -297,7 +383,11 @@ main() {
   # zero mutations and no misleading success output. Outputs are captured with
   # `output="$(producer)" || return $?` because Bash does not propagate the
   # exit status of process substitution (`< <(...)`) to the outer loop.
-  local planned_volumes planned_images cache_cmd=""
+  local planned_containers planned_volumes planned_images cache_cmd=""
+  if ! planned_containers="$(plan_inactive_agent_containers)"; then
+    printf 'Error: container discovery failed; aborting before any cleanup.\n' >&2
+    return 1
+  fi
   if ! planned_volumes="$(plan_unused_agent_volumes)"; then
     printf 'Error: volume discovery failed; aborting before any cleanup.\n' >&2
     return 1
@@ -314,6 +404,8 @@ main() {
 
   # --- Mutation phase -----------------------------------------------------
   # All discovery/planning succeeded; it is now safe to remove resources.
+  # Container removal runs before volume removal so newly unreferenced named
+  # volumes become eligible for the existing scoped-volume logic in a later run.
   printf '=== Agent environment disk cleanup ===\n'
   [[ "$DRY_RUN" == true ]] && printf '(dry-run mode — no changes will be made)\n'
   if [[ "$GLOBAL_PRUNE" == true ]]; then
@@ -321,6 +413,9 @@ main() {
   else
     printf '(scoped to LearnLoop agent resources only)\n'
   fi
+
+  printf '\n--- Inactive agent containers ---\n'
+  prune_agent_containers "$planned_containers" || return $?
 
   printf '\n--- Unused agent volumes ---\n'
   prune_agent_volumes "$planned_volumes"
