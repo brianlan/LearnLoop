@@ -9,9 +9,10 @@ from bson import ObjectId
 from fastapi import APIRouter, Query
 
 from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
-from app.domain.selection import ProblemSelectionConfig, select_problems
+from app.domain.selection import select_problems
 from app.domain.state import transition_exam_state
 from app.presentation.exam_grading import build_tracking_update, grade_item
+from app.presentation.selection_config import problem_selection_config
 from app.presentation.exam_helpers import (
     build_exam_summary,
     exam_requires_vlm_grading,
@@ -60,7 +61,7 @@ async def create_exam(
         "userId": current_user["_id"],
         "state": {"$in": [ExamState.IN_PROGRESS.value, ExamState.GRADING.value]},
     }
-    selection_config = ProblemSelectionConfig(
+    selection_config = problem_selection_config(
         cooldown_days=settings.problem_selection_cooldown_days,
         last_wrong_weight=settings.problem_selection_last_wrong_weight,
         failure_rate_weight=settings.problem_selection_failure_rate_weight,
