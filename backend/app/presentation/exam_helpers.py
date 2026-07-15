@@ -8,7 +8,7 @@ from bson import ObjectId
 from pydantic import ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 
-from app.domain.models import ExamItem, GradingStatus, Problem, ProblemType
+from app.domain.models import ExamItem, GradingStatus, ProblemType
 from app.domain.scoring import compute_summary
 from app.infrastructure.storage.mongo import Document
 from app.presentation.errors import ApiError
@@ -33,44 +33,6 @@ def requires_vlm_grading(item: Mapping[str, Any]) -> bool:
 
 def exam_requires_vlm_grading(items: list[Mapping[str, Any]]) -> bool:
     return any(requires_vlm_grading(item) for item in items)
-
-def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
-    try:
-        origin = dict(problem.get("origin") or {})
-        preview_id = origin.get("previewId")
-        if preview_id is not None:
-            origin["previewId"] = str(preview_id)
-        return Problem.model_validate(
-            {
-                "id": str(problem["_id"]),
-                "userId": str(problem["userId"]),
-                "text": problem["text"],
-                "problemType": problem["problemType"],
-                "subject": problem.get("subject", "math"),
-                "graphDsl": problem.get("graphDsl"),
-                "correctAnswer": problem["correctAnswer"],
-                "tags": list(problem.get("tags", [])),
-                "sourceImage": problem.get("sourceImage"),
-                "origin": origin,
-                "tracking": problem.get("tracking", {}),
-                "isDeleted": problem.get("isDeleted", False),
-                "deletedAt": problem.get("deletedAt"),
-                "isDisabled": problem.get("isDisabled", False),
-                "createdAt": problem["createdAt"],
-                "updatedAt": problem["updatedAt"],
-            }
-        )
-    except ValidationError as exc:
-        raise ApiError(
-            422,
-            "INVALID_PROBLEM_DATA",
-            "Problem contains invalid data for exam creation",
-            details={
-                "problemId": str(problem.get("_id", "")),
-                "errors": exc.errors(include_url=False),
-            },
-        ) from exc
-
 
 def build_exam_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
     models = [

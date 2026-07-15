@@ -28,8 +28,8 @@ from app.presentation.deps import (
 )
 from app.infrastructure.storage.s3 import load_source_image_base64
 from app.presentation.helpers import build_problem_image_url, parse_object_id
-from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.errors import ApiError
+from app.presentation.problem_serialization import problem_document_to_model
 from app.presentation.schemas import UTCDatetime
 
 router = APIRouter(prefix="/practice", tags=["practice"])

@@ -22,7 +22,6 @@ from app.presentation.exam_helpers import (
     build_exam_summary,
     find_item,
     make_exam_item,
-    problem_document_to_model,
 )
 
 
@@ -192,23 +191,6 @@ def test_build_exam_summary_casts_problem_id_to_string() -> None:
     summary = build_exam_summary(items)
     assert summary["totalProblems"] == 1
     assert summary["score"] == 1.0
-
-
-def test_problem_document_to_model_returns_problem() -> None:
-    problem = _problem_document()
-    model = problem_document_to_model(problem)
-    assert model.id == str(problem["_id"])
-    assert model.userId == str(problem["userId"])
-    assert model.text == problem["text"]
-    assert model.problemType == ProblemType.SINGLE_CHOICE
-
-
-def test_problem_document_to_model_raises_api_error_on_validation_failure() -> None:
-    problem = _problem_document(text=None)
-    with pytest.raises(ApiError) as exc_info:
-        problem_document_to_model(problem)
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.code == "INVALID_PROBLEM_DATA"
 
 
 def test_find_item_returns_index_and_copy() -> None:

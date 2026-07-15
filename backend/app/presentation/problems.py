@@ -19,7 +19,6 @@ from app.presentation.selection_config import practice_selection_config
 from app.observability import log_teacher_password_event
 from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
-from app.presentation.exam_helpers import problem_document_to_model
 from app.presentation.helpers import get_all_descendant_folder_ids, get_owned_folder, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.problem_serialization import (
     BulkSetFolderResponse,
@@ -33,6 +32,7 @@ from app.presentation.problem_serialization import (
     _serialize_problem_detail,
     _serialize_problem_summary,
     _serialize_tracking,
+    problem_document_to_model,
 )
 from app.solution_generation import regenerate_solution_task_for_problem
 from app.presentation.tag_registration import _register_tags
