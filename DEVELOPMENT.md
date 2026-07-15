@@ -205,14 +205,17 @@ The agent environment:
 
 Over time, agent sessions accumulate Docker volumes, old `learnloop-agent-tools:*` images, dangling layers, and build cache. Use `scripts/agent-env-cleanup.sh` to reclaim disk space.
 
-By default the script is **scoped to LearnLoop agent resources only**: it removes unused `learnloop-agent-*` volumes, old `learnloop-agent-tools:*` images, and stale git worktree metadata in this repository. It does not touch dangling images or build cache from other projects.
+By default the script is **scoped to LearnLoop agent resources only**: it removes stopped containers from fully inactive `learnloop-agent-*` Compose projects, unused `learnloop-agent-*` volumes, old `learnloop-agent-tools:*` images, and stale git worktree metadata in this repository. It does not touch dangling images or build cache from other projects.
+
+> CAUTION: Default cleanup removes stopped containers from fully inactive LearnLoop agent Compose projects. A project is eligible only if **every** container in it is in `exited`, `created`, or `dead` state. If any container is running, paused, restarting, or removing, the entire project is skipped. Removal uses non-forced `docker container rm` (no `-f`, `--force`, `-v`, or `--volumes`), so it does not directly delete volumes — but removing stopped containers makes their referenced named volumes eligible for removal by the existing unused-volume phase in a subsequent cleanup run. Non-zero container exit codes are shown in the output before removal so debugging context is visible.
 
 ```bash
 # Preview what would be cleaned up without removing anything
 ./scripts/agent-env-cleanup.sh --dry-run
 
 # Remove unused agent volumes, old tools images (keeping 2 most recent),
-# and stale git worktree metadata
+# and stale git worktree metadata. Also removes stopped containers from
+# fully inactive learnloop-agent-* Compose projects before volume cleanup.
 ./scripts/agent-env-cleanup.sh
 
 # Keep a different number of recent tools images
@@ -231,10 +234,12 @@ Daemon-wide Docker cleanup (dangling images and shared build-cache pruning) is o
 
 The script:
 
+- Removes stopped containers from fully inactive `learnloop-agent-*` Compose projects whose `com.docker.compose.project` label **strictly starts with** `learnloop-agent-`. A project is eligible only if every member is in `exited`, `created`, or `dead` state; any active member causes the entire project to be skipped. Removal uses non-forced `docker container rm` without volume flags. The normal `learnloop` project, unlabeled containers, and substring false positives are never selected. Container removal runs before volume cleanup so newly unreferenced named volumes become eligible in subsequent runs.
 - Removes unused volumes whose names **strictly start with** `learnloop-agent-` and are not referenced by any container (running or stopped). A name that merely contains the substring (e.g. `backup-learnloop-agent-data`) is never removed.
 - Keeps the N most recent `learnloop-agent-tools:*` images (default 2) and removes the rest.
 - Prunes stale git worktrees via `git worktree prune` (dry-run uses `git worktree prune --dry-run --verbose`).
 - Requires Docker to be reachable; aborts non-zero before any cleanup if the daemon is unavailable.
+- Discovers all container, volume, and image candidates before any mutation. A discovery failure aborts with zero mutations and no misleading success output. A removal failure (e.g. a container started between planning and removal) stops all subsequent cleanup phases.
 - With `--global-prune`, additionally runs `docker image prune -f` and a guarded build-cache prune that keeps a 10 GB reservation and prunes cache older than 30 days. It selects the prune command by Docker/buildx CLI capability (preferring `docker buildx prune -f --filter 'until=720h' --reserved-space 10GB`, falling back to `docker builder prune -f --filter 'until=720h' --keep-storage 10GB`) and fails rather than running an unbounded prune if neither capacity flag is supported.
 - `--help` works without a Docker daemon.
 

@@ -351,6 +351,19 @@ case "${1:-}" in
     esac
     ;;
   ps)
+    # Detect container discovery (label filter) vs volume-in-use check
+    has_label=false
+    for a in "$@"; do
+      case "$a" in
+        label=com.docker.compose.project) has_label=true ;;
+      esac
+    done
+    if [[ "$has_label" == true ]]; then
+      [[ "${STUB_CONTAINER_LS_FAIL:-0}" == "1" ]] && { printf 'container discovery boom\n' >&2; exit 1; }
+      printf '%s\n' "${STUB_CONTAINERS:-}" | sed '/^$/d'
+      exit 0
+    fi
+    # Volume-in-use check (existing behavior)
     [[ "${STUB_PS_FAIL:-0}" == "1" ]] && { printf 'ps boom\n' >&2; exit 1; }
     name=""
     for a in "$@"; do case "$a" in volume=*) name="${a#volume=}" ;; esac; done
@@ -371,6 +384,16 @@ case "${1:-}" in
   rmi) printf 'docker rmi %s\n' "${2:-}" >> "$MUT" ;;
   image)
     printf 'docker image prune %s\n' "${2:-}" >> "$MUT"
+    ;;
+  container)
+    case "${2:-}" in
+      rm)
+        for rid in ${STUB_CONTAINER_RM_RACE_IDS:-}; do
+          [[ "$rid" == "${3:-}" ]] && { printf 'container rm failed (race): %s\n' "${3:-}" >&2; exit 1; }
+        done
+        printf 'docker container rm %s\n' "${3:-}" >> "$MUT"
+        ;;
+    esac
     ;;
   buildx)
     case "${2:-}" in
@@ -426,6 +449,7 @@ GIT_EOF
   export STUB_MUTATIONS STUB_DOCKER_INFO=0 STUB_VOLUMES="" STUB_INUSE_VOLUMES=""
   export STUB_IMAGES="" STUB_DANGLING="" STUB_BUILDX=0 STUB_BUILDER_KEEPSTORAGE=0
   export STUB_VOLUME_LS_FAIL=0 STUB_PS_FAIL=0 STUB_IMAGES_FAIL=0
+  export STUB_CONTAINERS="" STUB_CONTAINER_LS_FAIL=0 STUB_CONTAINER_RM_RACE_IDS=""
 }
 
 teardown_stub_env() {
@@ -433,7 +457,8 @@ teardown_stub_env() {
   [ -n "${STUB_MUTATIONS:-}" ] && rm -f "$STUB_MUTATIONS"
   unset STUB_BIN_DIR STUB_MUTATIONS STUB_DOCKER_INFO STUB_VOLUMES \
     STUB_INUSE_VOLUMES STUB_IMAGES STUB_DANGLING STUB_BUILDX STUB_BUILDER_KEEPSTORAGE \
-    STUB_VOLUME_LS_FAIL STUB_PS_FAIL STUB_IMAGES_FAIL
+    STUB_VOLUME_LS_FAIL STUB_PS_FAIL STUB_IMAGES_FAIL \
+    STUB_CONTAINERS STUB_CONTAINER_LS_FAIL STUB_CONTAINER_RM_RACE_IDS
 }
 
 # Run the cleanup script under the stubbed PATH. Args passed through.
@@ -893,6 +918,243 @@ test_cleanup_dry_run_empty_discovery_success() {
   teardown_stub_env
 }
 
+# ---------------------------------------------------------------------------
+# Regression tests for inactive-agent-container cleanup (issue #497).
+# ---------------------------------------------------------------------------
+
+test_cleanup_container_inactive_project_removed() {
+  printf '%s\n' "test_cleanup_container_inactive_project_removed"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (0) 2 hours ago	learnloop-agent-proj1	init-deps
+c2	mongodb-1	exited	Exited (0) 1 hour ago	learnloop-agent-proj1	mongodb" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm c1'; then
+    pass "inactive container c1 is removed"
+  else
+    fail "inactive container c1 is removed"
+  fi
+  if printf '%s' "$log" | grep -q 'docker container rm c2'; then
+    pass "inactive container c2 is removed"
+  else
+    fail "inactive container c2 is removed"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_active_project_skipped() {
+  printf '%s\n' "test_cleanup_container_active_project_skipped"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (0) 2 hours ago	learnloop-agent-proj1	init-deps
+c2	tools-run-1	running	Up 5 minutes	learnloop-agent-proj1	tools" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm c1\|docker container rm c2'; then
+    fail "active project must have no containers removed"
+  else
+    pass "active project has no containers removed"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_learnloop_project_excluded() {
+  printf '%s\n' "test_cleanup_container_learnloop_project_excluded"
+  setup_stub_env
+  STUB_CONTAINERS="c1	mongodb-1	exited	Exited (0) 1 hour ago	learnloop	mongodb" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm c1'; then
+    fail "normal learnloop project must never be selected"
+  else
+    pass "normal learnloop project is never selected"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_substring_excluded() {
+  printf '%s\n' "test_cleanup_container_substring_excluded"
+  setup_stub_env
+  STUB_CONTAINERS="c1	some-service	exited	Exited (0) 1 hour ago	backup-learnloop-agent-data	some-service" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm c1'; then
+    fail "substring project label must never be selected"
+  else
+    pass "substring project label is never selected"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_no_label_excluded() {
+  printf '%s\n' "test_cleanup_container_no_label_excluded"
+  setup_stub_env
+  # Container with a learnloop-agent- name but no Compose project label.
+  STUB_CONTAINERS="c1	learnloop-agent-tools-1	exited	Exited (0) 1 hour ago		tools" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm c1'; then
+    fail "container without project label must never be selected"
+  else
+    pass "container without project label is never selected"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_nonzero_exit_removed() {
+  printf '%s\n' "test_cleanup_container_nonzero_exit_removed"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (1) 3 minutes ago	learnloop-agent-proj1	init-deps" \
+    run_cleanup_stubbed 2>/dev/null
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm c1'; then
+    pass "non-zero exit container is still removed"
+  else
+    fail "non-zero exit container is still removed"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_rm_no_force() {
+  printf '%s\n' "test_cleanup_container_rm_no_force"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (0) 2 hours ago	learnloop-agent-proj1	init-deps" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q -- '-f\|--force\|-v\|--volumes'; then
+    fail "container removal must not use force or volume flags (log: $log)"
+  else
+    pass "container removal uses no force or volume flags"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_before_volumes() {
+  printf '%s\n' "test_cleanup_container_before_volumes"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (0) 2 hours ago	learnloop-agent-proj1	init-deps" \
+    STUB_VOLUMES="learnloop-agent-proj1_frontend_deps" \
+    run_cleanup_stubbed 2>/dev/null
+  local log lines
+  log="$(mutations_log)"
+  # Container rm should appear before volume rm in the mutation log.
+  local cidx vidx
+  cidx="$(printf '%s\n' "$log" | grep -n 'docker container rm' | head -1 | cut -d: -f1)"
+  vidx="$(printf '%s\n' "$log" | grep -n 'docker volume rm' | head -1 | cut -d: -f1)"
+  if [ -n "$cidx" ] && [ -n "$vidx" ] && [ "$cidx" -lt "$vidx" ]; then
+    pass "container removal precedes volume removal"
+  else
+    fail "container removal precedes volume removal (cidx=$cidx vidx=$vidx log=$log)"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_dry_run_no_mutations() {
+  printf '%s\n' "test_cleanup_container_dry_run_no_mutations"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (0) 2 hours ago	learnloop-agent-proj1	init-deps
+c2	tools-1	running	Up 5 minutes	learnloop-agent-proj2	tools"
+  local out rc
+  out="$(run_cleanup_stubbed --dry-run 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -eq 0 ]; then pass "dry-run exits zero"; else fail "dry-run exits zero (rc=$rc)"; fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "dry-run must not mutate (log: $(mutations_log))"
+  else
+    pass "dry-run makes no mutations"
+  fi
+  if printf '%s' "$out" | grep -q 'would remove container: c1'; then
+    pass "dry-run lists container candidates"
+  else
+    fail "dry-run lists container candidates"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_discovery_failure_aborts() {
+  printf '%s\n' "test_cleanup_container_discovery_failure_aborts"
+  setup_stub_env
+  STUB_CONTAINER_LS_FAIL=1
+  local out rc
+  out="$(run_cleanup_stubbed 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "container discovery failure exits non-zero"; else fail "container discovery failure exits non-zero (rc=$rc)"; fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "container discovery failure must perform zero mutations (log: $(mutations_log))"
+  else
+    pass "container discovery failure performs zero mutations"
+  fi
+  if printf '%s' "$out" | grep -q '=== Done ==='; then
+    fail "container discovery failure must not print completion marker"
+  else
+    pass "container discovery failure prints no completion marker"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_rm_race_aborts() {
+  printf '%s\n' "test_cleanup_container_rm_race_aborts"
+  setup_stub_env
+  STUB_CONTAINERS="c1	init-deps-1	exited	Exited (0) 2 hours ago	learnloop-agent-proj1	init-deps
+c2	mongodb-1	exited	Exited (0) 1 hour ago	learnloop-agent-proj1	mongodb"
+  export STUB_CONTAINER_RM_RACE_IDS="c1"
+  local out rc
+  out="$(run_cleanup_stubbed 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "container rm race failure exits non-zero"; else fail "container rm race failure exits non-zero (rc=$rc)"; fi
+  # Volume, image, global-prune, and git worktree mutations must not run after
+  # a container removal failure.
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker volume rm\|docker rmi\|image prune\|buildx prune\|builder prune\|git worktree prune'; then
+    fail "later cleanup must not run after container rm failure (log: $log)"
+  else
+    pass "later cleanup does not run after container rm failure"
+  fi
+  if printf '%s' "$out" | grep -q '=== Done ==='; then
+    fail "container rm race must not print completion marker"
+  else
+    pass "container rm race prints no completion marker"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_container_all_states_coverage() {
+  printf '%s\n' "test_cleanup_container_all_states_coverage"
+  setup_stub_env
+  # exited, created, and dead are all removable; one of each.
+  STUB_CONTAINERS="c1	svc-exited	exited	Exited (0) 1h ago	learnloop-agent-st	exit-svc
+c2	svc-created	created	Created	learnloop-agent-st	create-svc
+c3	svc-dead	dead	Dead	learnloop-agent-st	dead-svc" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  local removed
+  removed="$(printf '%s\n' "$log" | grep -c 'docker container rm' || true)"
+  if [ "$removed" -eq 3 ]; then
+    pass "exited, created, and dead containers are all removed"
+  else
+    fail "exited, created, and dead containers are all removed (got $removed)"
+  fi
+  teardown_stub_env
+
+  setup_stub_env
+  # paused, restarting, removing must cause the project to be skipped.
+  STUB_CONTAINERS="c1	svc-paused	paused	Up (Paused)	learnloop-agent-ps	paused-svc
+c2	svc-exited	exited	Exited (0) 1h ago	learnloop-agent-ps	exit-svc" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker container rm'; then
+    fail "paused member must cause entire project to be skipped"
+  else
+    pass "paused member causes entire project to be skipped"
+  fi
+  teardown_stub_env
+}
+
 main() {
   printf 'Running agent-env.sh regression tests in %s\n' "$repo_root"
   reset_repo_root
@@ -926,6 +1188,18 @@ main() {
   test_cleanup_ps_failure_aborts
   test_cleanup_empty_discovery_success
   test_cleanup_dry_run_empty_discovery_success
+  test_cleanup_container_inactive_project_removed
+  test_cleanup_container_active_project_skipped
+  test_cleanup_container_learnloop_project_excluded
+  test_cleanup_container_substring_excluded
+  test_cleanup_container_no_label_excluded
+  test_cleanup_container_nonzero_exit_removed
+  test_cleanup_container_rm_no_force
+  test_cleanup_container_before_volumes
+  test_cleanup_container_dry_run_no_mutations
+  test_cleanup_container_discovery_failure_aborts
+  test_cleanup_container_rm_race_aborts
+  test_cleanup_container_all_states_coverage
 
   printf '\nResults: %d passed, %d failed\n' "$passed" "$failed"
   if [ "$failed" -gt 0 ]; then
