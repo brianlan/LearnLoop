@@ -180,6 +180,79 @@ class GradingResult(BaseModel):
     raw_provider_response: dict[str, Any]
 
 
+def _build_vlm_client(
+    *,
+    endpoint: str,
+    model: str,
+    api_key: str,
+    timeout_seconds: float,
+    provider: str = "openai",
+    api_mode: Literal["chat", "responses"] = "chat",
+    completion_fn: Callable[..., Any] | None = None,
+    responses_fn: Callable[..., Any] | None = None,
+    extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
+    request_correct_answer: bool = False,
+) -> VLMClient:
+    return VLMClient(
+        endpoint=endpoint,
+        model=model,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        provider=provider,
+        api_mode=api_mode,
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        extraction_system_prompt=extraction_system_prompt,
+        request_correct_answer=request_correct_answer,
+    )
+
+
+def build_helper_vlm_client(settings: Settings) -> VLMClient:
+    return _build_vlm_client(
+        endpoint=settings.helper_vlm_endpoint,
+        model=settings.helper_vlm_model,
+        api_key=settings.helper_vlm_api_key,
+        timeout_seconds=settings.helper_vlm_timeout_seconds,
+        provider=settings.helper_vlm_provider,
+        api_mode=settings.helper_vlm_api_mode,
+    )
+
+
+def build_math_ingestion_vlm_client(settings: Settings) -> VLMClient:
+    return _build_vlm_client(
+        endpoint=settings.math_ingestion_vlm_endpoint,
+        model=settings.math_ingestion_vlm_model,
+        api_key=settings.math_ingestion_vlm_api_key,
+        timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
+        provider=settings.math_ingestion_vlm_provider,
+        api_mode=settings.math_ingestion_vlm_api_mode,
+    )
+
+
+def build_english_ingestion_vlm_client(settings: Settings) -> VLMClient:
+    return _build_vlm_client(
+        endpoint=settings.english_ingestion_vlm_endpoint,
+        model=settings.english_ingestion_vlm_model,
+        api_key=settings.english_ingestion_vlm_api_key,
+        timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
+        provider=settings.english_ingestion_vlm_provider,
+        api_mode=settings.english_ingestion_vlm_api_mode,
+        extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
+        request_correct_answer=True,
+    )
+
+
+def build_grading_vlm_client(settings: Settings) -> VLMClient:
+    return _build_vlm_client(
+        endpoint=settings.grading_vlm_endpoint,
+        model=settings.grading_vlm_model,
+        api_key=settings.grading_vlm_api_key,
+        timeout_seconds=settings.grading_vlm_timeout_seconds,
+        provider=settings.grading_vlm_provider,
+        api_mode=settings.grading_vlm_api_mode,
+    )
+
+
 class VLMClient(BaseVLMClient):
     def __init__(
         self,

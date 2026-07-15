@@ -11,8 +11,11 @@ from app.infrastructure.config.settings import get_settings
 from app.infrastructure.storage.mongo import ensure_database_setup, get_database, get_mongo_adapter
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.observability import configure_logging
-from app.infrastructure.vlm.client import VLMClient
-from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
+from app.infrastructure.vlm.client import (
+    VLMClient,
+    build_english_ingestion_vlm_client,
+    build_math_ingestion_vlm_client,
+)
 from app.infrastructure.worker.extraction_worker import run_extraction_worker
 from app.infrastructure.worker.solution_worker import run_solution_worker
 from app.infrastructure.worker.exam_grading_worker import run_exam_grading_worker
@@ -47,24 +50,8 @@ async def _run_extraction_worker_with_logging(database, storage, settings, stop_
     math_client: VLMClient | None = None
     english_client: VLMClient | None = None
     try:
-        math_client = VLMClient(
-            endpoint=settings.math_ingestion_vlm_endpoint,
-            model=settings.math_ingestion_vlm_model,
-            api_key=settings.math_ingestion_vlm_api_key,
-            timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
-            provider=settings.math_ingestion_vlm_provider,
-            api_mode=settings.math_ingestion_vlm_api_mode,
-        )
-        english_client = VLMClient(
-            endpoint=settings.english_ingestion_vlm_endpoint,
-            model=settings.english_ingestion_vlm_model,
-            api_key=settings.english_ingestion_vlm_api_key,
-            timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
-            provider=settings.english_ingestion_vlm_provider,
-            api_mode=settings.english_ingestion_vlm_api_mode,
-            extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
-            request_correct_answer=True,
-        )
+        math_client = build_math_ingestion_vlm_client(settings)
+        english_client = build_english_ingestion_vlm_client(settings)
         await run_extraction_worker(
             database,
             storage,

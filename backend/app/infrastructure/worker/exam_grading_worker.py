@@ -15,7 +15,7 @@ from app.domain.state import transition_exam_state
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import EXAM_GRADING_TASKS_COLLECTION, _safe_get_collection
 from app.infrastructure.storage.s3 import S3StorageAdapter
-from app.infrastructure.vlm.client import VLMClient
+from app.infrastructure.vlm.client import VLMClient, build_grading_vlm_client
 from app.presentation.exam_grading import build_tracking_update, grade_item
 from app.presentation.exam_helpers import TERMINAL_GRADING_STATUSES, build_exam_summary
 
@@ -448,14 +448,7 @@ async def run_exam_grading_worker(
             continue
 
         # Build a grading VLM client for this task's exam.
-        vlm_client = VLMClient(
-            endpoint=settings.grading_vlm_endpoint,
-            model=settings.grading_vlm_model,
-            api_key=settings.grading_vlm_api_key,
-            timeout_seconds=settings.grading_vlm_timeout_seconds,
-            provider=settings.grading_vlm_provider,
-            api_mode=settings.grading_vlm_api_mode,
-        )
+        vlm_client = build_grading_vlm_client(settings)
         try:
             await process_exam_grading_task(
                 task, database, vlm_client, storage, settings, tasks_col,

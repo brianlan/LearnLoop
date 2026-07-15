@@ -20,8 +20,13 @@ from app.infrastructure.storage.mongo import (
     get_mongo_adapter as get_mongo_adapter_infra,
 )
 from app.infrastructure.storage.s3 import S3StorageAdapter
-from app.infrastructure.vlm.client import VLMClient
-from app.infrastructure.vlm.prompts import ENGLISH_EXTRACTION_SYSTEM_PROMPT
+from app.infrastructure.vlm.client import (
+    VLMClient,
+    build_english_ingestion_vlm_client,
+    build_grading_vlm_client,
+    build_helper_vlm_client,
+    build_math_ingestion_vlm_client,
+)
 from app.presentation.errors import ApiError
 
 
@@ -134,55 +139,25 @@ def get_s3_storage(
 def create_helper_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> VLMClient:
-    return VLMClient(
-        endpoint=settings.helper_vlm_endpoint,
-        model=settings.helper_vlm_model,
-        api_key=settings.helper_vlm_api_key,
-        timeout_seconds=settings.helper_vlm_timeout_seconds,
-        provider=settings.helper_vlm_provider,
-        api_mode=settings.helper_vlm_api_mode,
-    )
+    return build_helper_vlm_client(settings)
 
 
 def create_math_ingestion_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> VLMClient:
-    return VLMClient(
-        endpoint=settings.math_ingestion_vlm_endpoint,
-        model=settings.math_ingestion_vlm_model,
-        api_key=settings.math_ingestion_vlm_api_key,
-        timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
-        provider=settings.math_ingestion_vlm_provider,
-        api_mode=settings.math_ingestion_vlm_api_mode,
-    )
+    return build_math_ingestion_vlm_client(settings)
 
 
 def create_english_ingestion_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> VLMClient:
-    return VLMClient(
-        endpoint=settings.english_ingestion_vlm_endpoint,
-        model=settings.english_ingestion_vlm_model,
-        api_key=settings.english_ingestion_vlm_api_key,
-        timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
-        provider=settings.english_ingestion_vlm_provider,
-        api_mode=settings.english_ingestion_vlm_api_mode,
-        extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
-        request_correct_answer=True,
-    )
+    return build_english_ingestion_vlm_client(settings)
 
 
 async def get_grading_vlm_client(
     settings: Annotated[Settings, Depends(get_app_settings)],
 ) -> AsyncIterator[VLMClient]:
-    client = VLMClient(
-        endpoint=settings.grading_vlm_endpoint,
-        model=settings.grading_vlm_model,
-        api_key=settings.grading_vlm_api_key,
-        timeout_seconds=settings.grading_vlm_timeout_seconds,
-        provider=settings.grading_vlm_provider,
-        api_mode=settings.grading_vlm_api_mode,
-    )
+    client = build_grading_vlm_client(settings)
     try:
         yield client
     finally:
