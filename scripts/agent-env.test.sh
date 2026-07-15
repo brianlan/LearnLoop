@@ -319,6 +319,435 @@ test_cleanup_keep_images_logic() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Deterministic stub-based regression tests for scripts/agent-env-cleanup.sh.
+# These run the cleanup script with fake `docker`/`git` on PATH so they never
+# touch the developer's real Docker daemon or git worktree metadata.
+# ---------------------------------------------------------------------------
+
+# Create a temp bin dir containing fake `docker` and `git`, set up env, and
+# export globals: STUB_BIN_DIR, STUB_MUTATIONS. Caller is in repo root.
+setup_stub_env() {
+  STUB_BIN_DIR="$(mktemp -d)"
+  STUB_MUTATIONS="$(mktemp)"
+  : > "$STUB_MUTATIONS"
+
+  cat > "$STUB_BIN_DIR/docker" <<'DOCKER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+MUT="${STUB_MUTATIONS:-/dev/null}"
+case "${1:-}" in
+  info)
+    [[ "${STUB_DOCKER_INFO:-0}" == "1" ]] && exit 1
+    exit 0
+    ;;
+  volume)
+    case "${2:-}" in
+      ls) printf '%s\n' "${STUB_VOLUMES:-}" | sed '/^$/d' ;;
+      rm) printf 'docker volume rm %s\n' "${3:-}" >> "$MUT" ;;
+    esac
+    ;;
+  ps)
+    name=""
+    for a in "$@"; do case "$a" in volume=*) name="${a#volume=}" ;; esac; done
+    for v in ${STUB_INUSE_VOLUMES:-}; do
+      [[ "$v" == "$name" ]] && { printf 'some-container\n'; exit 0; }
+    done
+    ;;
+  images)
+    dangling=false
+    for a in "$@"; do case "$a" in dangling=true) dangling=true ;; esac; done
+    if [[ "$dangling" == true ]]; then
+      printf '%s\n' "${STUB_DANGLING:-}" | sed '/^$/d'
+    else
+      printf '%s\n' "${STUB_IMAGES:-}" | sed '/^$/d'
+    fi
+    ;;
+  rmi) printf 'docker rmi %s\n' "${2:-}" >> "$MUT" ;;
+  image)
+    printf 'docker image prune %s\n' "${2:-}" >> "$MUT"
+    ;;
+  buildx)
+    case "${2:-}" in
+      version) [[ "${STUB_BUILDX:-0}" == "0" ]] && exit 0 || exit 1 ;;
+      prune)
+        if [[ "${3:-}" == "--help" ]]; then
+          [[ "${STUB_BUILDX:-0}" == "0" ]] && printf -- '--reserved-space\n'
+          exit 0
+        fi
+        printf 'docker buildx prune %s\n' "${*:3}" >> "$MUT"
+        ;;
+      du) printf 'RECLAIMABLE 1.0GB\n' ;;
+    esac
+    ;;
+  builder)
+    case "${2:-}" in
+      prune)
+        if [[ "${3:-}" == "--help" ]]; then
+          [[ "${STUB_BUILDER_KEEPSTORAGE:-0}" == "0" ]] && printf -- '--keep-storage\n'
+          exit 0
+        fi
+        printf 'docker builder prune %s\n' "${*:3}" >> "$MUT"
+        ;;
+    esac
+    ;;
+esac
+exit 0
+DOCKER_EOF
+  chmod +x "$STUB_BIN_DIR/docker"
+
+  cat > "$STUB_BIN_DIR/git" <<'GIT_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+MUT="${STUB_MUTATIONS:-/dev/null}"
+case "${1:-}" in
+  worktree)
+    case "${2:-}" in
+      prune)
+        if [[ "${3:-}" == "--dry-run" ]]; then
+          printf 'would prune: /tmp/stale-worktree\n'
+        else
+          printf 'git worktree prune\n' >> "$MUT"
+        fi
+        ;;
+    esac
+    ;;
+esac
+exit 0
+GIT_EOF
+  chmod +x "$STUB_BIN_DIR/git"
+
+  export PATH="$STUB_BIN_DIR:$PATH"
+  export STUB_MUTATIONS STUB_DOCKER_INFO=0 STUB_VOLUMES="" STUB_INUSE_VOLUMES=""
+  export STUB_IMAGES="" STUB_DANGLING="" STUB_BUILDX=0 STUB_BUILDER_KEEPSTORAGE=0
+}
+
+teardown_stub_env() {
+  [ -n "${STUB_BIN_DIR:-}" ] && rm -rf "$STUB_BIN_DIR"
+  [ -n "${STUB_MUTATIONS:-}" ] && rm -f "$STUB_MUTATIONS"
+  unset STUB_BIN_DIR STUB_MUTATIONS STUB_DOCKER_INFO STUB_VOLUMES \
+    STUB_INUSE_VOLUMES STUB_IMAGES STUB_DANGLING STUB_BUILDX STUB_BUILDER_KEEPSTORAGE
+}
+
+# Run the cleanup script under the stubbed PATH. Args passed through.
+run_cleanup_stubbed() {
+  STUB_MUTATIONS="$STUB_MUTATIONS" \
+    env PATH="$STUB_BIN_DIR:$PATH" \
+    bash "$script_dir/agent-env-cleanup.sh" "$@"
+}
+
+mutations_log() { cat "$STUB_MUTATIONS" 2>/dev/null || true; }
+mutations_count() { wc -l < "$STUB_MUTATIONS" 2>/dev/null | tr -d ' ' || printf '0'; }
+
+test_cleanup_default_never_prunes() {
+  printf '%s\n' "test_cleanup_default_never_prunes"
+  setup_stub_env
+  STUB_VOLUMES="learnloop-agent-abc
+learnloop-agent-def" STUB_IMAGES="2026-07-01 00:00:00 +0000	learnloop-agent-tools:old
+2026-07-10 00:00:00 +0000	learnloop-agent-tools:new" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'image prune\|buildx prune\|builder prune'; then
+    fail "default run must not invoke any daemon-wide prune"
+  else
+    pass "default run never invokes daemon-wide prune"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_global_prune_invokes_commands() {
+  printf '%s\n' "test_cleanup_global_prune_invokes_commands"
+  setup_stub_env
+  STUB_BUILDX=0 STUB_IMAGES="2026-07-01 00:00:00 +0000	learnloop-agent-tools:old
+2026-07-10 00:00:00 +0000	learnloop-agent-tools:new" \
+    run_cleanup_stubbed --global-prune >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker image prune'; then
+    pass "--global-prune invokes docker image prune"
+  else
+    fail "--global-prune invokes docker image prune"
+  fi
+  if printf '%s' "$log" | grep -q 'buildx prune.*--reserved-space 10GB'; then
+    pass "--global-prune uses buildx prune with --reserved-space 10GB"
+  else
+    fail "--global-prune uses buildx prune with --reserved-space 10GB"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_dry_run_global_no_mutations() {
+  printf '%s\n' "test_cleanup_dry_run_global_no_mutations"
+  setup_stub_env
+  export STUB_BUILDX=0 STUB_VOLUMES="learnloop-agent-abc"
+  export STUB_DANGLING="deadbeef	other-project:latest	100MB"
+  export STUB_IMAGES="2026-07-01 00:00:00 +0000	learnloop-agent-tools:old
+2026-07-05 00:00:00 +0000	learnloop-agent-tools:mid
+2026-07-10 00:00:00 +0000	learnloop-agent-tools:new"
+  local out rc
+  out="$(run_cleanup_stubbed --dry-run --global-prune 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    fail "dry-run --global-prune should exit zero (rc=$rc)"
+  else
+    pass "dry-run --global-prune exits zero"
+  fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "dry-run --global-prune must not mutate (log: $(mutations_log))"
+  else
+    pass "dry-run --global-prune makes no mutations"
+  fi
+  if printf '%s' "$out" | grep -q 'other-project:latest'; then
+    pass "dry-run --global-prune lists dangling image candidates"
+  else
+    fail "dry-run --global-prune lists dangling image candidates"
+  fi
+  if printf '%s' "$out" | grep -q 'reserved-space 10GB'; then
+    pass "dry-run --global-prune shows selected guarded command"
+  else
+    fail "dry-run --global-prune shows selected guarded command"
+  fi
+  if printf '%s' "$out" | grep -q 'WARNING'; then
+    pass "dry-run --global-prune prints cross-project warning"
+  else
+    fail "dry-run --global-prune prints cross-project warning"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_buildx_capability_selection() {
+  printf '%s\n' "test_cleanup_buildx_capability_selection"
+  setup_stub_env
+  # Modern buildx with --reserved-space.
+  STUB_BUILDX=0 run_cleanup_stubbed --global-prune >/dev/null 2>&1
+  if mutations_log | grep -q 'buildx prune.*--reserved-space 10GB'; then
+    pass "modern buildx selects --reserved-space 10GB"
+  else
+    fail "modern buildx selects --reserved-space 10GB"
+  fi
+  teardown_stub_env
+
+  setup_stub_env
+  # No buildx, but legacy builder has --keep-storage.
+  STUB_BUILDX=1 STUB_BUILDER_KEEPSTORAGE=0 run_cleanup_stubbed --global-prune >/dev/null 2>&1
+  if mutations_log | grep -q 'builder prune.*--keep-storage 10GB'; then
+    pass "legacy builder selects --keep-storage 10GB"
+  else
+    fail "legacy builder selects --keep-storage 10GB"
+  fi
+  teardown_stub_env
+
+  setup_stub_env
+  # Neither capacity flag available: must fail without pruning cache.
+  local rc=0
+  STUB_BUILDX=1 STUB_BUILDER_KEEPSTORAGE=1 run_cleanup_stubbed --global-prune >/dev/null 2>&1 && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    pass "unsupported CLI fails non-zero without pruning cache"
+  else
+    fail "unsupported CLI fails non-zero without pruning cache (rc=$rc)"
+  fi
+  if mutations_log | grep -q 'buildx prune\|builder prune'; then
+    fail "unsupported CLI must not run any cache prune"
+  else
+    pass "unsupported CLI runs no cache prune"
+  fi
+  # image prune runs before cache selection per script order; ensure it did run
+  # but cache prune did not.
+  if mutations_log | grep -q 'docker image prune'; then
+    pass "unsupported CLI still attempted image prune before cache selection"
+  else
+    fail "unsupported CLI still attempted image prune before cache selection"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_default_dry_run_scoped_nonmutating() {
+  printf '%s\n' "test_cleanup_default_dry_run_scoped_nonmutating"
+  setup_stub_env
+  export STUB_VOLUMES="learnloop-agent-abc
+learnloop-agent-def"
+  export STUB_IMAGES="2026-07-01 00:00:00 +0000	learnloop-agent-tools:old
+2026-07-05 00:00:00 +0000	learnloop-agent-tools:mid
+2026-07-10 00:00:00 +0000	learnloop-agent-tools:new"
+  local out rc
+  out="$(run_cleanup_stubbed --dry-run 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then fail "default dry-run exits zero (rc=$rc)"; else pass "default dry-run exits zero"; fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "default dry-run must not mutate (log: $(mutations_log))"
+  else
+    pass "default dry-run makes no mutations"
+  fi
+  if printf '%s' "$out" | grep -q 'learnloop-agent-abc'; then
+    pass "default dry-run lists scoped volume candidates"
+  else
+    fail "default dry-run lists scoped volume candidates"
+  fi
+  if printf '%s' "$out" | grep -q 'learnloop-agent-tools:old'; then
+    pass "default dry-run lists scoped image candidates"
+  else
+    fail "default dry-run lists scoped image candidates"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_help_without_docker() {
+  printf '%s\n' "test_cleanup_help_without_docker"
+  setup_stub_env
+  STUB_DOCKER_INFO=1
+  local out rc
+  out="$(run_cleanup_stubbed --help 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -eq 0 ]; then pass "--help exits zero without Docker"; else fail "--help exits zero without Docker (rc=$rc)"; fi
+  if printf '%s' "$out" | grep -q 'global-prune'; then
+    pass "--help documents --global-prune"
+  else
+    fail "--help documents --global-prune"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_docker_unavailable_nonzero() {
+  printf '%s\n' "test_cleanup_docker_unavailable_nonzero"
+  setup_stub_env
+  STUB_DOCKER_INFO=1
+  local out rc
+  out="$(run_cleanup_stubbed --dry-run 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "Docker unavailable exits non-zero"; else fail "Docker unavailable exits non-zero (rc=$rc)"; fi
+  if printf '%s' "$out" | grep -qi 'Docker daemon is not available'; then
+    pass "Docker unavailable prints clear error"
+  else
+    fail "Docker unavailable prints clear error"
+  fi
+  # Must not claim zero resources were found.
+  if printf '%s' "$out" | grep -q 'No unused agent volumes found'; then
+    fail "Docker unavailable must not print misleading zero-resource success"
+  else
+    pass "Docker unavailable does not print misleading zero-resource success"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_volume_prefix_strict() {
+  printf '%s\n' "test_cleanup_volume_prefix_strict"
+  setup_stub_env
+  # Substring trap: "backup-learnloop-agent-data" must NEVER be selected.
+  STUB_VOLUMES="learnloop-agent-keep
+backup-learnloop-agent-data
+learnloop-agent-drop" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker volume rm backup-learnloop-agent-data'; then
+    fail "substring volume must never be removed"
+  else
+    pass "substring volume is never removed"
+  fi
+  if printf '%s' "$log" | grep -q 'docker volume rm learnloop-agent-keep'; then
+    pass "true-prefix volume learnloop-agent-keep is removed"
+  else
+    fail "true-prefix volume learnloop-agent-keep is removed"
+  fi
+  if printf '%s' "$log" | grep -q 'docker volume rm learnloop-agent-drop'; then
+    pass "true-prefix volume learnloop-agent-drop is removed"
+  else
+    fail "true-prefix volume learnloop-agent-drop is removed"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_volume_inuse_protected() {
+  printf '%s\n' "test_cleanup_volume_inuse_protected"
+  setup_stub_env
+  STUB_VOLUMES="learnloop-agent-free
+learnloop-agent-used" \
+    STUB_INUSE_VOLUMES="learnloop-agent-used" \
+    run_cleanup_stubbed >/dev/null 2>&1
+  local log
+  log="$(mutations_log)"
+  if printf '%s' "$log" | grep -q 'docker volume rm learnloop-agent-used'; then
+    fail "in-use volume must be protected"
+  else
+    pass "in-use volume is protected"
+  fi
+  if printf '%s' "$log" | grep -q 'docker volume rm learnloop-agent-free'; then
+    pass "free volume is removed"
+  else
+    fail "free volume is removed"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_dry_run_worktree_preview() {
+  printf '%s\n' "test_cleanup_dry_run_worktree_preview"
+  setup_stub_env
+  local out rc
+  out="$(run_cleanup_stubbed --dry-run 2>&1)" && rc=$? || rc=$?
+  if [ "$rc" -eq 0 ]; then pass "dry-run worktree preview exits zero"; else fail "dry-run worktree preview exits zero (rc=$rc)"; fi
+  if printf '%s' "$out" | grep -q 'would prune'; then
+    pass "dry-run uses git worktree prune --dry-run --verbose output"
+  else
+    fail "dry-run uses git worktree prune --dry-run --verbose output"
+  fi
+  if [ "$(mutations_count)" -ne 0 ]; then
+    fail "dry-run must not mutate worktree metadata"
+  else
+    pass "dry-run does not mutate worktree metadata"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_normal_mode_worktree_prune() {
+  printf '%s\n' "test_cleanup_normal_mode_worktree_prune"
+  setup_stub_env
+  run_cleanup_stubbed >/dev/null 2>&1
+  if mutations_log | grep -q 'git worktree prune'; then
+    pass "normal mode runs git worktree prune"
+  else
+    fail "normal mode runs git worktree prune"
+  fi
+  teardown_stub_env
+}
+
+test_cleanup_help_global_prune_documented() {
+  printf '%s\n' "test_cleanup_help_global_prune_documented"
+  local out
+  out="$(bash "$script_dir/agent-env-cleanup.sh" --help 2>&1)" || true
+  if printf '%s' "$out" | grep -qi 'global-prune'; then
+    pass "help text mentions --global-prune"
+  else
+    fail "help text mentions --global-prune"
+  fi
+}
+
+test_cleanup_keep_images_stubbed() {
+  printf '%s\n' "test_cleanup_keep_images_stubbed"
+  setup_stub_env
+  STUB_IMAGES="2026-07-01 00:00:00 +0000	learnloop-agent-tools:a
+2026-07-02 00:00:00 +0000	learnloop-agent-tools:b
+2026-07-03 00:00:00 +0000	learnloop-agent-tools:c
+2026-07-04 00:00:00 +0000	learnloop-agent-tools:d" \
+    run_cleanup_stubbed --keep-images 2 >/dev/null 2>&1
+  local log removed
+  log="$(mutations_log)"
+  removed="$(printf '%s\n' "$log" | grep -c 'docker rmi' || true)"
+  # 4 images, keep 2 newest (c,d), remove a,b -> 2 rmi calls.
+  if [ "$removed" -eq 2 ]; then
+    pass "keep-images=2 removes 2 of 4 agent tools images"
+  else
+    fail "keep-images=2 removes 2 of 4 agent tools images (got $removed)"
+  fi
+  if printf '%s' "$log" | grep -q 'docker rmi learnloop-agent-tools:a'; then
+    pass "oldest image a is removed"
+  else
+    fail "oldest image a is removed"
+  fi
+  if ! printf '%s' "$log" | grep -q 'docker rmi learnloop-agent-tools:d'; then
+    pass "newest image d is kept"
+  else
+    fail "newest image d is kept"
+  fi
+  teardown_stub_env
+}
+
 main() {
   printf 'Running agent-env.sh regression tests in %s\n' "$repo_root"
   reset_repo_root
@@ -334,6 +763,19 @@ main() {
   test_cleanup_dry_run_no_changes
   test_cleanup_dry_run_help_text
   test_cleanup_keep_images_logic
+  test_cleanup_default_never_prunes
+  test_cleanup_global_prune_invokes_commands
+  test_cleanup_dry_run_global_no_mutations
+  test_cleanup_buildx_capability_selection
+  test_cleanup_default_dry_run_scoped_nonmutating
+  test_cleanup_help_without_docker
+  test_cleanup_docker_unavailable_nonzero
+  test_cleanup_volume_prefix_strict
+  test_cleanup_volume_inuse_protected
+  test_cleanup_dry_run_worktree_preview
+  test_cleanup_normal_mode_worktree_prune
+  test_cleanup_help_global_prune_documented
+  test_cleanup_keep_images_stubbed
 
   printf '\nResults: %d passed, %d failed\n' "$passed" "$failed"
   if [ "$failed" -gt 0 ]; then

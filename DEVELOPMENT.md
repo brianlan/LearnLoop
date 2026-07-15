@@ -203,25 +203,42 @@ The agent environment:
 
 #### Disk cleanup
 
-Over time, agent sessions accumulate Docker volumes, old `learnloop-agent-tools:*` images, dangling layers, and build cache. Use `scripts/agent-env-cleanup.sh` to reclaim disk space:
+Over time, agent sessions accumulate Docker volumes, old `learnloop-agent-tools:*` images, dangling layers, and build cache. Use `scripts/agent-env-cleanup.sh` to reclaim disk space.
+
+By default the script is **scoped to LearnLoop agent resources only**: it removes unused `learnloop-agent-*` volumes, old `learnloop-agent-tools:*` images, and stale git worktree metadata in this repository. It does not touch dangling images or build cache from other projects.
 
 ```bash
 # Preview what would be cleaned up without removing anything
 ./scripts/agent-env-cleanup.sh --dry-run
 
 # Remove unused agent volumes, old tools images (keeping 2 most recent),
-# dangling images, build cache, and stale git worktrees
+# and stale git worktree metadata
 ./scripts/agent-env-cleanup.sh
 
 # Keep a different number of recent tools images
 ./scripts/agent-env-cleanup.sh --keep-images 3
 ```
 
+Daemon-wide Docker cleanup (dangling images and shared build-cache pruning) is opt-in and affects the entire Docker daemon, including resources from **other projects**. Use it only when you intend to reclaim disk across all projects on this machine:
+
+```bash
+# Preview daemon-wide cleanup (dangling images + build cache)
+./scripts/agent-env-cleanup.sh --dry-run --global-prune
+
+# Run daemon-wide cleanup with a fixed 30-day age filter and 10 GB cache reservation
+./scripts/agent-env-cleanup.sh --global-prune
+```
+
 The script:
-- Removes volumes matching `learnloop-agent-*` that are not in use by any container.
+
+- Removes unused volumes whose names **strictly start with** `learnloop-agent-` and are not referenced by any container (running or stopped). A name that merely contains the substring (e.g. `backup-learnloop-agent-data`) is never removed.
 - Keeps the N most recent `learnloop-agent-tools:*` images (default 2) and removes the rest.
-- Prunes dangling images and build cache via native Docker commands.
-- Prunes stale git worktrees via `git worktree prune`.
+- Prunes stale git worktrees via `git worktree prune` (dry-run uses `git worktree prune --dry-run --verbose`).
+- Requires Docker to be reachable; aborts non-zero before any cleanup if the daemon is unavailable.
+- With `--global-prune`, additionally runs `docker image prune -f` and a guarded build-cache prune that keeps a 10 GB reservation and prunes cache older than 30 days. It selects the prune command by Docker/buildx CLI capability (preferring `docker buildx prune -f --filter 'until=720h' --reserved-space 10GB`, falling back to `docker builder prune -f --filter 'until=720h' --keep-storage 10GB`) and fails rather than running an unbounded prune if neither capacity flag is supported.
+- `--help` works without a Docker daemon.
+
+> CAUTION: `--global-prune` removes dangling images and build cache from the whole Docker daemon, including images/cache belonging to other projects. It is off by default and must be requested explicitly.
 
 Docker Compose smoke validation tests (requires running Compose stack):
 
