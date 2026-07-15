@@ -170,6 +170,10 @@ class TestIsAllowedGraphDsl:
     def test_rejects_invalid_bounding_box(self) -> None:
         assert _is_allowed_graph_dsl("board.setBoundingBox([0, 0])") is False
 
+    def test_allows_single_quoted_option_key(self) -> None:
+        dsl = "var p = board.create('point', [0, 0], {'name': 'P'});"
+        assert _is_allowed_graph_dsl(dsl) is True
+
     def test_rejects_duplicate_declaration(self) -> None:
         dsl = "var A = board.create('point', [0, 0]); var A = board.create('point', [1, 1]);"
         assert _is_allowed_graph_dsl(dsl) is False

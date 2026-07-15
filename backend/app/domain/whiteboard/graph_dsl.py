@@ -134,7 +134,7 @@ def _validate_dsl_object(value: str, declared_names: set[str]) -> bool:
         pair = _split_top_level(entry, ":")
         if pair is None or len(pair) != 2:
             return False
-        key = pair[0].strip().strip('""')
+        key = pair[0].strip().strip("'\"")
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or key not in _ALLOWED_DSL_OPTION_KEYS:
             return False
         if not _validate_dsl_value(pair[1], declared_names):
