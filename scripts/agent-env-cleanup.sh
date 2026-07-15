@@ -96,25 +96,33 @@ docker_preflight() {
 }
 
 # Check if a Docker volume is in use by any container (running or stopped).
-# Returns 0 (true) if in use, 1 (false) if not. Safe under set -e.
+# Returns 0 (in use), 1 (not in use), or 2 (docker ps -a failed). Callers must
+# distinguish a genuine "not in use" result (1) from a discovery failure (2)
+# so a failed lookup aborts planning instead of being treated as unused and
+# silently deleted. Safe under set -e: callers capture status explicitly.
 volume_in_use() {
-  local names
-  names="$(docker ps -a --filter "volume=$1" --format '{{.Names}}')" || return 0
+  local names rc
+  names="$(docker ps -a --filter "volume=$1" --format '{{.Names}}' 2>&1)" || {
+    rc=$?
+    printf 'Error: docker ps -a failed for volume %s: %s\n' "$1" "$names" >&2
+    return 2
+  }
   [[ -n "$names" ]]
 }
 
-# Emit unused agent volumes with a strict prefix check. Docker's volume name
-# filter is a substring match, so we re-validate each name in shell to avoid
-# deleting unrelated volumes whose names merely contain the prefix text.
-# Failures from docker volume ls propagate via the captured exit status.
-list_unused_agent_volumes() {
-  local raw rc
+# Discover unused agent volumes with a strict prefix check. Docker's volume
+# name filter is a substring match, so we re-validate each name in shell to
+# avoid deleting unrelated volumes whose names merely contain the prefix
+# text. Output and status are captured by the caller BEFORE any mutation:
+# the result is consumed through `output="$(plan_unused_agent_volumes)" || …`,
+# never through process substitution, which would hide the exit status.
+plan_unused_agent_volumes() {
+  local raw rc vol vrc
   raw="$(docker volume ls --filter "name=${VOLUME_PREFIX}" --format '{{.Name}}' 2>&1)" || {
     rc=$?
     printf 'Error: docker volume ls failed: %s\n' "$raw" >&2
     return "$rc"
   }
-  local vol
   while IFS= read -r vol; do
     [[ -z "$vol" ]] && continue
     # Strict prefix check; Docker's --filter is a substring match.
@@ -122,16 +130,21 @@ list_unused_agent_volumes() {
       "${VOLUME_PREFIX}"*) ;;
       *) continue ;;
     esac
-    if volume_in_use "$vol"; then
-      continue
-    fi
+    volume_in_use "$vol" && vrc=0 || vrc=$?
+    case $vrc in
+      0) continue ;;       # in use
+      1) ;;                # not in use, keep as candidate
+      *) return "$vrc" ;;  # discovery failure, abort planning
+    esac
     printf '%s\n' "$vol"
   done <<< "$raw"
 }
 
-# List learnloop-agent-tools images, newest first by creation time.
-# Failures from docker images propagate via the captured exit status.
-list_agent_tools_images() {
+# Discover learnloop-agent-tools images, newest first by creation time.
+# Output and status are captured by the caller BEFORE any mutation. Never
+# consume this through process substitution; the exit status would not
+# propagate.
+plan_agent_tools_images() {
   local raw rc
   raw="$(docker images --filter "reference=${IMAGE_REF}:*" \
     --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' 2>&1)" || {
@@ -142,6 +155,8 @@ list_agent_tools_images() {
   printf '%s' "$raw" | sort -t$'\t' -k1,1 -r | cut -f2
 }
 
+# Remove planned volumes. Args: <newline-separated volume list>.
+# A zero-length list prints the empty-resource success message.
 prune_agent_volumes() {
   local vol count=0
   while IFS= read -r vol; do
@@ -153,19 +168,20 @@ prune_agent_volumes() {
       printf '  Removed volume: %s\n' "$vol"
     fi
     count=$((count + 1))
-  done < <(list_unused_agent_volumes)
+  done <<< "$1"
   if [[ $count -eq 0 ]]; then
     printf '  No unused agent volumes found.\n'
   fi
 }
 
+# Remove old planned images. Args: <newline-separated image list>.
 prune_old_images() {
-  local images=() i line
+  local images=() i line total
   while IFS= read -r line; do
     [[ -n "$line" ]] && images+=("$line")
-  done < <(list_agent_tools_images)
+  done <<< "$1"
 
-  local total=${#images[@]}
+  total=${#images[@]}
   if [[ $total -le $KEEP_IMAGES ]]; then
     printf '  Keeping all %d agent tools images (keep-images=%d).\n' "$total" "$KEEP_IMAGES"
     return 0
@@ -213,10 +229,11 @@ select_cache_prune_cmd() {
   printf '%s\n' "$cmd"
 }
 
+# Daemon-wide dangling-image and build-cache pruning. Args: <chosen cache cmd>.
+# The cache command was validated during planning; passing it in guarantees a
+# discovery-time capability failure aborts before any mutation.
 prune_dangling_and_cache() {
-  if [[ "$GLOBAL_PRUNE" != true ]]; then
-    return 0
-  fi
+  local cache_cmd="$1"
 
   printf '  WARNING: --global-prune removes dangling images and build cache from the\n'
   printf '           ENTIRE Docker daemon, including resources from OTHER projects.\n'
@@ -240,11 +257,6 @@ prune_dangling_and_cache() {
     else
       printf '  [dry-run] could not enumerate dangling images (docker images failed).\n'
     fi
-    # Build-cache summary (inventory/estimate; Docker has no exact dry-run for prune).
-    local cache_cmd
-    if ! cache_cmd="$(select_cache_prune_cmd)"; then
-      return 1
-    fi
     printf '  [dry-run] would run: %s\n' "$cache_cmd"
     printf '  [dry-run] note: Docker has no exact dry-run for builder prune; cache info is an inventory.\n'
     if docker buildx du >/dev/null 2>&1; then
@@ -254,10 +266,6 @@ prune_dangling_and_cache() {
     fi
   else
     docker image prune -f
-    local cache_cmd
-    if ! cache_cmd="$(select_cache_prune_cmd)"; then
-      return 1
-    fi
     # shellcheck disable=SC2086
     eval "$cache_cmd"
   fi
@@ -283,6 +291,29 @@ main() {
 
   docker_preflight || return $?
 
+  # --- Discovery / planning phase -----------------------------------------
+  # Gather all scoped candidates and validate optional --global-prune
+  # capability BEFORE any Docker or Git mutation. A failure here aborts with
+  # zero mutations and no misleading success output. Outputs are captured with
+  # `output="$(producer)" || return $?` because Bash does not propagate the
+  # exit status of process substitution (`< <(...)`) to the outer loop.
+  local planned_volumes planned_images cache_cmd=""
+  if ! planned_volumes="$(plan_unused_agent_volumes)"; then
+    printf 'Error: volume discovery failed; aborting before any cleanup.\n' >&2
+    return 1
+  fi
+  if ! planned_images="$(plan_agent_tools_images)"; then
+    printf 'Error: image discovery failed; aborting before any cleanup.\n' >&2
+    return 1
+  fi
+  if [[ "$GLOBAL_PRUNE" == true ]]; then
+    if ! cache_cmd="$(select_cache_prune_cmd)"; then
+      return 1
+    fi
+  fi
+
+  # --- Mutation phase -----------------------------------------------------
+  # All discovery/planning succeeded; it is now safe to remove resources.
   printf '=== Agent environment disk cleanup ===\n'
   [[ "$DRY_RUN" == true ]] && printf '(dry-run mode — no changes will be made)\n'
   if [[ "$GLOBAL_PRUNE" == true ]]; then
@@ -292,14 +323,14 @@ main() {
   fi
 
   printf '\n--- Unused agent volumes ---\n'
-  prune_agent_volumes
+  prune_agent_volumes "$planned_volumes"
 
   printf '\n--- Old agent tools images (keeping %s most recent) ---\n' "$KEEP_IMAGES"
-  prune_old_images
+  prune_old_images "$planned_images"
 
   if [[ "$GLOBAL_PRUNE" == true ]]; then
     printf '\n--- Daemon-wide dangling images and build cache (--global-prune) ---\n'
-    prune_dangling_and_cache || return $?
+    prune_dangling_and_cache "$cache_cmd" || return $?
   fi
 
   printf '\n--- Stale git worktrees ---\n'
