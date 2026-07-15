@@ -8,6 +8,7 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { LatexText } from "@/components/LatexText";
 import type { CoachingConversation } from "@/types/coaching";
 import type { ProblemDetail, ProblemResponse } from "@/types/problem";
+import { getPracticeHistory, PRACTICE_HISTORY_KEY } from "@/api/practice";
 import type { PracticeHistoryResponse } from "@/types/practice";
 import { WhiteboardPanel } from "./WhiteboardPanel";
 
@@ -62,9 +63,9 @@ export function CoachingPage() {
 
   // 2. Fetch Practice History (if referrer is practice)
   const isFromPractice = fromRoute === "/practice" || fromRoute.startsWith("/practice");
-  const { data: practiceHistory } = useQuery({
-    queryKey: ["practice-history"],
-    queryFn: () => api.get<PracticeHistoryResponse>("/practice/history"),
+  const { data: practiceHistory } = useQuery<PracticeHistoryResponse>({
+    queryKey: PRACTICE_HISTORY_KEY,
+    queryFn: getPracticeHistory,
     enabled: !!problemId && isFromPractice,
   });
 
