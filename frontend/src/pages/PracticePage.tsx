@@ -12,7 +12,7 @@ import {
   PRACTICE_HISTORY_KEY,
   PRACTICE_STATS_KEY,
 } from "@/api/practice";
-import type { PracticeHistoryItem, PracticeNextResponse } from "@/types/practice";
+import type { PracticeHistoryItem, PracticeHistoryResponse, PracticeNextResponse } from "@/types/practice";
 
 function getResultStyleClass(result: string) {
   switch (result) {
