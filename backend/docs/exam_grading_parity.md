@@ -202,10 +202,10 @@ storage adapter, then runs the result-persistence transaction.
 
 **Worker path:**
 
-- `run_exam_grading_worker` constructs one `build_grading_vlm_client(settings)`
-per claimed task in its `try` block and calls `await vlm_client.aclose()` in
-the matching `finally` block. So VLM client lifecycle is one client per task,
-closed after `process_exam_grading_task` returns or raises.
+- `run_exam_grading_worker` constructs one `VLMClient(...)` per claimed task in
+its `try` block and calls `await vlm_client.aclose()` in the matching `finally`
+block. So VLM client lifecycle is one client per task, closed after
+`process_exam_grading_task` returns or raises.
 - The storage adapter is constructed once at worker startup (or passed in) and
 shared across all tasks. It is not closed per task.
 - `process_exam_grading_task` receives the already-built VLM client and storage
