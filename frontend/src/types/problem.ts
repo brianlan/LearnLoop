@@ -50,3 +50,16 @@ export interface ProblemsResponse {
   page: number;
   pageSize: number;
 }
+
+export interface AttemptHistoryItem {
+  id: string;
+  testedAt: string;
+  result: string;
+  source: "practice" | "exam";
+}
+
+export interface AttemptHistoryResponse {
+  items: AttemptHistoryItem[];
+  total: number;
+  hasMore: boolean;
+}

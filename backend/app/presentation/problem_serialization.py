@@ -89,6 +89,19 @@ class BulkSetFolderResponse(BaseModel):
     ok: bool
 
 
+class AttemptHistoryItemPayload(BaseModel):
+    id: str
+    testedAt: UTCDatetime
+    result: str
+    source: str
+
+
+class AttemptHistoryResponse(BaseModel):
+    items: list[AttemptHistoryItemPayload]
+    total: int
+    hasMore: bool
+
+
 def _serialize_tracking(problem: dict[str, Any]) -> TrackingPayload:
     tracking = dict(problem.get("tracking", {}))
     return TrackingPayload(

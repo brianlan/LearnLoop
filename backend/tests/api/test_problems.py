@@ -1619,3 +1619,289 @@ async def test_problem_payload_includes_folder_id(
     assert detail_response.status_code == 200
     body = detail_response.json()["problem"]
     assert body["folderId"] == str(folder["_id"])
+
+
+def make_practice_attempt(
+    user_id: ObjectId,
+    problem_id: ObjectId,
+    *,
+    grading_status: str = "correct",
+    created_at: datetime | None = None,
+) -> dict[str, Any]:
+    now = created_at or datetime.now(UTC)
+    return {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "problemId": problem_id,
+        "submittedAnswer": "answer",
+        "gradingStatus": grading_status,
+        "gradingMethod": "normalized-match",
+        "createdAt": now,
+    }
+
+
+def make_exam_item(
+    problem_id: ObjectId,
+    *,
+    grading_status: str = "correct",
+) -> dict[str, Any]:
+    return {
+        "itemId": str(ObjectId()),
+        "order": 1,
+        "problemId": problem_id,
+        "problemSnapshot": {"text": "t", "problemType": "short-answer", "subject": "math"},
+        "answer": {"raw": "a", "savedAt": datetime.now(UTC)},
+        "grading": {
+            "status": grading_status,
+            "method": None,
+            "isCorrect": grading_status == "correct",
+            "score": None,
+            "feedback": None,
+        },
+    }
+
+
+def make_submitted_exam(
+    user_id: ObjectId,
+    problem_id: ObjectId,
+    *,
+    submitted_at: datetime,
+    grading_status: str = "correct",
+    state: str = "submitted",
+) -> dict[str, Any]:
+    return {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "state": state,
+        "items": [make_exam_item(problem_id, grading_status=grading_status)],
+        "summary": {},
+        "createdAt": submitted_at - timedelta(hours=1),
+        "startedAt": submitted_at - timedelta(minutes=30),
+        "submittedAt": submitted_at,
+        "updatedAt": submitted_at,
+    }
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_merges_practice_and_exam_newest_first(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="History problem")
+    database["problems"].seed(problem)
+
+    t1 = datetime(2026, 7, 16, 8, 0, 0, tzinfo=UTC)
+    t2 = datetime(2026, 7, 16, 10, 0, 0, tzinfo=UTC)
+    t3 = datetime(2026, 7, 16, 12, 0, 0, tzinfo=UTC)
+
+    database["practice_attempts"].seed(
+        make_practice_attempt(user_id, problem["_id"], grading_status="correct", created_at=t1),
+        make_practice_attempt(user_id, problem["_id"], grading_status="incorrect", created_at=t3),
+    )
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=t2, grading_status="correct"),
+    )
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert body["hasMore"] is False
+    items = body["items"]
+    # Newest first: t3 practice incorrect, t2 exam correct, t1 practice correct
+    assert items[0]["testedAt"].startswith("2026-07-16T12")
+    assert items[0]["source"] == "practice"
+    assert items[0]["result"] == "incorrect"
+    assert items[1]["source"] == "exam"
+    assert items[1]["result"] == "correct"
+    assert items[2]["testedAt"].startswith("2026-07-16T08")
+    assert items[2]["source"] == "practice"
+    assert items[2]["result"] == "correct"
+    assert all(item["id"].count(":") == 1 for item in items)
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_preserves_pending_and_ungraded_states(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    database["problems"].seed(problem)
+
+    now = datetime.now(UTC)
+    database["practice_attempts"].seed(
+        make_practice_attempt(user_id, problem["_id"], grading_status="pending-review", created_at=now),
+        make_practice_attempt(user_id, problem["_id"], grading_status="ungraded", created_at=now - timedelta(hours=1)),
+    )
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=now - timedelta(hours=2), grading_status="pending-review"),
+    )
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
+    assert response.status_code == 200
+    results = {item["result"] for item in response.json()["items"]}
+    assert results == {"pending-review", "ungraded"}
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_pagination_appends_without_duplication(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    database["problems"].seed(problem)
+
+    base = datetime(2026, 7, 16, 0, 0, 0, tzinfo=UTC)
+    # 22 distinct timestamps to exercise two pages of 20
+    for i in range(22):
+        database["practice_attempts"].seed(
+            make_practice_attempt(user_id, problem["_id"], grading_status="correct", created_at=base + timedelta(minutes=i))
+        )
+
+    first = await client.get(f"/api/v1/problems/{problem['_id']}/attempts", params={"limit": 20, "offset": 0})
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["total"] == 22
+    assert len(first_body["items"]) == 20
+    assert first_body["hasMore"] is True
+
+    second = await client.get(f"/api/v1/problems/{problem['_id']}/attempts", params={"limit": 20, "offset": 20})
+    assert second.status_code == 200
+    second_body = second.json()
+    assert len(second_body["items"]) == 2
+    assert second_body["hasMore"] is False
+
+    all_ids = [item["id"] for item in first_body["items"]] + [item["id"] for item in second_body["items"]]
+    assert len(all_ids) == 22
+    assert len(set(all_ids)) == 22
+    # Page 1 timestamps are strictly newer than page 2 timestamps
+    assert first_body["items"][-1]["testedAt"] >= second_body["items"][0]["testedAt"]
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_excludes_non_final_and_other_user_exams(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    other_user_id = problems_app.state.secondary_user["_id"]
+    problem = make_problem(user_id)
+    database["problems"].seed(problem)
+
+    now = datetime.now(UTC)
+    # Submitted exam for this user contributes
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=now, grading_status="correct", state="submitted"),
+    )
+    # Active exam for this user is excluded
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=now, grading_status="correct", state="in-progress"),
+    )
+    # Grading exam excluded
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=now, grading_status="correct", state="grading"),
+    )
+    # Discarded exam excluded
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=now, grading_status="correct", state="discarded"),
+    )
+    # Other user's submitted exam excluded
+    database["exams"].seed(
+        make_submitted_exam(other_user_id, problem["_id"], submitted_at=now, grading_status="correct", state="submitted"),
+    )
+    # Other user's practice attempt excluded
+    database["practice_attempts"].seed(
+        make_practice_attempt(other_user_id, problem["_id"], grading_status="correct", created_at=now),
+    )
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["source"] == "exam"
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_does_not_fabricate_rows_from_aggregate_counters(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    # Tracking counters claim 2 correct + 1 failed but no persisted records exist.
+    problem = make_problem(user_id, text="Counters only")
+    problem["tracking"] = {
+        "exposureCount": 3,
+        "correctCount": 2,
+        "failedCount": 1,
+        "lastTestedAt": datetime.now(UTC),
+        "lastAttemptCorrect": False,
+    }
+    database["problems"].seed(problem)
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 0
+    assert body["items"] == []
+    assert body["hasMore"] is False
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_missing_problem_returns_404(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    response = await client.get(f"/api/v1/problems/{ObjectId()}/attempts")
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "NOT_FOUND", "message": "Problem not found"}}
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_empty_state(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id)
+    database["problems"].seed(problem)
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"items": [], "total": 0, "hasMore": False}
+
+
+@pytest.mark.asyncio
+async def test_attempt_history_excludes_other_problem_records(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    problem = make_problem(user_id, text="Target")
+    other_problem = make_problem(user_id, text="Other")
+    database["problems"].seed(problem, other_problem)
+
+    now = datetime.now(UTC)
+    database["practice_attempts"].seed(
+        make_practice_attempt(user_id, problem["_id"], grading_status="correct", created_at=now),
+        make_practice_attempt(user_id, other_problem["_id"], grading_status="incorrect", created_at=now),
+    )
+    database["exams"].seed(
+        make_submitted_exam(user_id, problem["_id"], submitted_at=now, grading_status="correct"),
+        make_submitted_exam(user_id, other_problem["_id"], submitted_at=now, grading_status="correct"),
+    )
+
+    response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2

@@ -2,6 +2,7 @@
 // Uses fetch with credentials: 'include' to send HttpOnly cookies automatically
 
 import type { CoachingConversation } from "@/types/coaching";
+import type { AttemptHistoryResponse } from "@/types/problem";
 
 const API_BASE = "/api/v1";
 
@@ -112,6 +113,18 @@ export const api = {
    */
   async regenerateSolution(problemId: string): Promise<{ status: string }> {
     return this.post<{ status: string }>(`/problems/${problemId}/solution-regeneration`, {});
+  },
+
+  /**
+   * Get paginated practice/exam attempt history for a problem.
+   */
+  async getAttemptHistory(
+    problemId: string,
+    params: { limit: number; offset: number },
+  ): Promise<AttemptHistoryResponse> {
+    return this.get<AttemptHistoryResponse>(
+      `/problems/${problemId}/attempts?limit=${params.limit}&offset=${params.offset}`,
+    );
   },
 
   /**
