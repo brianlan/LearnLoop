@@ -804,12 +804,12 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
     database: FakeDatabase = home_app.state.fake_database
     user_id = home_app.state.user["_id"]
     now = datetime.now(UTC)
-    sixty_days_ago = now - timedelta(days=60)  # recency = 1.0 + 60/30 = 3.0
+    sixty_days_ago = now - timedelta(days=60)
 
-    # Never-tested: recency=1.0 (createdAt ~now), failure=0.0, last_wrong=1.0 -> raw=2.0 (bucket 2)
+    # Never-tested: recency=1.0 (createdAt ~now, days_since=0), failure=0.0, last_wrong=1.0 -> raw=2.0 (bucket 2)
     never_tested = make_problem(user_id, created_at=now)
 
-    # Tested correct: recency=3.0, failure=0.0, last_wrong=0.5 -> raw=3.5 (bucket 3)
+    # Tested correct: rate 1/60 -> recency=1.0+60/60=2.0, failure=0.0, last_wrong=0.5 -> raw=2.5 (bucket 2)
     tested_correct = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,
@@ -817,7 +817,7 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
         created_at=sixty_days_ago,
     )
 
-    # Tested incorrect, more failures than corrects: failure=2.0, last_wrong=2.0 -> raw=3.0+2.0+2.0=7.0 (bucket 7)
+    # Tested incorrect, more failures than corrects: rate 1/30 -> recency=3.0, failure=2.0, last_wrong=2.0 -> raw=7.0 (bucket 7)
     tested_incorrect = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,
@@ -835,19 +835,17 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
     by_start = {b["start"]: b for b in buckets}
     assert list(b["start"] for b in buckets) == sorted(b["start"] for b in buckets)
 
-    # Bucket range spans 2..7 with contiguous empty buckets at 4, 5, 6.
+    # Bucket range spans 2..7 with contiguous empty buckets at 3, 4, 5, 6.
     assert list(by_start.keys()) == [2, 3, 4, 5, 6, 7]
 
-    # Raw score 2.0 lands in bucket 2 (boundary: exact integer belongs to its own bucket).
-    assert by_start[2] == {"start": 2, "neverTested": 1, "minAged": 0, "tested": 0, "cooldown": 0}
-
-    # Raw score 3.5 lands in bucket 3.
-    assert by_start[3] == {"start": 3, "neverTested": 0, "minAged": 0, "tested": 1, "cooldown": 0}
+    # Raw scores 2.0 (never tested) and 2.5 (tested correct) both land in bucket 2.
+    assert by_start[2] == {"start": 2, "neverTested": 1, "minAged": 0, "tested": 1, "cooldown": 0}
 
     # Raw score 7.0 lands in bucket 7 (exact integer boundary).
     assert by_start[7] == {"start": 7, "neverTested": 0, "minAged": 0, "tested": 1, "cooldown": 0}
 
     # Empty intermediate buckets emitted contiguously.
+    assert by_start[3] == {"start": 3, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
     assert by_start[4] == {"start": 4, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
     assert by_start[5] == {"start": 5, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
     assert by_start[6] == {"start": 6, "neverTested": 0, "minAged": 0, "tested": 0, "cooldown": 0}
@@ -929,8 +927,8 @@ async def test_summary_score_distribution_raw_not_clamped_regression(
 
     # Tested correct with many more corrects than failures -> negative failure score.
     # correctCount=10, failedCount=0 -> failure = -sqrt(10) ~ -3.162.
-    # lastTestedAt 60d ago -> recency=3.0; lastAttemptCorrect -> last_wrong=0.5.
-    # raw = 3.0 + (-3.162) + 0.5 ~ 0.338 -> floor 0.
+    # lastTestedAt 60d ago, lastAttemptCorrect -> rate 1/60 -> recency=1.0+60/60=2.0; last_wrong=0.5.
+    # raw = 2.0 + (-3.162) + 0.5 ~ -0.662 -> floor -1.
     problem = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,
@@ -944,7 +942,7 @@ async def test_summary_score_distribution_raw_not_clamped_regression(
     response = await client.get("/api/v1/home/summary")
     buckets = response.json()["scoreDistribution"]["buckets"]
     assert len(buckets) == 1
-    assert buckets[0]["start"] == 0
+    assert buckets[0]["start"] == -1
     assert buckets[0]["tested"] == 1
 
 

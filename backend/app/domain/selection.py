@@ -62,11 +62,19 @@ def compute_score_breakdown(
     config: ProblemSelectionConfig,
     now: datetime,
 ) -> ScoreBreakdown:
-    # Recency score
-    last_dt = problem.tracking.lastTestedAt or problem.createdAt
-    if last_dt is not None:
-        days_since = (now - ensure_utc(last_dt)).days
-        recency_score = 1.0 + days_since / 30.0
+    # Recency score with status-specific daily growth rate.
+    # Never tested grows fastest (1/10), last-correct slowest (1/60),
+    # last-failed and tested-unknown retain the original pace (1/30).
+    if problem.tracking.lastTestedAt is None:
+        reference_dt = problem.createdAt
+        daily_rate = 1 / 10
+    else:
+        reference_dt = problem.tracking.lastTestedAt
+        daily_rate = 1 / 60 if problem.tracking.lastAttemptCorrect is True else 1 / 30
+
+    if reference_dt is not None:
+        days_since = (now - ensure_utc(reference_dt)).days
+        recency_score = 1.0 + days_since * daily_rate
     else:
         recency_score = 1.0
 

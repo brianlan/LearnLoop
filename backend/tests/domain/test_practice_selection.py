@@ -420,9 +420,9 @@ def test_compute_problem_weight_breakdown_never_tested():
 
     assert breakdown.lastWrong == 1.0
     assert breakdown.failure == 0.0
-    # Recency falls back to createdAt (30 days ago): score = 1.0 + 30/30 = 2.0
-    assert breakdown.recency == 2.0
-    assert breakdown.total == 3.0
+    # Never tested: createdAt (30 days ago), rate 1/10 -> 1.0 + 30*(1/10) = 4.0
+    assert breakdown.recency == 4.0
+    assert breakdown.total == 5.0
 
 
 def test_compute_problem_weight_breakdown_zero_attempts():
@@ -433,9 +433,9 @@ def test_compute_problem_weight_breakdown_zero_attempts():
 
     assert breakdown.lastWrong == 1.0
     assert breakdown.failure == 0.0
-    # Recency falls back to createdAt (30 days ago): score = 1.0 + 30/30 = 2.0
-    assert breakdown.recency == 2.0
-    assert breakdown.total == 3.0
+    # Never tested: createdAt (30 days ago), rate 1/10 -> 1.0 + 30*(1/10) = 4.0
+    assert breakdown.recency == 4.0
+    assert breakdown.total == 5.0
 
 
 def test_compute_problem_weight_breakdown_uses_same_total_as_selection():
