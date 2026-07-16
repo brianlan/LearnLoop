@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,6 +19,7 @@ vi.mock("@/api/client", () => ({
     setProblemDisabled: vi.fn(),
     getSolutionStatus: vi.fn(),
     regenerateSolution: vi.fn(),
+    getAttemptHistory: vi.fn(),
   },
 }));
 
@@ -101,11 +102,14 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.setProblemDisabled).mockReset();
     vi.mocked(api.getSolutionStatus).mockReset();
     vi.mocked(api.regenerateSolution).mockReset();
+    vi.mocked(api.getAttemptHistory).mockReset();
     mockNavigate.mockReset();
 
     // Default: no solution status
     vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
     vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
+    // Default: empty attempt history so existing tests are unaffected.
+    vi.mocked(api.getAttemptHistory).mockResolvedValue({ items: [], total: 0, hasMore: false });
   });
 
   it("renders problem details", async () => {
@@ -941,5 +945,216 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByTestId("teacher-password-modal")).toBeInTheDocument();
     expect(screen.getByTestId("toggle-disabled-button")).toHaveTextContent("Disable");
     expect(screen.queryByTestId("disabled-badge")).not.toBeInTheDocument();
+  });
+
+  it("renders attempt history rows from API", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory).mockResolvedValueOnce({
+      items: [
+        { id: "practice:p1", testedAt: "2026-07-16T12:00:00Z", result: "incorrect", source: "practice" },
+        { id: "exam:e1", testedAt: "2026-07-16T10:00:00Z", result: "correct", source: "exam" },
+        { id: "practice:p2", testedAt: "2026-07-16T08:00:00Z", result: "correct", source: "practice" },
+      ],
+      total: 3,
+      hasMore: false,
+    });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Test History")).toBeInTheDocument();
+    });
+
+    const history = await screen.findByTestId("attempt-history");
+    expect(history.querySelectorAll("tbody tr")).toHaveLength(3);
+    expect(within(history).getByText("Incorrect")).toBeInTheDocument();
+    expect(within(history).getAllByText("Correct").length).toBeGreaterThanOrEqual(1);
+    expect(within(history).getAllByText("practice").length).toBeGreaterThanOrEqual(2);
+    expect(within(history).getByText("exam")).toBeInTheDocument();
+    expect(screen.queryByTestId("attempt-history-load-more")).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing 3 of 3/)).toBeInTheDocument();
+  });
+
+  it("shows empty state when no attempt history exists", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    // getAttemptHistory defaults to empty from beforeEach.
+
+    renderProblemDetailPage();
+
+    expect(await screen.findByTestId("attempt-history-empty")).toHaveTextContent(
+      "No test history recorded.",
+    );
+  });
+
+  it("shows error and retry when attempt history fails to load", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory).mockRejectedValueOnce(new Error("History unavailable"));
+
+    renderProblemDetailPage();
+
+    expect(await screen.findByTestId("attempt-history-error")).toHaveTextContent(
+      "History unavailable",
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("loads more pages and appends rows without duplicates", async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: 20 }, (_, i) => ({
+      id: `practice:p${i}`,
+      testedAt: `2026-07-16T${String(23 - i).padStart(2, "0")}:00:00Z`,
+      result: "correct",
+      source: "practice" as const,
+    }));
+    const secondPage = [
+      { id: "practice:p20", testedAt: "2026-07-16T03:00:00Z", result: "correct", source: "practice" as const },
+      { id: "practice:p21", testedAt: "2026-07-16T02:00:00Z", result: "incorrect", source: "practice" as const },
+    ];
+
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory)
+      .mockResolvedValueOnce({ items: firstPage, total: 22, hasMore: true })
+      .mockResolvedValueOnce({ items: secondPage, total: 22, hasMore: false });
+
+    renderProblemDetailPage();
+
+    const history = await screen.findByTestId("attempt-history");
+    await waitFor(() => {
+      expect(history.querySelectorAll("tbody tr")).toHaveLength(20);
+    });
+    expect(screen.getByTestId("attempt-history-load-more")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("attempt-history-load-more"));
+
+    await waitFor(() => {
+      expect(history.querySelectorAll("tbody tr")).toHaveLength(22);
+    });
+    expect(screen.queryByTestId("attempt-history-load-more")).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing 22 of 22/)).toBeInTheDocument();
+  });
+
+  it("disables Load more while fetching and hides it on final page", async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: 20 }, (_, i) => ({
+      id: `practice:p${i}`,
+      testedAt: `2026-07-16T${String(23 - i).padStart(2, "0")}:00:00Z`,
+      result: "correct",
+      source: "practice" as const,
+    }));
+
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory)
+      .mockResolvedValueOnce({ items: firstPage, total: 22, hasMore: true })
+      // Never resolves so load-more stays pending
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    renderProblemDetailPage();
+
+    const loadMore = await screen.findByTestId("attempt-history-load-more");
+    await user.click(loadMore);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("attempt-history-load-more")).toBeDisabled();
+    });
+    expect(screen.getByTestId("attempt-history-load-more")).toHaveTextContent("Loading...");
+  });
+
+  it("preserves pending-review result label without relabeling as incorrect", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory).mockResolvedValueOnce({
+      items: [
+        { id: "practice:p1", testedAt: "2026-07-16T12:00:00Z", result: "pending-review", source: "practice" },
+        { id: "exam:e1", testedAt: "2026-07-16T10:00:00Z", result: "ungraded", source: "exam" },
+      ],
+      total: 2,
+      hasMore: false,
+    });
+
+    renderProblemDetailPage();
+
+    expect(await screen.findByText("Pending review")).toBeInTheDocument();
+    expect(screen.getByText("Ungraded")).toBeInTheDocument();
+    expect(screen.queryByText("Incorrect")).not.toBeInTheDocument();
+  });
+
+  it("keeps tracking statistics intact alongside attempt history", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory).mockResolvedValueOnce({
+      items: [{ id: "practice:p1", testedAt: "2026-07-16T12:00:00Z", result: "correct", source: "practice" }],
+      total: 1,
+      hasMore: false,
+    });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Tracking Statistics")).toBeInTheDocument();
+    });
+    // Existing aggregate counters remain
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    // Practice weight intact
+    expect(screen.getByTestId("practice-weight")).toBeInTheDocument();
+    // History also present
+    expect(await screen.findByTestId("attempt-history")).toBeInTheDocument();
+  });
+
+  it("does not reset appended Load more rows on window focus refetch", async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: 20 }, (_, i) => ({
+      id: `practice:p${i}`,
+      testedAt: `2026-07-16T${String(23 - i).padStart(2, "0")}:00:00Z`,
+      result: "correct",
+      source: "practice" as const,
+    }));
+    const secondPage = [
+      { id: "practice:p20", testedAt: "2026-07-16T03:00:00Z", result: "correct", source: "practice" as const },
+      { id: "practice:p21", testedAt: "2026-07-16T02:00:00Z", result: "incorrect", source: "practice" as const },
+    ];
+
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory)
+      .mockResolvedValueOnce({ items: firstPage, total: 22, hasMore: true })
+      .mockResolvedValueOnce({ items: secondPage, total: 22, hasMore: false });
+
+    renderProblemDetailPage();
+
+    const history = await screen.findByTestId("attempt-history");
+    await waitFor(() => {
+      expect(history.querySelectorAll("tbody tr")).toHaveLength(20);
+    });
+
+    await user.click(screen.getByTestId("attempt-history-load-more"));
+    await waitFor(() => {
+      expect(history.querySelectorAll("tbody tr")).toHaveLength(22);
+    });
+
+    // Simulate window focus, which would normally trigger a refetch of the
+    // initial page and clobber appended rows. With refetchOnWindowFocus:false
+    // the appended rows must remain and no extra getAttemptHistory call occurs.
+    const callsBefore = vi.mocked(api.getAttemptHistory).mock.calls.length;
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(history.querySelectorAll("tbody tr")).toHaveLength(22);
+    expect(screen.getByText(/Showing 22 of 22/)).toBeInTheDocument();
+    expect(vi.mocked(api.getAttemptHistory).mock.calls.length).toBe(callsBefore);
   });
 });

@@ -10,7 +10,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.domain.models import ProblemType
+from app.domain.models import ExamState, ProblemType
 from app.domain.normalization import normalize_answer
 from app.domain.practice_selection import compute_problem_weight_breakdown
 from app.infrastructure.auth.password import verify_password
@@ -21,6 +21,8 @@ from app.presentation.deps import DatabaseDependency, get_current_user
 from app.presentation.errors import ApiError
 from app.presentation.helpers import get_all_descendant_folder_ids, get_owned_folder, get_owned_problem, normalize_tags, parse_object_id
 from app.presentation.problem_serialization import (
+    AttemptHistoryResponse,
+    AttemptHistoryItemPayload,
     BulkSetFolderResponse,
     PracticeWeightPayload,
     ProblemDeleteResponse,
@@ -510,3 +512,85 @@ async def get_problem_tracking(
             total=breakdown.total,
         ),
     )
+
+
+@router.get("/{problem_id}/attempts", response_model=AttemptHistoryResponse)
+async def get_problem_attempt_history(
+    problem_id: str,
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> AttemptHistoryResponse:
+    """Return merged practice/exam attempt history for a problem, newest-first.
+
+    Practice records use ``practice_attempt.createdAt``; exam records use the
+    submitted exam's ``submittedAt``. Only submitted exams contribute. Legacy
+    records lacking a trustworthy timestamp are skipped. Records are merged
+    deterministically by ``testedAt`` desc with a source/id tie-breaker so
+    offset pages do not reorder or duplicate tied records.
+    """
+    problem_oid = parse_object_id(problem_id, resource_name="Problem")
+    problem = await database["problems"].find_one(
+        {"_id": problem_oid, "userId": current_user["_id"], "isDeleted": False}
+    )
+    if problem is None:
+        raise ApiError(404, "NOT_FOUND", "Problem not found")
+
+    user_id = current_user["_id"]
+
+    # Fetch all matching records per source. Per-problem-per-user history is
+    # inherently bounded, and this mirrors the existing practice-history endpoint
+    # convention. Totals/hasMore describe valid records only.
+    practice_docs = await database["practice_attempts"].find(
+        {"userId": user_id, "problemId": problem_oid, "createdAt": {"$ne": None}}
+    ).sort([("createdAt", -1), ("_id", 1)]).to_list(length=None)
+
+    exam_docs = await database["exams"].find(
+        {
+            "userId": user_id,
+            "state": ExamState.SUBMITTED.value,
+            "submittedAt": {"$ne": None},
+            "items.problemId": problem_oid,
+        }
+    ).sort([("submittedAt", -1), ("_id", 1)]).to_list(length=None)
+
+    records: list[tuple[datetime, str, str, str]] = []
+    for doc in practice_docs:
+        created_at = doc.get("createdAt")
+        if not isinstance(created_at, datetime):
+            continue
+        records.append(
+            (created_at, "practice", str(doc["_id"]), str(doc.get("gradingStatus", "ungraded")))
+        )
+
+    for exam in exam_docs:
+        submitted_at = exam.get("submittedAt")
+        if not isinstance(submitted_at, datetime):
+            continue
+        exam_item_id = ""
+        item_result = "ungraded"
+        for item in exam.get("items", []):
+            if item.get("problemId") == problem_oid:
+                exam_item_id = str(item.get("itemId", exam["_id"]))
+                grading = item.get("grading") or {}
+                item_result = str(grading.get("status", "ungraded"))
+                break
+        records.append(
+            (submitted_at, "exam", exam_item_id or str(exam["_id"]), item_result)
+        )
+
+    # Deterministic newest-first ordering with source/id tie-breaker so offset
+    # pagination never reorders or duplicates tied records.
+    records.sort(key=lambda r: (r[1], r[2]))  # stable pre-sort by source, id
+    records.sort(key=lambda r: r[0], reverse=True)
+
+    total = len(records)
+    page = records[offset : offset + limit]
+    has_more = offset + limit < total
+
+    items = [
+        AttemptHistoryItemPayload(id=f"{source}:{record_id}", testedAt=tested_at, result=result, source=source)
+        for tested_at, source, record_id, result in page
+    ]
+    return AttemptHistoryResponse(items=items, total=total, hasMore=has_more)

@@ -10,7 +10,7 @@ import { TagInput } from "@/components/TagInput";
 import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
-import type { ProblemDetail, ProblemResponse, PracticeWeight } from "@/types/problem";
+import type { ProblemDetail, ProblemResponse, PracticeWeight, AttemptHistoryItem } from "@/types/problem";
 import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
 
 interface TrackingData {
@@ -87,6 +87,172 @@ function WeightBreakdown({ weight }: { weight: PracticeWeight }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const RESULT_LABELS: Record<string, string> = {
+  correct: "Correct",
+  incorrect: "Incorrect",
+  "pending-review": "Pending review",
+  ungraded: "Ungraded",
+};
+
+const RESULT_BADGE_CLASS: Record<string, string> = {
+  correct: "badge-success",
+  incorrect: "badge-danger",
+  "pending-review": "badge-warning",
+  ungraded: "badge-muted",
+};
+
+const PAGE_SIZE = 20;
+
+function ProblemAttemptHistory({ problemId }: { problemId: string }) {
+  const [items, setItems] = useState<AttemptHistoryItem[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  // Fetch initial page when problemId changes.
+  useQuery({
+    queryKey: ["problem-attempts", problemId, "initial"],
+    queryFn: async () => {
+      setIsLoadingInitial(true);
+      setError(null);
+      try {
+        const data = await api.getAttemptHistory(problemId, { limit: PAGE_SIZE, offset: 0 });
+        setItems(data.items);
+        setTotal(data.total);
+        setHasMore(data.hasMore);
+        setOffset(data.items.length);
+        return data;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load history");
+        return null;
+      } finally {
+        setIsLoadingInitial(false);
+      }
+    },
+    enabled: !!problemId,
+    // Appended "Load more" rows are held in local state; a window-focus
+    // refetch of the initial page would clobber them, so opt out.
+    refetchOnWindowFocus: false,
+  });
+
+  const loadMore = async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    setError(null);
+    try {
+      const data = await api.getAttemptHistory(problemId, { limit: PAGE_SIZE, offset });
+      setItems((prev) => [...prev, ...data.items]);
+      setHasMore(data.hasMore);
+      setOffset((prev) => prev + data.items.length);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load more history");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  if (isLoadingInitial) {
+    return (
+      <div data-testid="attempt-history-loading" style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
+        Loading test history...
+      </div>
+    );
+  }
+
+  if (error && items.length === 0) {
+    return (
+      <div data-testid="attempt-history-error" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+        <div className="badge badge-danger" style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}>
+          {error}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setIsLoadingInitial(true);
+            api.getAttemptHistory(problemId, { limit: PAGE_SIZE, offset: 0 })
+              .then((data) => {
+                setItems(data.items);
+                setTotal(data.total);
+                setHasMore(data.hasMore);
+                setOffset(data.items.length);
+              }).catch((err) => {
+                setError(err instanceof Error ? err.message : "Failed to load history");
+              }).finally(() => setIsLoadingInitial(false));
+          }}
+          className="btn btn-secondary"
+          style={{ padding: "0.3rem 0.75rem", fontSize: "0.8125rem" }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div data-testid="attempt-history-empty" style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
+        No test history recorded.
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="attempt-history">
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem", minWidth: "360px" }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "2px solid var(--color-border)" }}>
+              <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Tested At</th>
+              <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Result</th>
+              <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
+                <td style={{ padding: "0.5rem 0.75rem", whiteSpace: "nowrap" }}>{formatDate(item.testedAt)}</td>
+                <td style={{ padding: "0.5rem 0.75rem" }}>
+                  <span
+                    className={`badge ${RESULT_BADGE_CLASS[item.result] ?? "badge-muted"}`}
+                    style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem", borderRadius: "var(--radius-sm)", fontWeight: 600, textTransform: "none", letterSpacing: "normal" }}
+                  >
+                    {RESULT_LABELS[item.result] ?? item.result}
+                  </span>
+                </td>
+                <td style={{ padding: "0.5rem 0.75rem", textTransform: "capitalize" }}>{item.source}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {error && items.length > 0 && (
+        <div className="badge badge-danger" style={{ marginTop: "0.5rem", textTransform: "none", letterSpacing: "normal", fontWeight: 500 }}>
+          {error}
+        </div>
+      )}
+      {hasMore && (
+        <button
+          type="button"
+          onClick={loadMore}
+          disabled={isLoadingMore}
+          data-testid="attempt-history-load-more"
+          className="btn btn-secondary"
+          style={{ marginTop: "0.75rem", padding: "0.4rem 0.875rem", fontSize: "0.8125rem" }}
+        >
+          {isLoadingMore ? "Loading..." : "Load more"}
+        </button>
+      )}
+      <div style={{ marginTop: "0.25rem", color: "var(--color-text-muted)", fontSize: "0.75rem" }}>
+        Showing {items.length} of {total}
+      </div>
     </div>
   );
 }
@@ -676,6 +842,10 @@ export function ProblemDetailPage() {
         ) : (
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>No tracking data available</div>
         )}
+        <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "1rem" }}>
+          <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>Test History</h3>
+          <ProblemAttemptHistory problemId={problemId} />
+        </div>
       </div>
 
       <TeacherPasswordModal

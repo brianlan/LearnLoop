@@ -181,3 +181,15 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
             "kwargs": {"unique": True, "name": "exam_grading_task_exam_unique"},
         }
     ]
+    assert database["practice_attempts"].index_calls == [
+        {
+            "keys": [("userId", 1), ("problemId", 1), ("createdAt", 1)],
+            "kwargs": {"name": "user_problem_time"},
+        }
+    ]
+    assert database["exams"].index_calls == [
+        {
+            "keys": [("userId", 1), ("state", 1), ("submittedAt", 1)],
+            "kwargs": {"name": "user_state_submitted_time"},
+        }
+    ]

@@ -147,6 +147,21 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
             collation={"locale": "en", "strength": 2},  # case-insensitive
         )
 
+    # Attempt-history lookup indexes (non-unique): practice attempts by user/problem/time,
+    # and submitted exams by user/state/submission time.
+    create_practice_attempt_index = getattr(database["practice_attempts"], "create_index", None)
+    if callable(create_practice_attempt_index):
+        await create_practice_attempt_index(
+            [("userId", ASCENDING), ("problemId", ASCENDING), ("createdAt", ASCENDING)],
+            name="user_problem_time",
+        )
+    create_exam_history_index = getattr(database["exams"], "create_index", None)
+    if callable(create_exam_history_index):
+        await create_exam_history_index(
+            [("userId", ASCENDING), ("state", ASCENDING), ("submittedAt", ASCENDING)],
+            name="user_state_submitted_time",
+        )
+
     await ensure_batch_indexes(database)
 
 
