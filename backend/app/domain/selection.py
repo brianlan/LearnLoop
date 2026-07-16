@@ -65,18 +65,22 @@ def compute_score_breakdown(
     # Recency score with status-specific daily growth rate.
     # Never tested grows fastest (1/10), last-correct slowest (1/60),
     # last-failed and tested-unknown retain the original pace (1/30).
+    # The 1.0 base represents the special priority of a never-tested
+    # problem; ever-tested problems start at 0.0 and grow with elapsed days.
     if problem.tracking.lastTestedAt is None:
         reference_dt = problem.createdAt
         daily_rate = 1 / 10
+        base = 1.0
     else:
         reference_dt = problem.tracking.lastTestedAt
         daily_rate = 1 / 60 if problem.tracking.lastAttemptCorrect is True else 1 / 30
+        base = 0.0
 
     if reference_dt is not None:
         days_since = (now - ensure_utc(reference_dt)).days
-        recency_score = 1.0 + days_since * daily_rate
+        recency_score = base + days_since * daily_rate
     else:
-        recency_score = 1.0
+        recency_score = base
 
     # Failure score
     failed_count = problem.tracking.failedCount

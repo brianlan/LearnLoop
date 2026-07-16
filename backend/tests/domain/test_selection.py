@@ -155,8 +155,8 @@ def test_recency_uses_last_tested_when_present():
     problem = create_test_problem("p1", last_tested_at=last_tested)
     config = ProblemSelectionConfig(recency_weight=1.0)
     breakdown = compute_score_breakdown(problem, config, now)
-    # Tested with unknown last result: rate 1/30, days_since = 60 -> 1.0 + 60*(1/30) = 3.0
-    assert breakdown.recency == 3.0
+    # Tested with unknown last result: base 0.0, rate 1/30, days_since = 60 -> 0.0 + 60*(1/30) = 2.0
+    assert breakdown.recency == 2.0
 
 
 def test_recency_uses_created_at_when_not_tested():
@@ -165,7 +165,7 @@ def test_recency_uses_created_at_when_not_tested():
     problem = create_test_problem("p1", last_tested_at=None, created_at=created_at)
     config = ProblemSelectionConfig(recency_weight=1.0)
     breakdown = compute_score_breakdown(problem, config, now)
-    # Never tested: rate 1/10, days_since = 45 -> 1.0 + 45*(1/10) = 5.5
+    # Never tested: base 1.0, rate 1/10, days_since = 45 -> 1.0 + 45*(1/10) = 5.5
     assert breakdown.recency == 5.5
 
 
@@ -174,29 +174,45 @@ def test_recency_status_specific_rates():
     now = datetime.now(timezone.utc)
     config = ProblemSelectionConfig(recency_weight=1.0)
 
-    # Never tested, created 30 days ago -> createdAt reference, rate 1/10 -> 4.0
+    # Never tested, created 30 days ago -> createdAt reference, base 1.0, rate 1/10 -> 4.0
     never_tested = create_test_problem(
         "never", last_tested_at=None, created_at=now - timedelta(days=30)
     )
     assert compute_score_breakdown(never_tested, config, now).recency == 4.0
 
-    # Last correct, tested 60 days ago -> lastTestedAt reference, rate 1/60 -> 2.0
+    # Last correct, tested 60 days ago -> lastTestedAt reference, base 0.0, rate 1/60 -> 1.0
     last_correct = create_test_problem(
         "correct", last_tested_at=now - timedelta(days=60), last_attempt_correct=True
     )
-    assert compute_score_breakdown(last_correct, config, now).recency == 2.0
+    assert compute_score_breakdown(last_correct, config, now).recency == 1.0
 
-    # Last failed, tested 60 days ago -> lastTestedAt reference, rate 1/30 -> 3.0
+    # Last failed, tested 60 days ago -> lastTestedAt reference, base 0.0, rate 1/30 -> 2.0
     last_failed = create_test_problem(
         "failed", last_tested_at=now - timedelta(days=60), last_attempt_correct=False
     )
-    assert compute_score_breakdown(last_failed, config, now).recency == 3.0
+    assert compute_score_breakdown(last_failed, config, now).recency == 2.0
 
-    # Tested 60 days ago with unknown last result -> lastTestedAt reference, rate 1/30 -> 3.0
+    # Tested 60 days ago with unknown last result -> lastTestedAt reference, base 0.0, rate 1/30 -> 2.0
     tested_unknown = create_test_problem(
         "unknown", last_tested_at=now - timedelta(days=60)
     )
-    assert compute_score_breakdown(tested_unknown, config, now).recency == 3.0
+    assert compute_score_breakdown(tested_unknown, config, now).recency == 2.0
+
+
+def test_recency_tested_today_starts_at_zero():
+    """A problem tested today has 0.0 recency; a never-tested problem created today has 1.0."""
+    now = datetime.now(timezone.utc)
+    config = ProblemSelectionConfig(recency_weight=1.0)
+
+    tested_today = create_test_problem(
+        "tested", last_tested_at=now, last_attempt_correct=False
+    )
+    assert compute_score_breakdown(tested_today, config, now).recency == 0.0
+
+    never_tested_today = create_test_problem(
+        "never", last_tested_at=None, created_at=now
+    )
+    assert compute_score_breakdown(never_tested_today, config, now).recency == 1.0
 
 
 def test_recency_weight_scales_status_specific_component():
@@ -208,6 +224,18 @@ def test_recency_weight_scales_status_specific_component():
     config = ProblemSelectionConfig(recency_weight=2.0)
     breakdown = compute_score_breakdown(problem, config, now)
     assert breakdown.recency == 8.0
+
+
+def test_recency_weight_scales_tested_component_and_base():
+    """recency_weight scales the entire revised component (base + age) for tested problems too."""
+    now = datetime.now(timezone.utc)
+    # Last failed, tested 60 days ago: raw recency = 0.0 + 60*(1/30) = 2.0, scaled by 2.0 -> 4.0
+    problem = create_test_problem(
+        "p1", last_tested_at=now - timedelta(days=60), last_attempt_correct=False
+    )
+    config = ProblemSelectionConfig(recency_weight=2.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.recency == 4.0
 
 
 def test_failure_score_no_attempts():
@@ -352,14 +380,14 @@ def test_weighted_total_equals_component_sum():
         last_wrong_weight=1.5,
     )
     breakdown = compute_score_breakdown(problem, config, now)
-    # recency_score = 1.0 + 30/30 = 2.0, recency = 2.0 * 1.0 = 2.0
-    assert breakdown.recency == 2.0
+    # recency_score = 0.0 + 30/30 = 1.0, recency = 1.0 * 1.0 = 1.0
+    assert breakdown.recency == 1.0
     # failedCount=7 > correctCount=3 and correctCount>0 => ratio: 7/3
     # failure = (7/3) * 2.0 ≈ 4.6666666667
     assert breakdown.failure == pytest.approx((7 / 3) * 2.0)
     # last_wrong_score = 2.0, last_wrong = 2.0 * 1.5 = 3.0
     assert breakdown.last_wrong == 3.0
-    assert breakdown.total == pytest.approx(2.0 + (7 / 3) * 2.0 + 3.0)
+    assert breakdown.total == pytest.approx(1.0 + (7 / 3) * 2.0 + 3.0)
     assert breakdown.total == pytest.approx(breakdown.recency + breakdown.failure + breakdown.last_wrong)
 
 
