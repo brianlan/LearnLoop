@@ -1113,4 +1113,48 @@ describe("ProblemDetailPage", () => {
     // History also present
     expect(await screen.findByTestId("attempt-history")).toBeInTheDocument();
   });
+
+  it("does not reset appended Load more rows on window focus refetch", async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: 20 }, (_, i) => ({
+      id: `practice:p${i}`,
+      testedAt: `2026-07-16T${String(23 - i).padStart(2, "0")}:00:00Z`,
+      result: "correct",
+      source: "practice" as const,
+    }));
+    const secondPage = [
+      { id: "practice:p20", testedAt: "2026-07-16T03:00:00Z", result: "correct", source: "practice" as const },
+      { id: "practice:p21", testedAt: "2026-07-16T02:00:00Z", result: "incorrect", source: "practice" as const },
+    ];
+
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.getAttemptHistory)
+      .mockResolvedValueOnce({ items: firstPage, total: 22, hasMore: true })
+      .mockResolvedValueOnce({ items: secondPage, total: 22, hasMore: false });
+
+    renderProblemDetailPage();
+
+    const history = await screen.findByTestId("attempt-history");
+    await waitFor(() => {
+      expect(history.querySelectorAll("tbody tr")).toHaveLength(20);
+    });
+
+    await user.click(screen.getByTestId("attempt-history-load-more"));
+    await waitFor(() => {
+      expect(history.querySelectorAll("tbody tr")).toHaveLength(22);
+    });
+
+    // Simulate window focus, which would normally trigger a refetch of the
+    // initial page and clobber appended rows. With refetchOnWindowFocus:false
+    // the appended rows must remain and no extra getAttemptHistory call occurs.
+    const callsBefore = vi.mocked(api.getAttemptHistory).mock.calls.length;
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(history.querySelectorAll("tbody tr")).toHaveLength(22);
+    expect(screen.getByText(/Showing 22 of 22/)).toBeInTheDocument();
+    expect(vi.mocked(api.getAttemptHistory).mock.calls.length).toBe(callsBefore);
+  });
 });

@@ -137,6 +137,9 @@ function ProblemAttemptHistory({ problemId }: { problemId: string }) {
       }
     },
     enabled: !!problemId,
+    // Appended "Load more" rows are held in local state; a window-focus
+    // refetch of the initial page would clobber them, so opt out.
+    refetchOnWindowFocus: false,
   });
 
   const loadMore = async () => {
