@@ -76,12 +76,6 @@ Start just the external dependencies, then run the app layers locally:
 Backend:
 
 ```bash
-/Users/rlan/miniforge3/envs/mykik_py311/bin/python -m uvicorn app.main:app --reload --app-dir backend
-```
-
-or:
-
-```bash
 uv run --directory backend uvicorn app.main:app --reload
 ```
 
