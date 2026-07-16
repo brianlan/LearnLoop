@@ -317,7 +317,12 @@ async def test_list_detail_update_delete_tags_and_tracking(
     assert "practiceWeight" in tracking_body
     weight = tracking_body["practiceWeight"]
     assert set(weight.keys()) == {"lastWrong", "failure", "recency", "total"}
-    assert weight["total"] == weight["lastWrong"] + weight["failure"] + weight["recency"]
+    # newest_problem is tested today (lastTestedAt ~now, lastAttemptCorrect True),
+    # so recency base is 0.0 and 0 elapsed days -> recency 0.0. With more correct
+    # than failed (2 vs 1) the failure component is negative, so the raw component
+    # sum is negative and the returned total is the zero-clamped value.
+    raw_total = weight["lastWrong"] + weight["failure"] + weight["recency"]
+    assert weight["total"] == max(0.0, raw_total)
 
     tags_response = await client.get("/api/v1/problems/tags")
     assert tags_response.status_code == 200
