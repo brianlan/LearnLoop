@@ -809,7 +809,7 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
     # Never-tested: recency=1.0 (createdAt ~now, days_since=0), failure=0.0, last_wrong=1.0 -> raw=2.0 (bucket 2)
     never_tested = make_problem(user_id, created_at=now)
 
-    # Tested correct: base 0.0, rate 1/60 -> recency=0.0+60/60=1.0, failure=0.0, last_wrong=0.5 -> raw=1.5 (bucket 1)
+    # Tested correct: base 0.0, rate 1/40 -> recency=0.0+60/40=1.5, failure=0.0, last_wrong=0.5 -> raw=2.0 (bucket 2)
     tested_correct = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,
@@ -835,14 +835,11 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
     by_start = {b["start"]: b for b in buckets}
     assert list(b["start"] for b in buckets) == sorted(b["start"] for b in buckets)
 
-    # Bucket range spans 1..6 with contiguous empty buckets at 2, 3, 4, 5.
-    assert list(by_start.keys()) == [1, 2, 3, 4, 5, 6]
+    # Bucket range spans 2..6 with contiguous empty buckets at 3, 4, 5.
+    assert list(by_start.keys()) == [2, 3, 4, 5, 6]
 
-    # Raw score 1.5 (tested correct) lands in bucket 1.
-    assert by_start[1] == {"start": 1, "neverTested": 0, "minAged": 0, "tested": 1, "cooldown": 0}
-
-    # Raw score 2.0 (never tested) lands in bucket 2.
-    assert by_start[2] == {"start": 2, "neverTested": 1, "minAged": 0, "tested": 0, "cooldown": 0}
+    # Raw score 2.0 (never tested + tested correct) both land in bucket 2.
+    assert by_start[2] == {"start": 2, "neverTested": 1, "minAged": 0, "tested": 1, "cooldown": 0}
 
     # Raw score 6.0 lands in bucket 6 (exact integer boundary).
     assert by_start[6] == {"start": 6, "neverTested": 0, "minAged": 0, "tested": 1, "cooldown": 0}
@@ -929,8 +926,8 @@ async def test_summary_score_distribution_raw_not_clamped_regression(
 
     # Tested correct with many more corrects than failures -> negative failure score.
     # correctCount=10, failedCount=0 -> failure = -sqrt(10) ~ -3.162.
-    # lastTestedAt 60d ago, lastAttemptCorrect -> base 0.0, rate 1/60 -> recency=0.0+60/60=1.0; last_wrong=0.5.
-    # raw = 1.0 + (-3.162) + 0.5 ~ -1.662 -> floor -2.
+    # lastTestedAt 60d ago, lastAttemptCorrect -> base 0.0, rate 1/40 -> recency=0.0+60/40=1.5; last_wrong=0.5.
+    # raw = 1.5 + (-3.162) + 0.5 ~ -1.162 -> floor -2.
     problem = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,
