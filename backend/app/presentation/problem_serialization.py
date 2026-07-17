@@ -92,7 +92,7 @@ class BulkSetFolderResponse(BaseModel):
 class AttemptHistoryItemPayload(BaseModel):
     id: str
     testedAt: UTCDatetime
-    result: str
+    result: str | None
     source: str
 
 

@@ -522,10 +522,11 @@ async def get_problem_attempt_history(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> AttemptHistoryResponse:
-    """Return merged practice/exam attempt history for a problem, newest-first.
+    """Return merged activity history for a problem, newest-first.
 
     Practice records use ``practice_attempt.createdAt``; exam records use the
-    submitted exam's ``submittedAt``. Only submitted exams contribute. Legacy
+    submitted exam's ``submittedAt``. A derived ``created`` activity uses the
+    problem document's ``createdAt``. Only submitted exams contribute. Legacy
     records lacking a trustworthy timestamp are skipped. Records are merged
     deterministically by ``testedAt`` desc with a source/id tie-breaker so
     offset pages do not reorder or duplicate tied records.
@@ -555,7 +556,7 @@ async def get_problem_attempt_history(
         }
     ).sort([("submittedAt", -1), ("_id", 1)]).to_list(length=None)
 
-    records: list[tuple[datetime, str, str, str]] = []
+    records: list[tuple[datetime, str, str, str | None]] = []
     for doc in practice_docs:
         created_at = doc.get("createdAt")
         if not isinstance(created_at, datetime):
@@ -579,6 +580,13 @@ async def get_problem_attempt_history(
         records.append(
             (submitted_at, "exam", exam_item_id or str(exam["_id"]), item_result)
         )
+
+    # Derived creation activity: the problem document already stores the
+    # canonical ``createdAt`` timestamp, so synthesize one row at read time
+    # rather than persisting a separate activity record.
+    problem_created_at = problem.get("createdAt")
+    if isinstance(problem_created_at, datetime):
+        records.append((problem_created_at, "created", str(problem_oid), None))
 
     # Deterministic newest-first ordering with source/id tie-breaker so offset
     # pagination never reorders or duplicates tied records.

@@ -956,25 +956,30 @@ describe("ProblemDetailPage", () => {
         { id: "practice:p1", testedAt: "2026-07-16T12:00:00Z", result: "incorrect", source: "practice" },
         { id: "exam:e1", testedAt: "2026-07-16T10:00:00Z", result: "correct", source: "exam" },
         { id: "practice:p2", testedAt: "2026-07-16T08:00:00Z", result: "correct", source: "practice" },
+        { id: "created:abc123", testedAt: "2026-07-16T06:00:00Z", result: null, source: "created" },
       ],
-      total: 3,
+      total: 4,
       hasMore: false,
     });
 
     renderProblemDetailPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Test History")).toBeInTheDocument();
+      expect(screen.getByText("Activities")).toBeInTheDocument();
     });
 
     const history = await screen.findByTestId("attempt-history");
-    expect(history.querySelectorAll("tbody tr")).toHaveLength(3);
+    expect(within(history).getByRole("columnheader", { name: "Timestamp" })).toBeInTheDocument();
+    expect(history.querySelectorAll("tbody tr")).toHaveLength(4);
     expect(within(history).getByText("Incorrect")).toBeInTheDocument();
     expect(within(history).getAllByText("Correct").length).toBeGreaterThanOrEqual(1);
     expect(within(history).getAllByText("practice").length).toBeGreaterThanOrEqual(2);
     expect(within(history).getByText("exam")).toBeInTheDocument();
+    // The created row renders a dash instead of a result badge.
+    expect(within(history).getByText("created")).toBeInTheDocument();
+    expect(within(history).getByText("-")).toBeInTheDocument();
     expect(screen.queryByTestId("attempt-history-load-more")).not.toBeInTheDocument();
-    expect(screen.getByText(/Showing 3 of 3/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 4 of 4/)).toBeInTheDocument();
   });
 
   it("shows empty state when no attempt history exists", async () => {
@@ -986,7 +991,21 @@ describe("ProblemDetailPage", () => {
     renderProblemDetailPage();
 
     expect(await screen.findByTestId("attempt-history-empty")).toHaveTextContent(
-      "No test history recorded.",
+      "No activities recorded.",
+    );
+  });
+
+  it("shows activities loading text while history is loading", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: baseProblem })
+      .mockResolvedValueOnce(baseTracking);
+    // Never resolves so the initial loading state persists.
+    vi.mocked(api.getAttemptHistory).mockReturnValue(new Promise(() => {}));
+
+    renderProblemDetailPage();
+
+    expect(await screen.findByTestId("attempt-history-loading")).toHaveTextContent(
+      "Loading activities...",
     );
   });
 

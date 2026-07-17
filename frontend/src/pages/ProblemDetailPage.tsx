@@ -161,7 +161,7 @@ function ProblemAttemptHistory({ problemId }: { problemId: string }) {
   if (isLoadingInitial) {
     return (
       <div data-testid="attempt-history-loading" style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
-        Loading test history...
+        Loading activities...
       </div>
     );
   }
@@ -199,7 +199,7 @@ function ProblemAttemptHistory({ problemId }: { problemId: string }) {
   if (items.length === 0) {
     return (
       <div data-testid="attempt-history-empty" style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>
-        No test history recorded.
+        No activities recorded.
       </div>
     );
   }
@@ -210,7 +210,7 @@ function ProblemAttemptHistory({ problemId }: { problemId: string }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem", minWidth: "360px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "2px solid var(--color-border)" }}>
-              <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Tested At</th>
+              <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Timestamp</th>
               <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Result</th>
               <th scope="col" style={{ padding: "0.5rem 0.75rem", fontWeight: 700 }}>Source</th>
             </tr>
@@ -220,12 +220,16 @@ function ProblemAttemptHistory({ problemId }: { problemId: string }) {
               <tr key={item.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
                 <td style={{ padding: "0.5rem 0.75rem", whiteSpace: "nowrap" }}>{formatDate(item.testedAt)}</td>
                 <td style={{ padding: "0.5rem 0.75rem" }}>
-                  <span
-                    className={`badge ${RESULT_BADGE_CLASS[item.result] ?? "badge-muted"}`}
-                    style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem", borderRadius: "var(--radius-sm)", fontWeight: 600, textTransform: "none", letterSpacing: "normal" }}
-                  >
-                    {RESULT_LABELS[item.result] ?? item.result}
-                  </span>
+                  {item.result === null ? (
+                    <span style={{ color: "var(--color-text-muted)" }}>-</span>
+                  ) : (
+                    <span
+                      className={`badge ${RESULT_BADGE_CLASS[item.result] ?? "badge-muted"}`}
+                      style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem", borderRadius: "var(--radius-sm)", fontWeight: 600, textTransform: "none", letterSpacing: "normal" }}
+                    >
+                      {RESULT_LABELS[item.result] ?? item.result}
+                    </span>
+                  )}
                 </td>
                 <td style={{ padding: "0.5rem 0.75rem", textTransform: "capitalize" }}>{item.source}</td>
               </tr>
@@ -843,7 +847,7 @@ export function ProblemDetailPage() {
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem" }}>No tracking data available</div>
         )}
         <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "1rem" }}>
-          <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>Test History</h3>
+          <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>Activities</h3>
           <ProblemAttemptHistory problemId={problemId} />
         </div>
       </div>
