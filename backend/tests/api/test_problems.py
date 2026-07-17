@@ -1694,7 +1694,11 @@ async def test_attempt_history_merges_practice_and_exam_newest_first(
 ) -> None:
     database: FakeDatabase = problems_app.state.fake_database
     user_id = problems_app.state.primary_user["_id"]
-    problem = make_problem(user_id, text="History problem")
+    problem = make_problem(
+        user_id,
+        text="History problem",
+        created_at=datetime(2026, 7, 16, 6, 0, 0, tzinfo=UTC),
+    )
     database["problems"].seed(problem)
 
     t1 = datetime(2026, 7, 16, 8, 0, 0, tzinfo=UTC)
@@ -1712,10 +1716,11 @@ async def test_attempt_history_merges_practice_and_exam_newest_first(
     response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 3
+    assert body["total"] == 4
     assert body["hasMore"] is False
     items = body["items"]
-    # Newest first: t3 practice incorrect, t2 exam correct, t1 practice correct
+    # Newest first: t3 practice incorrect, t2 exam correct, t1 practice correct,
+    # then the derived created activity (oldest) with a null result.
     assert items[0]["testedAt"].startswith("2026-07-16T12")
     assert items[0]["source"] == "practice"
     assert items[0]["result"] == "incorrect"
@@ -1724,6 +1729,10 @@ async def test_attempt_history_merges_practice_and_exam_newest_first(
     assert items[2]["testedAt"].startswith("2026-07-16T08")
     assert items[2]["source"] == "practice"
     assert items[2]["result"] == "correct"
+    assert items[3]["testedAt"].startswith("2026-07-16T06")
+    assert items[3]["source"] == "created"
+    assert items[3]["result"] is None
+    assert items[3]["id"] == f"created:{problem['_id']}"
     assert all(item["id"].count(":") == 1 for item in items)
 
 
@@ -1749,7 +1758,7 @@ async def test_attempt_history_preserves_pending_and_ungraded_states(
     response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
     assert response.status_code == 200
     results = {item["result"] for item in response.json()["items"]}
-    assert results == {"pending-review", "ungraded"}
+    assert results == {"pending-review", "ungraded", None}
 
 
 @pytest.mark.asyncio
@@ -1763,7 +1772,8 @@ async def test_attempt_history_pagination_appends_without_duplication(
     database["problems"].seed(problem)
 
     base = datetime(2026, 7, 16, 0, 0, 0, tzinfo=UTC)
-    # 22 distinct timestamps to exercise two pages of 20
+    # 22 distinct timestamps plus the derived created row (23 total) to
+    # exercise two pages of 20.
     for i in range(22):
         database["practice_attempts"].seed(
             make_practice_attempt(user_id, problem["_id"], grading_status="correct", created_at=base + timedelta(minutes=i))
@@ -1772,19 +1782,21 @@ async def test_attempt_history_pagination_appends_without_duplication(
     first = await client.get(f"/api/v1/problems/{problem['_id']}/attempts", params={"limit": 20, "offset": 0})
     assert first.status_code == 200
     first_body = first.json()
-    assert first_body["total"] == 22
+    assert first_body["total"] == 23
     assert len(first_body["items"]) == 20
     assert first_body["hasMore"] is True
 
     second = await client.get(f"/api/v1/problems/{problem['_id']}/attempts", params={"limit": 20, "offset": 20})
     assert second.status_code == 200
     second_body = second.json()
-    assert len(second_body["items"]) == 2
+    assert len(second_body["items"]) == 3
     assert second_body["hasMore"] is False
 
     all_ids = [item["id"] for item in first_body["items"]] + [item["id"] for item in second_body["items"]]
-    assert len(all_ids) == 22
-    assert len(set(all_ids)) == 22
+    assert len(all_ids) == 23
+    assert len(set(all_ids)) == 23
+    # The derived created activity participates in pagination exactly once.
+    assert all_ids.count(f"created:{problem['_id']}") == 1
     # Page 1 timestamps are strictly newer than page 2 timestamps
     assert first_body["items"][-1]["testedAt"] >= second_body["items"][0]["testedAt"]
 
@@ -1829,8 +1841,9 @@ async def test_attempt_history_excludes_non_final_and_other_user_exams(
     response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 1
-    assert body["items"][0]["source"] == "exam"
+    # Only the valid submitted exam and the derived created activity remain.
+    assert body["total"] == 2
+    assert {item["source"] for item in body["items"]} == {"exam", "created"}
 
 
 @pytest.mark.asyncio
@@ -1854,8 +1867,12 @@ async def test_attempt_history_does_not_fabricate_rows_from_aggregate_counters(
     response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 0
-    assert body["items"] == []
+    # Aggregate counters never fabricate practice/exam rows; only the derived
+    # created activity (from the problem's createdAt) is present.
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    assert body["items"][0]["source"] == "created"
+    assert body["items"][0]["result"] is None
     assert body["hasMore"] is False
 
 
@@ -1870,19 +1887,27 @@ async def test_attempt_history_missing_problem_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_attempt_history_empty_state(
+async def test_attempt_history_creation_only_returns_single_created_row(
     problems_app: FastAPI,
     client: AsyncClient,
 ) -> None:
     database: FakeDatabase = problems_app.state.fake_database
     user_id = problems_app.state.primary_user["_id"]
-    problem = make_problem(user_id)
+    created_at = datetime(2026, 7, 16, 9, 0, 0, tzinfo=UTC)
+    problem = make_problem(user_id, created_at=created_at)
     database["problems"].seed(problem)
 
     response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
     assert response.status_code == 200
     body = response.json()
-    assert body == {"items": [], "total": 0, "hasMore": False}
+    # A problem with no test attempts returns exactly one derived created row.
+    assert body["total"] == 1
+    assert body["hasMore"] is False
+    item = body["items"][0]
+    assert item["source"] == "created"
+    assert item["result"] is None
+    assert item["id"] == f"created:{problem['_id']}"
+    assert item["testedAt"] == "2026-07-16T09:00:00Z"
 
 
 @pytest.mark.asyncio
@@ -1909,4 +1934,4 @@ async def test_attempt_history_excludes_other_problem_records(
     response = await client.get(f"/api/v1/problems/{problem['_id']}/attempts")
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 2
+    assert body["total"] == 3

@@ -54,8 +54,8 @@ export interface ProblemsResponse {
 export interface AttemptHistoryItem {
   id: string;
   testedAt: string;
-  result: string;
-  source: "practice" | "exam";
+  result: string | null;
+  source: "practice" | "exam" | "created";
 }
 
 export interface AttemptHistoryResponse {
