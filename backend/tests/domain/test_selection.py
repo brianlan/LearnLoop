@@ -165,8 +165,8 @@ def test_recency_uses_created_at_when_not_tested():
     problem = create_test_problem("p1", last_tested_at=None, created_at=created_at)
     config = ProblemSelectionConfig(recency_weight=1.0)
     breakdown = compute_score_breakdown(problem, config, now)
-    # Never tested: base 1.0, rate 1/10, days_since = 45 -> 1.0 + 45*(1/10) = 5.5
-    assert breakdown.recency == 5.5
+    # Never tested: base 1.0, rate 1/20, days_since = 45 -> 1.0 + 45*(1/20) = 3.25
+    assert breakdown.recency == 3.25
 
 
 def test_recency_status_specific_rates():
@@ -174,17 +174,17 @@ def test_recency_status_specific_rates():
     now = datetime.now(timezone.utc)
     config = ProblemSelectionConfig(recency_weight=1.0)
 
-    # Never tested, created 30 days ago -> createdAt reference, base 1.0, rate 1/10 -> 4.0
+    # Never tested, created 30 days ago -> createdAt reference, base 1.0, rate 1/20 -> 2.5
     never_tested = create_test_problem(
         "never", last_tested_at=None, created_at=now - timedelta(days=30)
     )
-    assert compute_score_breakdown(never_tested, config, now).recency == 4.0
+    assert compute_score_breakdown(never_tested, config, now).recency == 2.5
 
-    # Last correct, tested 60 days ago -> lastTestedAt reference, base 0.0, rate 1/60 -> 1.0
+    # Last correct, tested 60 days ago -> lastTestedAt reference, base 0.0, rate 1/40 -> 1.5
     last_correct = create_test_problem(
         "correct", last_tested_at=now - timedelta(days=60), last_attempt_correct=True
     )
-    assert compute_score_breakdown(last_correct, config, now).recency == 1.0
+    assert compute_score_breakdown(last_correct, config, now).recency == 1.5
 
     # Last failed, tested 60 days ago -> lastTestedAt reference, base 0.0, rate 1/30 -> 2.0
     last_failed = create_test_problem(
@@ -217,13 +217,13 @@ def test_recency_tested_today_starts_at_zero():
 
 def test_recency_weight_scales_status_specific_component():
     now = datetime.now(timezone.utc)
-    # Never tested 30 days ago: raw recency = 4.0, scaled by recency_weight=2.0 -> 8.0
+    # Never tested 30 days ago: raw recency = 2.5, scaled by recency_weight=2.0 -> 5.0
     problem = create_test_problem(
         "p1", last_tested_at=None, created_at=now - timedelta(days=30)
     )
     config = ProblemSelectionConfig(recency_weight=2.0)
     breakdown = compute_score_breakdown(problem, config, now)
-    assert breakdown.recency == 8.0
+    assert breakdown.recency == 5.0
 
 
 def test_recency_weight_scales_tested_component_and_base():

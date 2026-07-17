@@ -63,17 +63,17 @@ def compute_score_breakdown(
     now: datetime,
 ) -> ScoreBreakdown:
     # Recency score with status-specific daily growth rate.
-    # Never tested grows fastest (1/10), last-correct slowest (1/60),
+    # Never tested grows fastest (1/20), last-correct slowest (1/40),
     # last-failed and tested-unknown retain the original pace (1/30).
     # The 1.0 base represents the special priority of a never-tested
     # problem; ever-tested problems start at 0.0 and grow with elapsed days.
     if problem.tracking.lastTestedAt is None:
         reference_dt = problem.createdAt
-        daily_rate = 1 / 10
+        daily_rate = 1 / 20
         base = 1.0
     else:
         reference_dt = problem.tracking.lastTestedAt
-        daily_rate = 1 / 60 if problem.tracking.lastAttemptCorrect is True else 1 / 30
+        daily_rate = 1 / 40 if problem.tracking.lastAttemptCorrect is True else 1 / 30
         base = 0.0
 
     if reference_dt is not None:
