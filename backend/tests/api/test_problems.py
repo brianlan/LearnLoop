@@ -1257,6 +1257,55 @@ async def test_list_problems_sorts_by_selection_score_using_configured_weights(
 
 
 @pytest.mark.asyncio
+async def test_list_problems_sorts_negative_selection_scores_before_pagination(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    from app.infrastructure.config.settings import Settings, get_settings
+
+    problems_app.dependency_overrides[get_settings] = lambda: Settings(
+        problem_selection_last_wrong_weight=0.0,
+        problem_selection_failure_rate_weight=1.0,
+        problem_selection_recency_weight=0.0,
+    )
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+    now = datetime.now(UTC)
+    lowest = make_problem(user_id, text="Lowest raw score", last_tested_at=now)
+    tie_a = make_problem(user_id, text="Tied raw score A", last_tested_at=now)
+    tie_b = make_problem(user_id, text="Tied raw score B", last_tested_at=now)
+    lowest["_id"] = ObjectId("000000000000000000000003")
+    tie_a["_id"] = ObjectId("000000000000000000000001")
+    tie_b["_id"] = ObjectId("000000000000000000000002")
+    lowest["tracking"].update(correctCount=9, failedCount=0, lastAttemptCorrect=True)
+    tie_a["tracking"].update(correctCount=4, failedCount=0, lastAttemptCorrect=True)
+    tie_b["tracking"].update(correctCount=4, failedCount=0, lastAttemptCorrect=True)
+    database["problems"].seed(tie_b, lowest, tie_a)
+
+    asc_response = await client.get(
+        "/api/v1/problems?sortBy=selectionScore&sortOrder=asc&pageSize=2"
+    )
+    asc_page_two_response = await client.get(
+        "/api/v1/problems?sortBy=selectionScore&sortOrder=asc&pageSize=2&page=2"
+    )
+    desc_response = await client.get("/api/v1/problems?sortBy=selectionScore&sortOrder=desc")
+
+    assert asc_response.status_code == 200
+    assert [item["text"] for item in asc_response.json()["items"]] == [
+        "Lowest raw score",
+        "Tied raw score A",
+    ]
+    assert asc_page_two_response.status_code == 200
+    assert [item["text"] for item in asc_page_two_response.json()["items"]] == ["Tied raw score B"]
+    assert desc_response.status_code == 200
+    assert [item["text"] for item in desc_response.json()["items"]] == [
+        "Tied raw score A",
+        "Tied raw score B",
+        "Lowest raw score",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_list_problems_sorting_composes_with_filters_and_rejects_invalid_values(
     problems_app: FastAPI,
     client: AsyncClient,
