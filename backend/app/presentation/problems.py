@@ -158,13 +158,10 @@ def _sort_by_selection_score(
 ) -> list[dict[str, Any]]:
     config = _practice_selection_config(settings)
     now = datetime.now(UTC)
-    scored = [
-        (
-            compute_problem_weight_breakdown(problem_document_to_model(problem), config, now).total,
-            problem,
-        )
-        for problem in problems
-    ]
+    scored = []
+    for problem in problems:
+        breakdown = compute_problem_weight_breakdown(problem_document_to_model(problem), config, now)
+        scored.append((breakdown.lastWrong + breakdown.failure + breakdown.recency, problem))
     scored.sort(key=lambda item: _problem_id_sort_value(item[1]))
     scored.sort(key=lambda item: item[0], reverse=reverse)
     return [problem for _, problem in scored]
