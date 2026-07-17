@@ -58,8 +58,7 @@ print_hybrid_commands() {
 Hybrid local-dev contract
 =========================
 
-1. Backend (choose one):
-   /Users/rlan/miniforge3/envs/mykik_py311/bin/python -m uvicorn app.main:app --reload --app-dir backend
+1. Backend:
    uv run --directory backend uvicorn app.main:app --reload
 
 2. Frontend:
