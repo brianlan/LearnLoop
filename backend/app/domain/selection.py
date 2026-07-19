@@ -66,7 +66,9 @@ def compute_score_breakdown(
     # Never tested grows fastest (1/20), last-correct slowest (1/40),
     # last-failed and tested-unknown retain the original pace (1/30).
     # The 1.0 base represents the special priority of a never-tested
-    # problem; ever-tested problems start at 0.0 and grow with elapsed days.
+    # problem; last-wrong problems start from a 0.5 floor so a recently
+    # failed problem still contributes a recency signal on day zero;
+    # last-correct and tested-unknown problems start at 0.0.
     if problem.tracking.lastTestedAt is None:
         reference_dt = problem.createdAt
         daily_rate = 1 / 20
@@ -74,7 +76,10 @@ def compute_score_breakdown(
     else:
         reference_dt = problem.tracking.lastTestedAt
         daily_rate = 1 / 40 if problem.tracking.lastAttemptCorrect is True else 1 / 30
-        base = 0.0
+        if problem.tracking.lastAttemptCorrect is False:
+            base = 0.5
+        else:
+            base = 0.0
 
     if reference_dt is not None:
         days_since = (now - ensure_utc(reference_dt)).days
