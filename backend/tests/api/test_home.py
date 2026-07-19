@@ -817,7 +817,7 @@ async def test_summary_score_distribution_negative_zero_positive_buckets(
         created_at=sixty_days_ago,
     )
 
-    # Tested incorrect, more failures than corrects: base 0.0, rate 1/30 -> recency=0.0+60/30=2.0, failure=2.0, last_wrong=2.0 -> raw=6.0 (bucket 6)
+    # Tested incorrect, more failures than corrects: base 0.5, rate 1/30 -> recency=0.5+60/30=2.5, failure=2.0, last_wrong=2.0 -> raw=6.5 (bucket 6)
     tested_incorrect = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,

@@ -404,11 +404,11 @@ def test_compute_problem_weight_breakdown_all_components():
     # failure = (7/3) * 2.0 ≈ 4.6666666667
     assert breakdown.failure == pytest.approx((7 / 3) * 2.0)
 
-    # days_since = 30, recency_score = 0.0 + 30/30 = 1.0
-    # recency = 1.0 * 1.0 = 1.0
-    assert breakdown.recency == 1.0
+    # days_since = 30, recency_score = 0.5 + 30/30 = 1.5
+    # recency = 1.5 * 1.0 = 1.5
+    assert breakdown.recency == 1.5
 
-    assert breakdown.total == pytest.approx(3.0 + (7 / 3) * 2.0 + 1.0)
+    assert breakdown.total == pytest.approx(3.0 + (7 / 3) * 2.0 + 1.5)
     assert breakdown.total == pytest.approx(breakdown.lastWrong + breakdown.failure + breakdown.recency)
 
 
