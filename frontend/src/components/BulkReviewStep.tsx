@@ -282,6 +282,21 @@ export function BulkReviewStep({
     [items, selectedIndex],
   );
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey) return;
+      if (event.key === "PageDown") {
+        navigate(1);
+        event.preventDefault();
+      } else if (event.key === "PageUp") {
+        navigate(-1);
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [navigate]);
+
   if (!selectedItem) {
     return (
       <div data-testid="bulk-wizard-review-step">
