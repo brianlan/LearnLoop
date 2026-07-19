@@ -10,6 +10,15 @@ import { ActivePracticePage } from "./ActivePracticePage";
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
+
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -37,6 +46,7 @@ const mockProblem = {
 describe("ActivePracticePage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockNavigate.mockReset();
     vi.spyOn(api, "getSolutionStatus").mockResolvedValue({ status: "none" });
   });
 
@@ -175,8 +185,7 @@ describe("ActivePracticePage", () => {
 
     screen.getByTestId("quit-button").click();
 
-    // The navigation happens via useNavigate, which we can't fully test in MemoryRouter
-    // without a route to render, but we can check the button exists and fires
+    expect(mockNavigate).toHaveBeenCalledWith("/practice");
   });
 
   it("shows loading state during grading", async () => {
@@ -224,11 +233,8 @@ describe("ActivePracticePage", () => {
   it("redirects to landing page when no problem provided", async () => {
     renderActivePracticePage(undefined);
 
-    // Since we're using MemoryRouter with no matching route for /practice,
-    // the redirect will navigate but we can't fully test the destination
-    // We just check that the component handles the case
     await waitFor(() => {
-      // Component should render nothing (null) when no problem
+      expect(mockNavigate).toHaveBeenCalledWith("/practice", { replace: true });
     });
   });
 
