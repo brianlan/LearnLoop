@@ -1,30 +1,13 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import {
   addAuthenticatedSession,
   APP_BASE,
-  DEFAULT_TEST_PASSWORD,
-  registerAndLogin,
-  seedProblem,
-  type AuthSession,
+  createSession,
+  createSessionWithProblem,
 } from "./helpers";
 
 test.use({ baseURL: APP_BASE });
-
-async function createSession(request: APIRequestContext, prefix: string): Promise<AuthSession> {
-  return registerAndLogin(request, `e2e_${prefix}_${Date.now()}_${Math.random()}`, DEFAULT_TEST_PASSWORD);
-}
-
-async function createSessionWithProblem(request: APIRequestContext, prefix: string) {
-  const session = await createSession(request, prefix);
-  const problem = await seedProblem(request, session, {
-    text: "What is 2+2?",
-    problemType: "fill-in-the-blank",
-    correctAnswer: "4",
-  });
-
-  return { session, problem };
-}
 
 // Helper to set theme before navigation
 async function setTheme(page: Page, theme: "light" | "dark") {

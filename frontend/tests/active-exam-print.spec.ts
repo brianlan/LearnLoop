@@ -3,20 +3,11 @@ import { expect, test } from "@playwright/test";
 import {
   addAuthenticatedSession,
   APP_BASE,
-  DEFAULT_TEST_PASSWORD,
-  registerAndLogin,
+  createSession,
   seedActiveExam,
-  type AuthSession,
 } from "./helpers";
 
 test.use({ baseURL: APP_BASE });
-
-async function createSession(
-  request: Parameters<typeof registerAndLogin>[0],
-  prefix: string,
-): Promise<AuthSession> {
-  return registerAndLogin(request, `e2e_${prefix}_${Date.now()}_${Math.random()}`, DEFAULT_TEST_PASSWORD);
-}
 
 test.describe("Active Exam print preview", () => {
   test("renders all exam content in the print preview for a one-problem exam", async ({ page, request }) => {
