@@ -14,46 +14,7 @@ from pathlib import Path
 
 import pytest
 
-
-# The visual test corpus is defined in conftest.py but also here for the standalone script
-GRAPH_TEST_CASES = [
-    {
-        "name": "line",
-        "dsl": "var b = JXG.JSXGraph.initBoard('jxgbox', {boundingbox: [-5,5,5,-5], axis: true, grid: true, showCopyright: false}); b.create('line', [[-3,1], [3,2]]);",
-        "description": "A straight line segment passing through the coordinate plane, going from lower left to upper right",
-        "expect_error": False,
-    },
-    {
-        "name": "circle",
-        "dsl": "var b = JXG.JSXGraph.initBoard('jxgbox', {boundingbox: [-5,5,5,-5], axis: true, grid: true, showCopyright: false}); b.create('circle', [[0,0], 3]);",
-        "description": "A circle centered at the origin with radius 3, displayed on a coordinate grid",
-        "expect_error": False,
-    },
-    {
-        "name": "triangle",
-        "dsl": "var b = JXG.JSXGraph.initBoard('jxgbox', {boundingbox: [-5,5,5,-5], axis: true, grid: true, showCopyright: false}); b.create('polygon', [[-2,-2], [2,-2], [0,2]]);",
-        "description": "A triangle with vertices at (-2,-2), (2,-2), and (0,2), forming a polygon shape on the coordinate plane",
-        "expect_error": False,
-    },
-    {
-        "name": "parabola",
-        "dsl": "var b = JXG.JSXGraph.initBoard('jxgbox', {boundingbox: [-5,5,5,-5], axis: true, grid: true, showCopyright: false}); b.create('functiongraph', [function(x){return x*x-2;}]);",
-        "description": "A parabola curve opening upward, representing the function y = x^2 - 2, with its vertex at (0, -2)",
-        "expect_error": False,
-    },
-    {
-        "name": "invalid_throw_error",
-        "dsl": "throw new Error('broken');",
-        "description": "An error message indicating the graph failed to render",
-        "expect_error": True,
-    },
-    {
-        "name": "invalid_empty",
-        "dsl": "",
-        "description": "An error state or empty rendering area showing no valid graph was produced",
-        "expect_error": True,
-    },
-]
+from .conftest import GRAPH_TEST_CORPUS, GraphTestCase
 
 
 def test_harness_file_exists(harness_html_path: Path) -> None:
@@ -77,13 +38,13 @@ def test_evidence_directory_exists(visual_evidence_dir: Path) -> None:
 
 def test_corpus_definitions() -> None:
     """Verify the test corpus has correct structure."""
-    assert len(GRAPH_TEST_CASES) >= 6, "Test corpus should have at least 6 test cases"
+    assert len(GRAPH_TEST_CORPUS) >= 6, "Test corpus should have at least 6 test cases"
     
-    names = [tc["name"] for tc in GRAPH_TEST_CASES]
+    names = [tc.name for tc in GRAPH_TEST_CORPUS]
     assert len(names) == len(set(names)), "Test case names must be unique"
     
-    valid_count = sum(1 for tc in GRAPH_TEST_CASES if not tc["expect_error"])
-    error_count = sum(1 for tc in GRAPH_TEST_CASES if tc["expect_error"])
+    valid_count = sum(1 for tc in GRAPH_TEST_CORPUS if not tc.expect_error)
+    error_count = sum(1 for tc in GRAPH_TEST_CORPUS if tc.expect_error)
     assert valid_count >= 4, "Should have at least 4 valid graph test cases"
     assert error_count >= 2, "Should have at least 2 error test cases"
 
@@ -135,19 +96,19 @@ def run_visual_validation(
     import asyncio
     
     results = []
-    for test_case in GRAPH_TEST_CASES:
+    for test_case in GRAPH_TEST_CORPUS:
         result = asyncio.run(_validate_single_case(
             test_case=test_case,
             visual_evidence_dir=visual_evidence_dir,
             harness_html_path=harness_html_path,
             browser_viewport_size=browser_viewport_size,
         ))
-        results.append((test_case["name"], result))
+        results.append((test_case.name, result))
     return results
 
 
 async def _validate_single_case(
-    test_case: dict,
+    test_case: GraphTestCase,
     visual_evidence_dir: Path,
     harness_html_path: Path,
     browser_viewport_size: dict,
@@ -160,8 +121,8 @@ async def _validate_single_case(
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
     from tools import playwright_browser_navigate, playwright_browser_resize, playwright_browser_wait_for, playwright_browser_take_screenshot, look_at
     
-    url = _build_harness_url(test_case["dsl"], harness_html_path)
-    screenshot_path = visual_evidence_dir / f"{test_case['name']}.png"
+    url = _build_harness_url(test_case.dsl, harness_html_path)
+    screenshot_path = visual_evidence_dir / f"{test_case.name}.png"
     
     try:
         await playwright_browser_navigate(url=url)
@@ -172,17 +133,17 @@ async def _validate_single_case(
         return f"Screenshot capture failed: {exc}"
     
     # Validate the screenshot
-    if test_case["expect_error"]:
+    if test_case.expect_error:
         goal = (
-            f"Analyze this JSXGraph rendering screenshot for test case '{test_case['name']}'. "
-            f"Expected: {test_case['description']}. "
+            f"Analyze this JSXGraph rendering screenshot for test case '{test_case.name}'. "
+            f"Expected: {test_case.description}. "
             f"Confirm that an error state is shown (error message, empty area, or no valid graph). "
             f"Answer with ONLY 'PASS' if the error state is correctly shown, or 'FAIL: <reason>' if not."
         )
     else:
         goal = (
-            f"Analyze this JSXGraph rendering screenshot for test case '{test_case['name']}'. "
-            f"Expected visual content: {test_case['description']}. "
+            f"Analyze this JSXGraph rendering screenshot for test case '{test_case.name}'. "
+            f"Expected visual content: {test_case.description}. "
             f"Answer with ONLY 'PASS' if the described visual content is present and correctly rendered, "
             f"or 'FAIL: <reason>' if the expected geometry is missing or incorrect."
         )
