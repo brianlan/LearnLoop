@@ -26,14 +26,17 @@ function createQueryClient() {
   });
 }
 
-function renderActiveExamPage() {
-  return render(
-    <QueryClientProvider client={createQueryClient()}>
-      <MemoryRouter>
-        <ActiveExamPage />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+function renderActiveExamPage(queryClient = createQueryClient()) {
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ActiveExamPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 const baseExamItem = {
@@ -400,6 +403,8 @@ describe("ActiveExamPage", () => {
       expect(screen.getByText("Exam Paper")).toBeInTheDocument();
     });
 
+    const paper = screen.getByTestId("print-preview-paper");
+    expect(paper).toHaveTextContent("Exam Paper");
     const previewItems = screen.getAllByTestId("print-preview-item");
     expect(previewItems).toHaveLength(2);
     expect(previewItems[0]).toHaveTextContent("First question?");
@@ -419,8 +424,11 @@ describe("ActiveExamPage", () => {
     });
   });
 
-  it("invalidates active-exam cache and navigates to detail on submit success", async () => {
+  it("removes active-exam cache, invalidates exams, and navigates on submit success", async () => {
     const user = userEvent.setup();
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(["active-exam"], { exam: baseExam });
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -429,13 +437,9 @@ describe("ActiveExamPage", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ exam: { ...baseExam, state: "submitted" } }),
-      })
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({ exam: baseExam }),
       });
 
-    renderActiveExamPage();
+    renderActiveExamPage(queryClient);
 
     await waitFor(() => {
       expect(screen.getByText("Active Exam")).toBeInTheDocument();
@@ -445,6 +449,8 @@ describe("ActiveExamPage", () => {
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
+      expect(queryClient.getQueryData(["active-exam"])).toBeUndefined();
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["exams"] });
       expect(mockNavigate).toHaveBeenCalledWith("/exams/exam123");
     });
   });
@@ -566,28 +572,6 @@ describe("ActiveExamPage", () => {
       expect.stringContaining("/api/v1/exams/exam123/items/item1/answer"),
       expect.anything(),
     );
-  });
-
-  it("renders the printable paper wrapper when print preview is open", async () => {
-    const user = userEvent.setup();
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ exam: baseExam }),
-    });
-
-    renderActiveExamPage();
-
-    await waitFor(() => {
-      expect(screen.getByText("Active Exam")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Print" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("print-preview-paper")).toBeInTheDocument();
-    });
-    expect(screen.getByTestId("print-preview-paper")).toHaveTextContent("Exam Paper");
-    expect(screen.getByTestId("print-preview-paper")).toHaveTextContent("What is 2+2?");
   });
 
   it("does not render uploaded images in the print preview", async () => {
