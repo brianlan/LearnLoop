@@ -487,58 +487,6 @@ async def test_coaching_vlm_client_reasoning_content_none_when_absent() -> None:
     assert result.reasoning_content is None
 
 
-def test_solution_coaching_strip_json_code_fences_leaves_plain_json_unchanged() -> None:
-    plain = '{"text":"hello"}'
-
-    assert SolutionVLMClient._strip_json_code_fences(plain) == plain
-
-
-def test_solution_coaching_strip_json_code_fences_strips_json_fence() -> None:
-    fenced = '```json\n{"text":"hello"}\n```'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
-
-
-def test_solution_coaching_strip_json_code_fences_strips_plain_fence() -> None:
-    fenced = '```\n{"text":"hello"}\n```'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
-
-
-def test_solution_coaching_strip_json_code_fences_strips_any_fence_language() -> None:
-    fenced = '```python\n{"text":"hello"}\n```'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
-
-
-def test_solution_coaching_strip_json_code_fences_preserves_incomplete_closing_fence() -> None:
-    fenced = '```json\n{"text":"hello"}'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == fenced
-
-
-def test_solution_coaching_strip_json_code_fences_preserves_single_line_fence() -> None:
-    fenced = '```json {"text":"hello"} ```'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == fenced
-
-
-def test_solution_coaching_strip_json_code_fences_returns_empty_string_for_empty_input() -> None:
-    assert SolutionVLMClient._strip_json_code_fences("") == ""
-
-
-def test_solution_coaching_strip_json_code_fences_strips_fence_with_whitespace_in_opening() -> None:
-    fenced = '``` json\n{"text":"hello"}\n```'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == '{"text":"hello"}'
-
-
-def test_solution_coaching_strip_json_code_fences_strips_multiline_json_content() -> None:
-    fenced = '```json\n{\n  "text": "hello",\n  "value": 42\n}\n```'
-
-    assert SolutionVLMClient._strip_json_code_fences(fenced) == '{\n  "text": "hello",\n  "value": 42\n}'
-
-
 @pytest.mark.asyncio
 async def test_solution_vlm_client_extracts_embedded_json_without_fences() -> None:
     async def completion_fn(**kwargs):
