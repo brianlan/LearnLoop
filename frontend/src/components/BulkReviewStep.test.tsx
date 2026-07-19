@@ -368,6 +368,142 @@ describe("BulkReviewStep", () => {
     expect(screen.getByTestId("bulk-review-next")).toBeDisabled();
   });
 
+  it("navigates to the next item on Alt+PageDown", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("1 / 2");
+
+    fireEvent(
+      window,
+      new KeyboardEvent("keydown", { key: "PageDown", altKey: true }),
+    );
+
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("2 / 2");
+  });
+
+  it("navigates to the previous item on Alt+PageUp", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("2 / 2");
+
+    fireEvent(
+      window,
+      new KeyboardEvent("keydown", { key: "PageUp", altKey: true }),
+    );
+
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("1 / 2");
+  });
+
+  it("navigates via Alt+PageDown while a Review text field has focus", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const textField = screen.getByTestId("bulk-review-text");
+    textField.focus();
+    expect(textField).toHaveFocus();
+
+    fireEvent(
+      window,
+      new KeyboardEvent("keydown", { key: "PageDown", altKey: true }),
+    );
+
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("2 / 2");
+  });
+
+  it("does not wrap item selection at the first or last item", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // At first item: Alt+PageUp keeps the first item selected.
+    fireEvent(
+      window,
+      new KeyboardEvent("keydown", { key: "PageUp", altKey: true }),
+    );
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("1 / 2");
+
+    // Move to the last item; Alt+PageDown keeps the last item selected.
+    fireEvent.click(screen.getByTestId("bulk-review-next"));
+    fireEvent(
+      window,
+      new KeyboardEvent("keydown", { key: "PageDown", altKey: true }),
+    );
+    expect(screen.getByTestId("bulk-review-position")).toHaveTextContent("2 / 2");
+  });
+
+  it("prevents the default browser behavior for Alt+PageDown and Alt+PageUp", () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", { order: 1 }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const downEvent = new KeyboardEvent("keydown", {
+      key: "PageDown",
+      altKey: true,
+      cancelable: true,
+    });
+    fireEvent(window, downEvent);
+    expect(downEvent.defaultPrevented).toBe(true);
+
+    const upEvent = new KeyboardEvent("keydown", {
+      key: "PageUp",
+      altKey: true,
+      cancelable: true,
+    });
+    fireEvent(window, upEvent);
+    expect(upEvent.defaultPrevented).toBe(true);
+  });
+
   it("edits every draft field and routes the correct key to onUpdateDraft", async () => {
     render(
       <BulkReviewStep
