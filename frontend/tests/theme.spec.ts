@@ -189,6 +189,7 @@ type PageThemeCase = {
   setup?: (page: Page) => Promise<void>;
   assert: (page: Page) => Promise<void>;
   background: (page: Page) => Promise<void>;
+  // extras: bounded mechanism for issue-required special cases only (not a general extension point)
   extras?: Array<{ title: string; theme: "light" | "dark"; suffix: string; run: (page: Page) => Promise<void> }>;
 };
 
