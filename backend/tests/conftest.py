@@ -48,7 +48,7 @@ def pytest_runtest_makereport(item: pytest.Item, call):
     if not config._require_real_mongo_enabled:
         return
     report = outcome.get_result()
-    if item.get_closest_marker("real_mongo") is not None and report.when == "call" and report.skipped:
+    if item.get_closest_marker("real_mongo") is not None and report.skipped:
         config._require_real_mongo_skip_seen = True
 
 

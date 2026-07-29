@@ -40,7 +40,7 @@ def pytest_runtest_makereport(item, call):
     if not config._require_real_mongo_enabled:
         return
     report = outcome.get_result()
-    if item.get_closest_marker("real_mongo") is not None and report.when == "call" and report.skipped:
+    if item.get_closest_marker("real_mongo") is not None and report.skipped:
         config._require_real_mongo_skip_seen = True
 
 def pytest_sessionfinish(session):
@@ -90,6 +90,28 @@ def test_require_real_mongo_passes_when_marked_tests_run(pytester: pytest.Pytest
 
 def test_require_real_mongo_fails_when_selected_marked_test_skips(pytester: pytest.Pytester) -> None:
     _write_marked(pytester, skip=True)
+    result = pytester.runpytest("--require-real-mongo")
+    assert result.ret != 0
+    result.assert_outcomes(skipped=1)
+
+
+def test_require_real_mongo_fails_when_fixture_skips_during_setup(pytester: pytest.Pytester) -> None:
+    # A fixture that skips during setup produces no "call" report, only a
+    # setup-phase skip. The hook must catch any-phase skips, not just call-phase.
+    pytester.makeconftest(_PLUGIN_CONFTEST)
+    pytester.makepyfile(
+        test_fixture_skip="""
+import pytest
+
+@pytest.fixture
+def needs_mongo():
+    pytest.skip("no mongo")
+
+@pytest.mark.real_mongo
+def test_run(needs_mongo):
+    assert True
+"""
+    )
     result = pytester.runpytest("--require-real-mongo")
     assert result.ret != 0
     result.assert_outcomes(skipped=1)
