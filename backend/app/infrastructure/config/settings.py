@@ -10,7 +10,10 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(_BACKEND_DIR / ".env"),
+        # Keep direct Settings construction deterministic for tests and callers
+        # that provide configuration explicitly. Runtime loading of the local
+        # dotenv file is kept at the get_settings() boundary below.
+        env_file=None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -126,4 +129,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(_env_file=_BACKEND_DIR / ".env")
