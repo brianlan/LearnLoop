@@ -535,25 +535,11 @@ async def test_run_worker_loop_processes_task_and_exits(
 
     settings = _make_settings(exam_grading_lease_seconds=60)
 
-    # Patch the VLMClient constructor so the worker uses our fake.
+    # Patch the worker's VLM builder so this test never makes a provider request.
     import app.infrastructure.worker.exam_grading_worker as worker_mod
 
-    original_init = worker_mod.VLMClient
-
-    class _FakeVLMWrapper:
-        def __init__(self, **kwargs: Any) -> None:
-            self._inner = vlm
-
-        async def __aenter__(self):
-            return self
-
-        async def grade_short_answer(self, **kwargs: Any):
-            return await self._inner.grade_short_answer(**kwargs)
-
-        async def aclose(self):
-            pass
-
-    worker_mod.VLMClient = lambda **kwargs: vlm  # type: ignore[misc]
+    original_builder = worker_mod.build_grading_vlm_client
+    worker_mod.build_grading_vlm_client = lambda settings: vlm  # type: ignore[assignment]
     try:
         stop = asyncio.Event()
         # Run worker briefly; it should process the one task then idle.
@@ -565,7 +551,7 @@ async def test_run_worker_loop_processes_task_and_exits(
 
         await _run_briefly()
     finally:
-        worker_mod.VLMClient = original_init  # type: ignore[misc]
+        worker_mod.build_grading_vlm_client = original_builder
 
     stored_exam = await db["exams"].find_one({"_id": exam["_id"]})
     assert stored_exam["state"] == ExamState.SUBMITTED.value
