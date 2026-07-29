@@ -137,16 +137,24 @@ async def _real_database_core(
     """Real-Mongo fixture core, parameterized for testability.
 
     Reads ``MONGODB_URI`` (skips if absent) and the sentinel
-    ``LEARNLOOP_REAL_MONGO_DATABASE`` name. Validates the name before any
-    database setup/write and revalidates it immediately before dropping the
-    whole database in teardown. ``client_factory`` and ``ensure_setup`` are
-    injected so tests can substitute fakes without touching a Mongo server.
+    ``LEARNLOOP_REAL_MONGO_DATABASE`` name. A missing sentinel name skips
+    (not opted in); a present-but-invalid name raises ``RuntimeError`` before
+    any database setup/write. The name is revalidated immediately before
+    dropping the whole database in teardown. ``client_factory`` and
+    ``ensure_setup`` are injected so tests can substitute fakes without
+    touching a Mongo server.
     """
     uri = os.environ.get("MONGODB_URI")
     if uri is None:
         pytest.skip("real Mongo integration tests require MONGODB_URI (run through agent-env.sh)")
 
-    database_name = validate_real_mongo_database_name(os.environ.get(REAL_MONGO_DATABASE_ENV))
+    raw_name = os.environ.get(REAL_MONGO_DATABASE_ENV)
+    if raw_name is None:
+        pytest.skip(
+            f"real Mongo integration tests require {REAL_MONGO_DATABASE_ENV} "
+            f"(run through agent-env.sh)"
+        )
+    database_name = validate_real_mongo_database_name(raw_name)
     client = client_factory(uri)
     try:
         database = client.get_database(database_name)
@@ -725,6 +733,21 @@ async def test_fixture_skips_without_mongodb_uri(
         monkeypatch=monkeypatch,
         real_mongo_database="learnloop_test_a",
         mongodb_uri=None,
+    )
+    assert client.setup_database_name is None
+    assert client.dropped_database_name is None
+
+
+@pytest.mark.asyncio
+async def test_fixture_skips_when_sentinel_name_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # MONGODB_URI is set but LEARNLOOP_REAL_MONGO_DATABASE is absent: not opted
+    # in, so the fixture skips instead of erroring.
+    client = await _drain_real_database_core(
+        monkeypatch=monkeypatch,
+        real_mongo_database=None,
+        mongodb_uri="mongodb://example/test",
     )
     assert client.setup_database_name is None
     assert client.dropped_database_name is None
