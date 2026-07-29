@@ -28,6 +28,10 @@ from app.infrastructure.ingestion.repository import (
 )
 from app.infrastructure.storage.mongo import ensure_database_setup
 
+# The whole module requires a real MongoDB server (or fakes for the
+# control-flow tests); it is excluded from the Docker-free fast tier.
+pytestmark = pytest.mark.real_mongo
+
 REAL_MONGO_DATABASE_ENV = "LEARNLOOP_REAL_MONGO_DATABASE"
 _REAL_MONGO_NAME_RE = re.compile(r"learnloop_test_[A-Za-z0-9_-]+")
 
