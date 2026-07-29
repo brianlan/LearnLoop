@@ -118,6 +118,7 @@ cmd_shell() {
 }
 
 run_backend_tests() {
+  compose_cmd up -d mongodb
   run_tools bash -c 'cd /workspace/backend && uv run --frozen --active pytest'
 }
 
