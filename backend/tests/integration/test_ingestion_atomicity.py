@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -25,6 +27,25 @@ from app.infrastructure.ingestion.repository import (
     update_item_draft,
 )
 from app.infrastructure.storage.mongo import ensure_database_setup
+
+REAL_MONGO_DATABASE_ENV = "LEARNLOOP_REAL_MONGO_DATABASE"
+_REAL_MONGO_NAME_RE = re.compile(r"learnloop_test_[A-Za-z0-9_-]+")
+
+
+def validate_real_mongo_database_name(name: str | None) -> str:
+    """Return ``name`` only when it is an externally supplied sentinel test db.
+
+    Raises ``RuntimeError`` for any absent, empty, or non-sentinel value so
+    the real-Mongo fixture can never write to or clean a shared/production
+    database. The match is a full-string match: no trimming or substring
+    acceptance is allowed.
+    """
+    if name is None or not _REAL_MONGO_NAME_RE.fullmatch(name):
+        raise RuntimeError(
+            f"{REAL_MONGO_DATABASE_ENV} must match 'learnloop_test_[A-Za-z0-9_-]+'; "
+            f"got {name!r}"
+        )
+    return name
 
 
 class _SynchronizedCollection:
@@ -104,24 +125,49 @@ class _SynchronizedDatabase:
         return getattr(self._real, name)
 
 
-@pytest_asyncio.fixture(loop_scope="function")
-async def real_database() -> Any:
+async def _real_database_core(
+    *,
+    client_factory: Callable[[str], Any],
+    ensure_setup: Callable[[Any], Awaitable[None]],
+) -> AsyncIterator[Any]:
+    """Real-Mongo fixture core, parameterized for testability.
+
+    Reads ``MONGODB_URI`` (skips if absent) and the sentinel
+    ``LEARNLOOP_REAL_MONGO_DATABASE`` name. Validates the name before any
+    database setup/write and revalidates it immediately before dropping the
+    whole database in teardown. ``client_factory`` and ``ensure_setup`` are
+    injected so tests can substitute fakes without touching a Mongo server.
+    """
     uri = os.environ.get("MONGODB_URI")
     if uri is None:
         pytest.skip("real Mongo integration tests require MONGODB_URI (run through agent-env.sh)")
 
-    database_name = os.environ.get("MONGODB_DATABASE", "learnloop")
-    client: AsyncMongoClient[Any] = AsyncMongoClient(uri)
+    database_name = validate_real_mongo_database_name(os.environ.get(REAL_MONGO_DATABASE_ENV))
+    client = client_factory(uri)
     try:
         database = client.get_database(database_name)
-        await ensure_database_setup(database)
+        await ensure_setup(database)
         yield database
     finally:
-        # Clean up only the ingestion batches collection after each test.
+        # Drop the whole sentinel-prefixed test database, revalidating the
+        # name immediately before the destructive call so no cleanup path can
+        # target a non-sentinel database even if the environment changed mid-run.
         try:
-            await database[INGESTION_BATCHES_COLLECTION].delete_many({})
+            validated = validate_real_mongo_database_name(
+                os.environ.get(REAL_MONGO_DATABASE_ENV)
+            )
+            await client.drop_database(validated)
         finally:
             await client.close()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def real_database() -> Any:
+    async for database in _real_database_core(
+        client_factory=AsyncMongoClient,
+        ensure_setup=ensure_database_setup,
+    ):
+        yield database
 
 
 @pytest.fixture
@@ -570,3 +616,111 @@ async def test_mutations_raise_for_missing_batch(
 ) -> None:
     with pytest.raises(ValueError, match="Batch not found"):
         await mutation(real_database, ObjectId(), user_id, "item", now=NOW, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Fixture control-flow tests: prove the sentinel name gates setup and cleanup
+# without touching a real Mongo server.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSetupDatabase:
+    """Minimal async database double for ensure_database_setup."""
+
+    async def list_collection_names(self) -> list[str]:
+        return []
+
+
+class _FakeClient:
+    """Records the database name passed to get_database/drop_database."""
+
+    def __init__(self) -> None:
+        self.setup_database_name: str | None = None
+        self.dropped_database_name: str | None = None
+        self.closed = False
+        self._database = _FakeSetupDatabase()
+
+    def get_database(self, name: str) -> _FakeSetupDatabase:
+        self.setup_database_name = name
+        return self._database
+
+    async def drop_database(self, name: str) -> None:
+        self.dropped_database_name = name
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def _drain_real_database_core(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    real_mongo_database: str | None,
+    mongodb_uri: str | None,
+) -> _FakeClient:
+    """Drive ``_real_database_core`` with a fake client and no-op setup.
+
+    No real Mongo I/O occurs. Returns the fake client so the test can inspect
+    setup/cleanup calls.
+    """
+    client = _FakeClient()
+
+    monkeypatch.delenv("MONGODB_URI", raising=False)
+    if mongodb_uri is not None:
+        monkeypatch.setenv("MONGODB_URI", mongodb_uri)
+    monkeypatch.delenv(REAL_MONGO_DATABASE_ENV, raising=False)
+    if real_mongo_database is not None:
+        monkeypatch.setenv(REAL_MONGO_DATABASE_ENV, real_mongo_database)
+
+    async def _no_op_setup(_db: Any) -> None:
+        return None
+
+    gen = _real_database_core(
+        client_factory=lambda _uri: client,
+        ensure_setup=_no_op_setup,
+    )
+    try:
+        await gen.__anext__()
+    except StopAsyncIteration:
+        return client
+    with contextlib.suppress(StopAsyncIteration):
+        await gen.__anext__()
+    return client
+
+
+@pytest.mark.asyncio
+async def test_fixture_setup_and_teardown_pass_valid_name_to_drop_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = await _drain_real_database_core(
+        monkeypatch=monkeypatch,
+        real_mongo_database="learnloop_test_run-42",
+        mongodb_uri="mongodb://example/test",
+    )
+    assert client.setup_database_name == "learnloop_test_run-42"
+    assert client.dropped_database_name == "learnloop_test_run-42"
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_fixture_rejects_invalid_name_before_setup_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(RuntimeError, match=REAL_MONGO_DATABASE_ENV):
+        await _drain_real_database_core(
+            monkeypatch=monkeypatch,
+            real_mongo_database="learnloop",
+            mongodb_uri="mongodb://example/test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_fixture_skips_without_mongodb_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = await _drain_real_database_core(
+        monkeypatch=monkeypatch,
+        real_mongo_database="learnloop_test_a",
+        mongodb_uri=None,
+    )
+    assert client.setup_database_name is None
+    assert client.dropped_database_name is None
