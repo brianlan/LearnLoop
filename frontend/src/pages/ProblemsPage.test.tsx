@@ -166,15 +166,6 @@ describe("ProblemsPage", () => {
     vi.useRealTimers();
   });
 
-  // Helper: simulate a long press (500ms) to enter selection mode.
-  async function longPress(card: HTMLElement) {
-    fireEvent.pointerDown(card);
-    await act(async () => {
-      vi.advanceTimersByTime(500);
-    });
-    fireEvent.pointerUp(card);
-  }
-
   it("defaults to All Problems without a folderId query param", async () => {
     installApiMock();
 
