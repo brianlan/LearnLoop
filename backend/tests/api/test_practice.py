@@ -368,3 +368,122 @@ async def test_next_returns_no_eligible_when_all_too_new(
     response = await client_with_min_age.post("/api/v1/practice/next")
     assert response.status_code == 200
     assert response.json()["status"] == "no_eligible"
+
+
+# ---------------------------------------------------------------------------
+# Cross-user ownership protection characterization (#558)
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def foreign_practice_app() -> FastAPI:
+    """An app where the authenticated user differs from the problem owner."""
+    application = create_app()
+    database = FakeDatabase()
+    settings = Settings(problem_selection_cooldown_days=7, problem_selection_min_age_days=0)
+    owner = make_user(ObjectId(), "owner")
+    foreign_user = make_user(ObjectId(), "other")
+
+    # Seed an owner-owned problem so the foreign user has zero eligible problems.
+    owner_problem = make_problem(owner["_id"], text="Owner problem", correct_answer_display="42")
+    database.seed("problems", [owner_problem])
+
+    application.state.fake_database = database
+    application.state.owner = owner
+    application.state.foreign_user = foreign_user
+
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_app_settings] = lambda: settings
+    application.dependency_overrides[get_current_user] = lambda: deepcopy(foreign_user)
+    return application
+
+
+@pytest_asyncio.fixture
+async def foreign_client(foreign_practice_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=foreign_practice_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest.mark.asyncio
+async def test_foreign_stats_returns_zero_practiceable(
+    foreign_practice_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    response = await foreign_client.get("/api/v1/practice/stats")
+    assert response.status_code == 200
+    assert response.json()["practiceableCount"] == 0
+
+
+@pytest.mark.asyncio
+async def test_foreign_next_returns_no_problems_without_exposure(
+    foreign_practice_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = foreign_practice_app.state.fake_database
+    owner: dict = foreign_practice_app.state.owner
+
+    response = await foreign_client.post("/api/v1/practice/next")
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_problems"
+
+    # Owner problem exposure count must remain unchanged.
+    problem = await database["problems"].find_one({"userId": owner["_id"]})
+    assert problem is not None
+    assert problem["tracking"]["exposureCount"] == 0
+
+
+@pytest.mark.asyncio
+async def test_foreign_attempt_returns_404_and_creates_no_attempt(
+    foreign_practice_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = foreign_practice_app.state.fake_database
+    owner: dict = foreign_practice_app.state.owner
+    owner_problem = await database["problems"].find_one({"userId": owner["_id"]})
+    assert owner_problem is not None
+
+    snapshot = deepcopy(owner_problem)
+
+    response = await foreign_client.post(
+        "/api/v1/practice/attempts",
+        json={"problemId": str(owner_problem["_id"]), "submittedAnswer": "42"},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    # No practice attempt was created.
+    attempts = database["practice_attempts"]._documents
+    assert len(attempts) == 0
+
+    # Owner problem tracking is unchanged.
+    after = await database["problems"].find_one({"_id": owner_problem["_id"]})
+    assert after["tracking"] == snapshot["tracking"]
+
+
+@pytest.mark.asyncio
+async def test_foreign_history_is_empty(
+    foreign_practice_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = foreign_practice_app.state.fake_database
+    owner: dict = foreign_practice_app.state.owner
+
+    # Seed an owner-owned attempt — it must not appear in foreign history.
+    now = datetime.now(UTC)
+    owner_problem = await database["problems"].find_one({"userId": owner["_id"]})
+    assert owner_problem is not None
+    database.seed("practice_attempts", [{
+        "_id": ObjectId(),
+        "userId": owner["_id"],
+        "problemId": owner_problem["_id"],
+        "submittedAnswer": "42",
+        "gradingStatus": "correct",
+        "gradingMethod": "normalized-match",
+        "createdAt": now,
+    }])
+
+    response = await foreign_client.get("/api/v1/practice/history")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["items"] == []
+    assert data["total"] == 0
