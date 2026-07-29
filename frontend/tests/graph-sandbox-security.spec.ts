@@ -15,7 +15,9 @@ test.describe("GraphSandbox Security", () => {
 
     await page.goto("/");
 
-    // Inject iframe using real generateIframeHtml() and the postMessage protocol
+    // Inject iframe using real generateIframeHtml() and the postMessage protocol.
+    // The injected DSL attempts malicious requests, then posts a probe-complete
+    // message so the test waits for an observable event instead of a fixed delay.
     await page.evaluate((html) => {
       return new Promise<void>((resolve) => {
         const iframe = document.createElement("iframe");
@@ -30,34 +32,41 @@ test.describe("GraphSandbox Security", () => {
 
         window.addEventListener("message", function handler(event) {
           if (event.data?.type === "ready") {
-            window.removeEventListener("message", handler);
-            // Send malicious DSL via postMessage (same protocol as GraphSandbox)
+            // Send malicious DSL via postMessage (same protocol as GraphSandbox).
+            // After attempting the requests, post probe-complete so the test
+            // can resolve on an observable event instead of a fixed timeout.
             iframe.contentWindow?.postMessage(
               {
                 type: "render",
                 payload: `
-                  fetch('https://example.com/malicious-test-request').catch(() => {});
-                  try {
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('GET', 'https://example.com/malicious-xhr-request', true);
-                    xhr.send();
-                  } catch (e) {}
+                  Promise.all([
+                    fetch('https://example.com/malicious-test-request').catch(() => {}),
+                    new Promise((resolve) => {
+                      try {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', 'https://example.com/malicious-xhr-request', true);
+                        xhr.onload = () => resolve(undefined);
+                        xhr.onerror = () => resolve(undefined);
+                        xhr.send();
+                      } catch (e) { resolve(undefined); }
+                    }),
+                  ]).finally(() => {
+                    parent.postMessage({ type: 'probe-complete' }, '*');
+                  });
                 `,
               },
               "*"
             );
-
-            // Wait for any requests to be attempted, then signal completion
-            setTimeout(() => resolve(undefined), 1500);
+          }
+          if (event.data?.type === "probe-complete") {
+            window.removeEventListener("message", handler);
+            resolve();
           }
         });
 
         document.body.appendChild(iframe);
       });
     }, generateIframeHtml());
-
-    // Wait for the iframe test to complete
-    await page.waitForTimeout(2000);
 
     // Verify no requests to example.com were made
     expect(routeHit).toBe(false);
