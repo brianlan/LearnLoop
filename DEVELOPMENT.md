@@ -180,6 +180,12 @@ Commands:
 ./scripts/agent-env.sh test e2e         # frontend Playwright e2e with isolated services
 ./scripts/agent-env.sh test all         # backend, frontend, and e2e in sequence
 
+# Run focused tests with forwarded runner arguments
+./scripts/agent-env.sh test backend tests/api/test_practice.py
+./scripts/agent-env.sh test backend -x tests/api/test_practice.py::test_get --tb=short
+./scripts/agent-env.sh test frontend --reporter verbose
+./scripts/agent-env.sh test e2e tests/login.spec.ts
+
 # Tear down this worktree's agent stack
 ./scripts/agent-env.sh down
 
