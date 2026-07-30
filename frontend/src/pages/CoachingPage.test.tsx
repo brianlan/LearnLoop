@@ -5,9 +5,10 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { api } from "@/api/client";
-import { CoachingPage, type ExamResponse } from "./CoachingPage";
+import { CoachingPage } from "./CoachingPage";
 import type { PracticeHistoryResponse } from "@/types/practice";
 import type { CoachingConversation, CoachingMessage } from "@/types/coaching";
+import type { ExamResponse } from "@/types/exam";
 
 // Mock GraphSandbox component to easily verify DSL and trigger errors
 vi.mock("@/components/GraphSandbox", () => ({
@@ -125,18 +126,48 @@ const mockPracticeHistory: PracticeHistoryResponse = {
 const mockExamData: ExamResponse = {
   exam: {
     id: "exam-789",
+    state: "submitted",
+    configSnapshot: {
+      maxProblemCount: 1,
+      selectionPolicy: {
+        cooldownDays: 0,
+        lastWrongWeight: 0,
+        failureRateWeight: 0,
+        recencyWeight: 0,
+        minProblemAgeDays: 0,
+      },
+      generatedAt: "2026-01-01T00:00:00Z",
+    },
     items: [
       {
+        itemId: "item-1",
+        order: 0,
         problemId: "prob-123",
+        problem: {
+          text: "Given $x^2 = 4$, find $x$.",
+          problemType: "short-answer",
+        },
         answer: {
           raw: "2",
         },
         grading: {
           status: "correct",
           isCorrect: true,
+          retryCount: 0,
         },
       },
     ],
+    summary: {
+      totalProblems: 1,
+      answeredProblems: 1,
+      gradedProblems: 1,
+      pendingProblems: 0,
+      correctProblems: 1,
+      failedProblems: 0,
+      score: 1,
+    },
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
   },
 };
 
