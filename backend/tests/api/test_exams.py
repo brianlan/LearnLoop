@@ -1204,3 +1204,234 @@ async def test_submit_sync_path_rejects_when_answers_modified_during_grading(
 
     assert submit_response.status_code == 409
     assert submit_response.json()["error"]["code"] == "ANSWERS_MODIFIED_DURING_GRADING"
+
+
+# ---------------------------------------------------------------------------
+# Cross-user ownership protection characterization (#558)
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def foreign_exams_app() -> FastAPI:
+    """An app where the authenticated user differs from the exam owner.
+
+    The owner has one problem and one in-progress exam seeded in the database.
+    The authenticated user is a second, foreign user.
+    """
+    application = create_app()
+    database = FakeDatabase()
+    adapter = FakeMongoAdapter()
+    storage = FakeStorage()
+    vlm = FakeVLMClient()
+    owner = make_user("owner")
+    foreign_user = make_user("intruder")
+
+    owner_problem = make_problem(owner["_id"], text="2+2?", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(owner_problem)
+
+    now = datetime.now(UTC)
+    owner_exam_id = ObjectId()
+    item_id = str(ObjectId())
+    database["exams"].seed(
+        {
+            "_id": owner_exam_id,
+            "userId": owner["_id"],
+            "state": "in-progress",
+            "configSnapshot": {
+                "maxProblemCount": 1,
+                "selectionPolicy": {
+                    "cooldownDays": 7,
+                    "lastWrongWeight": 1.0,
+                    "failureRateWeight": 1.0,
+                    "recencyWeight": 1.0,
+                    "minProblemAgeDays": 0,
+                },
+                "generatedAt": now,
+            },
+            "items": [
+                {
+                    "itemId": item_id,
+                    "order": 1,
+                    "problemId": owner_problem["_id"],
+                    "problemSnapshot": {
+                        "text": owner_problem["text"],
+                        "problemType": owner_problem["problemType"],
+                        "subject": owner_problem.get("subject", "math"),
+                        "graphDsl": None,
+                        "correctAnswer": deepcopy(owner_problem["correctAnswer"]),
+                        "sourceImage": deepcopy(owner_problem.get("sourceImage")),
+                    },
+                    "answer": {"raw": None, "savedAt": None},
+                    "grading": {
+                        "status": "ungraded",
+                        "method": None,
+                        "isCorrect": None,
+                        "score": None,
+                        "feedback": None,
+                        "providerModel": None,
+                        "rawProviderResponse": None,
+                        "gradedAt": None,
+                        "retryCount": 0,
+                        "selfReportedCorrect": None,
+                    },
+                }
+            ],
+            "summary": {
+                "totalProblems": 1,
+                "answeredProblems": 0,
+                "gradedProblems": 0,
+                "pendingProblems": 0,
+                "correctProblems": 0,
+                "failedProblems": 0,
+                "score": None,
+            },
+            "createdAt": now,
+            "startedAt": now,
+            "submittedAt": None,
+            "updatedAt": now,
+        }
+    )
+
+    settings = Settings(
+        problem_selection_min_age_days=0,
+        problem_selection_cooldown_days=7,
+        problem_selection_last_wrong_weight=1.0,
+        problem_selection_failure_rate_weight=1.0,
+        problem_selection_recency_weight=1.0,
+    )
+
+    application.state.fake_database = database
+    application.state.fake_adapter = adapter
+    application.state.fake_storage = storage
+    application.state.fake_grading_vlm = vlm
+    application.state.fake_vlm = vlm
+    application.state.owner = owner
+    application.state.foreign_user = foreign_user
+    application.state.owner_exam_id = owner_exam_id
+    application.state.owner_item_id = item_id
+
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_current_user] = lambda: deepcopy(foreign_user)
+    application.dependency_overrides[get_app_settings] = lambda: settings
+    application.dependency_overrides[get_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_s3_storage] = lambda: storage
+    application.dependency_overrides[get_grading_vlm_client] = lambda: vlm
+    return application
+
+
+@pytest_asyncio.fixture
+async def foreign_client(foreign_exams_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=foreign_exams_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        yield async_client
+
+
+@pytest.mark.asyncio
+async def test_foreign_active_exam_returns_404(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    response = await foreign_client.get("/api/v1/exams/active")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_history_is_empty(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    response = await foreign_client.get("/api/v1/exams")
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+    assert response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_get_returns_403(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    exam_id = foreign_exams_app.state.owner_exam_id
+
+    response = await foreign_client.get(f"/api/v1/exams/{exam_id}")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_answer_patch_returns_403(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    exam_id = foreign_exams_app.state.owner_exam_id
+    item_id = foreign_exams_app.state.owner_item_id
+
+    response = await foreign_client.patch(
+        f"/api/v1/exams/{exam_id}/items/{item_id}/answer",
+        json={"answer": "intruder guess"},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_submit_returns_403(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    exam_id = foreign_exams_app.state.owner_exam_id
+
+    response = await foreign_client.post(f"/api/v1/exams/{exam_id}/submit")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_discard_returns_403(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    exam_id = foreign_exams_app.state.owner_exam_id
+
+    response = await foreign_client.post(f"/api/v1/exams/{exam_id}/discard")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_self_report_returns_403(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    exam_id = foreign_exams_app.state.owner_exam_id
+    item_id = foreign_exams_app.state.owner_item_id
+
+    response = await foreign_client.post(
+        f"/api/v1/exams/{exam_id}/items/{item_id}/self-report",
+        json={"isCorrect": False},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_foreign_exam_operations_leave_owner_state_unchanged(
+    foreign_exams_app: FastAPI,
+    foreign_client: AsyncClient,
+) -> None:
+    """All five foreign exam ID operations must not mutate the owner's exam."""
+    database: FakeDatabase = foreign_exams_app.state.fake_database
+    exam_id = foreign_exams_app.state.owner_exam_id
+    item_id = foreign_exams_app.state.owner_item_id
+
+    snapshot = deepcopy(await database["exams"].find_one({"_id": exam_id}))
+
+    # Attempt all five foreign operations.
+    await foreign_client.get(f"/api/v1/exams/{exam_id}")
+    await foreign_client.patch(f"/api/v1/exams/{exam_id}/items/{item_id}/answer", json={"answer": "x"})
+    await foreign_client.post(f"/api/v1/exams/{exam_id}/submit")
+    await foreign_client.post(f"/api/v1/exams/{exam_id}/discard")
+    await foreign_client.post(f"/api/v1/exams/{exam_id}/items/{item_id}/self-report", json={"isCorrect": False})
+
+    after = await database["exams"].find_one({"_id": exam_id})
+    assert after == snapshot
