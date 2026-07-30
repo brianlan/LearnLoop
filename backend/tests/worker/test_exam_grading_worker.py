@@ -502,9 +502,15 @@ async def test_lease_refresh_extends_lease_during_long_task(
     task = _make_task(exam["_id"], user_id, claim_token="tok", lease_until=original_lease)
     db[EXAM_GRADING_TASKS_COLLECTION].seed(task)
 
-    # Make VLM slow so the refresher runs at least once.
+    # Make VLM wait until the lease refresher has extended the lease at least
+    # once, observed by checking the stored lease_until in the DB. This replaces
+    # a fixed 0.15s sleep with an observable condition.
     async def _slow_grade(**kwargs):
-        await asyncio.sleep(0.15)
+        for _ in range(200):
+            stored = await db[EXAM_GRADING_TASKS_COLLECTION].find_one({"_id": task["_id"]})
+            if stored and stored.get("leaseUntil", original_lease) > original_lease:
+                break
+            await asyncio.sleep(0)
         return FakeGradingResult(is_correct=True)
 
     vlm.grade_short_answer = _slow_grade  # type: ignore[assignment]
@@ -542,14 +548,20 @@ async def test_run_worker_loop_processes_task_and_exits(
     worker_mod.build_grading_vlm_client = lambda settings: vlm  # type: ignore[assignment]
     try:
         stop = asyncio.Event()
-        # Run worker briefly; it should process the one task then idle.
-        async def _run_briefly():
+        # Run worker until the task is processed (observable: exam state
+        # transitions to SUBMITTED), then stop. Replaces a fixed 0.5s sleep
+        # with an observable condition.
+        async def _run_until_processed():
             task_obj = asyncio.create_task(run_exam_grading_worker(db, storage, settings, stop, adapter=FakeMongoAdapter()))
-            await asyncio.sleep(0.5)
+            for _ in range(500):
+                stored = await db["exams"].find_one({"_id": exam["_id"]})
+                if stored and stored.get("state") == ExamState.SUBMITTED.value:
+                    break
+                await asyncio.sleep(0)
             stop.set()
             await asyncio.wait_for(task_obj, timeout=5.0)
 
-        await _run_briefly()
+        await _run_until_processed()
     finally:
         worker_mod.build_grading_vlm_client = original_builder
 

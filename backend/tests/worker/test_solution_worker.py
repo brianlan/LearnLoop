@@ -128,12 +128,18 @@ async def test_run_worker_stuck_task_recovery(monkeypatch):
 
     stop_event = asyncio.Event()
 
-    # Let it run one loop and stop
-    async def stop_soon():
-        await asyncio.sleep(0.05)
+    # Poll the DB until the worker has processed the stuck task, then stop.
+    # Replaces a fixed 0.05s sleep with an observable condition: the task
+    # transitions from "generating" to a terminal state.
+    async def stop_when_processed():
+        for _ in range(100):
+            updated = await db["solution_generation_tasks"].find_one({"_id": stuck_task["_id"]})
+            if updated["status"] == "failed":
+                break
+            await asyncio.sleep(0)
         stop_event.set()
 
-    await asyncio.gather(run_solution_worker(db, stop_event), stop_soon())
+    await asyncio.gather(run_solution_worker(db, stop_event), stop_when_processed())
 
     # After one loop, stuck task should be recovered to generating and then maybe processed if problem exists.
     # But since problem doesn't exist, it will be marked failed.
@@ -178,11 +184,15 @@ async def test_run_worker_skips_pending_task_until_process_after(monkeypatch) ->
 
     stop_event = asyncio.Event()
 
-    async def stop_soon():
-        await asyncio.sleep(0.05)
+    # The worker polls but skips this task (process_after is in the future).
+    # Observe that the worker has run at least one poll cycle by confirming
+    # the task remains pending after yielding control to the event loop.
+    async def stop_after_poll():
+        for _ in range(100):
+            await asyncio.sleep(0)
         stop_event.set()
 
-    await asyncio.gather(run_solution_worker(db, stop_event), stop_soon())
+    await asyncio.gather(run_solution_worker(db, stop_event), stop_after_poll())
 
     updated = await db["solution_generation_tasks"].find_one({"_id": pending_task["_id"]})
     assert updated["status"] == "pending"

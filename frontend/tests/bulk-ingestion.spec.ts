@@ -275,20 +275,27 @@ test.describe("Bulk ingestion E2E", () => {
     const answerInput = page.getByTestId("bulk-review-answer");
     await answerInput.fill("focus answer");
     await expect(answerInput).toBeFocused();
-    await page.waitForTimeout(700);
+    // Wait for the debounced draft-save PATCH response instead of a fixed timeout.
+    await page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && r.url().includes("/ingestion-batches/") && r.url().includes("/items/"),
+    );
     await expect(answerInput).toBeFocused();
 
     const graphDslInput = page.getByTestId("bulk-review-graphdsl");
     await graphDslInput.fill("board.create('point', [0, 0]);");
     await expect(graphDslInput).toBeFocused();
-    await page.waitForTimeout(700);
+    await page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && r.url().includes("/ingestion-batches/") && r.url().includes("/items/"),
+    );
     await expect(graphDslInput).toBeFocused();
 
     const tagInput = page.getByTestId("bulk-review-tags-field");
     await tagInput.fill("focus-tag");
     await tagInput.press("Enter");
     await expect(tagInput).toBeFocused();
-    await page.waitForTimeout(700);
+    await page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && r.url().includes("/ingestion-batches/") && r.url().includes("/items/"),
+    );
     await expect(tagInput).toBeFocused();
     await tagInput.fill("second-tag");
     await expect(tagInput).toHaveValue("second-tag");

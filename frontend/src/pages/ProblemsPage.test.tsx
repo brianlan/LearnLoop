@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { ProblemsPage, _resetProblemsPagePreferencesForTests } from "./ProblemsPage";
 
@@ -154,11 +154,16 @@ function problemRequestUrls() {
 
 describe("ProblemsPage", () => {
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     mockFetch.mockReset();
     mockNavigate.mockReset();
     window.sessionStorage.clear();
     vi.restoreAllMocks();
     _resetProblemsPagePreferencesForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("defaults to All Problems without a folderId query param", async () => {
@@ -190,7 +195,7 @@ describe("ProblemsPage", () => {
   });
 
   it("filters by Unfiled and resets requests to page 1", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -206,7 +211,7 @@ describe("ProblemsPage", () => {
   });
 
   it("filters by real folder and composes with tag, type, and search params", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -228,7 +233,7 @@ describe("ProblemsPage", () => {
   });
 
   it("remembers all list controls across remounts", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     const { unmount } = renderProblemsPage();
@@ -274,7 +279,7 @@ describe("ProblemsPage", () => {
   });
 
   it("does not write folderId to URL search params", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -290,7 +295,7 @@ describe("ProblemsPage", () => {
   });
 
   it("resets list controls to defaults when preferences are cleared", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     const { unmount } = renderProblemsPage();
@@ -326,7 +331,7 @@ describe("ProblemsPage", () => {
   });
 
   it("sends sort parameters with existing filters", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -352,7 +357,7 @@ describe("ProblemsPage", () => {
   });
 
   it("resets pagination and selection mode when sort changes", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })], total: 25 });
 
     renderProblemsPage();
@@ -362,7 +367,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
     await screen.findByRole("checkbox", { name: "Select problem p1" });
@@ -379,7 +384,7 @@ describe("ProblemsPage", () => {
   });
 
   it("persists sidebar collapse state in session storage and shows the active label", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -393,7 +398,7 @@ describe("ProblemsPage", () => {
   });
 
   it("expands ancestors of the selected folder after remount", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     const { unmount } = renderProblemsPage();
@@ -414,7 +419,7 @@ describe("ProblemsPage", () => {
   });
 
   it("creates root and child folders through the folder API", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
     vi.spyOn(window, "prompt").mockReturnValue("New Folder");
 
@@ -434,7 +439,7 @@ describe("ProblemsPage", () => {
   });
 
   it("renames, moves, and deletes folders through the folder API", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
     vi.spyOn(window, "prompt").mockReturnValue("Renamed");
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -468,7 +473,7 @@ describe("ProblemsPage", () => {
   });
 
   it("bulk moves selected problems to a folder, clears selection, and refetches data", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })], total: 2 });
 
     renderProblemsPage();
@@ -478,7 +483,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -500,7 +505,7 @@ describe("ProblemsPage", () => {
   });
 
   it("bulk move to Unfiled sends folderId null", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -510,7 +515,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -529,7 +534,7 @@ describe("ProblemsPage", () => {
   });
 
   it("uses folder-aware empty state copy after remount", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [], total: 0 });
 
     const { unmount } = renderProblemsPage();
@@ -546,7 +551,7 @@ describe("ProblemsPage", () => {
   });
 
   it("shows concise error feedback for folder and bulk move failures", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ failMutations: true });
     vi.spyOn(window, "prompt").mockReturnValue("New Folder");
 
@@ -561,7 +566,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -572,7 +577,7 @@ describe("ProblemsPage", () => {
   });
 
   it("navigates to problem detail on card click outside selection mode", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "abc123", text: "Test problem" })] });
 
     renderProblemsPage();
@@ -602,7 +607,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -613,8 +618,28 @@ describe("ProblemsPage", () => {
     expect(screen.getByText("1 selected")).toBeInTheDocument();
   });
 
+  it("short press (499ms) does not enter selection mode and navigates instead", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    installApiMock({ problems: [problem({ id: "p1", text: "Test problem" })] });
+
+    renderProblemsPage();
+    await screen.findByText("Test problem");
+
+    const card = screen.getByText("Test problem").closest("div")!;
+    fireEvent.pointerDown(card);
+    // Advance 499ms — just under the 500ms long-press threshold
+    await act(async () => {
+      vi.advanceTimersByTime(499);
+    });
+    fireEvent.pointerUp(card);
+
+    // Should NOT enter selection mode
+    expect(screen.queryByRole("checkbox", { name: "Select problem p1" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Bulk actions")).not.toBeInTheDocument();
+  });
+
   it("in selection mode, card click toggles selection without navigating", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
 
     renderProblemsPage();
@@ -624,7 +649,7 @@ describe("ProblemsPage", () => {
     const firstCard = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(firstCard);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(firstCard);
 
@@ -641,7 +666,7 @@ describe("ProblemsPage", () => {
   });
 
   it("Select all selects only current-page problems", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
 
     renderProblemsPage();
@@ -651,7 +676,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -666,7 +691,7 @@ describe("ProblemsPage", () => {
   });
 
   it("Deselect all removes only current-page problems from selection", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })] });
 
     renderProblemsPage();
@@ -676,7 +701,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -694,7 +719,7 @@ describe("ProblemsPage", () => {
   });
 
   it("Clear selection clears selected IDs but keeps selection mode active", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -704,7 +729,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -721,7 +746,7 @@ describe("ProblemsPage", () => {
   });
 
   it("Quit selection clears selected IDs and hides checkboxes", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -731,7 +756,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -746,7 +771,7 @@ describe("ProblemsPage", () => {
   });
 
   it("filter changes exit selection mode and clear selection", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -756,7 +781,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -782,7 +807,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
 
@@ -806,7 +831,7 @@ describe("ProblemsPage", () => {
   });
 
   it("selecting Failed sends solutionState=failed together with existing filters", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     renderProblemsPage();
@@ -824,7 +849,7 @@ describe("ProblemsPage", () => {
   });
 
   it("remembers the selected solution state across remounts", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     const { unmount } = renderProblemsPage();
@@ -846,7 +871,7 @@ describe("ProblemsPage", () => {
   });
 
   it("reset helper clears the solution-state preference", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock();
 
     const { unmount } = renderProblemsPage();
@@ -869,7 +894,7 @@ describe("ProblemsPage", () => {
   });
 
   it("changing solution state resets requests to page 1 and exits selection mode", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     installApiMock({ problems: [problem({ id: "p1" }), problem({ id: "p2", text: "Second problem" })], total: 25 });
 
     renderProblemsPage();
@@ -879,7 +904,7 @@ describe("ProblemsPage", () => {
     const card = screen.getByText("What is 2+2?").closest("div")!;
     fireEvent.pointerDown(card);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      vi.advanceTimersByTime(500);
     });
     fireEvent.pointerUp(card);
     await screen.findByRole("checkbox", { name: "Select problem p1" });
