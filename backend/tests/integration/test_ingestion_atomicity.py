@@ -694,6 +694,16 @@ async def _drain_real_database_core(
         await gen.__anext__()
     except StopAsyncIteration:
         return client
+    except pytest.skip.Exception:
+        # The fixture called pytest.skip() before yielding (missing MONGODB_URI
+        # or sentinel name). Drain the generator so cleanup runs, then return
+        # the client so the caller can assert no setup/cleanup occurred. We
+        # catch the skip outcome rather than letting it propagate so these
+        # control-flow tests pass (verifying the skip path) instead of being
+        # skipped themselves, which would fail --require-real-mongo enforcement.
+        with contextlib.suppress(StopAsyncIteration, pytest.skip.Exception):
+            await gen.__anext__()
+        return client
     with contextlib.suppress(StopAsyncIteration):
         await gen.__anext__()
     return client

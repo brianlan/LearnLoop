@@ -7,10 +7,13 @@
 # Commands:
 #   build                       Build the lockfile-keyed tools image if absent.
 #   shell                       Open an interactive shell with isolated MongoDB/RustFS.
-#   test [backend|frontend|e2e|all] [runner args...]
+#   test [backend|backend-real|frontend|e2e|all] [runner args...]
 #                               Run tests. Defaults to "all" when no selector is given.
 #                               Focused selectors forward trailing arguments to the
 #                               underlying runner; "all" accepts no trailing arguments.
+#                               "backend-real" provisions MongoDB, runs the guarded
+#                               real_mongo suite, proves selective cleanup, and tears
+#                               down volumes (see run_backend_real_tests).
 #   down [--volumes]            Remove this worktree's agent stack.
 #   help                        Show usage.
 #
@@ -124,6 +127,135 @@ run_backend_tests() {
   run_tools bash -c 'cd /workspace/backend && uv run --frozen --active pytest "$@"' _ "$@"
 }
 
+# Poll the mongodb service until its replica set reports ready, with a bounded
+# number of attempts. Returns nonzero on timeout.
+wait_mongodb_ready() {
+  local attempts="${1:-30}"
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if compose_cmd exec -T mongodb mongo --quiet --host 127.0.0.1 --port 27017 \
+        --eval 'try { rs.status().ok === 1 ? quit(0) : quit(1) } catch (error) { quit(1) }' \
+        >/dev/null 2>&1; then
+      return 0
+    fi
+    printf '  waiting for MongoDB replica set... (%d/%d)\n' "$i" "$attempts"
+    sleep 2
+  done
+  printf 'Error: MongoDB replica set did not become ready in time.\n' >&2
+  return 1
+}
+
+# Run the guarded real-Mongo atomicity suite with a full, ordered, first-failure
+# lifecycle: startup -> readiness -> control seed -> marked execution ->
+# target/control probe -> volume teardown. Trailing pytest arguments are
+# forwarded after the required -m/--require-real-mongo selection.
+#
+# Phase exit-code precedence: the first nonzero phase result wins; teardown
+# overrides only an otherwise successful run. The per-run target database name
+# is generated here and injected into the tools container so the T-12 (#552)
+# validator accepts it.
+run_backend_real_tests() {
+  local first_rc=0
+  local reached_control=0
+  local target_db control_db control_marker
+  target_db="learnloop_test_$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+  control_db="learnloop_test_control_$(printf '%s' "$target_db" | sed 's/^learnloop_test_//')"
+  control_marker="__real_mongo_control_probe__"
+
+  printf '[backend-real] target database: %s\n' "$target_db"
+  printf '[backend-real] control database: %s\n' "$control_db"
+
+  # Phase 1: startup.
+  printf '[backend-real] phase 1/6: starting MongoDB\n'
+  if [[ $first_rc -eq 0 ]]; then
+    compose_cmd up -d mongodb || first_rc=$?
+  fi
+
+  # Phase 2: readiness.
+  if [[ $first_rc -eq 0 ]]; then
+    printf '[backend-real] phase 2/6: waiting for replica-set readiness\n'
+    wait_mongodb_ready || first_rc=$?
+  fi
+
+  # Phase 3: control seed. Insert a marker document into a distinct control
+  # database so the post-test probe can prove selective cleanup (target dropped,
+  # control preserved). Uses the tools container's pymongo via python -c.
+  if [[ $first_rc -eq 0 ]]; then
+    printf '[backend-real] phase 3/6: seeding control database %s\n' "$control_db"
+    local seed_rc=0
+    compose_cmd run --rm \
+        -e LEARNLOOP_REAL_MONGO_DATABASE="$target_db" \
+        tools bash -c 'cd /workspace/backend && uv run --frozen --active python -c "
+import os, sys
+from pymongo import MongoClient
+client = MongoClient(os.environ[\"MONGODB_URI\"], serverSelectionTimeoutMS=5000)
+client[sys.argv[1]][\"__real_mongo_control__\"].insert_one({\"marker\": sys.argv[2]})
+client.close()
+" "$@"' _ "$control_db" "$control_marker" >/dev/null 2>&1 || seed_rc=$?
+    first_rc=$seed_rc
+    if [[ $seed_rc -eq 0 ]]; then
+      reached_control=1
+    fi
+  fi
+
+  # Phase 4: marked execution. Run every real_mongo node with --require-real-mongo
+  # so zero-selection or any skip fails the session. Forward trailing pytest args.
+  if [[ $first_rc -eq 0 ]]; then
+    printf '[backend-real] phase 4/6: running real_mongo suite (target=%s)\n' "$target_db"
+    local pytest_rc=0
+    compose_cmd run --rm \
+        -e LEARNLOOP_REAL_MONGO_DATABASE="$target_db" \
+        tools bash -c 'cd /workspace/backend && uv run --frozen --active pytest -m real_mongo --require-real-mongo "$@"' _ "$@" || pytest_rc=$?
+    first_rc=$pytest_rc
+  fi
+
+  # Phase 5: target/control probe. The target database must be absent (the
+  # fixture drops it on teardown) and the control database must still contain
+  # the marker document, proving selective cleanup. Runs only after the control
+  # seed succeeded (otherwise there is nothing to probe), including after a
+  # pytest failure so a cleanup regression does not hide behind a test failure.
+  if [[ $reached_control -eq 1 ]]; then
+    if [[ $first_rc -eq 0 ]]; then
+      printf '[backend-real] phase 5/6: probing target absence and control presence\n'
+    else
+      printf '[backend-real] phase 5/6: probing target absence and control presence (after earlier failure rc=%d)\n' "$first_rc"
+    fi
+    local probe_rc=0
+    compose_cmd run --rm \
+        -e LEARNLOOP_REAL_MONGO_DATABASE="$target_db" \
+        tools bash -c 'cd /workspace/backend && uv run --frozen --active python -c "
+import os, sys
+from pymongo import MongoClient
+client = MongoClient(os.environ[\"MONGODB_URI\"], serverSelectionTimeoutMS=5000)
+target_present = sys.argv[1] in client.list_database_names()
+control_doc = client[sys.argv[2]][\"__real_mongo_control__\"].find_one({\"marker\": sys.argv[3]})
+client.close()
+if target_present:
+    sys.exit(\"PROBE FAIL: target database still present after teardown\")
+if control_doc is None:
+    sys.exit(\"PROBE FAIL: control database marker missing\")
+" "$@"' _ "$target_db" "$control_db" "$control_marker" >/dev/null 2>&1 || probe_rc=$?
+    if [[ $first_rc -eq 0 ]]; then
+      first_rc=$probe_rc
+    fi
+  fi
+
+  # Phase 6: volume teardown. Always attempted. Only overrides the result when
+  # every earlier phase passed; otherwise the first failure is preserved and a
+  # teardown failure is logged but not fatal.
+  printf '[backend-real] phase 6/6: tearing down volumes\n'
+  local teardown_rc=0
+  compose_cmd down --volumes >/dev/null 2>&1 || teardown_rc=$?
+  if [[ $teardown_rc -ne 0 ]]; then
+    printf '[backend-real] warning: teardown failed (rc=%d); logged but not overriding first failure.\n' "$teardown_rc" >&2
+    if [[ $first_rc -eq 0 ]]; then
+      first_rc=$teardown_rc
+    fi
+  fi
+
+  return "$first_rc"
+}
+
 run_frontend_tests() {
   run_tools bash -c 'cd /workspace/frontend && npm test -- --run "$@"' _ "$@"
 }
@@ -158,6 +290,11 @@ cmd_test() {
       preflight
       run_backend_tests "$@"
       ;;
+    backend-real)
+      ensure_image "$(image_tag)"
+      preflight
+      run_backend_real_tests "$@"
+      ;;
     frontend)
       ensure_image "$(image_tag)"
       preflight
@@ -180,7 +317,7 @@ cmd_test() {
       run_e2e_tests
       ;;
     *)
-      printf 'Error: unknown test selector "%s". Use backend, frontend, e2e, or all.\n' "$selector" >&2
+      printf 'Error: unknown test selector "%s". Use backend, backend-real, frontend, e2e, or all.\n' "$selector" >&2
       return 1
       ;;
   esac
@@ -215,10 +352,13 @@ Usage: scripts/agent-env.sh <command> [args...]
 Commands:
   build                       Build the lockfile-keyed tools image if absent.
   shell                       Open an interactive shell with isolated MongoDB/RustFS.
-  test [backend|frontend|e2e|all] [runner args...]
+  test [backend|backend-real|frontend|e2e|all] [runner args...]
                               Run tests. Defaults to "all" when no selector is given.
                               Focused selectors forward trailing arguments to the
                               underlying runner; "all" accepts no trailing arguments.
+                              "backend-real" provisions MongoDB, runs the guarded
+                              real_mongo suite, proves selective cleanup, and tears
+                              down volumes.
   down [--volumes]            Remove this worktree's agent stack.
   help                        Show this message.
 
@@ -227,6 +367,8 @@ Examples:
   scripts/agent-env.sh shell
   scripts/agent-env.sh test backend
   scripts/agent-env.sh test backend tests/api/test_practice.py
+  scripts/agent-env.sh test backend-real
+  scripts/agent-env.sh test backend-real tests/integration/test_ingestion_atomicity.py -x
   scripts/agent-env.sh test frontend --reporter verbose
   scripts/agent-env.sh test e2e tests/login.spec.ts
   scripts/agent-env.sh test all
