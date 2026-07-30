@@ -151,6 +151,163 @@ test_invalid_args() {
   if [ "$rc" -eq 0 ]; then pass "help exits zero"; else fail "help exits zero (rc=$rc)"; fi
 }
 
+# ---------------------------------------------------------------------------
+# Regression tests for focused test-argument forwarding (issue #554).
+# Source agent-env.sh, stub the Docker/image functions, and capture the argv
+# that reaches run_backend_tests/run_frontend_tests/run_e2e_tests.
+# ---------------------------------------------------------------------------
+
+CAPTURE_FILE=""
+
+setup_forwarding_stubs() {
+  CAPTURE_FILE="$(mktemp)"
+  : > "$CAPTURE_FILE"
+  # Override Docker-touching functions so cmd_test never calls Docker.
+  ensure_image() { :; }
+  preflight() { :; }
+  compose_cmd() { :; }
+  # Capture the argv array as one arg per line into CAPTURE_FILE.
+  run_backend_tests() {
+    local i=0
+    for a in "$@"; do printf '%s\n' "$a" >> "$CAPTURE_FILE"; i=$((i+1)); done
+    printf 'BACKEND:%s\n' "$i" >> "$CAPTURE_FILE"
+  }
+  run_frontend_tests() {
+    local i=0
+    for a in "$@"; do printf '%s\n' "$a" >> "$CAPTURE_FILE"; i=$((i+1)); done
+    printf 'FRONTEND:%s\n' "$i" >> "$CAPTURE_FILE"
+  }
+  run_e2e_tests() {
+    local i=0
+    for a in "$@"; do printf '%s\n' "$a" >> "$CAPTURE_FILE"; i=$((i+1)); done
+    printf 'E2E:%s\n' "$i" >> "$CAPTURE_FILE"
+  }
+}
+
+teardown_forwarding_stubs() {
+  [ -n "$CAPTURE_FILE" ] && rm -f "$CAPTURE_FILE"
+  unset -f ensure_image preflight run_backend_tests run_frontend_tests run_e2e_tests
+  unset CAPTURE_FILE
+  # Re-source agent-env.sh to restore the original functions we overrode.
+  # shellcheck source=agent-env.sh
+  source "$script_dir/agent-env.sh"
+}
+
+# Call cmd_test with the given args and return the captured argv lines.
+capture_cmd_test() {
+  : > "$CAPTURE_FILE"
+  cmd_test "$@" 2>/dev/null || true
+  cat "$CAPTURE_FILE"
+}
+
+test_forward_backend_single_arg() {
+  printf '%s\n' "test_forward_backend_single_arg"
+  setup_forwarding_stubs
+  local out
+  out="$(capture_cmd_test backend tests/api/test_practice.py)"
+  local count
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/BACKEND://')"
+  assert_eq "backend forwards 1 arg" "$count" "1"
+  assert_eq "backend arg is the file path" "$(printf '%s' "$out" | head -1)" "tests/api/test_practice.py"
+  teardown_forwarding_stubs
+}
+
+test_forward_backend_multiple_args_preserve_order() {
+  printf '%s\n' "test_forward_backend_multiple_args_preserve_order"
+  setup_forwarding_stubs
+  local out
+  out="$(capture_cmd_test backend -x tests/api/test_practice.py::test_get --tb=short)"
+  local count
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/BACKEND://')"
+  assert_eq "backend forwards 3 args" "$count" "3"
+  assert_eq "backend arg 1 order preserved" "$(printf '%s\n' "$out" | sed -n '1p')" "-x"
+  assert_eq "backend arg 2 order preserved" "$(printf '%s\n' "$out" | sed -n '2p')" "tests/api/test_practice.py::test_get"
+  assert_eq "backend arg 3 order preserved" "$(printf '%s\n' "$out" | sed -n '3p')" "--tb=short"
+  teardown_forwarding_stubs
+}
+
+test_forward_backend_arg_with_space() {
+  printf '%s\n' "test_forward_backend_arg_with_space"
+  setup_forwarding_stubs
+  local out
+  out="$(capture_cmd_test backend "some path with spaces.py")"
+  local count
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/BACKEND://')"
+  assert_eq "backend forwards 1 arg with spaces" "$count" "1"
+  assert_eq "backend arg with spaces is one arg" "$(printf '%s' "$out" | head -1)" "some path with spaces.py"
+  teardown_forwarding_stubs
+}
+
+test_forward_frontend_args() {
+  printf '%s\n' "test_forward_frontend_args"
+  setup_forwarding_stubs
+  local out
+  out="$(capture_cmd_test frontend --reporter verbose)"
+  local count
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/FRONTEND://')"
+  assert_eq "frontend forwards 2 args" "$count" "2"
+  assert_eq "frontend arg 1 preserved" "$(printf '%s\n' "$out" | sed -n '1p')" "--reporter"
+  assert_eq "frontend arg 2 preserved" "$(printf '%s\n' "$out" | sed -n '2p')" "verbose"
+  teardown_forwarding_stubs
+}
+
+test_forward_e2e_args() {
+  printf '%s\n' "test_forward_e2e_args"
+  setup_forwarding_stubs
+  local out
+  out="$(capture_cmd_test e2e tests/login.spec.ts --grep auth)"
+  local count
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/E2E://')"
+  assert_eq "e2e forwards 3 args" "$count" "3"
+  assert_eq "e2e arg 1 preserved" "$(printf '%s\n' "$out" | sed -n '1p')" "tests/login.spec.ts"
+  assert_eq "e2e arg 2 preserved" "$(printf '%s\n' "$out" | sed -n '2p')" "--grep"
+  assert_eq "e2e arg 3 preserved" "$(printf '%s\n' "$out" | sed -n '3p')" "auth"
+  teardown_forwarding_stubs
+}
+
+test_reject_test_all_with_trailing_args() {
+  printf '%s\n' "test_reject_test_all_with_trailing_args"
+  setup_forwarding_stubs
+  : > "$CAPTURE_FILE"
+  local rc=0
+  cmd_test all extra-arg 2>/dev/null && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "test all with trailing args exits non-zero"; else fail "test all with trailing args exits non-zero (rc=$rc)"; fi
+  # No runner should have been called.
+  if [ -s "$CAPTURE_FILE" ]; then
+    fail "test all with trailing args must not invoke any runner"
+  else
+    pass "test all with trailing args invokes no runner"
+  fi
+  teardown_forwarding_stubs
+}
+
+test_reject_bare_test_with_trailing_args() {
+  printf '%s\n' "test_reject_bare_test_with_trailing_args"
+  setup_forwarding_stubs
+  : > "$CAPTURE_FILE"
+  local rc=0
+  cmd_test --some-flag 2>/dev/null && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "bare test with trailing args exits non-zero"; else fail "bare test with trailing args exits non-zero (rc=$rc)"; fi
+  teardown_forwarding_stubs
+}
+
+test_selector_only_commands_unchanged() {
+  printf '%s\n' "test_selector_only_commands_unchanged"
+  setup_forwarding_stubs
+  local out
+  out="$(capture_cmd_test backend)"
+  local count
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/BACKEND://')"
+  assert_eq "backend with no args forwards 0 args" "$count" "0"
+  out="$(capture_cmd_test frontend)"
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/FRONTEND://')"
+  assert_eq "frontend with no args forwards 0 args" "$count" "0"
+  out="$(capture_cmd_test e2e)"
+  count="$(printf '%s\n' "$out" | tail -1 | sed 's/E2E://')"
+  assert_eq "e2e with no args forwards 0 args" "$count" "0"
+  teardown_forwarding_stubs
+}
+
 test_config_no_fixed_names_no_host_ports() {
   printf '%s\n' "test_config_no_fixed_names_no_host_ports"
   reset_repo_root
@@ -1162,6 +1319,14 @@ main() {
   test_fingerprint_stable
   test_fingerprint_changes
   test_invalid_args
+  test_forward_backend_single_arg
+  test_forward_backend_multiple_args_preserve_order
+  test_forward_backend_arg_with_space
+  test_forward_frontend_args
+  test_forward_e2e_args
+  test_reject_test_all_with_trailing_args
+  test_reject_bare_test_with_trailing_args
+  test_selector_only_commands_unchanged
   test_config_no_fixed_names_no_host_ports
   test_image_build_and_exit_code
   test_cleanup_scoped_to_worktree

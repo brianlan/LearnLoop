@@ -7,8 +7,10 @@
 # Commands:
 #   build                       Build the lockfile-keyed tools image if absent.
 #   shell                       Open an interactive shell with isolated MongoDB/RustFS.
-#   test [backend|frontend|e2e|all]
+#   test [backend|frontend|e2e|all] [runner args...]
 #                               Run tests. Defaults to "all" when no selector is given.
+#                               Focused selectors forward trailing arguments to the
+#                               underlying runner; "all" accepts no trailing arguments.
 #   down [--volumes]            Remove this worktree's agent stack.
 #   help                        Show usage.
 #
@@ -119,11 +121,11 @@ cmd_shell() {
 
 run_backend_tests() {
   compose_cmd up -d mongodb
-  run_tools bash -c 'cd /workspace/backend && uv run --frozen --active pytest'
+  run_tools bash -c 'cd /workspace/backend && uv run --frozen --active pytest "$@"' _ "$@"
 }
 
 run_frontend_tests() {
-  run_tools bash -c 'cd /workspace/frontend && npm test -- --run'
+  run_tools bash -c 'cd /workspace/frontend && npm test -- --run "$@"' _ "$@"
 }
 
 run_e2e_tests() {
@@ -139,7 +141,7 @@ run_e2e_tests() {
     compose_cmd down --volumes || true
     return "$rc"
   fi
-  run_tools bash -c 'cd /workspace/frontend && npm run test:ui' || rc=$?
+  run_tools bash -c 'cd /workspace/frontend && npm run test:ui "$@"' _ "$@" || rc=$?
   compose_cmd down --volumes || true
   return "$rc"
 }
@@ -147,19 +149,32 @@ run_e2e_tests() {
 cmd_test() {
   local selector
   selector="${1:-all}"
-  ensure_image "$(image_tag)"
-  preflight
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
   case "$selector" in
     backend)
-      run_backend_tests
+      ensure_image "$(image_tag)"
+      preflight
+      run_backend_tests "$@"
       ;;
     frontend)
-      run_frontend_tests
+      ensure_image "$(image_tag)"
+      preflight
+      run_frontend_tests "$@"
       ;;
     e2e)
-      run_e2e_tests
+      ensure_image "$(image_tag)"
+      preflight
+      run_e2e_tests "$@"
       ;;
     all)
+      if [[ $# -gt 0 ]]; then
+        printf 'Error: "test all" accepts no trailing arguments (got: %s). Use a focused selector (backend, frontend, e2e) to forward arguments.\n' "$*" >&2
+        return 1
+      fi
+      ensure_image "$(image_tag)"
+      preflight
       run_backend_tests
       run_frontend_tests
       run_e2e_tests
@@ -200,8 +215,10 @@ Usage: scripts/agent-env.sh <command> [args...]
 Commands:
   build                       Build the lockfile-keyed tools image if absent.
   shell                       Open an interactive shell with isolated MongoDB/RustFS.
-  test [backend|frontend|e2e|all]
+  test [backend|frontend|e2e|all] [runner args...]
                               Run tests. Defaults to "all" when no selector is given.
+                              Focused selectors forward trailing arguments to the
+                              underlying runner; "all" accepts no trailing arguments.
   down [--volumes]            Remove this worktree's agent stack.
   help                        Show this message.
 
@@ -209,8 +226,9 @@ Examples:
   scripts/agent-env.sh build
   scripts/agent-env.sh shell
   scripts/agent-env.sh test backend
-  scripts/agent-env.sh test frontend
-  scripts/agent-env.sh test e2e
+  scripts/agent-env.sh test backend tests/api/test_practice.py
+  scripts/agent-env.sh test frontend --reporter verbose
+  scripts/agent-env.sh test e2e tests/login.spec.ts
   scripts/agent-env.sh test all
   scripts/agent-env.sh down
   scripts/agent-env.sh down --volumes
