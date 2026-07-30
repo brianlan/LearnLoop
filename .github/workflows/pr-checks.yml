@@ -32,7 +32,17 @@ jobs:
 
       - name: Run backend test suite
         working-directory: backend
-        run: uv run --frozen --extra dev pytest -m "not real_mongo"
+        run: uv run --frozen --extra dev pytest -m "not real_mongo" --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml -ra
+
+      - name: Upload backend-fast coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-fast-coverage
+          path: backend/coverage.xml
+          retention-days: 7
+          if-no-files-found: ignore
+        continue-on-error: true
 
   frontend-tests:
     name: Frontend Tests
@@ -55,7 +65,17 @@ jobs:
 
       - name: Run frontend unit tests
         working-directory: frontend
-        run: npm test -- --run
+        run: npm test -- --run --coverage
+
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/lcov.info
+          retention-days: 7
+          if-no-files-found: ignore
+        continue-on-error: true
 
   playwright-tests:
     name: Playwright E2E Tests
