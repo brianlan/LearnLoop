@@ -12,7 +12,7 @@ only; no production behavior or module location was changed.
 | Worker | `app.infrastructure.worker.exam_grading_worker.process_exam_grading_task` | Celery task `exam_grading_task` when at least one item needs VLM grading | Per-item updates outside a transaction; finalization uses `with_transaction` for exam state, tracking, and task completion |
 | Self-report | `app.presentation.exams.self_report_exam_item` | `POST /api/v1/exams/{id}/items/{itemId}/self-report` for a `pending-review` item | Single `with_transaction` covering item grading, summary, and problem tracking |
 
-All three paths use the same item-grading helpers in `app.presentation.exam_grading`:
+All three paths use the same item-grading helpers in `app.exam_grading`:
 
 - `grade_item`
 - `grade_objective_item`
@@ -38,8 +38,7 @@ items[].grading:
 ```
 
 Terminal item statuses (`CORRECT`, `INCORRECT`, `PENDING_REVIEW`) are never
-re-graded by the worker (`TERMINAL_GRADING_STATUSES` in
-`app.presentation.exam_helpers`).
+re-graded by the worker (`TERMINAL_GRADING_STATUSES` in `app.exam_grading`).
 
 The exam summary is produced by `build_exam_summary` using `compute_summary`:
 
@@ -101,7 +100,7 @@ prompt.
 - If the VLM returns a parseable verdict, the item becomes `correct` or
 `incorrect` with `method: vlm`.
 - If the VLM raises a retryable `VLMError`, `grade_short_answer_item` performs
-exactly **one** retry (hardcoded limit in `backend/app/presentation/exam_grading.py`).
+exactly **one** retry (hardcoded limit in `backend/app/exam_grading.py`).
 - After the retry is exhausted, or on a non-retryable or unexpected error, the
 item becomes `pending-review` with `method: vlm` and the error stored in
 `feedback` / `rawProviderResponse`.
@@ -219,8 +218,8 @@ answer normalization, summary computation, tracking deltas) into
 domain layer. That boundary is **not approved here**.
 
 - Current ownership: orchestration lives in `app.presentation.exams` and
-`app.infrastructure.worker.exam_grading_worker`; shared grading logic lives in
-`app.presentation.exam_grading`; domain models live in `app.domain.models`.
+  `app.infrastructure.worker.exam_grading_worker`; shared grading logic lives in
+  `app.exam_grading`; domain models live in `app.domain.models`.
 - Candidate ownership: pure, I/O-free grading rules under `app/domain/exam`;
 VLM client construction/close and S3 adapter lifecycle remain in presentation
 and infrastructure code.
@@ -261,7 +260,7 @@ metadata that the worker path does not reproduce.
 
 ## Human / council review gate
 
-Changes that alter `app.presentation.exam_grading`,
+Changes that alter `app.exam_grading`,
 `app.presentation.exams._submit_exam_synchronous`,
 `app.presentation.exams.self_report_exam_item`, or
 `app.infrastructure.worker.exam_grading_worker` must:
