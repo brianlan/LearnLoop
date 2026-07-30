@@ -768,7 +768,9 @@ async def test_regenerate_solution_rejects_ineligible_active_states(
     response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "SOLUTION_REGENERATION_CONFLICT"
+    body = response.json()["error"]
+    assert body["code"] == "SOLUTION_REGENERATION_CONFLICT"
+    assert body["message"] == "Solution is already pending or generating."
 
     # task unchanged
     tasks = await database["solution_generation_tasks"].find(
@@ -791,7 +793,9 @@ async def test_regenerate_solution_rejects_none_state(
     response = await client.post(f"/api/v1/problems/{problem_id_str}/solution-regeneration")
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "SOLUTION_REGENERATION_CONFLICT"
+    body = response.json()["error"]
+    assert body["code"] == "SOLUTION_REGENERATION_CONFLICT"
+    assert body["message"] == "No solution to regenerate."
 
 
 @pytest.mark.asyncio
