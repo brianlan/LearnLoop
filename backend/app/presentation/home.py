@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.domain.models import ExamState, GradingStatus
-from app.domain.selection import compute_score_breakdown, ensure_utc
+from app.domain.selection import ProblemSelectionConfig, compute_score_breakdown, ensure_utc
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
 from app.presentation.problem_serialization import problem_document_to_model
 from app.presentation.selection_config import problem_selection_config_from_settings
