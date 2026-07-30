@@ -14,9 +14,21 @@ from app.infrastructure.storage.mongo import (
     SOLUTION_GENERATION_TASKS_COLLECTION,
 )
 from app.observability import log_solution_generation_event
-from app.presentation.errors import ApiError
 
 SOLUTION_BACKFILL_BATCH_SIZE = 100
+
+
+class SolutionRegenerationConflict(Exception):
+    """Raised when a solution cannot be regenerated because of state conflict.
+
+    Carries the stable semantic code and message only; the HTTP presentation
+    layer translates it into a 409 ``ApiError`` response.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 def _utc_now() -> datetime:
@@ -49,6 +61,13 @@ async def enqueue_solution_generation_task_for_problem(
     *,
     now: datetime | None = None,
 ) -> bool:
+    """Enqueue a pending solution-generation task for a problem.
+
+    Returns ``True`` when a task was created, ``False`` when a task or
+    canonical solution already exists for the problem (idempotent no-op).
+    Raises ``KeyError`` when the solution-generation collections are
+    unavailable.
+    """
     tasks = _safe_get_collection(database, SOLUTION_GENERATION_TASKS_COLLECTION)
     solutions = _safe_get_collection(database, CANONICAL_SOLUTIONS_COLLECTION)
     if tasks is None or solutions is None:
@@ -156,7 +175,7 @@ async def regenerate_solution_task_for_problem(
       - ``failed``: reset the failed task to pending.
 
     Ineligible states (``none``, ``pending``, ``generating``) raise
-    ``ApiError(409)``.
+    ``SolutionRegenerationConflict``.
 
     Returns ``"pending"`` on success.
     """
@@ -193,14 +212,12 @@ async def regenerate_solution_task_for_problem(
             await _reset_task_to_pending(tasks, existing_task["_id"], now=current_time)
             log_solution_generation_event("regenerate", problem_id)
             return SolutionGenerationStatus.PENDING.value
-        raise ApiError(
-            409,
+        raise SolutionRegenerationConflict(
             "SOLUTION_REGENERATION_CONFLICT",
             "Solution is already pending or generating.",
         )
 
-    raise ApiError(
-        409,
+    raise SolutionRegenerationConflict(
         "SOLUTION_REGENERATION_CONFLICT",
         "No solution to regenerate.",
     )

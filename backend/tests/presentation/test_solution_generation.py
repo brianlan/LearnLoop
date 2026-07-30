@@ -3,7 +3,8 @@
 These tests lock down the current enqueue/backfill/regenerate behavior of the
 solution-generation orchestration module so a module move can be verified to
 preserve behavior. They assert task document shape, idempotency, unavailable
-collection handling, backfill cases, and exact ``ApiError`` semantics.
+collection handling, backfill cases, and exact
+``SolutionRegenerationConflict`` semantics.
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ import pytest
 from bson import ObjectId
 
 from app.domain.models import SolutionGenerationStatus
-from app.presentation.errors import ApiError
 from app.solution_generation import (
     SOLUTION_BACKFILL_BATCH_SIZE,
+    SolutionRegenerationConflict,
     backfill_solution_generation_tasks,
     enqueue_solution_generation_task_for_problem,
     regenerate_solution_task_for_problem,
@@ -298,7 +299,7 @@ async def test_regenerate_failed_resets_task_to_pending() -> None:
 
 
 @pytest.mark.asyncio
-async def test_regenerate_pending_conflict_raises_exact_api_error() -> None:
+async def test_regenerate_pending_conflict_raises_exact_conflict() -> None:
     database = FakeDatabase()
     problem = _make_problem()
     problem_id = str(problem["_id"])
@@ -306,18 +307,17 @@ async def test_regenerate_pending_conflict_raises_exact_api_error() -> None:
         {"problem_id": problem_id, "status": SolutionGenerationStatus.PENDING.value}
     )
 
-    with pytest.raises(ApiError) as exc_info:
+    with pytest.raises(SolutionRegenerationConflict) as exc_info:
         await regenerate_solution_task_for_problem(
             database, problem_id, str(problem["userId"]), now=NOW
         )
 
-    assert exc_info.value.status_code == 409
     assert exc_info.value.code == "SOLUTION_REGENERATION_CONFLICT"
     assert exc_info.value.message == "Solution is already pending or generating."
 
 
 @pytest.mark.asyncio
-async def test_regenerate_generating_conflict_raises_exact_api_error() -> None:
+async def test_regenerate_generating_conflict_raises_exact_conflict() -> None:
     database = FakeDatabase()
     problem = _make_problem()
     problem_id = str(problem["_id"])
@@ -325,27 +325,25 @@ async def test_regenerate_generating_conflict_raises_exact_api_error() -> None:
         {"problem_id": problem_id, "status": SolutionGenerationStatus.GENERATING.value}
     )
 
-    with pytest.raises(ApiError) as exc_info:
+    with pytest.raises(SolutionRegenerationConflict) as exc_info:
         await regenerate_solution_task_for_problem(
             database, problem_id, str(problem["userId"]), now=NOW
         )
 
-    assert exc_info.value.status_code == 409
     assert exc_info.value.code == "SOLUTION_REGENERATION_CONFLICT"
     assert exc_info.value.message == "Solution is already pending or generating."
 
 
 @pytest.mark.asyncio
-async def test_regenerate_no_solution_no_task_raises_exact_api_error() -> None:
+async def test_regenerate_no_solution_no_task_raises_exact_conflict() -> None:
     database = FakeDatabase()
     problem = _make_problem()
     problem_id = str(problem["_id"])
 
-    with pytest.raises(ApiError) as exc_info:
+    with pytest.raises(SolutionRegenerationConflict) as exc_info:
         await regenerate_solution_task_for_problem(
             database, problem_id, str(problem["userId"]), now=NOW
         )
 
-    assert exc_info.value.status_code == 409
     assert exc_info.value.code == "SOLUTION_REGENERATION_CONFLICT"
     assert exc_info.value.message == "No solution to regenerate."
