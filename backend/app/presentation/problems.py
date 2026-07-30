@@ -36,7 +36,10 @@ from app.presentation.problem_serialization import (
     _serialize_tracking,
     problem_document_to_model,
 )
-from app.solution_generation import regenerate_solution_task_for_problem
+from app.solution_generation import (
+    SolutionRegenerationConflict,
+    regenerate_solution_task_for_problem,
+)
 from app.presentation.tag_registration import _register_tags
 from app.presentation.teacher_password import _ensure_teacher_password_hash
 
@@ -474,11 +477,14 @@ async def regenerate_solution(
         current_user["_id"],
         allow_deleted=False,
     )
-    status = await regenerate_solution_task_for_problem(
-        database,
-        str(problem["_id"]),
-        str(current_user["_id"]),
-    )
+    try:
+        status = await regenerate_solution_task_for_problem(
+            database,
+            str(problem["_id"]),
+            str(current_user["_id"]),
+        )
+    except SolutionRegenerationConflict as exc:
+        raise ApiError(409, exc.code, exc.message) from exc
     return SolutionStatusResponse(status=status)
 
 
