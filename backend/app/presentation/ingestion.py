@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.domain import IngestionPreviewStatus, ProblemSubject, ProblemType
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.vlm.client import VLMError
+from pymongo.asynchronous.database import AsyncDatabase
 from app.presentation.deps import (
     CurrentUserDependency,
     DatabaseDependency,
