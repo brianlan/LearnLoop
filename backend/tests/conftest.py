@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -14,6 +15,54 @@ from tests.test_utils.db_fakes import (
     FakeDatabase as FakeDatabase,
     matches_query as matches_query,
 )
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--require-real-mongo",
+        action="store_true",
+        default=False,
+        help="Fail the session when zero real_mongo tests are selected or any selected real_mongo test skips.",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config._require_real_mongo_enabled = config.getoption("--require-real-mongo", default=False)
+    config._require_real_mongo_selected: list[pytest.Item] = []
+    config._require_real_mongo_skip_seen = False
+
+
+@pytest.hookimpl
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if not config._require_real_mongo_enabled:
+        return
+    config._require_real_mongo_selected = [
+        item for item in items if item.get_closest_marker("real_mongo") is not None
+    ]
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call):
+    outcome = yield
+    config = item.config
+    if not config._require_real_mongo_enabled:
+        return
+    report = outcome.get_result()
+    if item.get_closest_marker("real_mongo") is not None and report.skipped:
+        config._require_real_mongo_skip_seen = True
+
+
+@pytest.hookimpl
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    config = session.config
+    if not config._require_real_mongo_enabled:
+        return
+    if not config._require_real_mongo_selected:
+        session.exitstatus = 2
+        print("\n--require-real-mongo: no real_mongo tests were selected")
+    elif config._require_real_mongo_skip_seen:
+        session.exitstatus = 2
+        print("\n--require-real-mongo: a selected real_mongo test was skipped")
 
 
 class FakeStorage:
