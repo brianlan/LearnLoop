@@ -12,7 +12,7 @@ from app.domain.models import ExamState, GradingStatus
 from app.domain.selection import compute_score_breakdown, ensure_utc
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
 from app.presentation.problem_serialization import problem_document_to_model
-from app.presentation.selection_config import problem_selection_config
+from app.presentation.selection_config import problem_selection_config_from_settings
 
 router = APIRouter(prefix="/home", tags=["home"])
 
@@ -69,13 +69,7 @@ class HomeSummaryResponse(BaseModel):
 
 
 def _selection_config_from_settings(settings: Any):
-    return problem_selection_config(
-        cooldown_days=settings.problem_selection_cooldown_days,
-        last_wrong_weight=settings.problem_selection_last_wrong_weight,
-        failure_rate_weight=settings.problem_selection_failure_rate_weight,
-        recency_weight=settings.problem_selection_recency_weight,
-        min_problem_age_days=settings.problem_selection_min_age_days,
-    )
+    return problem_selection_config_from_settings(settings)
 
 
 def _build_score_distribution(

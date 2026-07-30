@@ -1,8 +1,11 @@
 from app.domain.practice_selection import PracticeSelectionConfig
 from app.domain.selection import ProblemSelectionConfig
+from app.infrastructure.config.settings import Settings
 from app.presentation.selection_config import (
     practice_selection_config,
+    practice_selection_config_from_settings,
     problem_selection_config,
+    problem_selection_config_from_settings,
 )
 
 
@@ -90,3 +93,37 @@ def test_problem_selection_config_and_practice_selection_config_to_shared_values
     )
 
     assert problem_config == practice_config.to_shared_config()
+
+
+def _non_default_settings() -> Settings:
+    return Settings(
+        problem_selection_cooldown_days=5,
+        problem_selection_last_wrong_weight=1.5,
+        problem_selection_failure_rate_weight=2.0,
+        problem_selection_recency_weight=2.5,
+        problem_selection_min_age_days=0,
+    )
+
+
+def test_problem_selection_config_from_settings_maps_all_five_fields() -> None:
+    settings = _non_default_settings()
+    mapped = problem_selection_config_from_settings(settings)
+
+    assert isinstance(mapped, ProblemSelectionConfig)
+    assert mapped.cooldown_days == 5
+    assert mapped.last_wrong_weight == 1.5
+    assert mapped.failure_rate_weight == 2.0
+    assert mapped.recency_weight == 2.5
+    assert mapped.min_problem_age_days == 0
+
+
+def test_practice_selection_config_from_settings_maps_all_five_fields() -> None:
+    settings = _non_default_settings()
+    mapped = practice_selection_config_from_settings(settings)
+
+    assert isinstance(mapped, PracticeSelectionConfig)
+    assert mapped.cooldown_days == 5
+    assert mapped.last_wrong_weight == 1.5
+    assert mapped.failure_rate_weight == 2.0
+    assert mapped.recency_weight == 2.5
+    assert mapped.min_problem_age_days == 0

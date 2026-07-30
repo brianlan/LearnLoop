@@ -15,7 +15,10 @@ from app.domain.practice_selection import (
     select_practice_problem,
 )
 from app.infrastructure.config.settings import get_settings
-from app.presentation.selection_config import practice_selection_config
+from app.presentation.selection_config import (
+    practice_selection_config,
+    practice_selection_config_from_settings,
+)
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient, VLMError
@@ -130,13 +133,7 @@ async def get_next_practice_problem(
     if not eligible_documents:
         return PracticeNextResponse(status="no_problems")
 
-    config = practice_selection_config(
-        cooldown_days=settings.problem_selection_cooldown_days,
-        last_wrong_weight=settings.problem_selection_last_wrong_weight,
-        failure_rate_weight=settings.problem_selection_failure_rate_weight,
-        recency_weight=settings.problem_selection_recency_weight,
-        min_problem_age_days=settings.problem_selection_min_age_days,
-    )
+    config = practice_selection_config_from_settings(settings)
 
     problem_models = [problem_document_to_model(p) for p in eligible_documents]
     now = datetime.now(UTC)

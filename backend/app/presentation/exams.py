@@ -12,7 +12,7 @@ from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPo
 from app.domain.selection import select_problems
 from app.domain.state import transition_exam_state
 from app.exam_grading import build_exam_summary, build_tracking_update, grade_item
-from app.presentation.selection_config import problem_selection_config
+from app.presentation.selection_config import problem_selection_config_from_settings
 from app.presentation.exam_helpers import (
     exam_requires_vlm_grading,
     find_item,
@@ -60,13 +60,7 @@ async def create_exam(
         "userId": current_user["_id"],
         "state": {"$in": [ExamState.IN_PROGRESS.value, ExamState.GRADING.value]},
     }
-    selection_config = problem_selection_config(
-        cooldown_days=settings.problem_selection_cooldown_days,
-        last_wrong_weight=settings.problem_selection_last_wrong_weight,
-        failure_rate_weight=settings.problem_selection_failure_rate_weight,
-        recency_weight=settings.problem_selection_recency_weight,
-        min_problem_age_days=settings.problem_selection_min_age_days,
-    )
+    selection_config = problem_selection_config_from_settings(settings)
     selection_policy = SelectionPolicyConfig(
         cooldownDays=settings.problem_selection_cooldown_days,
         lastWrongWeight=settings.problem_selection_last_wrong_weight,
