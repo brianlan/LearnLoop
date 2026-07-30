@@ -17,9 +17,9 @@ from app.domain.models import (
     ProblemSubject,
     ProblemType,
 )
+from app.exam_grading import build_exam_summary
 from app.presentation.errors import ApiError
 from app.presentation.exam_helpers import (
-    build_exam_summary,
     find_item,
     make_exam_item,
 )

@@ -5,10 +5,19 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from app.domain.models import GradingStatus, ProblemType
+from app.domain.models import ExamItem, GradingStatus, ProblemType
 from app.domain.normalization import compare_answers, normalize_answer
+from app.domain.scoring import compute_summary
 from app.infrastructure.storage.s3 import S3StorageAdapter, load_source_image_base64
 from app.infrastructure.vlm.client import VLMClient, VLMError
+
+
+# Terminal item grading statuses: once set, the item should not be re-graded.
+TERMINAL_GRADING_STATUSES = frozenset({
+    GradingStatus.CORRECT.value,
+    GradingStatus.INCORRECT.value,
+    GradingStatus.PENDING_REVIEW.value,
+})
 
 
 def build_grading_result(
@@ -159,3 +168,16 @@ def build_tracking_update(tracking: Mapping[str, Any], *, now: datetime, is_corr
         "lastTestedAt": now,
         "lastAttemptCorrect": is_correct,
     }
+
+
+def build_exam_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    models = [
+        ExamItem.model_validate(
+            {
+                **item,
+                "problemId": str(item["problemId"]),
+            }
+        )
+        for item in items
+    ]
+    return compute_summary(models).model_dump()

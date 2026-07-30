@@ -8,7 +8,7 @@ import pytest
 from app.domain.models import GradingStatus, ProblemType
 from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
 from app.infrastructure.vlm.client import VLMClient, VLMError
-from app.presentation.exam_grading import (
+from app.exam_grading import (
     build_grading_result,
     build_tracking_update,
     grade_item,

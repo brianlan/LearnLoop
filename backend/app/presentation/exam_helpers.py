@@ -8,18 +8,10 @@ from bson import ObjectId
 from pydantic import ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 
-from app.domain.models import ExamItem, GradingStatus, ProblemType
-from app.domain.scoring import compute_summary
+from app.domain.models import GradingStatus, ProblemType
 from app.infrastructure.storage.mongo import Document
 from app.presentation.errors import ApiError
 from app.presentation.helpers import parse_object_id
-
-# Terminal item grading statuses: once set, the item should not be re-graded.
-TERMINAL_GRADING_STATUSES = frozenset({
-    GradingStatus.CORRECT.value,
-    GradingStatus.INCORRECT.value,
-    GradingStatus.PENDING_REVIEW.value,
-})
 
 
 def requires_vlm_grading(item: Mapping[str, Any]) -> bool:
@@ -33,18 +25,6 @@ def requires_vlm_grading(item: Mapping[str, Any]) -> bool:
 
 def exam_requires_vlm_grading(items: list[Mapping[str, Any]]) -> bool:
     return any(requires_vlm_grading(item) for item in items)
-
-def build_exam_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
-    models = [
-        ExamItem.model_validate(
-            {
-                **item,
-                "problemId": str(item["problemId"]),
-            }
-        )
-        for item in items
-    ]
-    return compute_summary(models).model_dump()
 
 
 def make_exam_item(problem: Mapping[str, Any], *, order: int) -> dict[str, Any]:

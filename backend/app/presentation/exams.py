@@ -11,10 +11,9 @@ from fastapi import APIRouter, Query
 from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
 from app.domain.selection import select_problems
 from app.domain.state import transition_exam_state
-from app.presentation.exam_grading import build_tracking_update, grade_item
+from app.exam_grading import build_exam_summary, build_tracking_update, grade_item
 from app.presentation.selection_config import problem_selection_config
 from app.presentation.exam_helpers import (
-    build_exam_summary,
     exam_requires_vlm_grading,
     find_item,
     get_owned_exam,

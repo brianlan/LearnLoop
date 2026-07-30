@@ -16,8 +16,12 @@ from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.storage.mongo import EXAM_GRADING_TASKS_COLLECTION, _safe_get_collection
 from app.infrastructure.storage.s3 import S3StorageAdapter
 from app.infrastructure.vlm.client import VLMClient, build_grading_vlm_client
-from app.presentation.exam_grading import build_tracking_update, grade_item
-from app.presentation.exam_helpers import TERMINAL_GRADING_STATUSES, build_exam_summary
+from app.exam_grading import (
+    TERMINAL_GRADING_STATUSES,
+    build_exam_summary,
+    build_tracking_update,
+    grade_item,
+)
 
 logger = logging.getLogger(__name__)
 
