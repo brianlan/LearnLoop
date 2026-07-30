@@ -308,6 +308,295 @@ test_selector_only_commands_unchanged() {
   teardown_forwarding_stubs
 }
 
+# ---------------------------------------------------------------------------
+# Regression tests for the backend-real lifecycle (issue #555).
+# Source agent-env.sh, stub compose_cmd/wait_mongodb_ready/uuidgen so the
+# lifecycle runs without Docker, and record which phases executed plus the
+# first-failure exit code under controlled per-phase failure injection.
+# ---------------------------------------------------------------------------
+
+REAL_PHASE_LOG=""
+REAL_FAIL_PHASE=""
+
+# Override compose_cmd to record the phase and inject a controlled failure.
+# Phases are identified by the subcommand and script content:
+#   up -d mongodb        -> phase 1 (startup)
+#   exec ... (via wait)  -> phase 2 (readiness) [overridden separately]
+#   run ... insert_one   -> phase 3 (control seed)
+#   run ... pytest -m real_mongo -> phase 4 (marked execution)
+#   run ... PROBE        -> phase 5 (probe)
+#   down --volumes       -> phase 6 (teardown)
+real_compose_cmd() {
+  local phase=""
+  local all_args="$*"
+  case "$1" in
+    up) phase="startup" ;;
+    exec) phase="readiness-poll" ;;
+    run)
+      if printf '%s' "$all_args" | grep -q 'pytest -m real_mongo'; then
+        phase="pytest"
+      elif printf '%s' "$all_args" | grep -q 'insert_one'; then
+        phase="control-seed"
+      elif printf '%s' "$all_args" | grep -q 'PROBE'; then
+        phase="probe"
+      else
+        phase="run-other"
+      fi
+      ;;
+    down) phase="teardown" ;;
+    *) phase="other:$1" ;;
+  esac
+  printf '%s\n' "$phase" >> "$REAL_PHASE_LOG"
+  if [[ "$phase" == "$REAL_FAIL_PHASE" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# Override wait_mongodb_ready so phase 2 does not require a real Mongo server.
+real_wait_mongodb_ready() {
+  printf 'readiness\n' >> "$REAL_PHASE_LOG"
+  if [[ "$REAL_FAIL_PHASE" == "readiness" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+setup_real_stubs() {
+  REAL_PHASE_LOG="$(mktemp)"
+  REAL_FAIL_PHASE=""
+  : > "$REAL_PHASE_LOG"
+  ensure_image() { :; }
+  preflight() { :; }
+  compose_cmd() { real_compose_cmd "$@"; }
+  wait_mongodb_ready() { real_wait_mongodb_ready "$@"; }
+  # Deterministic UUID so the generated target name is predictable.
+  uuidgen() { printf 'real-test-uuid-0001\n'; }
+}
+
+teardown_real_stubs() {
+  [ -n "$REAL_PHASE_LOG" ] && rm -f "$REAL_PHASE_LOG"
+  unset -f ensure_image preflight compose_cmd wait_mongodb_ready uuidgen
+  unset REAL_PHASE_LOG REAL_FAIL_PHASE
+  # shellcheck source=agent-env.sh
+  source "$script_dir/agent-env.sh"
+}
+
+# Run run_backend_real_tests under stubs, returning its exit code and leaving
+# the phase log in REAL_PHASE_LOG for assertions.
+run_real_stubbed() {
+  : > "$REAL_PHASE_LOG"
+  run_backend_real_tests "$@" 2>/dev/null || return $?
+  return 0
+}
+
+assert_phases() {
+  local label="$1" expected="$2"
+  local actual
+  # Normalize readiness-poll (emitted by real_compose_cmd's exec branch) and
+  # readiness (emitted by real_wait_mongodb_ready) to a single marker, drop
+  # blanks, and compare against the expected newline-separated phase sequence.
+  actual="$(sed 's/readiness-poll/readiness/' "$REAL_PHASE_LOG" | grep -v '^$')"
+  if [ "$actual" = "$expected" ]; then
+    pass "$label (phases: $(printf '%s' "$actual" | tr '\n' ','))"
+  else
+    fail "$label (expected phases: $(printf '%s' "$expected" | tr '\n' ','); got: $(printf '%s' "$actual" | tr '\n' ','))"
+  fi
+}
+
+test_backend_real_forwards_args() {
+  printf '%s\n' "test_backend_real_forwards_args"
+  setup_real_stubs
+  local capture
+  capture="$(mktemp)"
+  : > "$capture"
+  # Override compose_cmd to record the argv forwarded into the pytest phase.
+  compose_cmd() {
+    local all_args="$*"
+    if printf '%s' "$all_args" | grep -q 'pytest -m real_mongo'; then
+      # The forwarded trailing args follow the bash -c script and the "_" $0.
+      # Record every arg after the first occurrence of "_".
+      local seen_underscore=0
+      for a in "$@"; do
+        if [[ "$a" == "_" ]]; then seen_underscore=1; continue; fi
+        if [[ $seen_underscore -eq 1 ]]; then printf '%s\n' "$a" >> "$capture"; fi
+      done
+    fi
+    return 0
+  }
+  run_backend_real_tests -x tests/integration/test_ingestion_atomicity.py --tb=short >/dev/null 2>&1 || true
+  if grep -qx -- '-x' "$capture" && grep -qx -- 'tests/integration/test_ingestion_atomicity.py' "$capture" && grep -qx -- '--tb=short' "$capture"; then
+    pass "backend-real forwards trailing pytest args"
+  else
+    fail "backend-real forwards trailing pytest args (capture: $(cat "$capture"))"
+  fi
+  rm -f "$capture"
+  teardown_real_stubs
+}
+
+test_backend_real_all_phases_run_on_success() {
+  printf '%s\n' "test_backend_real_all_phases_run_on_success"
+  setup_real_stubs
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "all-success returns zero" "$rc" "0"
+  assert_phases "all-success runs every phase" "startup
+readiness
+control-seed
+pytest
+probe
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_first_failure_startup() {
+  printf '%s\n' "test_backend_real_first_failure_startup"
+  setup_real_stubs
+  REAL_FAIL_PHASE="startup"
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "startup failure returns nonzero" "$rc" "1"
+  # Startup fails immediately; readiness/control/pytest/probe should NOT run,
+  # but teardown always runs.
+  assert_phases "startup failure skips later phases but tears down" "startup
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_first_failure_readiness() {
+  printf '%s\n' "test_backend_real_first_failure_readiness"
+  setup_real_stubs
+  REAL_FAIL_PHASE="readiness"
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "readiness failure returns nonzero" "$rc" "1"
+  assert_phases "readiness failure skips control/pytest/probe but tears down" "startup
+readiness
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_first_failure_control_seed() {
+  printf '%s\n' "test_backend_real_first_failure_control_seed"
+  setup_real_stubs
+  REAL_FAIL_PHASE="control-seed"
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "control-seed failure returns nonzero" "$rc" "1"
+  assert_phases "control-seed failure skips pytest/probe but tears down" "startup
+readiness
+control-seed
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_first_failure_pytest() {
+  printf '%s\n' "test_backend_real_first_failure_pytest"
+  setup_real_stubs
+  REAL_FAIL_PHASE="pytest"
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "pytest failure returns nonzero" "$rc" "1"
+  # Probe runs even after pytest failure (per lifecycle contract), teardown always.
+  assert_phases "pytest failure still probes and tears down" "startup
+readiness
+control-seed
+pytest
+probe
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_first_failure_probe() {
+  printf '%s\n' "test_backend_real_first_failure_probe"
+  setup_real_stubs
+  REAL_FAIL_PHASE="probe"
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "probe failure returns nonzero" "$rc" "1"
+  assert_phases "probe failure runs all phases except it fails at probe" "startup
+readiness
+control-seed
+pytest
+probe
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_first_failure_preserved_over_teardown() {
+  printf '%s\n' "test_backend_real_first_failure_preserved_over_teardown"
+  setup_real_stubs
+  REAL_FAIL_PHASE="pytest"
+  # Make teardown also fail to confirm the FIRST failure (pytest) is preserved.
+  real_compose_cmd() {
+    local phase=""
+    local all_args="$*"
+    case "$1" in
+      up) phase="startup" ;;
+      exec) phase="readiness-poll" ;;
+      run)
+        if printf '%s' "$all_args" | grep -q 'pytest -m real_mongo'; then phase="pytest"
+        elif printf '%s' "$all_args" | grep -q 'insert_one'; then phase="control-seed"
+        elif printf '%s' "$all_args" | grep -q 'PROBE'; then phase="probe"
+        else phase="run-other"; fi
+        ;;
+      down) phase="teardown" ;;
+      *) phase="other:$1" ;;
+    esac
+    printf '%s\n' "$phase" >> "$REAL_PHASE_LOG"
+    if [[ "$phase" == "pytest" || "$phase" == "teardown" ]]; then
+      return 1
+    fi
+    return 0
+  }
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "pytest failure preserved over teardown failure" "$rc" "1"
+  teardown_real_stubs
+}
+
+test_backend_real_teardown_failure_wins_on_success() {
+  printf '%s\n' "test_backend_real_teardown_failure_wins_on_success"
+  setup_real_stubs
+  REAL_FAIL_PHASE="teardown"
+  local rc=0
+  run_real_stubbed || rc=$?
+  assert_eq "teardown failure overrides otherwise-successful run" "$rc" "1"
+  assert_phases "teardown failure runs all phases" "startup
+readiness
+control-seed
+pytest
+probe
+teardown"
+  teardown_real_stubs
+}
+
+test_backend_real_target_name_has_sentinel_prefix() {
+  printf '%s\n' "test_backend_real_target_name_has_sentinel_prefix"
+  setup_real_stubs
+  # Capture the generated target db name from the printed header on stdout.
+  local header
+  header="$(run_backend_real_tests 2>/dev/null | grep 'target database' || true)"
+  if printf '%s' "$header" | grep -q 'learnloop_test_'; then
+    pass "target database name uses learnloop_test_ sentinel prefix"
+  else
+    fail "target database name uses learnloop_test_ sentinel prefix (got: $header)"
+  fi
+  teardown_real_stubs
+}
+
+test_backend_real_selector_rejects_all_forwarding() {
+  printf '%s\n' "test_backend_real_selector_rejects_all_forwarding"
+  # backend-real is a focused selector, not 'all'; it should forward args.
+  # Verify 'all' still rejects trailing args (unchanged behavior).
+  setup_forwarding_stubs
+  : > "$CAPTURE_FILE"
+  local rc=0
+  cmd_test all extra-arg 2>/dev/null && rc=$? || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "all still rejects trailing args with backend-real present"; else fail "all still rejects trailing args with backend-real present"; fi
+  teardown_forwarding_stubs
+}
+
 test_config_no_fixed_names_no_host_ports() {
   printf '%s\n' "test_config_no_fixed_names_no_host_ports"
   reset_repo_root
@@ -1327,6 +1616,17 @@ main() {
   test_reject_test_all_with_trailing_args
   test_reject_bare_test_with_trailing_args
   test_selector_only_commands_unchanged
+  test_backend_real_forwards_args
+  test_backend_real_all_phases_run_on_success
+  test_backend_real_first_failure_startup
+  test_backend_real_first_failure_readiness
+  test_backend_real_first_failure_control_seed
+  test_backend_real_first_failure_pytest
+  test_backend_real_first_failure_probe
+  test_backend_real_first_failure_preserved_over_teardown
+  test_backend_real_teardown_failure_wins_on_success
+  test_backend_real_target_name_has_sentinel_prefix
+  test_backend_real_selector_rejects_all_forwarding
   test_config_no_fixed_names_no_host_ports
   test_image_build_and_exit_code
   test_cleanup_scoped_to_worktree

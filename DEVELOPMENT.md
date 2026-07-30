@@ -175,7 +175,8 @@ Commands:
 ./scripts/agent-env.sh shell
 
 # Run tests
-./scripts/agent-env.sh test backend     # backend pytest suite
+./scripts/agent-env.sh test backend     # backend pytest suite (Docker-free fast tier)
+./scripts/agent-env.sh test backend-real # guarded real-Mongo suite with full lifecycle
 ./scripts/agent-env.sh test frontend    # frontend unit/component tests
 ./scripts/agent-env.sh test e2e         # frontend Playwright e2e with isolated services
 ./scripts/agent-env.sh test all         # backend, frontend, and e2e in sequence
@@ -183,6 +184,7 @@ Commands:
 # Run focused tests with forwarded runner arguments
 ./scripts/agent-env.sh test backend tests/api/test_practice.py
 ./scripts/agent-env.sh test backend -x tests/api/test_practice.py::test_get --tb=short
+./scripts/agent-env.sh test backend-real tests/integration/test_ingestion_atomicity.py -x
 ./scripts/agent-env.sh test frontend --reporter verbose
 ./scripts/agent-env.sh test e2e tests/login.spec.ts
 
@@ -200,6 +202,8 @@ The agent environment:
 - Runs each worktree in a separate Compose project so multiple worktrees can run concurrently.
 - Publishes no host ports for infrastructure, avoiding collisions with the normal development stack or other worktrees.
 - Runs the tools service as the host UID/GID so files created in bind-mounted paths have the same ownership as the host checkout.
+
+The `backend-real` selector runs the guarded real-Mongo atomicity suite with a full, ordered lifecycle. It starts MongoDB, waits for replica-set readiness, generates a per-run sentinel-prefixed target database name (`learnloop_test_<uuid>`), seeds a distinct control database, runs `pytest -m real_mongo --require-real-mongo`, probes that the target database was dropped and the control database still holds its marker, and always tears down volumes. The first nonzero phase result wins; teardown overrides only an otherwise-successful run. PR and merge-group CI invoke this same command via the `Backend Real-Mongo Tests` job.
 
 #### Disk cleanup
 
