@@ -1,7 +1,13 @@
 from app.domain.practice_selection import PracticeSelectionConfig
 from app.domain.selection import ProblemSelectionConfig
+from app.infrastructure.config.settings import Settings
 
-__all__ = ["problem_selection_config", "practice_selection_config"]
+__all__ = [
+    "problem_selection_config",
+    "practice_selection_config",
+    "problem_selection_config_from_settings",
+    "practice_selection_config_from_settings",
+]
 
 
 def problem_selection_config(
@@ -47,4 +53,26 @@ def practice_selection_config(
         failure_rate_weight=failure_rate_weight if failure_rate_weight is not None else 1.0,
         recency_weight=recency_weight if recency_weight is not None else 1.0,
         min_problem_age_days=min_problem_age_days if min_problem_age_days is not None else 3,
+    )
+
+
+def problem_selection_config_from_settings(settings: Settings) -> ProblemSelectionConfig:
+    """Build a ``ProblemSelectionConfig`` from a full ``Settings`` instance."""
+    return problem_selection_config(
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
+    )
+
+
+def practice_selection_config_from_settings(settings: Settings) -> PracticeSelectionConfig:
+    """Build a ``PracticeSelectionConfig`` from a full ``Settings`` instance."""
+    return practice_selection_config(
+        cooldown_days=settings.problem_selection_cooldown_days,
+        last_wrong_weight=settings.problem_selection_last_wrong_weight,
+        failure_rate_weight=settings.problem_selection_failure_rate_weight,
+        recency_weight=settings.problem_selection_recency_weight,
+        min_problem_age_days=settings.problem_selection_min_age_days,
     )
