@@ -1,44 +1,20 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "@/api/client";
+import { ApiError } from "@/api/client";
+import {
+  createExam,
+  discardExam,
+  getActiveExam,
+  saveExamAnswer,
+  submitExam,
+} from "@/api/exams";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
 import { AnswerInput, parseOptions } from "@/components/AnswerInput";
 import { Modal } from "@/components/Modal";
-import type {
-  ExamItem,
-  CreateExamRequest,
-  CreateExamResponse,
-  ExamResponse,
-  SaveAnswerRequest,
-  SaveAnswerResponse,
-} from "@/types/exam";
-
-async function fetchActiveExam(): Promise<ExamResponse> {
-  return api.get<ExamResponse>("/exams/active");
-}
-
-async function createExam(request: CreateExamRequest): Promise<CreateExamResponse> {
-  return api.post<CreateExamResponse>("/exams", request);
-}
-
-async function saveAnswer(
-  examId: string,
-  itemId: string,
-  request: SaveAnswerRequest,
-): Promise<SaveAnswerResponse> {
-  return api.patch<SaveAnswerResponse>(`/exams/${examId}/items/${itemId}/answer`, request);
-}
-
-async function submitExam(examId: string): Promise<ExamResponse> {
-  return api.post<ExamResponse>(`/exams/${examId}/submit`, {});
-}
-
-async function discardExam(examId: string): Promise<ExamResponse> {
-  return api.post<ExamResponse>(`/exams/${examId}/discard`, {});
-}
+import type { ExamItem, ExamResponse, SaveAnswerRequest } from "@/types/exam";
 
 export function ActiveExamPage() {
   const navigate = useNavigate();
@@ -57,7 +33,7 @@ export function ActiveExamPage() {
     refetch: refetchExam,
   } = useQuery<ExamResponse>({
     queryKey: ["active-exam"],
-    queryFn: fetchActiveExam,
+    queryFn: getActiveExam,
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -83,7 +59,7 @@ export function ActiveExamPage() {
 
   const saveAnswerMutation = useMutation({
     mutationFn: ({ examId, itemId, request }: { examId: string; itemId: string; request: SaveAnswerRequest }) =>
-      saveAnswer(examId, itemId, request),
+      saveExamAnswer(examId, itemId, request),
     onSuccess: () => {
       setSaveStatus("saved");
       queryClient.invalidateQueries({ queryKey: ["active-exam"] });

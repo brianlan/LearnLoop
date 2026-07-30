@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/api/client";
+import { createExam, getExamHistory } from "@/api/exams";
 import { formatDate, formatScore } from "@/utils/format";
-import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest, CreateExamResponse } from "@/types/exam";
+import type { ExamHistoryResponse, ExamHistoryItem, CreateExamRequest } from "@/types/exam";
 import Pagination from "@/components/Pagination";
 import { Modal } from "@/components/Modal";
 
@@ -124,14 +124,11 @@ export function ExamsPage() {
 
   const { data, isLoading, error } = useQuery<ExamHistoryResponse>({
     queryKey: ["exams", page, pageSize, showDiscarded],
-    queryFn: () =>
-      api.get<ExamHistoryResponse>(
-        `/exams?page=${page}&pageSize=${pageSize}&includeDiscarded=${showDiscarded}`,
-      ),
+    queryFn: () => getExamHistory(page, pageSize, showDiscarded),
   });
 
   const createExamMutation = useMutation({
-    mutationFn: (req: CreateExamRequest) => api.post<CreateExamResponse>("/exams", req),
+    mutationFn: (req: CreateExamRequest) => createExam(req),
     onSuccess: () => {
       setShowCreateExamModal(false);
       queryClient.invalidateQueries({ queryKey: ["exams"] });

@@ -2,33 +2,17 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { getExam } from "@/api/exams";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { MarkdownText } from "@/components/MarkdownText";
 import { LatexText } from "@/components/LatexText";
 import type { CoachingConversation } from "@/types/coaching";
 import type { ProblemDetail, ProblemResponse } from "@/types/problem";
+import type { ExamResponse } from "@/types/exam";
 import { getPracticeHistory, PRACTICE_HISTORY_KEY } from "@/api/practice";
 import type { PracticeHistoryResponse } from "@/types/practice";
 import { WhiteboardPanel } from "./WhiteboardPanel";
-
-interface ExamItem {
-  problemId: string;
-  answer: {
-    raw?: string;
-  };
-  grading: {
-    status: string;
-    isCorrect?: boolean;
-  };
-}
-
-export interface ExamResponse {
-  exam: {
-    id: string;
-    items: ExamItem[];
-  };
-}
 
 export function CoachingPage() {
   const { problemId = "" } = useParams<{ problemId: string }>();
@@ -74,7 +58,7 @@ export function CoachingPage() {
   const examId = isFromExam ? fromRoute.split("/")[2] : "";
   const { data: examData } = useQuery({
     queryKey: ["exam", examId],
-    queryFn: () => api.get<ExamResponse>(`/exams/${examId}`),
+    queryFn: () => getExam(examId),
     enabled: !!problemId && !!examId,
   });
 

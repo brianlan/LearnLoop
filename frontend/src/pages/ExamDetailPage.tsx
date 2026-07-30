@@ -2,24 +2,13 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { getExam, selfReportExamItem } from "@/api/exams";
 import { formatDate, formatScore } from "@/utils/format";
 import { GraphSandbox } from "@/components/GraphSandbox";
 import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
-import type { Exam, ExamItem, ExamResponse, SelfReportRequest, SelfReportResponse } from "@/types/exam";
-
-async function fetchExam(examId: string): Promise<ExamResponse> {
-  return api.get<ExamResponse>(`/exams/${examId}`);
-}
-
-async function selfReportItem(
-  examId: string,
-  itemId: string,
-  request: SelfReportRequest,
-): Promise<SelfReportResponse> {
-  return api.post<SelfReportResponse>(`/exams/${examId}/items/${itemId}/self-report`, request);
-}
+import type { Exam, ExamItem, ExamResponse, SelfReportRequest } from "@/types/exam";
 
 function GradingStatusBadge({ status }: { status: string }) {
   const classes: Record<string, string> = {
@@ -408,7 +397,7 @@ export function ExamDetailPage() {
     error,
   } = useQuery<ExamResponse>({
     queryKey: ["exam", id],
-    queryFn: () => fetchExam(id!),
+    queryFn: () => getExam(id!),
     enabled: !!id,
     refetchInterval: (query) => {
       const state = query.state.data?.exam?.state;
@@ -418,7 +407,7 @@ export function ExamDetailPage() {
 
   const selfReportMutation = useMutation({
     mutationFn: ({ itemId, request }: { itemId: string; request: SelfReportRequest }) =>
-      selfReportItem(id!, itemId, request),
+      selfReportExamItem(id!, itemId, request),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["exam", id] });
     },
