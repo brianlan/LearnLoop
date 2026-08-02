@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -604,5 +604,231 @@ describe("ActiveExamPage", () => {
     });
 
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  const examWithTwoItems = {
+    ...baseExam,
+    items: [
+      { ...baseExamItem, itemId: "item1", order: 1, problem: { ...baseExamItem.problem, text: "First question?" } },
+      { ...baseExamItem, itemId: "item2", order: 2, problem: { ...baseExamItem.problem, text: "Second question?" } },
+    ],
+    summary: { ...baseExam.summary, totalProblems: 2 },
+  };
+
+  async function renderTwoItemExam() {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: examWithTwoItems }),
+    });
+    const result = renderActiveExamPage();
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+    return result;
+  }
+
+  it("navigates forward with ArrowRight and back with ArrowLeft", async () => {
+    await renderTwoItemExam();
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() => {
+      expect(screen.getByText(/Question 2 of 2/)).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    await waitFor(() => {
+      expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+    });
+  });
+
+  it("PATCHes a changed answer when navigating with ArrowRight", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: examWithTwoItems }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          item: { ...examWithTwoItems.items[0], answer: { raw: "42", savedAt: "2024-01-01T01:00:00Z" } },
+        }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ exam: examWithTwoItems }),
+      });
+
+    renderActiveExamPage();
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "42");
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+      )).toBe(true);
+    });
+
+    const patchCall = mockFetch.mock.calls.find((call) =>
+      String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+    );
+    expect(patchCall).toBeDefined();
+    expect(patchCall![1].method).toBe("PATCH");
+    expect(JSON.parse(patchCall![1].body)).toEqual({ answer: "42" });
+  });
+
+  it("ArrowLeft on the first question neither navigates nor saves", async () => {
+    await renderTwoItemExam();
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+    expect(
+      mockFetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ArrowRight on the last question neither navigates nor saves", async () => {
+    await renderTwoItemExam();
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() => {
+      expect(screen.getByText(/Question 2 of 2/)).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    expect(screen.getByText(/Question 2 of 2/)).toBeInTheDocument();
+    expect(
+      mockFetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/items/item2/answer"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores arrow keys originating from a text answer input", async () => {
+    await renderTwoItemExam();
+    const input = screen.getByRole("textbox");
+
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+  });
+
+  it("ignores arrow keys originating from a radio answer control", async () => {
+    const singleChoiceExam = {
+      ...examWithTwoItems,
+      items: [
+        {
+          ...examWithTwoItems.items[0],
+          problem: { text: "Pick one.\nA. One\nB. Two", problemType: "single-choice" },
+        },
+        examWithTwoItems.items[1],
+      ],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: singleChoiceExam }),
+    });
+    const { container } = renderActiveExamPage();
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    const radio = container.querySelector('input[type="radio"]') as HTMLInputElement;
+    fireEvent.keyDown(radio, { key: "ArrowRight" });
+
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+  });
+
+  it("blocks arrow navigation while the submit dialog is open", async () => {
+    const user = userEvent.setup();
+    await renderTwoItemExam();
+
+    await user.click(screen.getByRole("button", { name: "Submit Exam" }));
+    await waitFor(() => {
+      expect(screen.getByText("Submit Exam?")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+  });
+
+  it("blocks arrow navigation while the discard dialog is open", async () => {
+    const user = userEvent.setup();
+    await renderTwoItemExam();
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => {
+      expect(screen.getByText("Discard Exam?")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+  });
+
+  it("blocks arrow navigation while the print preview is open", async () => {
+    const user = userEvent.setup();
+    await renderTwoItemExam();
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+  });
+
+  it("ignores modifier-key and repeated arrow events", async () => {
+    await renderTwoItemExam();
+
+    fireEvent.keyDown(window, { key: "ArrowRight", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", metaKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", altKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", repeat: true });
+
+    expect(screen.getByText(/Question 1 of 2/)).toBeInTheDocument();
+  });
+
+  it("removes the arrow-key listener on unmount", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: examWithTwoItems }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ exam: examWithTwoItems }),
+      });
+
+    const { unmount } = renderActiveExamPage();
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "42");
+
+    unmount();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    expect(
+      mockFetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+      ),
+    ).toBe(false);
   });
 });
