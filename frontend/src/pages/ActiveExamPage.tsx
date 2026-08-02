@@ -163,6 +163,37 @@ export function ActiveExamPage() {
     window.print();
   }, []);
 
+  useEffect(() => {
+    function handleArrowKey(event: KeyboardEvent) {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      if (event.repeat) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (showSubmitConfirm || showDiscardConfirm || showPrintPreview) return;
+      if (isMutating) return;
+      if (event.key === "ArrowLeft") {
+        if (currentItemIndex <= 0) return;
+        event.preventDefault();
+        void handlePrevious();
+      } else {
+        if (currentItemIndex >= items.length - 1) return;
+        event.preventDefault();
+        void handleNext();
+      }
+    }
+    window.addEventListener("keydown", handleArrowKey);
+    return () => window.removeEventListener("keydown", handleArrowKey);
+  }, [handlePrevious, handleNext, currentItemIndex, items.length, showSubmitConfirm, showDiscardConfirm, showPrintPreview, isMutating]);
+
   const pageCanvasStyle: React.CSSProperties = {
     minHeight: "calc(100vh - 60px)",
     backgroundColor: "var(--color-surface-muted)",
