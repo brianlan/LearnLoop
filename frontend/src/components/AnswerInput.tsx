@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 export function extractOptionKey(option: string): string {
   const match = option.trim().match(/^([A-Za-z]|\d+)\s*[.):\-]?(?:\s|$)/);
   return (match?.[1] ?? option).trim();
@@ -20,6 +22,43 @@ export function parseOptions(text: string): string[] {
   return [];
 }
 
+function isTextEditingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) {
+    return true;
+  }
+  if (target.tagName === "INPUT") {
+    const type = (target as HTMLInputElement).type;
+    return type !== "radio" && type !== "checkbox";
+  }
+  return false;
+}
+
+function useOptionKeyShortcut(options: string[], onMatch: (optionValue: string) => void, disabled?: boolean) {
+  useEffect(() => {
+    if (disabled) return;
+    const letterToValue = new Map<string, string>();
+    for (const option of options) {
+      const optionValue = extractOptionKey(option);
+      if (/^[A-Za-z]$/.test(optionValue)) {
+        letterToValue.set(optionValue.toLowerCase(), optionValue);
+      }
+    }
+    if (letterToValue.size === 0) return;
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTextEditingTarget(event.target)) return;
+      const match = letterToValue.get(event.key.toLowerCase());
+      if (match === undefined) return;
+      event.preventDefault();
+      onMatch(match);
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, [options, onMatch, disabled]);
+}
+
 interface SingleChoiceInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -29,6 +68,7 @@ interface SingleChoiceInputProps {
 }
 
 export function SingleChoiceInput({ value, onChange, options, onBlur, disabled }: SingleChoiceInputProps) {
+  useOptionKeyShortcut(options, onChange, disabled);
   if (options.length === 0) {
     return (
       <input
@@ -92,6 +132,8 @@ export function MultiChoiceInput({ value, onChange, options, onBlur, disabled }:
       : [...selectedValues, optionValue];
     onChange(newValues.join(", "));
   };
+
+  useOptionKeyShortcut(options, handleToggle, disabled);
 
   if (options.length === 0) {
     return (

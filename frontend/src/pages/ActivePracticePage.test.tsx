@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -372,5 +372,49 @@ describe("ActivePracticePage", () => {
       expect(screen.getByTestId("submit-button")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("jsxgraph-iframe")).not.toBeInTheDocument();
+  });
+
+  const singleChoiceProblem = {
+    id: "problem-sc",
+    text: "Pick one.\nA. One\nB. Two\nC. Three",
+    type: "single-choice",
+  };
+
+  it("selects a practice choice via an option-letter shortcut", async () => {
+    const { container } = renderActivePracticePage(singleChoiceProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "a" });
+
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    await waitFor(() => expect(radioA.checked).toBe(true));
+  });
+
+  it("does not change the practice answer via shortcut while grading", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = renderActivePracticePage(singleChoiceProblem);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-button")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "a" });
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    await waitFor(() => expect(radioA.checked).toBe(true));
+
+    await user.click(screen.getByTestId("submit-button"));
+    await waitFor(() => {
+      expect(screen.getByText("Grading...")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "b" });
+    const radioB = container.querySelector('input[type="radio"][value="B"]') as HTMLInputElement;
+    expect(radioB.checked).toBe(false);
+    expect(radioA.checked).toBe(true);
   });
 });

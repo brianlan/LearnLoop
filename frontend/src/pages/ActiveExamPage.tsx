@@ -384,7 +384,7 @@ export function ActiveExamPage() {
             onChange={setLocalAnswer}
             onBlur={handleBlur}
             options={options}
-            disabled={isMutating}
+            disabled={isMutating || showSubmitConfirm || showDiscardConfirm || showPrintPreview}
           />
           <div
             style={{ marginTop: "0.5rem", fontSize: "0.875rem", color:
