@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -604,5 +604,149 @@ describe("ActiveExamPage", () => {
     });
 
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  const singleChoiceExamItem = {
+    ...baseExamItem,
+    itemId: "item1",
+    problem: {
+      text: "Pick one.\nA. One\nB. Two\nC. Three",
+      problemType: "single-choice",
+      correctAnswer: { display: "A", normalizedText: "a", normalizedSet: ["a"], format: "single" },
+    },
+    answer: { raw: "", savedAt: undefined },
+  };
+
+  const singleChoiceExam = {
+    ...baseExam,
+    items: [singleChoiceExamItem],
+  };
+
+  async function renderSingleChoiceExam() {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: singleChoiceExam }),
+    });
+    const result = renderActiveExamPage();
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+    return result;
+  }
+
+  it("updates the current exam answer via shortcut without an immediate save request", async () => {
+    const { container } = await renderSingleChoiceExam();
+
+    fireEvent.keyDown(window, { key: "a" });
+
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    await waitFor(() => expect(radioA.checked).toBe(true));
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(
+      mockFetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+      ),
+    ).toBe(false);
+  });
+
+  it("saves a keyboard-selected exam answer when navigating to the next question", async () => {
+    const user = userEvent.setup();
+    const examWithTwoItems = {
+      ...singleChoiceExam,
+      items: [
+        singleChoiceExamItem,
+        {
+          ...singleChoiceExamItem,
+          itemId: "item2",
+          order: 2,
+          problem: { text: "Second question?", problemType: "fill-in-the-blank" },
+        },
+      ],
+      summary: { ...baseExam.summary, totalProblems: 2 },
+    };
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: examWithTwoItems }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          item: { ...singleChoiceExamItem, answer: { raw: "A", savedAt: "2024-01-01T01:00:00Z" } },
+        }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ exam: examWithTwoItems }),
+      });
+
+    const { container } = renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "a" });
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    await waitFor(() => expect(radioA.checked).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+      )).toBe(true);
+    });
+
+    const patchCall = mockFetch.mock.calls.find((call) =>
+      String(call[0]).includes("/api/v1/exams/exam123/items/item1/answer"),
+    );
+    expect(patchCall).toBeDefined();
+    expect(patchCall![1].method).toBe("PATCH");
+    expect(JSON.parse(patchCall![1].body)).toEqual({ answer: "A" });
+  });
+
+  it("blocks background shortcut changes while the submit dialog is open", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderSingleChoiceExam();
+
+    await user.click(screen.getByRole("button", { name: "Submit Exam" }));
+    await waitFor(() => {
+      expect(screen.getByText("Submit Exam?")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "a" });
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    expect(radioA.checked).toBe(false);
+  });
+
+  it("blocks background shortcut changes while the discard dialog is open", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderSingleChoiceExam();
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => {
+      expect(screen.getByText("Discard Exam?")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "a" });
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    expect(radioA.checked).toBe(false);
+  });
+
+  it("blocks background shortcut changes while the print preview is open", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderSingleChoiceExam();
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "a" });
+    const radioA = container.querySelector('input[type="radio"][value="A"]') as HTMLInputElement;
+    expect(radioA.checked).toBe(false);
   });
 });
