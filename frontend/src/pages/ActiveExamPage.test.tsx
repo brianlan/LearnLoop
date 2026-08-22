@@ -79,6 +79,7 @@ describe("ActiveExamPage", () => {
     mockFetch.mockReset();
     mockNavigate.mockReset();
     vi.stubGlobal("print", vi.fn());
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -410,6 +411,135 @@ describe("ActiveExamPage", () => {
     expect(previewItems[0]).toHaveTextContent("First question?");
     expect(previewItems[1]).toHaveTextContent("Second question?");
   });
+
+  it("applies the default 250px minimum height to every print-preview item", async () => {
+    const user = userEvent.setup();
+    const examWithTwoItems = {
+      ...baseExam,
+      items: [
+        { ...baseExamItem, itemId: "item1", order: 1, problem: { ...baseExamItem.problem, text: "First question?" } },
+        { ...baseExamItem, itemId: "item2", order: 2, problem: { ...baseExamItem.problem, text: "Second question?" } },
+      ],
+      summary: { ...baseExam.summary, totalProblems: 2 },
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: examWithTwoItems }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("print-preview-min-height-input")).toHaveValue(250);
+    const previewItems = screen.getAllByTestId("print-preview-item");
+    expect(previewItems).toHaveLength(2);
+    for (const item of previewItems) {
+      expect(item).toHaveStyle({ minHeight: "250px" });
+    }
+  });
+
+  it("updates every print-preview item and persists a valid minimum height", async () => {
+    const user = userEvent.setup();
+    const examWithTwoItems = {
+      ...baseExam,
+      items: [
+        { ...baseExamItem, itemId: "item1", order: 1, problem: { ...baseExamItem.problem, text: "First question?" } },
+        { ...baseExamItem, itemId: "item2", order: 2, problem: { ...baseExamItem.problem, text: "Second question?" } },
+      ],
+      summary: { ...baseExam.summary, totalProblems: 2 },
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: examWithTwoItems }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    const input = screen.getByTestId("print-preview-min-height-input");
+    await user.clear(input);
+    await user.type(input, "300");
+
+    for (const item of screen.getAllByTestId("print-preview-item")) {
+      expect(item).toHaveStyle({ minHeight: "300px" });
+    }
+    expect(localStorage.getItem("learnloop-print-question-min-height")).toBe("300");
+  });
+
+  it("restores a valid stored minimum height preference", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("learnloop-print-question-min-height", "350");
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ exam: baseExam }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Exam")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Print" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("print-preview-min-height-input")).toHaveValue(350);
+    expect(screen.getAllByTestId("print-preview-item")[0]).toHaveStyle({ minHeight: "350px" });
+  });
+
+  it.each(["not-a-number", "-50", "Infinity"])(
+    "falls back to 250px when the stored minimum height is invalid (%s)",
+    async (storedValue) => {
+      const user = userEvent.setup();
+      localStorage.setItem("learnloop-print-question-min-height", storedValue);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: baseExam }),
+      });
+
+      renderActiveExamPage();
+
+      await waitFor(() => {
+        expect(screen.getByText("Active Exam")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole("button", { name: "Print" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Exam Paper")).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId("print-preview-min-height-input")).toHaveValue(250);
+      for (const item of screen.getAllByTestId("print-preview-item")) {
+        expect(item).toHaveStyle({ minHeight: "250px" });
+      }
+    },
+  );
 
   it("redirects to exam detail page when active exam is in grading state", async () => {
     mockFetch.mockResolvedValueOnce({
