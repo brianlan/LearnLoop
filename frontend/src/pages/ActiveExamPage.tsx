@@ -476,6 +476,7 @@ export function ActiveExamPage() {
           isOpen={true}
           onClose={handleClosePrintPreview}
           overlayTestId="print-preview-overlay"
+          zIndex={50}
           cardStyle={{
             padding: "1.5rem",
             borderRadius: "0.5rem",

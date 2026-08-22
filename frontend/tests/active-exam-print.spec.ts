@@ -2,9 +2,11 @@ import { expect, test } from "@playwright/test";
 
 import {
   addAuthenticatedSession,
+  API_BASE,
   APP_BASE,
   createSession,
   seedActiveExam,
+  seedProblem,
 } from "./helpers";
 
 test.use({ baseURL: APP_BASE });
@@ -56,5 +58,60 @@ test.describe("Active Exam print preview", () => {
     await expect(page.getByTestId("print-preview-print-button")).not.toBeVisible();
     await expect(page.getByRole("button", { name: "Cancel" }).first()).not.toBeVisible();
     await expect(page.locator("header")).not.toBeVisible();
+  });
+
+  test("print preview controls stay topmost above the wrapped header at narrow widths", async ({ page, request }) => {
+    const session = await createSession(request, "active_exam_print_narrow");
+    for (let i = 0; i < 6; i += 1) {
+      await seedProblem(request, session, {
+        text: `Question ${i + 1}: What is ${i + 1}+${i + 1}?`,
+        problemType: "fill-in-the-blank",
+        correctAnswer: String(2 * (i + 1)),
+      });
+    }
+    const createResponse = await request.post(`${API_BASE}/exams`, {
+      headers: { Cookie: session.cookieHeader },
+      data: { maxProblemCount: 6 },
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    await addAuthenticatedSession(page, session);
+
+    await page.setViewportSize({ width: 480, height: 800 });
+    await page.goto("/exams/active");
+    await expect(page.getByRole("heading", { name: "Active Exam" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Print" }).click();
+    const paper = page.getByTestId("print-preview-paper");
+    await expect(paper).toBeVisible();
+
+    // The wrapped sticky header covers the top of the viewport at 480px, so
+    // the preview controls must still be the topmost hit targets there.
+    for (const [label, button] of [
+      ["Cancel", page.getByRole("button", { name: "Cancel" }).first()],
+      ["Print", page.getByTestId("print-preview-print-button")],
+    ] as const) {
+      const box = await button.boundingBox();
+      if (!box) {
+        throw new Error(`${label} button should be visible`);
+      }
+      const hit = await page.evaluate(
+        ({ x, y }) => {
+          const el = document.elementFromPoint(x, y);
+          if (!el) return { found: false, inHeader: false, inButton: false };
+          return {
+            found: true,
+            inHeader: el.closest("header") !== null,
+            inButton: el.closest("button") !== null,
+          };
+        },
+        { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+      );
+      expect(hit.found, `${label} center should hit an element`).toBe(true);
+      expect(hit.inHeader, `${label} center should not be intercepted by the sticky header`).toBe(false);
+      expect(hit.inButton, `${label} center should hit the ${label} button`).toBe(true);
+    }
+
+    await page.getByRole("button", { name: "Cancel" }).first().click();
+    await expect(paper).not.toBeVisible();
   });
 });
