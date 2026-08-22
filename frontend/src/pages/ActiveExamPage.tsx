@@ -16,6 +16,20 @@ import { AnswerInput, parseOptions } from "@/components/AnswerInput";
 import { Modal } from "@/components/Modal";
 import type { ExamItem, ExamResponse, SaveAnswerRequest } from "@/types/exam";
 
+const DEFAULT_QUESTION_MIN_HEIGHT = 250;
+const QUESTION_MIN_HEIGHT_STORAGE_KEY = "learnloop-print-question-min-height";
+
+function getInitialQuestionMinHeight(): number {
+  try {
+    const saved = localStorage.getItem(QUESTION_MIN_HEIGHT_STORAGE_KEY);
+    if (saved !== null) {
+      const parsed = Number(saved);
+      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    }
+  } catch {}
+  return DEFAULT_QUESTION_MIN_HEIGHT;
+}
+
 export function ActiveExamPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -25,6 +39,7 @@ export function ActiveExamPage() {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
+  const [questionMinHeight, setQuestionMinHeight] = useState<number>(getInitialQuestionMinHeight);
 
   const {
     data: examData,
@@ -491,6 +506,28 @@ export function ActiveExamPage() {
               className="print-preview-controls"
               style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginBottom: "1rem" }}
             >
+              <label
+                htmlFor="print-preview-min-height"
+                style={{ marginRight: "auto", display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                Question minimum height (px)
+                <input
+                  id="print-preview-min-height"
+                  type="number"
+                  min={0}
+                  value={questionMinHeight}
+                  onChange={(event) => {
+                    const parsed = Number(event.target.value);
+                    if (!Number.isFinite(parsed) || parsed < 0) return;
+                    setQuestionMinHeight(parsed);
+                    try {
+                      localStorage.setItem(QUESTION_MIN_HEIGHT_STORAGE_KEY, String(parsed));
+                    } catch {}
+                  }}
+                  style={{ width: "5rem", padding: "0.25rem 0.5rem" }}
+                  data-testid="print-preview-min-height-input"
+                />
+              </label>
               <button
                 onClick={handleClosePrintPreview}
                 style={{ padding: "0.5rem 1rem" }}
@@ -522,7 +559,7 @@ export function ActiveExamPage() {
                   key={item.itemId}
                   className="print-preview-item"
                   data-testid="print-preview-item"
-                  style={{ marginBottom: "1.5rem", breakInside: "avoid" }}
+                  style={{ marginBottom: "1.5rem", breakInside: "avoid", minHeight: `${questionMinHeight}px` }}
                 >
                   <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>
                     Question {index + 1}

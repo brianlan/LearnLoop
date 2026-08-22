@@ -57,7 +57,38 @@ test.describe("Active Exam print preview", () => {
     // Preview controls and app shell should be hidden by print CSS.
     await expect(page.getByTestId("print-preview-print-button")).not.toBeVisible();
     await expect(page.getByRole("button", { name: "Cancel" }).first()).not.toBeVisible();
+    await expect(page.getByTestId("print-preview-min-height-input")).not.toBeVisible();
     await expect(page.locator("header")).not.toBeVisible();
+  });
+
+  test("print preview applies the configured minimum question height in layout", async ({ page, request }) => {
+    const session = await createSession(request, "active_exam_print_min_height");
+    await seedActiveExam(request, session, {
+      text: "Short question?",
+      problemType: "fill-in-the-blank",
+      correctAnswer: "yes",
+    });
+    await addAuthenticatedSession(page, session);
+
+    await page.goto("/exams/active");
+    await page.getByRole("button", { name: "Print" }).click();
+    const paper = page.getByTestId("print-preview-paper");
+    await expect(paper).toBeVisible();
+
+    const item = paper.getByTestId("print-preview-item");
+    const input = page.getByTestId("print-preview-min-height-input");
+    await expect(input).toHaveValue("250");
+
+    const defaultBox = await item.boundingBox();
+    expect(defaultBox).not.toBeNull();
+    expect(defaultBox!.height).toBeGreaterThanOrEqual(250);
+
+    await input.fill("400");
+    await expect(input).toHaveValue("400");
+
+    const tallerBox = await item.boundingBox();
+    expect(tallerBox).not.toBeNull();
+    expect(tallerBox!.height).toBeGreaterThanOrEqual(400);
   });
 
   test("print preview controls stay topmost above the wrapped header at narrow widths", async ({ page, request }) => {
