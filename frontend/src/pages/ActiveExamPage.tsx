@@ -14,6 +14,7 @@ import { CollapsibleImage } from "@/components/CollapsibleImage";
 import { LatexText } from "@/components/LatexText";
 import { AnswerInput, parseOptions } from "@/components/AnswerInput";
 import { Modal } from "@/components/Modal";
+import { CreateExamModal } from "@/components/CreateExamModal";
 import type { ExamItem, ExamResponse, SaveAnswerRequest } from "@/types/exam";
 
 const DEFAULT_QUESTION_MIN_HEIGHT = 250;
@@ -39,6 +40,7 @@ export function ActiveExamPage() {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
+  const [showCreateExamModal, setShowCreateExamModal] = useState(false);
   const [questionMinHeight, setQuestionMinHeight] = useState<number>(getInitialQuestionMinHeight);
 
   const {
@@ -67,6 +69,7 @@ export function ActiveExamPage() {
   const createExamMutation = useMutation({
     mutationFn: createExam,
     onSuccess: () => {
+      setShowCreateExamModal(false);
       queryClient.invalidateQueries({ queryKey: ["active-exam"] });
       refetchExam();
     },
@@ -162,8 +165,12 @@ export function ActiveExamPage() {
     discardExamMutation.mutate(exam.id);
   }, [exam, discardExamMutation]);
 
-  const handleCreateExam = useCallback(() => {
-    createExamMutation.mutate({ maxProblemCount: 10 });
+  const handleOpenCreateExamModal = useCallback(() => {
+    setShowCreateExamModal(true);
+  }, []);
+
+  const handleConfirmCreateExam = useCallback((maxProblemCount: number) => {
+    createExamMutation.mutate({ maxProblemCount });
   }, [createExamMutation]);
 
   const handleOpenPrintPreview = useCallback(() => {
@@ -240,7 +247,7 @@ export function ActiveExamPage() {
           <div style={{ textAlign: "center", padding: "3rem", backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "0.5rem" }}>
             <p>No active exam found.</p>
             <button
-              onClick={handleCreateExam}
+              onClick={handleOpenCreateExamModal}
               disabled={createExamMutation.isPending}
               style={{
                 padding: "0.75rem 1.5rem",
@@ -262,6 +269,12 @@ export function ActiveExamPage() {
             )}
           </div>
         </div>
+        <CreateExamModal
+          isOpen={showCreateExamModal}
+          isCreating={createExamMutation.isPending}
+          onClose={() => setShowCreateExamModal(false)}
+          onCreate={handleConfirmCreateExam}
+        />
       </main>
     );
   }
