@@ -144,10 +144,14 @@ async def get_home_summary(
     user_id = current_user["_id"]
 
     problem_documents = await database["problems"].find(
-        {"userId": user_id, "isDeleted": False}
+        {
+            "userId": user_id,
+            "isDeleted": False,
+            "isDisabled": {"$ne": True},
+        }
     ).to_list(length=None)
-    non_deleted_problem_ids = {doc["_id"] for doc in problem_documents}
-    total_problems = len(non_deleted_problem_ids)
+    active_problem_ids = {doc["_id"] for doc in problem_documents}
+    total_problems = len(active_problem_ids)
 
     tried_problem_ids: set[Any] = set()
     latest_mastery: dict[Any, tuple[datetime, bool]] = {}
@@ -178,7 +182,7 @@ async def get_home_summary(
     ).to_list(length=None)
     for attempt in practice_attempts:
         problem_id = attempt.get("problemId")
-        if problem_id in non_deleted_problem_ids:
+        if problem_id in active_problem_ids:
             tried_problem_ids.add(problem_id)
             _consider_mastery(
                 problem_id,
@@ -198,7 +202,7 @@ async def get_home_summary(
         submitted_at = exam.get("submittedAt")
         for item in exam.get("items", []):
             problem_id = item.get("problemId")
-            if problem_id not in non_deleted_problem_ids:
+            if problem_id not in active_problem_ids:
                 continue
             tried_problem_ids.add(problem_id)
             grading = item.get("grading") or {}
@@ -247,13 +251,17 @@ async def get_home_summary(
 
     for attempt in practice_attempts:
         date_str = _date_key(attempt.get("createdAt"))
-        if date_str is not None:
+        if date_str is not None and attempt.get("problemId") in active_problem_ids:
             daily_counts[date_str] += 1
 
     for exam in submitted_exams:
         date_str = _date_key(exam.get("submittedAt"))
         if date_str is not None:
-            daily_counts[date_str] += len(exam.get("items", []))
+            daily_counts[date_str] += sum(
+                1
+                for item in exam.get("items", [])
+                if item.get("problemId") in active_problem_ids
+            )
 
     days = [
         HomeActivityDay(date=date_str, count=count)
