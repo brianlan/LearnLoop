@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -131,10 +131,105 @@ describe("ActiveExamPage", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
 
     await waitFor(() => {
       expect(screen.getByText(/Something went wrong/)).toBeInTheDocument();
     });
+  });
+
+  it("opens the problem count selector from the empty state without sending a create request", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({ error: { message: "No active exam" } }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("No active exam found.")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Start New Exam" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Problem count")).toHaveValue(5);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables exam creation and shows validation for an invalid problem count", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({ error: { message: "No active exam" } }),
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("No active exam found.")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+
+    const input = screen.getByLabelText("Problem count");
+    await user.clear(input);
+    await user.type(input, "31");
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a whole number from 1 to 30.");
+    expect(screen.getByRole("button", { name: "Create Exam" })).toBeDisabled();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates an exam with the selected problem count and loads it on the active page", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ error: { message: "No active exam" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ exam: baseExam }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ exam: baseExam }),
+      });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("No active exam found.")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+
+    const input = screen.getByLabelText("Problem count");
+    await user.clear(input);
+    await user.type(input, "8");
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/exams"),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ maxProblemCount: 8 }),
+        }),
+      );
+    });
+
+    expect(await screen.findByText("Active Exam")).toBeInTheDocument();
+    expect(screen.getByText(/Question 1 of 1/)).toBeInTheDocument();
   });
 
   it("renders active exam with problem text and navigation", async () => {
