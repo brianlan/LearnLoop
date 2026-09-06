@@ -877,7 +877,7 @@ async def test_summary_score_distribution_never_tested_vs_tested(
 
 
 @pytest.mark.asyncio
-async def test_summary_score_distribution_includes_disabled_excludes_deleted_and_other_users(
+async def test_summary_score_distribution_excludes_disabled_deleted_and_other_users(
     home_app: FastAPI, client: AsyncClient
 ) -> None:
     other_user_id = ObjectId()
@@ -886,7 +886,14 @@ async def test_summary_score_distribution_includes_disabled_excludes_deleted_and
     now = datetime.now(UTC)
     sixty_days_ago = now - timedelta(days=60)
 
-    # Disabled but tested problem must be included.
+    # Enabled tested problem must be included.
+    enabled = make_problem(
+        user_id,
+        last_tested_at=sixty_days_ago,
+        last_attempt_correct=True,
+        created_at=sixty_days_ago,
+    )
+    # Disabled problem must be excluded even though it was tested.
     disabled = make_problem(
         user_id,
         is_disabled=True,
@@ -904,7 +911,7 @@ async def test_summary_score_distribution_includes_disabled_excludes_deleted_and
     )
     # Other user's problem must be excluded.
     other = make_problem(other_user_id, created_at=now)
-    database.seed("problems", [disabled, deleted, other])
+    database.seed("problems", [enabled, disabled, deleted, other])
 
     response = await client.get("/api/v1/home/summary")
     buckets = response.json()["scoreDistribution"]["buckets"]
@@ -1090,15 +1097,21 @@ async def test_summary_score_distribution_recently_created_tested_problem_not_mi
 
 
 @pytest.mark.asyncio
-async def test_summary_score_distribution_disabled_included_deleted_other_users_excluded_categories(
+async def test_summary_score_distribution_disabled_deleted_other_users_excluded_categories(
     home_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
 ) -> None:
-    """Disabled problems are bucketed by category; deleted/other-user problems are excluded."""
+    """Only enabled own problems are bucketed; disabled/deleted/other-user are excluded."""
     database: FakeDatabase = home_app_with_min_age.state.fake_database
     user_id = home_app_with_min_age.state.user["_id"]
     other_user_id = ObjectId()
     one_day_ago = datetime.now(UTC) - timedelta(days=1)
 
+    enabled_cooldown = make_problem(
+        user_id,
+        last_tested_at=one_day_ago,
+        last_attempt_correct=True,
+        created_at=one_day_ago,
+    )
     disabled_cooldown = make_problem(
         user_id,
         is_disabled=True,
@@ -1114,7 +1127,7 @@ async def test_summary_score_distribution_disabled_included_deleted_other_users_
         created_at=one_day_ago,
     )
     other_min_aged = make_problem(other_user_id, created_at=one_day_ago)
-    database.seed("problems", [disabled_cooldown, deleted_cooldown, other_min_aged])
+    database.seed("problems", [enabled_cooldown, disabled_cooldown, deleted_cooldown, other_min_aged])
 
     response = await client_with_min_age.get("/api/v1/home/summary")
     buckets = response.json()["scoreDistribution"]["buckets"]
@@ -1124,3 +1137,86 @@ async def test_summary_score_distribution_disabled_included_deleted_other_users_
     assert bucket_total == 1
     assert sum(b["cooldown"] for b in buckets) == 1
     assert sum(b["minAged"] for b in buckets) == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_disabled_problems_excluded_from_all_metrics(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Coverage, conquest, first-pass, activity, and score distribution use enabled problems only."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    enabled = make_problem(user_id)
+    disabled = make_problem(user_id, is_disabled=True)
+    database.seed("problems", [enabled, disabled])
+    now = datetime.now(UTC)
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, enabled["_id"], created_at=now, grading_status="correct"),
+        make_practice_attempt(user_id, disabled["_id"], created_at=now, grading_status="correct"),
+    ])
+    database.seed("exams", [
+        make_submitted_exam(
+            user_id,
+            problem_ids=[enabled["_id"], disabled["_id"]],
+            submitted_at=now,
+            item_grading_statuses=["correct", "correct"],
+        ),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    assert data["coverage"]["totalProblems"] == 1
+    assert data["coverage"]["triedProblems"] == 1
+    assert data["coverage"]["percentage"] == 100
+    assert data["conquest"]["totalProblems"] == 1
+    assert data["conquest"]["masteredProblems"] == 1
+    assert data["conquest"]["percentage"] == 100
+    assert data["firstPass"]["attemptedProblems"] == 1
+    assert data["firstPass"]["firstPassCorrectProblems"] == 1
+    assert data["firstPass"]["percentage"] == 100
+
+    # Activity: one enabled practice attempt plus only the enabled exam item.
+    today_str = now.strftime("%Y-%m-%d")
+    today_day = next(d for d in data["activity"]["days"] if d["date"] == today_str)
+    assert today_day["count"] == 2
+
+    # Score distribution counts only the enabled (never-tested) problem.
+    bucket_total = sum(
+        b["neverTested"] + b["minAged"] + b["tested"] + b["cooldown"]
+        for b in data["scoreDistribution"]["buckets"]
+    )
+    assert bucket_total == 1
+    assert sum(b["neverTested"] for b in data["scoreDistribution"]["buckets"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_re_enabling_problem_restores_statistics(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Current-state semantics: re-enabling a problem makes it eligible again without migration."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id, is_disabled=True)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(
+            user_id, problem["_id"],
+            created_at=datetime.now(UTC),
+            grading_status="correct",
+        ),
+    ])
+
+    excluded = (await client.get("/api/v1/home/summary")).json()
+    assert excluded["coverage"]["totalProblems"] == 0
+    assert excluded["coverage"]["triedProblems"] == 0
+    assert excluded["conquest"]["masteredProblems"] == 0
+    assert excluded["scoreDistribution"]["buckets"] == []
+
+    await database["problems"].update_one(
+        {"_id": problem["_id"]}, {"$set": {"isDisabled": False}}
+    )
+    included = (await client.get("/api/v1/home/summary")).json()
+    assert included["coverage"]["totalProblems"] == 1
+    assert included["coverage"]["triedProblems"] == 1
+    assert included["conquest"]["masteredProblems"] == 1
+    assert included["scoreDistribution"]["buckets"] != []
