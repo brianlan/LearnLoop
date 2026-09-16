@@ -6,6 +6,7 @@ from bson import ObjectId
 from app.domain.coaching.service import CoachingService, CoachingError
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole
 from app.infrastructure.vlm.solution_coaching_client import CoachingVLMResult, SolutionCoachingVLMError
+from app.solution_generation import compute_problem_context_hash
 from tests.conftest import FakeCollection, FakeDatabase
 
 
@@ -27,6 +28,24 @@ class FakeCoachingVLMClient:
         if self.error_to_raise:
             raise self.error_to_raise
         return self.result
+
+
+def _problem(prob_id, user_id, *, text="prob text", answer="ans"):
+    return {
+        "_id": prob_id,
+        "userId": user_id,
+        "isDeleted": False,
+        "text": text,
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": {
+            "display": answer,
+            "normalizedText": answer,
+            "normalizedSet": [],
+            "format": "single",
+        },
+        "sourceImage": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -77,8 +96,15 @@ async def test_send_message_success():
     prob_id = ObjectId()
     user_id = ObjectId()
 
-    db["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
-    db["canonical_solutions"].seed({"problem_id": str(prob_id), "steps_markdown": "steps", "final_answer": "ans"})
+    problem = _problem(prob_id, user_id)
+    db["problems"].seed(problem)
+    db["canonical_solutions"].seed({
+        "problem_id": str(prob_id),
+        "steps_markdown": "steps",
+        "final_answer": "ans",
+        "level_classification": "primary",
+        "problem_context_hash": compute_problem_context_hash(problem),
+    })
 
     conv = await service.send_message(str(prob_id), str(user_id), "help me")
 
@@ -92,6 +118,60 @@ async def test_send_message_success():
     req = client.calls[0]
     assert req.problem_text == "prob text"
     assert req.canonical_steps_markdown == "steps"
+    assert req.canonical_final_answer == "ans"
+    assert req.level_classification == "primary"
+
+
+@pytest.mark.asyncio
+async def test_send_message_changed_problem_ignores_stale_solution():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    service = CoachingService(db, vlm_client=client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+
+    old_problem = _problem(prob_id, user_id, text="old text", answer="old ans")
+    db["problems"].seed(_problem(prob_id, user_id, text="current text", answer="current ans"))
+    db["canonical_solutions"].seed({
+        "problem_id": str(prob_id),
+        "steps_markdown": "old steps",
+        "final_answer": "old ans",
+        "level_classification": "middle-school",
+        "problem_context_hash": compute_problem_context_hash(old_problem),
+    })
+
+    await service.send_message(str(prob_id), str(user_id), "help me")
+
+    req = client.calls[0]
+    assert req.canonical_steps_markdown == "No canonical steps available."
+    assert req.correct_answer == "current ans"
+    assert req.canonical_final_answer == "current ans"
+    assert req.level_classification == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_send_message_legacy_solution_without_hash_ignored():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    service = CoachingService(db, vlm_client=client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+
+    db["problems"].seed(_problem(prob_id, user_id, answer="current ans"))
+    db["canonical_solutions"].seed({
+        "problem_id": str(prob_id),
+        "steps_markdown": "legacy steps",
+        "final_answer": "legacy ans",
+        "level_classification": "primary",
+    })
+
+    await service.send_message(str(prob_id), str(user_id), "help me")
+
+    req = client.calls[0]
+    assert req.canonical_steps_markdown == "No canonical steps available."
+    assert req.canonical_final_answer == "current ans"
 
 
 @pytest.mark.asyncio

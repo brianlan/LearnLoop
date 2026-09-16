@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +18,37 @@ from app.infrastructure.storage.mongo import (
 from app.observability import log_solution_generation_event
 
 SOLUTION_BACKFILL_BATCH_SIZE = 100
+
+# Canonical-solution document key holding the hash of the problem context the
+# solution was generated from. Solutions without this key are treated as legacy.
+PROBLEM_CONTEXT_HASH_FIELD = "problem_context_hash"
+
+
+def compute_problem_context_hash(problem: Mapping[str, Any]) -> str:
+    """Return a deterministic hash of the problem fields that affect solving.
+
+    Problem text, type, normalized answer, GraphDSL, and the source-image
+    SHA-256 can all change after a canonical solution was generated. Coaching
+    compares this hash against the value stored with a solution so a solution
+    from an older problem version is not presented as authoritative.
+
+    Only the normalized answer participates, so equivalent persisted answers
+    (for example ``A.`` and ``A``) hash identically, and ``normalizedSet`` is
+    sorted so set ordering does not matter.
+    """
+    correct_answer = problem.get("correctAnswer") or {}
+    source_image = problem.get("sourceImage") or {}
+    context = {
+        "text": problem.get("text", ""),
+        "problemType": problem.get("problemType"),
+        "normalizedText": correct_answer.get("normalizedText", ""),
+        "normalizedSet": sorted(str(item) for item in correct_answer.get("normalizedSet") or []),
+        "answerFormat": correct_answer.get("format"),
+        "graphDsl": problem.get("graphDsl"),
+        "sourceImageSha256": source_image.get("sha256"),
+    }
+    canonical = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class SolutionRegenerationConflict(Exception):
