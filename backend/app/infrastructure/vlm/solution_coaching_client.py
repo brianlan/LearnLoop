@@ -38,6 +38,21 @@ class SolutionCoachingVLMError(BaseVLMError):
 
 # Response models moved to _models.py
 
+# Image media types accepted by the providers. Anything else falls back to a
+# safe default instead of becoming an arbitrary data-URL media type.
+SUPPORTED_IMAGE_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
+DEFAULT_IMAGE_MEDIA_TYPE = "image/png"
+
+
+def build_image_data_url(image_base64: str, image_media_type: str | None = None) -> str:
+    """Build an inline image data URL, restricting the media type to supported values."""
+    media_type = (
+        image_media_type
+        if image_media_type in SUPPORTED_IMAGE_MEDIA_TYPES
+        else DEFAULT_IMAGE_MEDIA_TYPE
+    )
+    return f"data:{media_type};base64,{image_base64}"
+
 
 class SolutionVLMRequest(BaseModel):
     problem_text: str
@@ -45,6 +60,7 @@ class SolutionVLMRequest(BaseModel):
     graph_dsl: str | None = None
     image_url: str | None = None
     image_base64: str | None = None
+    image_media_type: str | None = None
 
 
 
@@ -67,6 +83,9 @@ class CoachingVLMRequest(BaseModel):
     canonical_steps_markdown: str
     canonical_final_answer: str
     level_classification: str
+    graph_dsl: str | None = None
+    image_base64: str | None = None
+    image_media_type: str | None = None
     conversation_history: list[CoachingMessage] = Field(default_factory=list)
     new_message: str
 
@@ -204,6 +223,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
                 user_prompt=user_prompt,
                 image_url=request.image_url,
                 image_base64=request.image_base64,
+                image_media_type=request.image_media_type,
             )
             raw_provider_response = await self._send_responses_request(payload)
             parsed = self._validate_response(raw_provider_response, _SolutionProviderPayload)
@@ -212,6 +232,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
                 user_prompt=user_prompt,
                 image_url=request.image_url,
                 image_base64=request.image_base64,
+                image_media_type=request.image_media_type,
             )
             raw_provider_response = await self._send_chat_completion(payload)
             parsed = self._validate_response(raw_provider_response, _SolutionProviderPayload)
@@ -230,6 +251,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
         user_prompt: str,
         image_url: str | None,
         image_base64: str | None,
+        image_media_type: str | None = None,
     ) -> dict[str, Any]:
         content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] = [
             _ChatMessageContentText(type="text", text=user_prompt)
@@ -238,7 +260,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             content.append(
                 _ChatMessageContentImageUrl(
                     type="image_url",
-                    image_url={"url": f"data:image/png;base64,{image_base64}"},
+                    image_url={"url": build_image_data_url(image_base64, image_media_type)},
                 )
             )
         elif image_url:
@@ -267,6 +289,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
         user_prompt: str,
         image_url: str | None,
         image_base64: str | None,
+        image_media_type: str | None = None,
     ) -> dict[str, Any]:
         input_items: list[dict[str, Any]] = [
             {"type": "input_text", "text": user_prompt}
@@ -274,7 +297,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
         
         if image_base64:
             input_items.append(
-                {"type": "input_image", "image_url": f"data:image/png;base64,{image_base64}"}
+                {"type": "input_image", "image_url": build_image_data_url(image_base64, image_media_type)}
             )
         elif image_url:
             input_items.append(
@@ -352,6 +375,7 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             canonical_steps_markdown=request.canonical_steps_markdown,
             canonical_final_answer=request.canonical_final_answer,
             level_classification=request.level_classification,
+            graph_dsl=request.graph_dsl,
             conversation_history=history,
             new_message=request.new_message,
         )
@@ -362,23 +386,42 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
         )
         
         if self._api_mode == "responses":
+            input_items: list[dict[str, Any]] = [{"type": "input_text", "text": user_prompt}]
+            if request.image_base64:
+                input_items.append(
+                    {
+                        "type": "input_image",
+                        "image_url": build_image_data_url(
+                            request.image_base64, request.image_media_type
+                        ),
+                    }
+                )
             payload = {
                 "instructions": system_prompt,
-                "input": [
-                    {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": user_prompt}],
-                    }
-                ],
+                "input": [{"role": "user", "content": input_items}],
                 "text": {"format": {"type": "json_object"}},
             }
             raw_provider_response = await self._send_responses_request(payload)
         else:
+            content: list[_ChatMessageContentText | _ChatMessageContentImageUrl] = [
+                _ChatMessageContentText(type="text", text=user_prompt)
+            ]
+            if request.image_base64:
+                content.append(
+                    _ChatMessageContentImageUrl(
+                        type="image_url",
+                        image_url={
+                            "url": build_image_data_url(
+                                request.image_base64, request.image_media_type
+                            )
+                        },
+                    )
+                )
             payload = _ChatCompletionRequest(
                 model=self._model,
                 messages=[
                     _ChatMessage(role="system", content=system_prompt),
-                    _ChatMessage(role="user", content=user_prompt),
+                    _ChatMessage(role="user", content=content),
                 ],
             ).model_dump(exclude_none=True)
             raw_provider_response = await self._send_chat_completion(payload)
