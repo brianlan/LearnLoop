@@ -19,6 +19,7 @@ from app.infrastructure.storage.mongo import (
     SOLUTION_GENERATION_TASKS_COLLECTION,
 )
 from app.infrastructure.storage.s3 import S3StorageAdapter, load_source_image_base64
+from app.solution_generation import PROBLEM_CONTEXT_HASH_FIELD, compute_problem_context_hash
 
 logger = logging.getLogger(__name__)
 from app.observability import log_solution_generation_event
@@ -90,6 +91,7 @@ async def process_task(
             "steps_markdown": result.steps_markdown,
             "final_answer": result.final_answer,
             "level_classification": result.level_classification,
+            PROBLEM_CONTEXT_HASH_FIELD: compute_problem_context_hash(problem),
             "created_at": datetime.now(UTC)
         }
         await solutions_col.insert_one(solution)

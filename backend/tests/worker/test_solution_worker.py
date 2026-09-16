@@ -9,6 +9,7 @@ from bson import ObjectId
 from app.domain.models import SolutionGenerationStatus
 from app.infrastructure.vlm.solution_coaching_client import SolutionCoachingVLMError, SolutionVLMResult
 from app.infrastructure.worker.solution_worker import run_solution_worker, process_task
+from app.solution_generation import compute_problem_context_hash
 from tests.conftest import FakeCollection, FakeDatabase, FakeStorage
 
 
@@ -61,6 +62,43 @@ async def test_process_task_success():
     assert len(solutions_col._documents) == 1
     assert len(client.calls) == 1
     assert not client.closed  # injected client must not be closed
+
+
+@pytest.mark.asyncio
+async def test_process_task_persists_problem_context_hash():
+    client = FakeSolutionVLMClient()
+    storage = FakeStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+
+    problem_id = str(ObjectId())
+    user_id = str(ObjectId())
+    task_id = ObjectId()
+
+    problem = {
+        "_id": ObjectId(problem_id),
+        "text": "prob",
+        "problemType": "short-answer",
+        "graphDsl": "board.create('point',[0,0])",
+        "correctAnswer": {
+            "display": "ans",
+            "normalizedText": "ans",
+            "normalizedSet": [],
+            "format": "single",
+        },
+        "sourceImage": None,
+    }
+    problems_col.seed(problem)
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
+    tasks_col.seed(task)
+
+    await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
+
+    assert (
+        solutions_col._documents[0]["problem_context_hash"]
+        == compute_problem_context_hash(problem)
+    )
 
 
 @pytest.mark.asyncio

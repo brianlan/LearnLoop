@@ -5,6 +5,7 @@ from typing import Any
 from bson import ObjectId
 
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole, ExamState
+from app.solution_generation import PROBLEM_CONTEXT_HASH_FIELD, compute_problem_context_hash
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.solution_coaching_client import (
     CoachingMessage as VLMCoachingMessage,
@@ -72,18 +73,25 @@ class CoachingService:
         if not problem:
             raise CoachingError("Problem not found", code="NOT_FOUND", status_code=404)
 
-        # 3. Fetch canonical solution
+        # 3. Fetch canonical solution, but only trust it when it was generated
+        # from the current problem context. Stale, legacy, or unmarked
+        # solutions must not be presented as authoritative, so fall back to the
+        # current correct answer instead of stale solution steps.
         solution = await self.db[CANONICAL_SOLUTIONS_COLLECTION].find_one({
             "problem_id": problem_id
         })
-        if not solution:
-            steps_markdown = "No canonical steps available."
-            canonical_final_answer = problem.get("correctAnswer", {}).get("display", "Unknown")
-            level_classification = "unknown"
-        else:
+        current_answer = problem.get("correctAnswer", {}).get("display", "Unknown")
+        if (
+            solution is not None
+            and solution.get(PROBLEM_CONTEXT_HASH_FIELD) == compute_problem_context_hash(problem)
+        ):
             steps_markdown = solution.get("steps_markdown", "")
             canonical_final_answer = solution.get("final_answer", "")
             level_classification = solution.get("level_classification") or solution.get("math_level_classification", "unknown")
+        else:
+            steps_markdown = "No canonical steps available."
+            canonical_final_answer = current_answer
+            level_classification = "unknown"
 
         # 4. Fetch or create Conversation
         conversation = await self.get_conversation(problem_id, user_id)

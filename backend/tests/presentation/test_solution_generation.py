@@ -20,6 +20,7 @@ from app.solution_generation import (
     SOLUTION_BACKFILL_BATCH_SIZE,
     SolutionRegenerationConflict,
     backfill_solution_generation_tasks,
+    compute_problem_context_hash,
     enqueue_solution_generation_task_for_problem,
     regenerate_solution_task_for_problem,
 )
@@ -347,3 +348,96 @@ async def test_regenerate_no_solution_no_task_raises_exact_conflict() -> None:
 
     assert exc_info.value.code == "SOLUTION_REGENERATION_CONFLICT"
     assert exc_info.value.message == "No solution to regenerate."
+
+
+# ---------------------------------------------------------------------------
+# Problem context hash
+# ---------------------------------------------------------------------------
+
+
+def _context_problem(**overrides: Any) -> dict[str, Any]:
+    problem: dict[str, Any] = {
+        "text": "2+2",
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": {
+            "display": "4",
+            "normalizedText": "4",
+            "normalizedSet": [],
+            "format": "single",
+        },
+        "sourceImage": None,
+    }
+    problem.update(overrides)
+    return problem
+
+
+def test_context_hash_is_deterministic_and_ignores_display_only_changes() -> None:
+    problem = _context_problem()
+    equivalent = _context_problem(
+        correctAnswer={
+            "display": "4.0",
+            "normalizedText": "4",
+            "normalizedSet": [],
+            "format": "single",
+        }
+    )
+
+    assert compute_problem_context_hash(problem) == compute_problem_context_hash(dict(problem))
+    assert compute_problem_context_hash(problem) == compute_problem_context_hash(equivalent)
+
+
+def test_context_hash_ignores_normalized_set_ordering() -> None:
+    ordered = _context_problem(
+        problemType="multi-choice",
+        correctAnswer={
+            "display": "A,B",
+            "normalizedText": "a,b",
+            "normalizedSet": ["a", "b"],
+            "format": "set",
+        },
+    )
+    reversed_set = _context_problem(
+        problemType="multi-choice",
+        correctAnswer={
+            "display": "A,B",
+            "normalizedText": "a,b",
+            "normalizedSet": ["b", "a"],
+            "format": "set",
+        },
+    )
+
+    assert compute_problem_context_hash(ordered) == compute_problem_context_hash(reversed_set)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"text": "3+3"},
+        {"problemType": "single-choice"},
+        {"graphDsl": "board.create('point',[0,0])"},
+        {
+            "correctAnswer": {
+                "display": "5",
+                "normalizedText": "5",
+                "normalizedSet": [],
+                "format": "single",
+            }
+        },
+        {
+            "correctAnswer": {
+                "display": "A,B",
+                "normalizedText": "a,b",
+                "normalizedSet": ["a", "b"],
+                "format": "set",
+            }
+        },
+        {"sourceImage": {"sha256": "a" * 64}},
+    ],
+)
+def test_context_hash_changes_for_each_solving_relevant_field(
+    change: dict[str, Any],
+) -> None:
+    assert compute_problem_context_hash(_context_problem()) != compute_problem_context_hash(
+        _context_problem(**change)
+    )
