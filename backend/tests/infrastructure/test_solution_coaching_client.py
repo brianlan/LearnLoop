@@ -13,15 +13,18 @@ from litellm.exceptions import (
 
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.solution_coaching_client import (
+    DEFAULT_IMAGE_MEDIA_TYPE,
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
     FAILURE_CODE_PROVIDER,
+    SUPPORTED_IMAGE_MEDIA_TYPES,
     CoachingVLMClient,
     CoachingVLMRequest,
     CoachingMessage,
     SolutionCoachingVLMError,
     SolutionVLMClient,
     SolutionVLMRequest,
+    build_image_data_url,
 )
 from app.infrastructure.vlm.solution_coaching_prompts import (
     ENGLISH_COACHING_SYSTEM_PROMPT,
@@ -274,7 +277,7 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         system_prompt = messages[0]["content"]
-        user_prompt = messages[1]["content"]
+        user_prompt = messages[1]["content"][0]["text"]
         assert "Write this student-facing tutoring reply in Simplified Chinese" in system_prompt
         assert "Be warm, encouraging, and patient" in system_prompt
         assert "canonicalSolutionSteps" in user_prompt
@@ -739,3 +742,168 @@ async def test_solution_vlm_client_responses_mode_with_thinking() -> None:
 
     assert result.steps_markdown == "步骤"
     assert result.raw_provider_response["reasoning_content"] == "internal reasoning"
+
+
+# Image MIME handling and GraphDSL request context
+
+
+def test_build_image_data_url_whitelists_media_type_and_falls_back() -> None:
+    assert build_image_data_url("QUJD", "image/jpeg") == "data:image/jpeg;base64,QUJD"
+    for supported in SUPPORTED_IMAGE_MEDIA_TYPES:
+        assert build_image_data_url("QUJD", supported) == f"data:{supported};base64,QUJD"
+    # Unknown or missing values must not become arbitrary data-URL media types.
+    assert (
+        build_image_data_url("QUJD", "text/html")
+        == f"data:{DEFAULT_IMAGE_MEDIA_TYPE};base64,QUJD"
+    )
+    assert (
+        build_image_data_url("QUJD", None)
+        == f"data:{DEFAULT_IMAGE_MEDIA_TYPE};base64,QUJD"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type", ["image/png", "image/jpeg"])
+async def test_coaching_vlm_client_chat_includes_image_with_whitelisted_media_type(media_type: str) -> None:
+    async def completion_fn(**kwargs):
+        content = kwargs["messages"][1]["content"]
+        assert content[0]["type"] == "text"
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == f"data:{media_type};base64,QUJD"
+        return _mock_response(json.dumps({"text": "看图片。"}))
+
+    client = _build_coaching_client(completion_fn)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            image_base64="QUJD",
+            image_media_type=media_type,
+            new_message="看看图",
+        )
+    )
+
+    assert result.text == "看图片。"
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_chat_without_image_sends_text_only() -> None:
+    async def completion_fn(**kwargs):
+        content = kwargs["messages"][1]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        return _mock_response(json.dumps({"text": "ok"}))
+
+    client = _build_coaching_client(completion_fn)
+    await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            new_message="你好",
+        )
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type", ["image/png", "image/jpeg"])
+async def test_coaching_vlm_client_responses_mode_includes_image_with_whitelisted_media_type(media_type: str) -> None:
+    async def responses_fn(**kwargs):
+        items = kwargs["input"][0]["content"]
+        assert items[0]["type"] == "input_text"
+        assert items[1]["type"] == "input_image"
+        assert items[1]["image_url"] == f"data:{media_type};base64,QUJD"
+        return _mock_responses_response(json.dumps({"text": "看图片。"}))
+
+    client = _build_coaching_client_responses(responses_fn)
+    result = await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            image_base64="QUJD",
+            image_media_type=media_type,
+            new_message="看看图",
+        )
+    )
+
+    assert result.text == "看图片。"
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_responses_mode_without_image_sends_text_only() -> None:
+    async def responses_fn(**kwargs):
+        items = kwargs["input"][0]["content"]
+        assert len(items) == 1
+        assert items[0]["type"] == "input_text"
+        return _mock_responses_response(json.dumps({"text": "ok"}))
+
+    client = _build_coaching_client_responses(responses_fn)
+    await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            new_message="你好",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_client_includes_graph_dsl_in_prompt() -> None:
+    async def completion_fn(**kwargs):
+        user_prompt = kwargs["messages"][1]["content"][0]["text"]
+        assert '"graphDsl": "board.create(\'point\', [0, 0]);"' in user_prompt
+        return _mock_response(json.dumps({"text": "ok"}))
+
+    client = _build_coaching_client(completion_fn)
+    await client.send_message(
+        CoachingVLMRequest(
+            problem_text="题目",
+            correct_answer="2",
+            canonical_steps_markdown="步骤",
+            canonical_final_answer="2",
+            level_classification="primary",
+            graph_dsl="board.create('point', [0, 0]);",
+            new_message="你好",
+        )
+    )
+
+
+def test_coaching_prompts_distinguish_graph_dsl_from_whiteboard_dsl() -> None:
+    for prompt in [MATH_COACHING_SYSTEM_PROMPT, ENGLISH_COACHING_SYSTEM_PROMPT]:
+        assert "`graphDsl`" in prompt
+        assert "not the `whiteboard_dsl`" in prompt
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_client_uses_whitelisted_image_media_type() -> None:
+    async def completion_fn(**kwargs):
+        image_part = kwargs["messages"][1]["content"][1]
+        assert image_part["image_url"]["url"] == "data:image/jpeg;base64,QUJD"
+        return _mock_response(
+            json.dumps(
+                {"steps_markdown": "s", "final_answer": "2", "level_classification": "primary"}
+            )
+        )
+
+    client = _build_solution_client(completion_fn)
+    result = await client.generate_solution(
+        SolutionVLMRequest(
+            problem_text="题目",
+            correct_answer="2",
+            image_base64="QUJD",
+            image_media_type="image/jpeg",
+        )
+    )
+
+    assert result.final_answer == "2"

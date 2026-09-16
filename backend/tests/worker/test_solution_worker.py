@@ -50,7 +50,7 @@ async def test_process_task_success():
     user_id = str(ObjectId())
     task_id = ObjectId()
 
-    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k", "contentType": "image/jpeg"}})
     storage.seed("b", "k", b"image")
     task = {"_id": task_id, "problem_id": problem_id, "user_id": user_id, "status": "pending"}
     tasks_col.seed(task)
@@ -61,6 +61,8 @@ async def test_process_task_success():
     assert updated_task["status"] == "ready"
     assert len(solutions_col._documents) == 1
     assert len(client.calls) == 1
+    assert client.calls[0].image_base64 is not None
+    assert client.calls[0].image_media_type == "image/jpeg"
     assert not client.closed  # injected client must not be closed
 
 
@@ -259,6 +261,7 @@ async def test_process_task_no_image():
     assert len(solutions_col._documents) == 1
     assert len(client.calls) == 1
     assert client.calls[0].image_base64 is None
+    assert client.calls[0].image_media_type is None
     assert not client.closed  # injected client must not be closed
 
 

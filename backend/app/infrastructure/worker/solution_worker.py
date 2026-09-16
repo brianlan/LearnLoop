@@ -70,7 +70,7 @@ async def process_task(
         owned_client = True
 
     try:
-        source_image = problem.get("sourceImage")
+        source_image = problem.get("sourceImage") or {}
         image_base64 = load_source_image_base64(source_image, storage)
 
         request = SolutionVLMRequest(
@@ -78,6 +78,7 @@ async def process_task(
             correct_answer=problem["correctAnswer"]["display"],
             graph_dsl=problem.get("graphDsl"),
             image_base64=image_base64,
+            image_media_type=source_image.get("contentType"),
             image_url=None
         )
 

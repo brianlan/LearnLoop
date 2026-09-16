@@ -1,3 +1,4 @@
+from base64 import b64encode
 from datetime import datetime, UTC
 
 import pytest
@@ -7,7 +8,7 @@ from app.domain.coaching.service import CoachingService, CoachingError
 from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole
 from app.infrastructure.vlm.solution_coaching_client import CoachingVLMResult, SolutionCoachingVLMError
 from app.solution_generation import compute_problem_context_hash
-from tests.conftest import FakeCollection, FakeDatabase
+from tests.conftest import FakeCollection, FakeDatabase, FakeStorage
 
 
 # VLM-specific test double; kept local because it models the coaching VLM client,
@@ -332,3 +333,124 @@ async def test_send_message_reasoning_content_none_when_absent():
     assert conv.messages[1].role == CoachingRole.COACH
     assert conv.messages[1].content == "coach reply"
     assert conv.messages[1].reasoning_content is None
+
+
+def _seed_problem_with_context(db, prob_id, user_id, *, graph_dsl=None, source_image=None):
+    problem = _problem(prob_id, user_id)
+    problem["graphDsl"] = graph_dsl
+    problem["sourceImage"] = source_image
+    db["problems"].seed(problem)
+    db["canonical_solutions"].seed({
+        "problem_id": str(prob_id),
+        "steps_markdown": "steps",
+        "final_answer": "ans",
+        "level_classification": "primary",
+        "problem_context_hash": compute_problem_context_hash(problem),
+    })
+
+
+@pytest.mark.asyncio
+async def test_send_message_includes_graph_dsl_and_source_image():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    storage = FakeStorage()
+    storage.seed("media-bucket", "problems/img.jpg", b"JPEGDATA")
+    service = CoachingService(db, vlm_client=client, storage=storage)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+    _seed_problem_with_context(
+        db,
+        prob_id,
+        user_id,
+        graph_dsl="board.create('point', [0, 0]);",
+        source_image={
+            "bucket": "media-bucket",
+            "objectKey": "problems/img.jpg",
+            "contentType": "image/jpeg",
+        },
+    )
+
+    await service.send_message(str(prob_id), str(user_id), "help me")
+
+    req = client.calls[0]
+    assert req.graph_dsl == "board.create('point', [0, 0]);"
+    assert req.image_media_type == "image/jpeg"
+    assert req.image_base64 == b64encode(b"JPEGDATA").decode("ascii")
+    assert storage.get_calls == [("media-bucket", "problems/img.jpg")]
+
+
+@pytest.mark.asyncio
+async def test_send_message_missing_source_image_degrades_to_text_only():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    storage = FakeStorage()  # object never seeded -> StorageObjectNotFoundError
+    service = CoachingService(db, vlm_client=client, storage=storage)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+    _seed_problem_with_context(
+        db,
+        prob_id,
+        user_id,
+        source_image={"bucket": "b", "objectKey": "missing.png", "contentType": "image/png"},
+    )
+
+    conv = await service.send_message(str(prob_id), str(user_id), "help me")
+
+    assert len(conv.messages) == 2
+    req = client.calls[0]
+    assert req.image_base64 is None
+    assert req.problem_text == "prob text"
+
+
+@pytest.mark.asyncio
+async def test_send_message_storage_error_degrades_to_text_only():
+    class ExplodingStorage:
+        def get_object(self, bucket, object_key):
+            raise RuntimeError("storage down")
+
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    service = CoachingService(db, vlm_client=client, storage=ExplodingStorage())
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+    _seed_problem_with_context(
+        db,
+        prob_id,
+        user_id,
+        source_image={"bucket": "b", "objectKey": "img.png", "contentType": "image/png"},
+    )
+
+    conv = await service.send_message(str(prob_id), str(user_id), "help me")
+
+    assert len(conv.messages) == 2
+    assert client.calls[0].image_base64 is None
+
+
+@pytest.mark.asyncio
+async def test_send_message_history_contains_only_role_and_text():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    service = CoachingService(db, vlm_client=client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+    db["problems"].seed(_problem(prob_id, user_id))
+    db["coaching_conversations"].seed({
+        "problem_id": str(prob_id),
+        "user_id": str(user_id),
+        "messages": [
+            {"role": "student", "content": "先看第一步"},
+            {"role": "coach", "content": "先看已知条件"},
+        ],
+    })
+
+    await service.send_message(str(prob_id), str(user_id), "再来一个提示")
+
+    history = client.calls[0].conversation_history
+    assert [message.model_dump() for message in history] == [
+        {"role": "student", "text": "先看第一步"},
+        {"role": "coach", "text": "先看已知条件"},
+    ]

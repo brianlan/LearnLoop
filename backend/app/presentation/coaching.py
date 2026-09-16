@@ -13,6 +13,7 @@ from app.presentation.deps import (
     CurrentUserDependency,
     DatabaseDependency,
     SettingsDependency,
+    StorageDependency,
 )
 from app.presentation.errors import ApiError
 
@@ -23,9 +24,10 @@ class CoachingMessageRequest(BaseModel):
 
 def get_coaching_service(
     database: DatabaseDependency,
-    settings: SettingsDependency
+    settings: SettingsDependency,
+    storage: StorageDependency,
 ) -> CoachingService:
-    return CoachingService(database=database, settings=settings, vlm_client=None)
+    return CoachingService(database=database, settings=settings, vlm_client=None, storage=storage)
 
 CoachingServiceDependency = Annotated[CoachingService, Depends(get_coaching_service)]
 

@@ -24,6 +24,7 @@ from app.infrastructure.storage.mongo import (
     CANONICAL_SOLUTIONS_COLLECTION,
     COACHING_CONVERSATIONS_COLLECTION,
 )
+from app.infrastructure.storage.s3 import S3StorageAdapter, load_source_image_base64
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,17 @@ class CoachingError(Exception):
 
 
 class CoachingService:
-    def __init__(self, database: Any, settings: Settings | None = None, vlm_client: CoachingVLMClient | None = None):
+    def __init__(
+        self,
+        database: Any,
+        settings: Settings | None = None,
+        vlm_client: CoachingVLMClient | None = None,
+        storage: S3StorageAdapter | None = None,
+    ):
         self.db = database
         self._settings = settings
         self._vlm_client = vlm_client
+        self._storage = storage
 
     async def get_conversation(self, problem_id: str, user_id: str) -> CoachingConversation | None:
         doc = await self.db[COACHING_CONVERSATIONS_COLLECTION].find_one({
@@ -117,11 +125,32 @@ class CoachingService:
                 status_code=400
             )
 
-        # 5. Call VLM
+        # 5. Call VLM. History stays student/coach text only; the original
+        # problem image is loaded server-side as read-only request context.
         history = [
             VLMCoachingMessage(role=msg.role.value, text=msg.content)
             for msg in conversation.messages
         ]
+
+        source_image = problem.get("sourceImage")
+        image_base64 = None
+        image_media_type = None
+        if source_image:
+            image_media_type = source_image.get("contentType")
+            if self._storage is not None:
+                try:
+                    image_base64 = load_source_image_base64(source_image, self._storage)
+                except Exception:
+                    logger.warning(
+                        "Failed to load source image for coaching problem %s; continuing text-only.",
+                        problem_id,
+                        exc_info=True,
+                    )
+            if image_base64 is None:
+                logger.warning(
+                    "Coaching source image unavailable for problem %s; continuing text-only.",
+                    problem_id,
+                )
 
         request = CoachingVLMRequest(
             problem_text=problem.get("text", ""),
@@ -129,6 +158,9 @@ class CoachingService:
             canonical_steps_markdown=steps_markdown,
             canonical_final_answer=canonical_final_answer,
             level_classification=level_classification,
+            graph_dsl=problem.get("graphDsl"),
+            image_base64=image_base64,
+            image_media_type=image_media_type,
             conversation_history=history,
             new_message=message
         )
