@@ -157,6 +157,12 @@ async def test_solution_vlm_client_builds_policy_prompt_and_uses_solution_config
         assert "Do not use advanced or out-of-scope methods" in system_prompt
         assert "the answer key may be only one valid wording or format" in system_prompt
         assert "Return valid JSON only" in system_prompt
+        assert "wrapped in dollar-sign delimiters" in system_prompt
+        assert "`$...$` for inline math" in system_prompt
+        assert "`$$...$$` for standalone display math" in system_prompt
+        assert "Never output bare LaTeX outside delimiters" in system_prompt
+        assert "Do not use a lone `$` for money amounts" in system_prompt
+        assert "`steps_markdown` and `final_answer`" in system_prompt
         assert "已知 x + 3 = 5" in user_prompt
         assert '"answerKey": "2"' in user_prompt
         assert messages[1]["content"][1]["image_url"]["url"] == "https://example.com/problem.png"
@@ -280,6 +286,11 @@ async def test_coaching_vlm_client_builds_context_prompt_and_uses_coaching_confi
         user_prompt = messages[1]["content"][0]["text"]
         assert "Write this student-facing tutoring reply in Simplified Chinese" in system_prompt
         assert "Be warm, encouraging, and patient" in system_prompt
+        assert "wrapped in dollar-sign delimiters" in system_prompt
+        assert "`$...$` for inline math" in system_prompt
+        assert "`$$...$$` for standalone display math" in system_prompt
+        assert "Never output bare LaTeX outside delimiters" in system_prompt
+        assert "Do not use a lone `$` for money amounts" in system_prompt
         assert "canonicalSolutionSteps" in user_prompt
         assert "board.create('text', [x, y, 'label'], {anchorX:'middle', fontSize:12})" in system_prompt
         assert "Never write `board.create('text', [x, y, 'label', {options}])`" in system_prompt
