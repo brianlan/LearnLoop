@@ -74,7 +74,8 @@ services:
       start_period: 20s
 
   rustfs-bootstrap:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    # Docker Hub denies pulls for minio/mc; Quay serves the same pinned release (#599).
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     profiles: ["bootstrap"]
     restart: "no"
     depends_on:
