@@ -80,10 +80,16 @@ async function detectAndCommitAll(page: any) {
   const count = await imageCards.count();
   expect(count, "images to detect").toBeGreaterThan(0);
 
+  // Snapshot all image ids up front: committing an image removes its card from
+  // the DOM, so iterating the live list by index (nth(i)) races the re-render
+  // and can wait forever for an index that no longer exists.
+  const imageIds: string[] = [];
   for (let i = 0; i < count; i++) {
     const testId = await imageCards.nth(i).getAttribute("data-testid");
-    const imageId = testId!.replace("bulk-detect-image-", "");
+    imageIds.push(testId!.replace("bulk-detect-image-", ""));
+  }
 
+  for (const imageId of imageIds) {
     await page.getByTestId(`bulk-detect-run-${imageId}`).click();
     await expect(
       page.getByTestId(`bulk-detect-status-${imageId}`),
