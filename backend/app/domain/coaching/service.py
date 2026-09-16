@@ -4,7 +4,14 @@ from typing import Any
 
 from bson import ObjectId
 
-from app.domain.models import CoachingConversation, CoachingMessage, CoachingRole, ExamState
+from app.domain.models import (
+    MAX_CONVERSATION_MESSAGES,
+    MESSAGES_PER_TURN,
+    CoachingConversation,
+    CoachingMessage,
+    CoachingRole,
+    ExamState,
+)
 from app.solution_generation import PROBLEM_CONTEXT_HASH_FIELD, compute_problem_context_hash
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.solution_coaching_client import (
@@ -101,10 +108,11 @@ class CoachingService:
                 user_id=user_id
             )
 
-        # Enforce max 20 messages
-        if len(conversation.messages) >= 20:
+        # Reserve both slots this turn appends before calling the VLM, so a turn
+        # that cannot fit in the cap fails before the expensive call.
+        if len(conversation.messages) + MESSAGES_PER_TURN > MAX_CONVERSATION_MESSAGES:
             raise CoachingError(
-                "Conversation has reached the maximum limit of 20 messages.",
+                f"Conversation has reached the maximum limit of {MAX_CONVERSATION_MESSAGES} messages.",
                 code="MESSAGE_CAP_EXCEEDED",
                 status_code=400
             )

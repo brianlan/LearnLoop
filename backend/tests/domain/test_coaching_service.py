@@ -213,6 +213,54 @@ async def test_send_message_cap_exceeded():
     with pytest.raises(CoachingError) as exc:
         await service.send_message(str(prob_id), str(user_id), "hello")
     assert exc.value.code == "MESSAGE_CAP_EXCEEDED"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_message_cap_rejected_at_nineteen_messages_without_vlm_call():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    service = CoachingService(db, vlm_client=client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+
+    db["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
+
+    # 19 existing messages leave room for only one of the two messages this turn appends.
+    messages = [{"role": "student", "content": "hello"}] * 19
+    db["coaching_conversations"].seed({
+        "problem_id": str(prob_id), "user_id": str(user_id), "messages": messages
+    })
+
+    with pytest.raises(CoachingError) as exc:
+        await service.send_message(str(prob_id), str(user_id), "hello")
+    assert exc.value.code == "MESSAGE_CAP_EXCEEDED"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_message_completes_turn_at_eighteen_messages():
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    service = CoachingService(db, vlm_client=client)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+
+    db["problems"].seed({"_id": prob_id, "userId": user_id, "isDeleted": False, "text": "prob text"})
+    db["canonical_solutions"].seed({"problem_id": str(prob_id), "steps_markdown": "steps", "final_answer": "ans"})
+
+    # 18 existing messages leave exactly the two slots this turn uses.
+    messages = [{"role": "student", "content": "hello"}] * 18
+    db["coaching_conversations"].seed({
+        "problem_id": str(prob_id), "user_id": str(user_id), "messages": messages
+    })
+
+    conv = await service.send_message(str(prob_id), str(user_id), "help me")
+
+    assert len(conv.messages) == 20
+    assert len(client.calls) == 1
 
 
 @pytest.mark.asyncio
