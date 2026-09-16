@@ -260,6 +260,11 @@ class CoachingMessage(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+# One coaching turn appends a student message and a coach message.
+MESSAGES_PER_TURN = 2
+MAX_CONVERSATION_MESSAGES = 20
+
+
 class CoachingConversation(BaseModel):
     id: Optional[str] = None
     problem_id: str
@@ -270,8 +275,10 @@ class CoachingConversation(BaseModel):
 
     def add_message(self, message: CoachingMessage) -> None:
         """Add a message, enforcing the 20-message cap."""
-        if len(self.messages) >= 20:
-            raise ValueError("Conversation cannot have more than 20 messages")
+        if len(self.messages) >= MAX_CONVERSATION_MESSAGES:
+            raise ValueError(
+                f"Conversation cannot have more than {MAX_CONVERSATION_MESSAGES} messages"
+            )
         self.messages.append(message)
         self.updated_at = datetime.now(UTC)
 
