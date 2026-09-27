@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any, Callable, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -58,7 +59,15 @@ _PROFILE_PLACEHOLDER = "replace-me"
 
 def _profile_unconfigured(value: str | None) -> bool:
     cleaned = (value or "").strip()
-    return not cleaned or cleaned == _PROFILE_PLACEHOLDER or cleaned.endswith(".invalid")
+    if not cleaned or cleaned == _PROFILE_PLACEHOLDER:
+        return True
+    # Endpoint defaults live on the reserved .invalid TLD but carry URL paths
+    # (e.g. https://example-…-provider.invalid/api), so judge the hostname
+    # label; non-URL values (model/api key) fall back to the raw suffix.
+    host = urlparse(cleaned).hostname or ""
+    if host:
+        return host.lower().endswith(".invalid")
+    return cleaned.lower().endswith(".invalid")
 
 
 class _ProviderPayload(BaseModel):
@@ -178,6 +187,7 @@ class VariantGeneratorVLMClient(_TextOnlyVLMClient):
             mode=mode,
             source_text=source.text,
             source_problem_type=source.problem_type,
+            source_subject=source.subject,
             source_graph_dsl=source.graph_dsl,
             source_correct_answer=source.correct_answer,
         )
@@ -186,9 +196,12 @@ class VariantGeneratorVLMClient(_TextOnlyVLMClient):
             user_prompt=user_prompt,
         )
         payload = self._validate_payload(parsed, _VariantCandidateProviderPayload)
+        # The subject is inherited server-side; the provider payload schema has
+        # no subject field, so the model can never generate or change it.
         return VariantCandidate(
             text=payload.text,
             problemType=payload.problem_type,
+            subject=source.subject,
             graphDsl=payload.graph_dsl,
             correctAnswer=payload.correct_answer,
             generator=self.identity,  # type: ignore[arg-type]
@@ -391,6 +404,7 @@ async def generate_and_validate(
     generator: VariantGeneratorVLMClient,
     validators: Sequence[VariantValidatorVLMClient],
     helper: VariantHelperVLMClient,
+    candidate: VariantCandidate | None = None,
 ) -> VariantGenerationResult:
     """The callable interface the later worker crosses.
 
@@ -400,27 +414,29 @@ async def generate_and_validate(
     even on failure. Fails closed: generator/validator/helper provider or
     invalid-response failures become non-content failures and the verdict is
     FAIL. Conclusively invalid candidates short-circuit before validator
-    calls.
+    calls. A pre-built ``candidate`` skips generation entirely; this exists
+    for the deterministic gate samples in scripts/check_variant_models.py.
     """
-    try:
-        candidate = await generator.generate_candidate(mode=mode, source=source)
-    except BaseVLMError as exc:
-        return VariantGenerationResult(
-            candidate=None,
-            reports=[],
-            assessment=VariantAssessment(
-                verdict="fail",
-                failures=[
-                    AssessmentFailure(
-                        kind=_failure_kind(exc),
-                        evidence=(
-                            f"generator {generator.identity['provider']}/{generator.identity['model']} "
-                            f"failed: {exc}"
-                        ),
-                    )
-                ],
-            ),
-        )
+    if candidate is None:
+        try:
+            candidate = await generator.generate_candidate(mode=mode, source=source)
+        except BaseVLMError as exc:
+            return VariantGenerationResult(
+                candidate=None,
+                reports=[],
+                assessment=VariantAssessment(
+                    verdict="fail",
+                    failures=[
+                        AssessmentFailure(
+                            kind=_failure_kind(exc),
+                            evidence=(
+                                f"generator {generator.identity['provider']}/{generator.identity['model']} "
+                                f"failed: {exc}"
+                            ),
+                        )
+                    ],
+                ),
+            )
 
     cheap_failures = check_candidate(mode, source, candidate)
     if cheap_failures:

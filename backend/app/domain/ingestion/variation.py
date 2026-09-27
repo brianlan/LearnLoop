@@ -75,6 +75,7 @@ class ValidatorReport(BaseModel):
 class ProblemContent(BaseModel):
     text: str
     problem_type: str = Field(alias="problemType")
+    subject: str
     graph_dsl: str | None = Field(default=None, alias="graphDsl")
     correct_answer: str = Field(alias="correctAnswer")
 
@@ -84,6 +85,7 @@ class ProblemContent(BaseModel):
 class VariantCandidate(BaseModel):
     text: str
     problem_type: str = Field(alias="problemType")
+    subject: str
     graph_dsl: str | None = Field(default=None, alias="graphDsl")
     correct_answer: str = Field(alias="correctAnswer")
     generator: ModelIdentity
@@ -164,12 +166,15 @@ def _category_disagreements(
     first: ValidatorReport, second: ValidatorReport
 ) -> list[AssessmentFailure]:
     failures: list[AssessmentFailure] = []
-    for name, passing in PASSING_CHECK_VALUES.items():
+    for name in PASSING_CHECK_VALUES:
         one = first.checks.get(name)
         two = second.checks.get(name)
         if one is None or two is None:
             continue
-        if (one.category in passing) != (two.category in passing):
+        # Critical-category comparison: the exact values must match, not just
+        # their pass/fail membership (e.g. "consistent" vs "not-applicable",
+        # or "materially-easier" vs "materially-harder", are disagreements).
+        if one.category != two.category:
             failures.append(
                 _content_failure(
                     f"validators disagree on {name}: "
@@ -196,11 +201,21 @@ def _assess_report(
                 _content_failure(f"{name}: {check.category} - {check.evidence}")
             )
     graph_check = report.checks.get("graphConsistency")
-    if graph_check is not None and graph_check.category == "not-applicable":
-        if source.graph_dsl or candidate.graph_dsl:
+    if graph_check is not None:
+        source_has_graph = bool((source.graph_dsl or "").strip())
+        candidate_has_graph = bool((candidate.graph_dsl or "").strip())
+        if graph_check.category == "not-applicable":
+            if source_has_graph or candidate_has_graph:
+                failures.append(
+                    _content_failure(
+                        "graphConsistency: not-applicable is invalid because a graph is present"
+                    )
+                )
+        elif not source_has_graph and not candidate_has_graph:
             failures.append(
                 _content_failure(
-                    "graphConsistency: not-applicable is invalid because a graph is present"
+                    f"graphConsistency: {graph_check.category} is invalid because "
+                    "neither problem has a graph; only not-applicable applies"
                 )
             )
     if report.original_solved_answer is None or report.variant_solved_answer is None:

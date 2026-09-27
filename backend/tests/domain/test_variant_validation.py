@@ -21,6 +21,7 @@ from app.infrastructure.vlm.variant_client import VariantCandidate
 SOURCE = ProblemContent(
     text="A train travels 120 km in 2 hours. What is its speed in km/h?",
     problemType="short-answer",
+    subject="mathematics",
     graphDsl=None,
     correctAnswer="60",
 )
@@ -28,6 +29,7 @@ SOURCE = ProblemContent(
 CANDIDATE = VariantCandidate(
     text="A train travels 180 km in 3 hours. What is its speed in km/h?",
     problemType="short-answer",
+    subject="mathematics",
     graphDsl=None,
     correctAnswer="60",
     generator=ModelIdentity(provider="openai", model="gen-1"),
@@ -223,6 +225,57 @@ def test_graph_not_applicable_invalid_when_graph_present() -> None:
     assert assessment.verdict == "fail"
     assert any(
         "not-applicable is invalid because a graph is present" in f.evidence
+        for f in assessment.failures
+    )
+
+
+def test_graphless_consistent_rejected() -> None:
+    """The only valid graphless graphConsistency category is not-applicable."""
+    report = _report(categories={**PASSING_CATEGORIES, "graphConsistency": "consistent"})
+    assessment = assess_variant(
+        mode="data-only", source=SOURCE, candidate=CANDIDATE, reports=[report]
+    )
+    assert assessment.verdict == "fail"
+    assert any(
+        "consistent is invalid because neither problem has a graph" in f.evidence
+        for f in assessment.failures
+    )
+
+
+def test_two_validators_disagree_on_nonpassing_values_blocks_pass() -> None:
+    """Exact category equality: two failing values are still a disagreement."""
+    easier = _report(
+        categories={**PASSING_CATEGORIES, "difficultyShift": "materially-easier"},
+        identity=ModelIdentity(provider="openai", model="val-1"),
+    )
+    harder = _report(
+        categories={**PASSING_CATEGORIES, "difficultyShift": "materially-harder"},
+        identity=ModelIdentity(provider="openai", model="val-2"),
+    )
+    assessment = _assess([easier, harder])
+    assert assessment.verdict == "fail"
+    assert any(
+        "validators disagree on difficultyShift: 'materially-easier' vs 'materially-harder'"
+        in f.evidence
+        for f in assessment.failures
+    )
+
+
+def test_two_validators_graph_category_value_disagreement_blocks_pass() -> None:
+    """consistent vs not-applicable are not interchangeable pass values."""
+    consistent = _report(
+        categories={**PASSING_CATEGORIES, "graphConsistency": "consistent"},
+        identity=ModelIdentity(provider="openai", model="val-1"),
+    )
+    not_applicable = _report(
+        categories={**PASSING_CATEGORIES, "graphConsistency": "not-applicable"},
+        identity=ModelIdentity(provider="openai", model="val-2"),
+    )
+    assessment = _assess([consistent, not_applicable])
+    assert assessment.verdict == "fail"
+    assert any(
+        "validators disagree on graphConsistency: 'consistent' vs 'not-applicable'"
+        in f.evidence
         for f in assessment.failures
     )
 
