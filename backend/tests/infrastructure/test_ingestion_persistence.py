@@ -603,14 +603,22 @@ async def test_save_item_extraction_success_sets_ready_payload_and_clears_lease(
 ) -> None:
     batch, image, items = await _batch_with_items(database, user_id, settings)
     item_id = items[0]["itemId"]
+    coll = database[INGESTION_BATCHES_COLLECTION]
+    lease_until = NOW + timedelta(minutes=5)
+    await coll.update_one(
+        {"_id": batch["_id"], "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.EXTRACTING.value, "items.$.leaseUntil": lease_until}},
+    )
     crop = {"bucket": "media", "objectKey": "users/u/crop.png"}
     draft = {"text": "2+2=?", "problemType": "short-answer"}
     extraction = {"success": True, "model": "vlm-1"}
 
-    await save_item_extraction_success(
-        database, batch["_id"], user_id, item_id, crop=crop, draft=draft, extraction=extraction, now=NOW
+    saved = await save_item_extraction_success(
+        database, batch["_id"], user_id, item_id,
+        crop=crop, draft=draft, extraction=extraction, lease_until=lease_until, now=NOW,
     )
 
+    assert saved is True
     loaded = await get_batch(database, batch["_id"], user_id)
     item = next(i for i in loaded["items"] if i["itemId"] == item_id)
     assert item["status"] == ItemState.READY.value
@@ -621,6 +629,15 @@ async def test_save_item_extraction_success_sets_ready_payload_and_clears_lease(
     assert item["updatedAt"] == NOW
     assert loaded["updatedAt"] == NOW
 
+    # Stale lease (or non-extracting status): no write, result False.
+    later = NOW + timedelta(seconds=1)
+    before = await get_batch(database, batch["_id"], user_id)
+    assert await save_item_extraction_success(
+        database, batch["_id"], user_id, item_id,
+        crop={}, draft={}, extraction={}, lease_until=lease_until, now=later,
+    ) is False
+    assert await get_batch(database, batch["_id"], user_id) == before
+
 
 @pytest.mark.asyncio
 async def test_save_item_extraction_failure_sets_failed_and_clears_lease(
@@ -628,12 +645,20 @@ async def test_save_item_extraction_failure_sets_failed_and_clears_lease(
 ) -> None:
     batch, image, items = await _batch_with_items(database, user_id, settings)
     item_id = items[0]["itemId"]
+    coll = database[INGESTION_BATCHES_COLLECTION]
+    lease_until = NOW + timedelta(minutes=5)
+    await coll.update_one(
+        {"_id": batch["_id"], "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.EXTRACTING.value, "items.$.leaseUntil": lease_until}},
+    )
     extraction = {"success": False, "failureCode": "EXTRACTION_FAILED", "failureMessage": "boom"}
 
-    await save_item_extraction_failure(
-        database, batch["_id"], user_id, item_id, extraction=extraction, now=NOW
+    saved = await save_item_extraction_failure(
+        database, batch["_id"], user_id, item_id,
+        extraction=extraction, lease_until=lease_until, now=NOW,
     )
 
+    assert saved is True
     loaded = await get_batch(database, batch["_id"], user_id)
     item = next(i for i in loaded["items"] if i["itemId"] == item_id)
     assert item["status"] == ItemState.FAILED.value
@@ -644,6 +669,33 @@ async def test_save_item_extraction_failure_sets_failed_and_clears_lease(
 
 
 @pytest.mark.asyncio
+async def test_save_item_extraction_failure_rejects_stale_lease(
+    database: FakeDatabase, user_id: ObjectId, settings: Settings
+) -> None:
+    batch, image, items = await _batch_with_items(database, user_id, settings)
+    item_id = items[0]["itemId"]
+    coll = database[INGESTION_BATCHES_COLLECTION]
+    lease_until = NOW + timedelta(minutes=5)
+    await coll.update_one(
+        {"_id": batch["_id"], "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.EXTRACTING.value, "items.$.leaseUntil": lease_until}},
+    )
+
+    saved = await save_item_extraction_failure(
+        database, batch["_id"], user_id, item_id,
+        extraction={"success": False, "failureCode": "X"},
+        lease_until=NOW + timedelta(minutes=1),
+        now=NOW,
+    )
+
+    assert saved is False
+    loaded = await get_batch(database, batch["_id"], user_id)
+    item = next(i for i in loaded["items"] if i["itemId"] == item_id)
+    assert item["status"] == ItemState.EXTRACTING.value
+    assert item["leaseUntil"] == lease_until
+
+
+@pytest.mark.asyncio
 async def test_reset_item_for_retry_resets_failed_and_lease_expired_and_skips_ineligible(
     database: FakeDatabase, user_id: ObjectId, settings: Settings
 ) -> None:
@@ -651,11 +703,17 @@ async def test_reset_item_for_retry_resets_failed_and_lease_expired_and_skips_in
     item_id = items[0]["itemId"]
     coll = database[INGESTION_BATCHES_COLLECTION]
 
-    # FAILED -> queued.
-    await save_item_extraction_failure(
-        database, batch["_id"], user_id, item_id,
-        extraction={"success": False, "failureCode": "X"}, now=NOW,
+    # EXTRACTING with lease -> failed -> queued.
+    lease_until = NOW + timedelta(minutes=5)
+    await coll.update_one(
+        {"_id": batch["_id"], "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.EXTRACTING.value, "items.$.leaseUntil": lease_until}},
     )
+    assert await save_item_extraction_failure(
+        database, batch["_id"], user_id, item_id,
+        extraction={"success": False, "failureCode": "X"},
+        lease_until=lease_until, now=NOW,
+    ) is True
     assert await reset_item_for_retry(database, batch["_id"], user_id, item_id, now=NOW) is True
     loaded = await get_batch(database, batch["_id"], user_id)
     item = next(i for i in loaded["items"] if i["itemId"] == item_id)
@@ -674,12 +732,22 @@ async def test_reset_item_for_retry_resets_failed_and_lease_expired_and_skips_in
     assert item["status"] == ItemState.QUEUED.value
     assert item["leaseUntil"] is None
 
+    # EXTRACTING with live lease -> ineligible.
+    live = NOW + timedelta(minutes=5)
+    await coll.update_one(
+        {"_id": batch["_id"], "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.EXTRACTING.value, "items.$.leaseUntil": live}},
+    )
+    before = await get_batch(database, batch["_id"], user_id)
+    assert await reset_item_for_retry(database, batch["_id"], user_id, item_id, now=NOW) is False
+    assert await get_batch(database, batch["_id"], user_id) == before
+
     # READY (ineligible) -> False, unchanged.
-    await save_item_extraction_success(
+    assert await save_item_extraction_success(
         database, batch["_id"], user_id, item_id,
         crop={"bucket": "b", "objectKey": "k"}, draft={"text": "t"},
-        extraction={"success": True}, now=NOW,
-    )
+        extraction={"success": True}, lease_until=live, now=NOW,
+    ) is True
     assert await reset_item_for_retry(database, batch["_id"], user_id, item_id, now=NOW) is False
     loaded = await get_batch(database, batch["_id"], user_id)
     item = next(i for i in loaded["items"] if i["itemId"] == item_id)
@@ -823,7 +891,7 @@ async def test_missing_batch_raises_value_error(
     with pytest.raises(ValueError, match="Batch not found"):
         await save_item_extraction_success(
             database, missing_batch_id, user_id, "item-1",
-            crop={}, draft={}, extraction={}, now=NOW,
+            crop={}, draft={}, extraction={}, lease_until=None, now=NOW,
         )
 
     with pytest.raises(ValueError, match="Batch not found"):
