@@ -293,8 +293,19 @@ class FakeCollection:
         identifier, tail = rest.split("]", 1)
         identifier_filter: dict[str, Any] = {}
         for spec in array_filters or []:
-            if isinstance(spec, dict) and identifier in spec:
-                identifier_filter = spec[identifier]
+            if not isinstance(spec, dict):
+                continue
+            # The identifier may appear bare (``{"item": {...}}``) or as a
+            # dotted prefix on element fields (``{"item.imageId": ...}``);
+            # both constrain the element the same way.
+            element_query: dict[str, Any] = {}
+            for spec_key, spec_value in spec.items():
+                if spec_key == identifier and isinstance(spec_value, dict):
+                    element_query.update(spec_value)
+                elif spec_key.startswith(f"{identifier}."):
+                    element_query[spec_key[len(identifier) + 1 :]] = spec_value
+            if element_query or identifier in spec:
+                identifier_filter = element_query
                 break
         target = document.get(head)
         if not isinstance(target, list):
@@ -503,6 +514,13 @@ def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
                                 break
                     if not matched:
                         return False
+                elif op == "$nin":
+                    for c in candidates:
+                        if isinstance(c, list):
+                            if any(item in op_val for item in c):
+                                return False
+                        elif c in op_val:
+                            return False
                 elif op == "$ne":
                     for c in candidates:
                         if isinstance(c, list):

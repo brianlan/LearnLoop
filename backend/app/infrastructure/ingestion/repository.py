@@ -127,6 +127,20 @@ async def get_active_batch_for_user(
 _MAX_OCC_ATTEMPTS = 50
 
 
+def _revision_guard(batch: Document) -> dict[str, Any]:
+    """OCC predicate matching the exact document version that was read.
+
+    ``revision`` is advanced by every writer (``$inc``), so equality on it is
+    collision-safe where ``updatedAt`` equality is not: two writers that read
+    the same version and write within the same millisecond cannot both match,
+    because the first writer's ``$inc`` invalidates the second's filter.
+    Batches created before the revision token existed have no field yet.
+    """
+    if "revision" in batch:
+        return {"revision": batch["revision"]}
+    return {"revision": {"$exists": False}}
+
+
 async def add_source_image(
     database: Any,
     batch_id: str | ObjectId,
@@ -147,7 +161,11 @@ async def add_source_image(
 
     result = await _collection(database).update_one(
         {"_id": _object_id(batch_id), "userId": user_id},
-        {"$push": {"images": image_document}, "$set": {"updatedAt": current}},
+        {
+            "$push": {"images": image_document},
+            "$set": {"updatedAt": current},
+            "$inc": {"revision": 1},
+        },
     )
     if result.matched_count == 0:
         raise ValueError("Batch not found")
@@ -181,6 +199,8 @@ async def add_items_for_image(
 
     # Atomic append + image commit: the whole invariant lands in one
     # conditional update, so a concurrent commit cannot duplicate items.
+    # Terminal image states (committed/deleted) are excluded so a commit can
+    # never resurrect a deleted image's items.
     result = await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
@@ -188,7 +208,12 @@ async def add_items_for_image(
             "images": {
                 "$elemMatch": {
                     "imageId": image_id,
-                    "status": {"$ne": ImageState.COMMITTED.value},
+                    "status": {
+                        "$nin": [
+                            ImageState.COMMITTED.value,
+                            ImageState.DELETED.value,
+                        ]
+                    },
                 }
             },
         },
@@ -200,6 +225,7 @@ async def add_items_for_image(
                 "images.$.updatedAt": current,
                 "updatedAt": current,
             },
+            "$inc": {"revision": 1},
         },
     )
     if result.matched_count == 0:
@@ -228,7 +254,8 @@ async def start_image_detection(
                 "images.$.status": ImageState.DETECTING.value,
                 "images.$.updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
     )
 
@@ -266,7 +293,8 @@ async def save_image_detection_success(
                 },
                 "images.$.updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
     )
 
@@ -300,7 +328,8 @@ async def save_image_detection_failure(
                 },
                 "images.$.updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
     )
 
@@ -332,7 +361,7 @@ async def save_image_boxes_and_subject(
             "userId": user_id,
             "images": {"$elemMatch": {"imageId": image_id}},
         },
-        {"$set": set_fields},
+        {"$set": set_fields, "$inc": {"revision": 1}},
     )
 
 
@@ -360,7 +389,8 @@ async def delete_batch_image(
                 "items.$[item].status": ItemState.DELETED.value,
                 "items.$[item].updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
         array_filters=[{"item.imageId": image_id}],
     )
@@ -391,6 +421,10 @@ async def commit_image_boxes(
                 item for item in batch.get("items", [])
                 if item.get("imageId") == image_id and item.get("status") != ItemState.DELETED.value
             ]
+        if target_image["status"] != ImageState.READY.value:
+            # The API only commits ready images; reject deleted (or otherwise
+            # not-yet-ready) images instead of resurrecting deleted content.
+            raise ValueError("Image not found")
 
         existing_items = [
             item for item in batch.get("items", [])
@@ -412,17 +446,19 @@ async def commit_image_boxes(
             new_items.append(item_document)
 
         # Guarded append: the update only lands on the exact document version
-        # that was read (updatedAt equality), so two concurrent commits cannot
-        # duplicate items or orders; the loser re-reads and retries.
+        # that was read (revision equality), so two concurrent commits cannot
+        # duplicate items or orders; the loser re-reads and retries. Requiring
+        # the READY pre-commit state in the database predicate means a delete
+        # that won the race can never be overwritten back to committed.
         result = await collection.update_one(
             {
                 "_id": _object_id(batch_id),
                 "userId": user_id,
-                "updatedAt": batch.get("updatedAt"),
+                **_revision_guard(batch),
                 "images": {
                     "$elemMatch": {
                         "imageId": image_id,
-                        "status": {"$ne": ImageState.COMMITTED.value},
+                        "status": ImageState.READY.value,
                     }
                 },
             },
@@ -434,6 +470,7 @@ async def commit_image_boxes(
                     "images.$.updatedAt": now,
                     "updatedAt": now,
                 },
+                "$inc": {"revision": 1},
             },
         )
         if result.matched_count == 1:
@@ -475,7 +512,7 @@ async def claim_item(
                 "items.$.extraction.requestStartedAt": now,
                 "updatedAt": now,
             },
-            "$inc": {"items.$.retryCount": 1},
+            "$inc": {"items.$.retryCount": 1, "revision": 1},
         },
         return_document=ReturnDocument.AFTER,
     )
@@ -528,7 +565,8 @@ async def save_item_extraction_success(
                 "items.$.leaseUntil": None,
                 "items.$.updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
     )
     return result is not None
@@ -566,7 +604,8 @@ async def save_item_extraction_failure(
                 "items.$.leaseUntil": None,
                 "items.$.updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
     )
     return result is not None
@@ -603,7 +642,8 @@ async def reset_item_for_retry(
                 "items.$.leaseUntil": None,
                 "items.$.updatedAt": now,
                 "updatedAt": now,
-            }
+            },
+            "$inc": {"revision": 1},
         },
     )
     return result is not None
@@ -635,7 +675,7 @@ async def update_item_draft(
             "userId": user_id,
             "items": {"$elemMatch": {"itemId": item_id}},
         },
-        {"$set": set_fields},
+        {"$set": set_fields, "$inc": {"revision": 1}},
         return_document=ReturnDocument.AFTER,
     )
     if result is None:
@@ -679,7 +719,8 @@ async def mark_item_deleted(
                     "items.$.deletedAt": now,
                     "items.$.updatedAt": now,
                     "updatedAt": now,
-                }
+                },
+                "$inc": {"revision": 1},
             },
         )
         if result is not None:
@@ -740,6 +781,7 @@ async def undo_item_deletion(
                 "items.$.previousStatus": "",
                 "items.$.deletedAt": "",
             },
+            "$inc": {"revision": 1},
         },
     )
     return result is not None
@@ -790,14 +832,15 @@ async def submit_items_and_complete_batch(
             update["status"] = BatchState.COMPLETED.value
 
         # Guarded write: outcomes + completion only land on the exact version
-        # that was read, so concurrent item work is never overwritten.
+        # that was read (revision equality), so concurrent item work is never
+        # overwritten — even when both writes carry the same millisecond.
         result = await collection.update_one(
             {
                 "_id": _object_id(batch_id),
                 "userId": user_id,
-                "updatedAt": batch.get("updatedAt"),
+                **_revision_guard(batch),
             },
-            {"$set": update},
+            {"$set": update, "$inc": {"revision": 1}},
         )
         if result.matched_count == 1:
             return await collection.find_one(
@@ -835,7 +878,10 @@ async def mark_batch_cleaned(
     current = now or _now()
     await _collection(database).update_one(
         {"_id": _object_id(batch_id)},
-        {"$set": {"status": BatchState.DELETED.value, "updatedAt": current}},
+        {
+            "$set": {"status": BatchState.DELETED.value, "updatedAt": current},
+            "$inc": {"revision": 1},
+        },
     )
 
 

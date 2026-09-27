@@ -38,16 +38,26 @@ array from a stale snapshot. The mutation surface is now:
    issue one `update_one`/`find_one_and_update` with an `$elemMatch` bound to
    the same element (`items.$.…`, `images.$.…`) plus state/lease predicates in
    the database write. A cheap existence read preserves the
-   `ValueError("Batch not found")` contract.
+   `ValueError("Batch not found")` contract. Every writer advances the batch
+   document's monotonic `revision` counter (`$inc`).
 2. **Atomic appends** — `add_source_image`, `add_items_for_image`, and
    `commit_image_boxes` append with `$push` (optionally `$each`) combined with
    the image state transition in one update, so concurrent commits cannot
-   duplicate items or orders.
+   duplicate items or orders. `add_items_for_image` excludes terminal image
+   states (`$nin [committed, deleted]`) and `commit_image_boxes` requires the
+   `ready` pre-commit state, so a delete that wins a race can never be
+   overwritten back to `committed` (no resurrection).
 3. **Guarded read-compute-write (OCC)** — `commit_image_boxes` and
-   `submit_items_and_complete_batch` re-check `updatedAt` equality in the
-   write filter (the write only lands on the exact version that was read) and
-   retry on a lost race (`_MAX_OCC_ATTEMPTS`). No stale full-array write can
-   land; no process-local lock exists.
+   `submit_items_and_complete_batch` re-check `revision` equality in the
+   write filter (the write only lands on the exact document version that was
+   read) and retry on a lost race (`_MAX_OCC_ATTEMPTS`). `revision` is
+   collision-safe where `updatedAt` equality is not: BSON dates carry
+   millisecond precision, so two writers that read the same version and write
+   within one millisecond could both match a timestamp guard, while the first
+   writer's `$inc` always invalidates the second's revision filter. Batches
+   created before the token existed are matched via
+   `revision: {"$exists": False}` and normalized on first write. No stale
+   full-array write can land; no process-local lock exists.
 4. **Lease-guarded completion** — `save_item_extraction_success` /
    `save_item_extraction_failure` require the claimed `EXTRACTING` lease
    (`status` + `leaseUntil` equality) and return `bool`; a stale owner's
@@ -63,13 +73,13 @@ extend that tuple when `ItemState` gains members.
 |---|---|---|---|---|---|
 | `create_batch` | Insert a new active batch document. | Direct: `test_create_batch_persists_and_loads` | `insert_one(build_batch_document(...))` | None significant. | — |
 | `add_source_image` | Append an uploaded image to a batch. | Direct: `test_add_source_image_round_trips` | Atomic `$push` append; `matched_count == 0` raises `Batch not found` | None significant. | — |
-| `add_items_for_image` | Create queued items for an image and commit the image. | Direct: `test_add_items_for_image_commits_image_and_creates_items` | Atomic `$push` `$each` + conditional image commit (one update; rejects missing/committed images with `ValueError`) | Multi-item ordering continuation. | `test_add_items_for_image_continues_ordering_across_calls` |
+| `add_items_for_image` | Create queued items for an image and commit the image. | Direct: `test_add_items_for_image_commits_image_and_creates_items` | Atomic `$push` `$each` + conditional image commit (one update; `$nin [committed, deleted]` rejects missing/terminal images with `ValueError`; `$inc revision`) | Multi-item ordering continuation. | `test_add_items_for_image_continues_ordering_across_calls` |
 | `start_image_detection` | Mark an image `detecting`. | Direct (new): `test_start_image_detection_sets_image_to_detecting` | Targeted `images.$` positional `$set` | "Batch not found" `ValueError`; missing image is a no-op. | `test_start_image_detection_raises_when_batch_missing` |
 | `save_image_detection_success` | Mark image `ready` with subject/boxes/detection. | Direct (new): `test_save_image_detection_success_sets_ready_with_detection_payload` | Targeted `images.$` positional `$set` (detection subdoc: `{model, rawProviderResponse, failureCode:null, failureMessage:null}`) | None significant. | — |
 | `save_image_detection_failure` | Mark image `detect-failed` with failure detection. | Direct (new): `test_save_image_detection_failure_sets_detect_failed_with_detection_payload` | Targeted `images.$` positional `$set` (detection subdoc: `{model:null, rawProviderResponse:null, failureCode, failureMessage}`) | None significant. | — |
 | `save_image_boxes_and_subject` | Mark image `ready`, set boxes, conditionally set subject. | Direct (new): `test_save_image_boxes_and_subject_sets_ready_boxes_and_conditional_subject` | Targeted `images.$` positional `$set` (subject set only when not `None`) | None significant. | — |
 | `delete_batch_image` | Mark image `deleted` and all its items `deleted`. | Direct (new): `test_delete_batch_image_marks_image_and_items_deleted` | One atomic update: `images.$` + `items.$[item]` array filter on `imageId` | Multi-item/multi-image interaction. | `test_delete_batch_image_marks_all_items_for_image_deleted` |
-| `commit_image_boxes` | Create queued items from image boxes; mark image `committed`; idempotent. | Direct (new): `test_commit_image_boxes_creates_items_and_is_idempotent` | OCC-guarded `$push` `$each` + conditional image commit; retries on lost race | Concurrent-commit races (real-Mongo lane). | `test_commit_image_boxes_continues_item_ordering` |
+| `commit_image_boxes` | Create queued items from image boxes; mark image `committed`; idempotent. | Direct (new): `test_commit_image_boxes_creates_items_and_is_idempotent` | OCC-guarded (`revision` equality) `$push` `$each` + conditional image commit requiring `ready` state (deleted/other states rejected with `ValueError`); retries on lost race | Concurrent-commit races (real-Mongo lane). | `test_commit_image_boxes_continues_item_ordering` |
 | `claim_item` | Atomically lease an item for extraction. | Indirect via worker tests; **atomic path out of scope** | `find_one_and_update` with `$set` (positional `items.$.`) + `$inc` (`items.$.retryCount`) | Atomic/concurrency behavior not characterized (out of scope). | `test_claim_item_acquires_queued_item` (future, when atomic paths in scope) |
 | `save_item_extraction_success` | Mark item `ready` with crop/draft/extraction, clear lease. | Direct (new): `test_save_item_extraction_success_sets_ready_payload_and_clears_lease` | Lease-guarded targeted `items.$` write; requires owned `EXTRACTING` lease; returns `bool` | Stale-lease/deleted-item races (real-Mongo lane). | — |
 | `save_item_extraction_failure` | Mark item `failed` with extraction, clear lease. | Direct (new): `test_save_item_extraction_failure_sets_failed_and_clears_lease` | Lease-guarded targeted `items.$` write; requires owned `EXTRACTING` lease; returns `bool` | Stale-lease races (real-Mongo lane). | — |
@@ -77,7 +87,7 @@ extend that tuple when `ItemState` gains members.
 | `update_item_draft` | Merge allowed draft keys into an item. | Direct (new): `test_update_item_draft_merges_allowed_keys_and_returns_none_for_missing` | Targeted `items.$.draft.<key>` `$set` (allowed: `text, problemType, graphDsl, correctAnswer, tags, subject`) | None significant. | — |
 | `mark_item_deleted` | Save `previousStatus`, mark item `deleted`; idempotent for `deleted`/`submitted`. | Direct (new): `test_mark_item_deleted_saves_previous_status_and_is_idempotent` | One conditional `find_one_and_update` per candidate status (first match wins atomically) | `submitted` idempotency (returns `True` without `previousStatus`). | `test_mark_item_deleted_is_idempotent_for_submitted` |
 | `undo_item_deletion` | Restore `previousStatus`, drop `deletedAt`; `False` if not deleted/no prior status. | Direct (new): `test_undo_item_deletion_restores_status_and_returns_false_when_not_deleted` | Targeted conditional write with `$set` + `$unset`, guarded on observed status/`previousStatus` | Missing `previousStatus` returns `False`. | `test_undo_item_deletion_returns_false_without_previous_status` |
-| `submit_items_and_complete_batch` | Persist per-item submit outcomes; complete batch when all non-deleted submitted. | Direct (new): `test_submit_items_and_complete_batch_completes_only_when_all_submitted` | OCC-guarded write (`updatedAt` equality, retry on lost race) | Deleted items excluded from completion check; concurrent races (real-Mongo lane). | `test_submit_items_completes_when_only_deleted_items_remain_unsubmitted` |
+| `submit_items_and_complete_batch` | Persist per-item submit outcomes; complete batch when all non-deleted submitted. | Direct (new): `test_submit_items_and_complete_batch_completes_only_when_all_submitted` | OCC-guarded write (`revision` equality, retry on lost race) | Deleted items excluded from completion check; concurrent races (real-Mongo lane). | `test_submit_items_completes_when_only_deleted_items_remain_unsubmitted` |
 | `mark_batch_cleaned` | Mark batch `deleted`. | Direct: `test_mark_batch_cleaned` | `$set: {status, updatedAt}` | None significant. | — |
 | `ensure_batch_indexes` | Create batch collection indexes. | None (DDL; `create_index` is a no-op on `FakeCollection`) | `create_index` per `BATCH_INDEXES` | Index creation not verified against a real Mongo. | `test_ensure_batch_indexes_creates_expected_indexes` (requires real/index-fake) |
 

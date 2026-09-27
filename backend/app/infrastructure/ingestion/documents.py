@@ -155,6 +155,10 @@ def build_batch_document(
         "status": BatchState.ACTIVE.value,
         "images": [],
         "items": [],
+        # Monotonic mutation counter used as the optimistic-concurrency token
+        # by guarded read-compute-write mutations (BSON dates only carry
+        # millisecond precision, so updatedAt equality is not collision-safe).
+        "revision": 0,
         "createdAt": now,
         "updatedAt": now,
         "expiresAt": expires_at,

@@ -564,6 +564,39 @@ async def test_delete_batch_image_marks_image_and_items_deleted(
 
 
 @pytest.mark.asyncio
+async def test_delete_batch_image_only_deletes_the_targeted_images_items(
+    database: FakeDatabase, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression: dotted array filters (``item.imageId``) must select only
+    the requested image's items, not every item in the batch."""
+    batch, image_a, items_a = await _batch_with_items(database, user_id, settings)
+    source_image_b = build_source_image(
+        bucket="media",
+        object_key="users/u/img-b.png",
+        content_type="image/png",
+        size_bytes=42,
+        sha256="sha-b",
+        uploaded_at=NOW,
+    )
+    image_b = await add_source_image(database, batch["_id"], user_id, source_image_b, order=1, now=NOW)
+    items_b = await add_items_for_image(
+        database, batch["_id"], user_id, image_b["imageId"], item_count=1, starting_order=1, now=NOW
+    )
+
+    await delete_batch_image(database, batch["_id"], user_id, image_a["imageId"], now=NOW)
+
+    loaded = await get_batch(database, batch["_id"], user_id)
+    item_a = next(i for i in loaded["items"] if i["itemId"] == items_a[0]["itemId"])
+    item_b = next(i for i in loaded["items"] if i["itemId"] == items_b[0]["itemId"])
+    assert item_a["status"] == ItemState.DELETED.value
+    # Image B's item must be untouched by image A's deletion.
+    assert item_b["status"] == ItemState.QUEUED.value
+    image_status = {img["imageId"]: img["status"] for img in loaded["images"]}
+    assert image_status[image_a["imageId"]] == ImageState.DELETED.value
+    assert image_status[image_b["imageId"]] == ImageState.COMMITTED.value
+
+
+@pytest.mark.asyncio
 async def test_commit_image_boxes_creates_items_and_is_idempotent(
     database: FakeDatabase, user_id: ObjectId, settings: Settings
 ) -> None:
