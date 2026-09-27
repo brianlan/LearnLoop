@@ -468,6 +468,8 @@ async def test_save_image_detection_success_sets_ready_with_detection_payload(
     database: FakeDatabase, user_id: ObjectId, settings: Settings
 ) -> None:
     batch, image = await _batch_with_image(database, user_id, settings)
+    # The legal flow: detection must be in flight before a result can land.
+    await start_image_detection(database, batch["_id"], user_id, image["imageId"], now=NOW)
     boxes = [{"x": 1, "y": 2, "w": 3, "h": 4}]
     raw = {"provider": "resp"}
 
@@ -496,6 +498,8 @@ async def test_save_image_detection_failure_sets_detect_failed_with_detection_pa
     database: FakeDatabase, user_id: ObjectId, settings: Settings
 ) -> None:
     batch, image = await _batch_with_image(database, user_id, settings)
+    # The legal flow: detection must be in flight before a failure can land.
+    await start_image_detection(database, batch["_id"], user_id, image["imageId"], now=NOW)
 
     await save_image_detection_failure(
         database, batch["_id"], user_id, image["imageId"],

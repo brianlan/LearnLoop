@@ -243,11 +243,24 @@ async def start_image_detection(
 ) -> None:
     await _load_batch_for_update(database, batch_id, user_id)
 
+    # Only images whose current state legally transitions to DETECTING; a
+    # deleted/committed image can never be re-entered by a late detection
+    # start, so a lost race is a silent no-op.
     await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
             "userId": user_id,
-            "images": {"$elemMatch": {"imageId": image_id}},
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": {
+                        "$in": [
+                            ImageState.UPLOADED.value,
+                            ImageState.DETECT_FAILED.value,
+                        ]
+                    },
+                }
+            },
         },
         {
             "$set": {
@@ -274,11 +287,19 @@ async def save_image_detection_success(
 ) -> None:
     await _load_batch_for_update(database, batch_id, user_id)
 
+    # The result may only land on the image the detection request started
+    # from; if delete (or a commit) won the race, the write matches nothing
+    # and the stale result is discarded instead of resurrecting the image.
     await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
             "userId": user_id,
-            "images": {"$elemMatch": {"imageId": image_id}},
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": ImageState.DETECTING.value,
+                }
+            },
         },
         {
             "$set": {
@@ -311,11 +332,18 @@ async def save_image_detection_failure(
 ) -> None:
     await _load_batch_for_update(database, batch_id, user_id)
 
+    # Same ownership rule as the success write: only the in-flight DETECTING
+    # image can be marked failed.
     await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
             "userId": user_id,
-            "images": {"$elemMatch": {"imageId": image_id}},
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": ImageState.DETECTING.value,
+                }
+            },
         },
         {
             "$set": {
@@ -355,11 +383,24 @@ async def save_image_boxes_and_subject(
     if subject is not None:
         set_fields["images.$.subject"] = subject
 
+    # Box edits are legal from any non-terminal state (the API blocks only
+    # committed/deleted images); the database predicate enforces the same
+    # boundary so a delete that wins the race cannot be overwritten.
     await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
             "userId": user_id,
-            "images": {"$elemMatch": {"imageId": image_id}},
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": {
+                        "$nin": [
+                            ImageState.COMMITTED.value,
+                            ImageState.DELETED.value,
+                        ]
+                    },
+                }
+            },
         },
         {"$set": set_fields, "$inc": {"revision": 1}},
     )
@@ -811,6 +852,11 @@ async def submit_items_and_complete_batch(
         for item in items:
             result = result_by_item.get(item.get("itemId"))
             if result is None:
+                continue
+            if item.get("status") == ItemState.DELETED.value:
+                # Deletion won the race (possibly between this OCC retry's
+                # read and the first, rejected attempt): a stale submit
+                # result must not resurrect the deleted item.
                 continue
             item["status"] = result["status"]
             item["submit"] = result["submit"]
