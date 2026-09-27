@@ -74,25 +74,47 @@ services:
       start_period: 20s
 
   rustfs-bootstrap:
-    # Docker Hub denies pulls for minio/mc; Quay serves the same pinned release (#599).
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    # Creates the S3 bucket with the backend image's boto3. No external mc image:
+    # Docker Hub (#599) and Quay both deny anonymous minio/mc pulls.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     profiles: ["bootstrap"]
     restart: "no"
     depends_on:
       rustfs:
         condition: service_healthy
     environment:
+      S3_ENDPOINT: http://rustfs:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-replace-me}
       S3_BUCKET: ${S3_BUCKET:-learnloop-media}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-replace-me}
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        until mc alias set learnloop http://rustfs:9000 "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY"; do
-          sleep 2;
-        done;
-        mc mb --ignore-existing "learnloop/$$S3_BUCKET";
-        mc ls learnloop;
+        python - <<'PY'
+        import time
+
+        from app.infrastructure.config.settings import Settings
+        from app.infrastructure.storage.s3 import S3StorageAdapter
+
+        settings = Settings()
+        bucket = settings.s3_bucket
+        storage = S3StorageAdapter(settings)
+        deadline = time.time() + 60
+        last_error = "object storage never became reachable"
+
+        while time.time() < deadline:
+            try:
+                created = storage.ensure_bucket(bucket)
+                print(f"{'created' if created else 'using existing'} bucket {bucket}")
+                break
+            except Exception as exc:  # bootstrap only: retry while rustfs is unreachable
+                last_error = str(exc)
+                time.sleep(2)
+        else:
+            raise SystemExit(last_error)
+        PY
 
   app:
     build:
