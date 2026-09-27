@@ -198,6 +198,7 @@ async def _grade_answer(
                 user_answer=answer,
                 correct_answer=str(correct_answer.get("display", "")),
                 subject=str(problem.get("subject", "math")),
+                graph_dsl=problem.get("graphDsl"),
             )
             status = GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT
             return status, GradingMethod.VLM, result.feedback

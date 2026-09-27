@@ -334,6 +334,107 @@ async def test_vlm_grading_includes_subject_in_task_data() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vlm_grading_allows_missing_image_and_carries_graph_dsl_chat() -> None:
+    async def completion_fn(**kwargs):
+        content = kwargs["messages"][1]["content"]
+        assert all(part["type"] == "text" for part in content)
+        grading_context = content[0]["text"]
+        assert '"graphDsl": "graph { a -- b }"' in grading_context
+        assert '"problemText": "Solve x + 1 = 2."' in grading_context
+        return _mock_response(
+            json.dumps(
+                {
+                    "isCorrect": True,
+                    "feedback": "Correct.",
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(completion_fn)
+
+    result = await client.grade_short_answer(
+        problem_text="Solve x + 1 = 2.",
+        user_answer="1",
+        correct_answer="1",
+        graph_dsl="graph { a -- b }",
+    )
+
+    assert result.is_correct is True
+
+
+@pytest.mark.asyncio
+async def test_vlm_grading_allows_missing_image_and_carries_graph_dsl_responses() -> None:
+    captured: dict = {}
+
+    async def responses_fn(**kwargs):
+        captured["input"] = kwargs["input"]
+        return _mock_responses_response(
+            json.dumps(
+                {
+                    "isCorrect": False,
+                    "feedback": "Incorrect.",
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(responses_fn=responses_fn, api_mode="responses")
+
+    result = await client.grade_short_answer(
+        problem_text="Solve x + 1 = 2.",
+        user_answer="2",
+        correct_answer="1",
+        graph_dsl="graph { c -- d }",
+    )
+
+    assert result.is_correct is False
+    input_items = captured["input"][0]["content"]
+    assert all(item["type"] == "input_text" for item in input_items)
+    assert '"graphDsl": "graph { c -- d }"' in input_items[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_vlm_grading_omits_graph_dsl_key_when_not_provided() -> None:
+    async def completion_fn(**kwargs):
+        grading_context = kwargs["messages"][1]["content"][0]["text"]
+        assert '"graphDsl"' not in grading_context
+        return _mock_response(
+            json.dumps(
+                {
+                    "isCorrect": True,
+                    "feedback": "Correct.",
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(completion_fn)
+
+    result = await client.grade_short_answer(
+        problem_text="What is 1 + 1?",
+        user_answer="1",
+        correct_answer="1",
+    )
+
+    assert result.is_correct is True
+
+
+def test_image_required_validator_still_applies_to_non_grading_requests() -> None:
+    from pydantic import ValidationError
+
+    from app.infrastructure.vlm.client import (
+        ClassificationRequest,
+        DetectionRequest,
+        ExtractionRequest,
+    )
+
+    for request_class in (ExtractionRequest, ClassificationRequest, DetectionRequest):
+        with pytest.raises(ValidationError):
+            request_class(model="demo", prompt="p", expectedResponseSchema={})
+
+
+@pytest.mark.asyncio
 async def test_vlm_extraction_accepts_fenced_json_content() -> None:
     async def completion_fn(**kwargs):
         return _mock_response(

@@ -106,6 +106,7 @@ async def grade_short_answer_item(
                 user_answer=str(answer_raw),
                 correct_answer=str(correct_answer.get("display", "")),
                 subject=str(snapshot.get("subject", "math")),
+                graph_dsl=snapshot.get("graphDsl"),
             )
             graded_item["grading"] = build_grading_result(
                 status=GradingStatus.CORRECT if result.is_correct else GradingStatus.INCORRECT,

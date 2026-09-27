@@ -341,6 +341,42 @@ async def test_grade_short_answer_item_success_correct() -> None:
     assert graded["grading"]["retryCount"] == 0
 
 
+async def test_grade_short_answer_item_passes_graph_dsl_without_image_or_audit_read() -> None:
+    result = type(
+        "GradingResult",
+        (object,),
+        {
+            "is_correct": True,
+            "feedback": "Correct.",
+            "model": "grading-model",
+            "provider_metadata": {},
+            "raw_provider_response": {},
+        },
+    )()
+
+    class NoS3Reads:
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+            raise AssertionError(f"unexpected storage read: {Bucket}/{Key}")
+
+    vlm = FakeVLMClient(result=result)
+    item = _short_answer_item(source_image=None)
+    item["problemSnapshot"]["graphDsl"] = "graph { c -- d }"
+    item["problemSnapshot"]["variation"] = {
+        "original": {"auditImage": {"bucket": "audit-bucket", "objectKey": "audit/key"}}
+    }
+
+    graded = await grade_short_answer_item(item, vlm_client=vlm, storage=NoS3Reads(), now=NOW)
+
+    assert vlm.call_count == 1
+    call_kwargs = vlm.last_call_kwargs
+    assert call_kwargs["problem_text"] == "Solve this."
+    assert call_kwargs["graph_dsl"] == "graph { c -- d }"
+    assert call_kwargs["image_base64"] is None
+    assert call_kwargs.get("image_url") is None
+    assert graded["grading"]["status"] == "correct"
+    assert graded["grading"]["method"] == "vlm"
+
+
 async def test_grade_short_answer_item_success_incorrect() -> None:
     result = type(
         "GradingResult",

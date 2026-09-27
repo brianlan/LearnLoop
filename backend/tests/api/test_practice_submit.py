@@ -314,6 +314,66 @@ async def test_submit_short_answer_vlm_passes_problem_subject(client: AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_submit_short_answer_variant_passes_graph_dsl_without_image_or_audit_read(
+    client: AsyncClient, practice_app: FastAPI
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.presentation.deps import get_s3_storage
+
+    database: FakeDatabase = practice_app.state.fake_database
+    user_id = practice_app.state.user["_id"]
+    problem = make_problem(
+        user_id,
+        problem_type="short-answer",
+        text="Variant problem: solve the transformed question.",
+        correct_answer_display="42",
+    )
+    problem["graphDsl"] = "graph { a -- b }"
+    problem["sourceImage"] = None
+    problem["variation"] = {
+        "original": {"auditImage": {"bucket": "audit-bucket", "objectKey": "audit/key"}}
+    }
+    database.seed("problems", [problem])
+
+    fake_grading = GradingResult(
+        request_type="short-answer-grading",
+        model="test-model",
+        is_correct=True,
+        feedback="Correct.",
+        provider_metadata={},
+        raw_provider_response={},
+    )
+
+    fake_vlm = AsyncMock()
+    fake_vlm.grade_short_answer = AsyncMock(return_value=fake_grading)
+    fake_vlm.aclose = AsyncMock()
+    practice_app.dependency_overrides[get_grading_vlm_client] = lambda: fake_vlm
+
+    class NoStorageReads:
+        def get_object(self, bucket: str, key: str) -> dict[str, object]:
+            raise AssertionError(f"unexpected storage read: {bucket}/{key}")
+
+    practice_app.dependency_overrides[get_s3_storage] = lambda: NoStorageReads()
+
+    response = await client.post(
+        "/api/v1/practice/attempts",
+        json={"problemId": str(problem["_id"]), "submittedAnswer": "42"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["gradingStatus"] == "correct"
+    assert data["gradingMethod"] == "vlm"
+
+    fake_vlm.grade_short_answer.assert_awaited_once()
+    call_kwargs = fake_vlm.grade_short_answer.call_args.kwargs
+    assert call_kwargs["problem_text"] == "Variant problem: solve the transformed question."
+    assert call_kwargs["graph_dsl"] == "graph { a -- b }"
+    assert call_kwargs["image_base64"] is None
+    assert call_kwargs.get("image_url") is None
+
+
+@pytest.mark.asyncio
 async def test_submit_short_answer_vlm_no_feedback_on_pending_review(client: AsyncClient, practice_app: FastAPI) -> None:
     from unittest.mock import AsyncMock
     from app.infrastructure.vlm.client import VLMError

@@ -73,7 +73,14 @@ class GradingRequest(_RequestBase):
     correct_answer: str = Field(alias="correctAnswer")
     problem_text: str = Field(alias="problemText")
     subject: str = "math"
+    graph_dsl: str | None = Field(default=None, alias="graphDsl")
     expected_response_schema: dict[str, Any] = Field(alias="expectedResponseSchema")
+
+    @model_validator(mode="after")
+    def validate_image_reference(self) -> "GradingRequest":
+        # Grading is allowed without an image (text/GraphDSL-only variants);
+        # extraction/detection/classification keep the image-required rule.
+        return self
 
 
 class ClassificationRequest(_RequestBase):
@@ -411,6 +418,7 @@ class VLMClient(BaseVLMClient):
         user_answer: str,
         correct_answer: str,
         subject: str = "math",
+        graph_dsl: str | None = None,
     ) -> GradingResult:
         request = GradingRequest(
             model=self._model,
@@ -421,6 +429,7 @@ class VLMClient(BaseVLMClient):
             userAnswer=user_answer,
             correctAnswer=correct_answer,
             subject=subject,
+            graphDsl=graph_dsl,
             expectedResponseSchema={
                 "type": "object",
                 "required": ["isCorrect", "feedback"],
@@ -476,6 +485,7 @@ class VLMClient(BaseVLMClient):
                 user_answer=request.user_answer,
                 correct_answer=request.correct_answer,
                 subject=request.subject,
+                graph_dsl=request.graph_dsl,
                 expected_response_schema=request.expected_response_schema,
             )
         elif isinstance(request, ClassificationRequest):
@@ -525,6 +535,7 @@ class VLMClient(BaseVLMClient):
                 user_answer=request.user_answer,
                 correct_answer=request.correct_answer,
                 subject=request.subject,
+                graph_dsl=request.graph_dsl,
                 expected_response_schema=request.expected_response_schema,
             )
         elif isinstance(request, ClassificationRequest):

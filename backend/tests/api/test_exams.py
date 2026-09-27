@@ -71,6 +71,7 @@ class FakeVLMClient:
         user_answer: str,
         correct_answer: str,
         subject: str = "math",
+        graph_dsl: str | None = None,
     ) -> FakeGradingResult:
         self.calls += 1
         self.last_call_kwargs = {
@@ -80,6 +81,7 @@ class FakeVLMClient:
             "user_answer": user_answer,
             "correct_answer": correct_answer,
             "subject": subject,
+            "graph_dsl": graph_dsl,
         }
         response = self.responses.pop(0)
         if isinstance(response, Exception):
