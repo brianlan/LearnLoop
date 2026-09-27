@@ -278,6 +278,8 @@ async def test_process_item_success_math(
         storage,
         subject="math",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     batch = await get_batch(database, batch_id, user_id)
     item = batch["items"][0]
@@ -324,6 +326,8 @@ async def test_process_item_normalizes_draft_text_and_preserves_raw_text(
         storage,
         subject="math",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     batch = await get_batch(database, batch_id, user_id)
     item = batch["items"][0]
@@ -362,6 +366,8 @@ async def test_process_item_routes_to_english_client(
         storage,
         subject="english",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     batch = await get_batch(database, batch_id, user_id)
     item = batch["items"][0]
@@ -397,6 +403,8 @@ async def test_process_item_persists_english_correct_answer(
         storage,
         subject="english",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     batch = await get_batch(database, batch_id, user_id)
     item = batch["items"][0]
@@ -438,6 +446,8 @@ async def test_process_item_leaves_answer_empty_when_correct_answer_null(
         storage,
         subject="english",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     batch = await get_batch(database, batch_id, user_id)
     item = batch["items"][0]
@@ -474,6 +484,8 @@ async def test_process_item_failure_isolated(
         storage,
         subject="math",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     batch = await get_batch(database, batch_id, user_id)
     item = batch["items"][0]
@@ -510,6 +522,8 @@ async def test_process_item_source_missing_marks_failed(
         storage,
         subject="math",
         box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
     )
     # Remove the source object so storage read fails
     storage._objects.clear()
@@ -689,9 +703,8 @@ async def test_process_item_completed_item_not_reextracted(
     math_client = FakeIngestionVLMClient(model="math-model")
     english_client = FakeIngestionVLMClient(model="english-model")
 
-    # process_item does not guard status itself; claim_item does. Calling it directly on a
-    # ready item would re-extract, so this test documents that completed items must be
-    # filtered by the claim layer.
+    # Completed items are filtered by the claim layer; process_item's guarded
+    # completion writes additionally require an owned extracting lease.
     claimed = await claim_next_item(database, settings, now=datetime.now(UTC))
     assert claimed is None
     assert len(math_client.calls) == 0

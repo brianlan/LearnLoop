@@ -65,18 +65,6 @@ async def _load_batch_for_update(
     return batch
 
 
-async def _persist_batch(
-    database: Any,
-    batch_id: str | ObjectId,
-    user_id: Any,
-    set_fields: dict[str, Any],
-) -> None:
-    await _collection(database).update_one(
-        {"_id": _object_id(batch_id), "userId": user_id},
-        {"$set": set_fields},
-    )
-
-
 def is_batch_expired(batch: Document, *, now: datetime | None = None) -> bool:
     expires_at = batch.get("expiresAt")
     if not isinstance(expires_at, datetime):
@@ -132,6 +120,27 @@ async def get_active_batch_for_user(
     )
 
 
+# Bound for optimistic-concurrency retries (guarded read-compute-write
+# mutations). Each attempt only lands on the exact document version it read,
+# so a lost race re-reads and retries instead of overwriting concurrent work.
+# ponytail: fixed bound; raise if a writer starves, which would indicate a bug.
+_MAX_OCC_ATTEMPTS = 50
+
+
+def _revision_guard(batch: Document) -> dict[str, Any]:
+    """OCC predicate matching the exact document version that was read.
+
+    ``revision`` is advanced by every writer (``$inc``), so equality on it is
+    collision-safe where ``updatedAt`` equality is not: two writers that read
+    the same version and write within the same millisecond cannot both match,
+    because the first writer's ``$inc`` invalidates the second's filter.
+    Batches created before the revision token existed have no field yet.
+    """
+    if "revision" in batch:
+        return {"revision": batch["revision"]}
+    return {"revision": {"$exists": False}}
+
+
 async def add_source_image(
     database: Any,
     batch_id: str | ObjectId,
@@ -150,11 +159,16 @@ async def add_source_image(
         now=current,
     )
 
-    batch = await _load_batch_for_update(database, batch_id, user_id)
-
-    images = list(batch.get("images", []))
-    images.append(image_document)
-    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": current})
+    result = await _collection(database).update_one(
+        {"_id": _object_id(batch_id), "userId": user_id},
+        {
+            "$push": {"images": image_document},
+            "$set": {"updatedAt": current},
+            "$inc": {"revision": 1},
+        },
+    )
+    if result.matched_count == 0:
+        raise ValueError("Batch not found")
     return image_document
 
 
@@ -169,31 +183,53 @@ async def add_items_for_image(
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     current = now or _now()
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    items = list(batch.get("items", []))
     new_items: list[dict[str, Any]] = []
     for offset in range(item_count):
         item_id = new_item_id()
         item_document = build_item_document(
             item_id=item_id,
-            batch_id=batch["_id"],
+            batch_id=_object_id(batch_id),
             image_id=image_id,
             order=starting_order + offset,
             now=current,
         )
-        items.append(item_document)
         new_items.append(item_document)
 
-    images = list(batch.get("images", []))
-    for image in images:
-        if image.get("imageId") == image_id:
-            image["status"] = ImageState.COMMITTED.value
-            image["committedAt"] = current
-            image["updatedAt"] = current
-            break
-
-    await _persist_batch(database, batch_id, user_id, {"images": images, "items": items, "updatedAt": current})
+    # Atomic append + image commit: the whole invariant lands in one
+    # conditional update, so a concurrent commit cannot duplicate items.
+    # Terminal image states (committed/deleted) are excluded so a commit can
+    # never resurrect a deleted image's items.
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": {
+                        "$nin": [
+                            ImageState.COMMITTED.value,
+                            ImageState.DELETED.value,
+                        ]
+                    },
+                }
+            },
+        },
+        {
+            "$push": {"items": {"$each": new_items}},
+            "$set": {
+                "images.$.status": ImageState.COMMITTED.value,
+                "images.$.committedAt": current,
+                "images.$.updatedAt": current,
+                "updatedAt": current,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    if result.matched_count == 0:
+        raise ValueError("Image not found")
     return new_items
 
 
@@ -205,16 +241,36 @@ async def start_image_detection(
     *,
     now: datetime,
 ) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    images = list(batch.get("images", []))
-    for image in images:
-        if image.get("imageId") == image_id:
-            image["status"] = ImageState.DETECTING.value
-            image["updatedAt"] = now
-            break
-
-    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
+    # Only images whose current state legally transitions to DETECTING; a
+    # deleted/committed image can never be re-entered by a late detection
+    # start, so a lost race is a silent no-op.
+    await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": {
+                        "$in": [
+                            ImageState.UPLOADED.value,
+                            ImageState.DETECT_FAILED.value,
+                        ]
+                    },
+                }
+            },
+        },
+        {
+            "$set": {
+                "images.$.status": ImageState.DETECTING.value,
+                "images.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
 
 
 async def save_image_detection_success(
@@ -229,24 +285,39 @@ async def save_image_detection_success(
     raw_provider_response: dict[str, Any] | None,
     now: datetime,
 ) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    images = list(batch.get("images", []))
-    for image in images:
-        if image.get("imageId") == image_id:
-            image["status"] = ImageState.READY.value
-            image["subject"] = subject
-            image["boxes"] = list(boxes)
-            image["detection"] = {
-                "model": model,
-                "rawProviderResponse": raw_provider_response,
-                "failureCode": None,
-                "failureMessage": None,
-            }
-            image["updatedAt"] = now
-            break
-
-    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
+    # The result may only land on the image the detection request started
+    # from; if delete (or a commit) won the race, the write matches nothing
+    # and the stale result is discarded instead of resurrecting the image.
+    await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": ImageState.DETECTING.value,
+                }
+            },
+        },
+        {
+            "$set": {
+                "images.$.status": ImageState.READY.value,
+                "images.$.subject": subject,
+                "images.$.boxes": list(boxes),
+                "images.$.detection": {
+                    "model": model,
+                    "rawProviderResponse": raw_provider_response,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+                "images.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
 
 
 async def save_image_detection_failure(
@@ -259,22 +330,36 @@ async def save_image_detection_failure(
     failure_message: str,
     now: datetime,
 ) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    images = list(batch.get("images", []))
-    for image in images:
-        if image.get("imageId") == image_id:
-            image["status"] = ImageState.DETECT_FAILED.value
-            image["detection"] = {
-                "model": None,
-                "rawProviderResponse": None,
-                "failureCode": failure_code,
-                "failureMessage": failure_message,
-            }
-            image["updatedAt"] = now
-            break
-
-    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
+    # Same ownership rule as the success write: only the in-flight DETECTING
+    # image can be marked failed.
+    await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": ImageState.DETECTING.value,
+                }
+            },
+        },
+        {
+            "$set": {
+                "images.$.status": ImageState.DETECT_FAILED.value,
+                "images.$.detection": {
+                    "model": None,
+                    "rawProviderResponse": None,
+                    "failureCode": failure_code,
+                    "failureMessage": failure_message,
+                },
+                "images.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
 
 
 async def save_image_boxes_and_subject(
@@ -287,19 +372,38 @@ async def save_image_boxes_and_subject(
     boxes: list[dict[str, Any]],
     now: datetime,
 ) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    images = list(batch.get("images", []))
-    for image in images:
-        if image.get("imageId") == image_id:
-            image["status"] = ImageState.READY.value
-            if subject is not None:
-                image["subject"] = subject
-            image["boxes"] = list(boxes)
-            image["updatedAt"] = now
-            break
+    set_fields: dict[str, Any] = {
+        "images.$.status": ImageState.READY.value,
+        "images.$.boxes": list(boxes),
+        "images.$.updatedAt": now,
+        "updatedAt": now,
+    }
+    if subject is not None:
+        set_fields["images.$.subject"] = subject
 
-    await _persist_batch(database, batch_id, user_id, {"images": images, "updatedAt": now})
+    # Box edits are legal from any non-terminal state (the API blocks only
+    # committed/deleted images); the database predicate enforces the same
+    # boundary so a delete that wins the race cannot be overwritten.
+    await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "images": {
+                "$elemMatch": {
+                    "imageId": image_id,
+                    "status": {
+                        "$nin": [
+                            ImageState.COMMITTED.value,
+                            ImageState.DELETED.value,
+                        ]
+                    },
+                }
+            },
+        },
+        {"$set": set_fields, "$inc": {"revision": 1}},
+    )
 
 
 async def delete_batch_image(
@@ -310,22 +414,27 @@ async def delete_batch_image(
     *,
     now: datetime,
 ) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    images = list(batch.get("images", []))
-    for image in images:
-        if image.get("imageId") == image_id:
-            image["status"] = ImageState.DELETED.value
-            image["updatedAt"] = now
-            break
-
-    items = list(batch.get("items", []))
-    for item in items:
-        if item.get("imageId") == image_id:
-            item["status"] = ItemState.DELETED.value
-            item["updatedAt"] = now
-
-    await _persist_batch(database, batch_id, user_id, {"images": images, "items": items, "updatedAt": now})
+    # Image + all of its items in one atomic update (array-filtered items).
+    await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "images": {"$elemMatch": {"imageId": image_id}},
+        },
+        {
+            "$set": {
+                "images.$.status": ImageState.DELETED.value,
+                "images.$.updatedAt": now,
+                "items.$[item].status": ItemState.DELETED.value,
+                "items.$[item].updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+        array_filters=[{"item.imageId": image_id}],
+    )
 
 
 async def commit_image_boxes(
@@ -336,51 +445,78 @@ async def commit_image_boxes(
     *,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    collection = _collection(database)
+    for _ in range(_MAX_OCC_ATTEMPTS):
+        batch = await _load_batch_for_update(database, batch_id, user_id)
 
-    images = list(batch.get("images", []))
-    target_image = None
-    for image in images:
-        if image.get("imageId") == image_id:
-            target_image = image
-            break
-    if target_image is None:
-        raise ValueError("Image not found")
+        target_image = None
+        for image in batch.get("images", []):
+            if image.get("imageId") == image_id:
+                target_image = image
+                break
+        if target_image is None:
+            raise ValueError("Image not found")
 
-    if target_image["status"] == ImageState.COMMITTED.value:
-        return [
+        if target_image["status"] == ImageState.COMMITTED.value:
+            return [
+                item for item in batch.get("items", [])
+                if item.get("imageId") == image_id and item.get("status") != ItemState.DELETED.value
+            ]
+        if target_image["status"] != ImageState.READY.value:
+            # The API only commits ready images; reject deleted (or otherwise
+            # not-yet-ready) images instead of resurrecting deleted content.
+            raise ValueError("Image not found")
+
+        existing_items = [
             item for item in batch.get("items", [])
-            if item.get("imageId") == image_id and item.get("status") != ItemState.DELETED.value
+            if item.get("status") != ItemState.DELETED.value
         ]
+        next_order = max((item["order"] for item in existing_items), default=-1) + 1
 
-    existing_items = [
-        item for item in batch.get("items", [])
-        if item.get("status") != ItemState.DELETED.value
-    ]
-    next_order = max((item["order"] for item in existing_items), default=-1) + 1
+        new_items: list[dict[str, Any]] = []
+        for offset, box in enumerate(target_image.get("boxes", [])):
+            item_id = new_item_id()
+            item_document = build_item_document(
+                item_id=item_id,
+                batch_id=batch["_id"],
+                image_id=image_id,
+                order=next_order + offset,
+                now=now,
+                box=box,
+            )
+            new_items.append(item_document)
 
-    new_items: list[dict[str, Any]] = []
-    for offset, box in enumerate(target_image.get("boxes", [])):
-        item_id = new_item_id()
-        item_document = build_item_document(
-            item_id=item_id,
-            batch_id=batch["_id"],
-            image_id=image_id,
-            order=next_order + offset,
-            now=now,
-            box=box,
+        # Guarded append: the update only lands on the exact document version
+        # that was read (revision equality), so two concurrent commits cannot
+        # duplicate items or orders; the loser re-reads and retries. Requiring
+        # the READY pre-commit state in the database predicate means a delete
+        # that won the race can never be overwritten back to committed.
+        result = await collection.update_one(
+            {
+                "_id": _object_id(batch_id),
+                "userId": user_id,
+                **_revision_guard(batch),
+                "images": {
+                    "$elemMatch": {
+                        "imageId": image_id,
+                        "status": ImageState.READY.value,
+                    }
+                },
+            },
+            {
+                "$push": {"items": {"$each": new_items}},
+                "$set": {
+                    "images.$.status": ImageState.COMMITTED.value,
+                    "images.$.committedAt": now,
+                    "images.$.updatedAt": now,
+                    "updatedAt": now,
+                },
+                "$inc": {"revision": 1},
+            },
         )
-        new_items.append(item_document)
-
-    items = list(batch.get("items", []))
-    items.extend(new_items)
-
-    target_image["status"] = ImageState.COMMITTED.value
-    target_image["committedAt"] = now
-    target_image["updatedAt"] = now
-
-    await _persist_batch(database, batch_id, user_id, {"images": images, "items": items, "updatedAt": now})
-    return new_items
+        if result.matched_count == 1:
+            return new_items
+    raise RuntimeError("commit_image_boxes lost too many concurrent races")
 
 
 async def claim_item(
@@ -417,7 +553,7 @@ async def claim_item(
                 "items.$.extraction.requestStartedAt": now,
                 "updatedAt": now,
             },
-            "$inc": {"items.$.retryCount": 1},
+            "$inc": {"items.$.retryCount": 1, "revision": 1},
         },
         return_document=ReturnDocument.AFTER,
     )
@@ -438,22 +574,43 @@ async def save_item_extraction_success(
     crop: dict[str, Any],
     draft: dict[str, Any],
     extraction: dict[str, Any],
+    lease_until: datetime | None,
     now: datetime,
-) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+) -> bool:
+    """Persist an extraction result only if the caller still owns the lease.
 
-    items = list(batch.get("items", []))
-    for item in items:
-        if item.get("itemId") == item_id:
-            item["status"] = ItemState.READY.value
-            item["crop"] = crop
-            item["draft"] = draft
-            item["extraction"] = extraction
-            item["leaseUntil"] = None
-            item["updatedAt"] = now
-            break
+    Returns True when the write landed. A False return means the item was
+    deleted, already completed by a newer owner, or re-claimed with a new
+    lease; the caller must discard its stale result.
+    """
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
+    result = await _collection(database).find_one_and_update(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "status": ItemState.EXTRACTING.value,
+                    "leaseUntil": lease_until,
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.status": ItemState.READY.value,
+                "items.$.crop": crop,
+                "items.$.draft": draft,
+                "items.$.extraction": extraction,
+                "items.$.leaseUntil": None,
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    return result is not None
 
 
 async def save_item_extraction_failure(
@@ -463,20 +620,36 @@ async def save_item_extraction_failure(
     item_id: str,
     *,
     extraction: dict[str, Any],
+    lease_until: datetime | None,
     now: datetime,
-) -> None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+) -> bool:
+    """Persist an extraction failure only if the caller still owns the lease."""
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    items = list(batch.get("items", []))
-    for item in items:
-        if item.get("itemId") == item_id:
-            item["status"] = ItemState.FAILED.value
-            item["extraction"] = extraction
-            item["leaseUntil"] = None
-            item["updatedAt"] = now
-            break
-
-    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
+    result = await _collection(database).find_one_and_update(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "status": ItemState.EXTRACTING.value,
+                    "leaseUntil": lease_until,
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.status": ItemState.FAILED.value,
+                "items.$.extraction": extraction,
+                "items.$.leaseUntil": None,
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    return result is not None
 
 
 async def reset_item_for_retry(
@@ -487,35 +660,34 @@ async def reset_item_for_retry(
     *,
     now: datetime,
 ) -> bool:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    items = list(batch.get("items", []))
-    changed = False
-    for item in items:
-        if item.get("itemId") != item_id:
-            continue
-        status = item.get("status")
-        lease_until = item.get("leaseUntil")
-        if (
-            status == ItemState.FAILED.value
-            or status == ItemState.SUBMIT_FAILED.value
-            or (
-                status == ItemState.EXTRACTING.value
-                and isinstance(lease_until, datetime)
-                and lease_until <= now
-            )
-        ):
-            item["status"] = ItemState.QUEUED.value
-            item["leaseUntil"] = None
-            item["updatedAt"] = now
-            changed = True
-        break
-
-    if not changed:
-        return False
-
-    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
-    return True
+    result = await _collection(database).find_one_and_update(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "$or": [
+                        {"status": ItemState.FAILED.value},
+                        {"status": ItemState.SUBMIT_FAILED.value},
+                        {"status": ItemState.EXTRACTING.value, "leaseUntil": {"$lte": now}},
+                    ],
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.status": ItemState.QUEUED.value,
+                "items.$.leaseUntil": None,
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    return result is not None
 
 
 async def update_item_draft(
@@ -527,28 +699,32 @@ async def update_item_draft(
     draft_update: dict[str, Any],
     now: datetime,
 ) -> dict[str, Any] | None:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    items = list(batch.get("items", []))
-    updated_item: dict[str, Any] | None = None
-    for item in items:
-        if item.get("itemId") != item_id:
-            continue
-        draft = dict(item.get("draft", {}))
-        allowed = {"text", "problemType", "graphDsl", "correctAnswer", "tags", "subject"}
-        for key, value in draft_update.items():
-            if key in allowed:
-                draft[key] = value
-        item["draft"] = draft
-        item["updatedAt"] = now
-        updated_item = item
-        break
+    set_fields: dict[str, Any] = {
+        "items.$.updatedAt": now,
+        "updatedAt": now,
+    }
+    allowed = {"text", "problemType", "graphDsl", "correctAnswer", "tags", "subject"}
+    for key in allowed:
+        if key in draft_update:
+            set_fields[f"items.$.draft.{key}"] = draft_update[key]
 
-    if updated_item is None:
+    result = await _collection(database).find_one_and_update(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "items": {"$elemMatch": {"itemId": item_id}},
+        },
+        {"$set": set_fields, "$inc": {"revision": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if result is None:
         return None
-
-    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
-    return updated_item
+    for item in result.get("items", []):
+        if item.get("itemId") == item_id:
+            return item
+    return None
 
 
 async def mark_item_deleted(
@@ -559,28 +735,49 @@ async def mark_item_deleted(
     *,
     now: datetime,
 ) -> bool:
-    batch = await _load_batch_for_update(database, batch_id, user_id)
+    await _load_batch_for_update(database, batch_id, user_id)
 
-    items = list(batch.get("items", []))
-    changed = False
-    for item in items:
-        if item.get("itemId") != item_id:
-            continue
-        status = item.get("status")
-        if status in {ItemState.DELETED.value, ItemState.SUBMITTED.value}:
+    # previousStatus must record the observed status, so each candidate state
+    # gets its own conditional attempt; the first match wins atomically.
+    # ponytail: enumerated states; extend here when ItemState gains members.
+    for status in (
+        ItemState.QUEUED.value,
+        ItemState.EXTRACTING.value,
+        ItemState.READY.value,
+        ItemState.FAILED.value,
+        ItemState.SUBMIT_FAILED.value,
+    ):
+        result = await _collection(database).find_one_and_update(
+            {
+                "_id": _object_id(batch_id),
+                "userId": user_id,
+                "items": {"$elemMatch": {"itemId": item_id, "status": status}},
+            },
+            {
+                "$set": {
+                    "items.$.previousStatus": status,
+                    "items.$.status": ItemState.DELETED.value,
+                    "items.$.deletedAt": now,
+                    "items.$.updatedAt": now,
+                    "updatedAt": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        if result is not None:
             return True
-        item["previousStatus"] = status
-        item["status"] = ItemState.DELETED.value
-        item["deletedAt"] = now
-        item["updatedAt"] = now
-        changed = True
-        break
 
-    if not changed:
-        return False
-
-    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
-    return True
+    final = await _load_batch_for_update(database, batch_id, user_id)
+    item = next(
+        (i for i in final.get("items", []) if i.get("itemId") == item_id),
+        None,
+    )
+    if item is not None and item.get("status") in {
+        ItemState.DELETED.value,
+        ItemState.SUBMITTED.value,
+    }:
+        return True
+    return False
 
 
 async def undo_item_deletion(
@@ -593,27 +790,42 @@ async def undo_item_deletion(
 ) -> bool:
     batch = await _load_batch_for_update(database, batch_id, user_id)
 
-    items = list(batch.get("items", []))
-    changed = False
-    for item in items:
-        if item.get("itemId") != item_id:
-            continue
-        if item.get("status") != ItemState.DELETED.value:
-            return False
-        previous_status = item.pop("previousStatus", None)
-        if previous_status is None:
-            return False
-        item["status"] = previous_status
-        item.pop("deletedAt", None)
-        item["updatedAt"] = now
-        changed = True
-        break
-
-    if not changed:
+    item = next(
+        (i for i in batch.get("items", []) if i.get("itemId") == item_id),
+        None,
+    )
+    if item is None or item.get("status") != ItemState.DELETED.value:
+        return False
+    previous_status = item.get("previousStatus")
+    if previous_status is None:
         return False
 
-    await _persist_batch(database, batch_id, user_id, {"items": items, "updatedAt": now})
-    return True
+    result = await _collection(database).find_one_and_update(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "status": ItemState.DELETED.value,
+                    "previousStatus": previous_status,
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.status": previous_status,
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$unset": {
+                "items.$.previousStatus": "",
+                "items.$.deletedAt": "",
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    return result is not None
 
 
 async def submit_items_and_complete_batch(
@@ -630,37 +842,57 @@ async def submit_items_and_complete_batch(
     ``submitted``. Items in other states (including ``submit-failed``) keep the
     batch active so they can be retried or deleted.
     """
-    batch = await _load_batch_for_update(database, batch_id, user_id)
-
+    collection = _collection(database)
     result_by_item = {result["itemId"]: result for result in item_results}
-    items = list(batch.get("items", []))
-    for item in items:
-        result = result_by_item.get(item.get("itemId"))
-        if result is None:
-            continue
-        item["status"] = result["status"]
-        item["submit"] = result["submit"]
-        item["updatedAt"] = now
 
-    all_submitted = True
-    has_submitted = False
-    for item in items:
-        status = item.get("status")
-        if status == ItemState.DELETED.value:
-            continue
-        if status == ItemState.SUBMITTED.value:
-            has_submitted = True
-        else:
-            all_submitted = False
+    for _ in range(_MAX_OCC_ATTEMPTS):
+        batch = await _load_batch_for_update(database, batch_id, user_id)
 
-    update: dict[str, Any] = {"items": items, "updatedAt": now}
-    if all_submitted and has_submitted:
-        update["status"] = BatchState.COMPLETED.value
+        items = [dict(item) for item in batch.get("items", [])]
+        for item in items:
+            result = result_by_item.get(item.get("itemId"))
+            if result is None:
+                continue
+            if item.get("status") == ItemState.DELETED.value:
+                # Deletion won the race (possibly between this OCC retry's
+                # read and the first, rejected attempt): a stale submit
+                # result must not resurrect the deleted item.
+                continue
+            item["status"] = result["status"]
+            item["submit"] = result["submit"]
+            item["updatedAt"] = now
 
-    await _persist_batch(database, batch_id, user_id, update)
-    return await _collection(database).find_one(
-        {"_id": _object_id(batch_id), "userId": user_id}
-    )
+        all_submitted = True
+        has_submitted = False
+        for item in items:
+            status = item.get("status")
+            if status == ItemState.DELETED.value:
+                continue
+            if status == ItemState.SUBMITTED.value:
+                has_submitted = True
+            else:
+                all_submitted = False
+
+        update: dict[str, Any] = {"items": items, "updatedAt": now}
+        if all_submitted and has_submitted:
+            update["status"] = BatchState.COMPLETED.value
+
+        # Guarded write: outcomes + completion only land on the exact version
+        # that was read (revision equality), so concurrent item work is never
+        # overwritten — even when both writes carry the same millisecond.
+        result = await collection.update_one(
+            {
+                "_id": _object_id(batch_id),
+                "userId": user_id,
+                **_revision_guard(batch),
+            },
+            {"$set": update, "$inc": {"revision": 1}},
+        )
+        if result.matched_count == 1:
+            return await collection.find_one(
+                {"_id": _object_id(batch_id), "userId": user_id}
+            )
+    raise RuntimeError("submit_items_and_complete_batch lost too many concurrent races")
 
 
 async def find_cleanup_candidates(
@@ -692,7 +924,10 @@ async def mark_batch_cleaned(
     current = now or _now()
     await _collection(database).update_one(
         {"_id": _object_id(batch_id)},
-        {"$set": {"status": BatchState.DELETED.value, "updatedAt": current}},
+        {
+            "$set": {"status": BatchState.DELETED.value, "updatedAt": current},
+            "$inc": {"revision": 1},
+        },
     )
 
 

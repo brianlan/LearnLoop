@@ -110,7 +110,7 @@ async def process_item(
 
     image = _find_image(batch, image_id)
     if image is None:
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -121,14 +121,20 @@ async def process_item(
                 current,
                 current,
             ),
+            lease_until=item.get("leaseUntil"),
             now=current,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
 
     source_image = image.get("sourceImage") or {}
     subject = image.get("subject")
     if not subject:
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -139,13 +145,19 @@ async def process_item(
                 current,
                 current,
             ),
+            lease_until=item.get("leaseUntil"),
             now=current,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
 
     box = item.get("box")
     if not box:
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -156,15 +168,21 @@ async def process_item(
                 current,
                 current,
             ),
+            lease_until=item.get("leaseUntil"),
             now=current,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
 
     try:
         source_bytes = storage.get_object(source_image["bucket"], source_image["objectKey"])
     except Exception as exc:
         logger.exception("Failed to load source image for extraction")
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -175,15 +193,21 @@ async def process_item(
                 current,
                 current,
             ),
+            lease_until=item.get("leaseUntil"),
             now=current,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
 
     try:
         crop_bytes, crop_content_type, crop_width, crop_height = crop_image_to_box(source_bytes, box)
     except Exception as exc:
         logger.exception("Failed to crop source image")
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -194,8 +218,14 @@ async def process_item(
                 current,
                 current,
             ),
+            lease_until=item.get("leaseUntil"),
             now=current,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
 
     crop_extension = _content_type_extension(crop_content_type)
@@ -218,7 +248,7 @@ async def process_item(
         result = await client.extract(image_base64=base64.b64encode(crop_bytes).decode())
     except BaseVLMError as exc:
         finished_at = _utc_now()
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -230,13 +260,19 @@ async def process_item(
                 finished_at,
                 raw_provider_response=exc.raw_provider_response,
             ),
+            lease_until=item.get("leaseUntil"),
             now=finished_at,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
     except Exception as exc:
         logger.exception("Unexpected extraction failure")
         finished_at = _utc_now()
-        await save_item_extraction_failure(
+        saved = await save_item_extraction_failure(
             database,
             batch_id,
             user_id,
@@ -247,13 +283,19 @@ async def process_item(
                 current,
                 finished_at,
             ),
+            lease_until=item.get("leaseUntil"),
             now=finished_at,
         )
+        if not saved:
+            logger.info(
+                "Discarding extraction failure for %s: lease no longer owned",
+                item_id,
+            )
         return
 
     finished_at = _utc_now()
     normalized_text = normalize_extracted_problem_text(result.text)
-    await save_item_extraction_success(
+    saved = await save_item_extraction_success(
         database,
         batch_id,
         user_id,
@@ -279,8 +321,14 @@ async def process_item(
             "requestStartedAt": current,
             "requestFinishedAt": finished_at,
         },
+        lease_until=item.get("leaseUntil"),
         now=finished_at,
     )
+    if not saved:
+        logger.info(
+            "Discarding extraction result for %s: lease no longer owned",
+            item_id,
+        )
 
 
 async def claim_next_item(

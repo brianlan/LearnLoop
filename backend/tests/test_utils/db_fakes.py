@@ -19,8 +19,9 @@ class FakeInsertOneResult:
 
 
 class FakeUpdateResult:
-    def __init__(self, modified_count: int) -> None:
+    def __init__(self, modified_count: int, matched_count: int | None = None) -> None:
         self.modified_count = modified_count
+        self.matched_count = modified_count if matched_count is None else matched_count
 
 
 class FakeDeleteResult:
@@ -154,6 +155,7 @@ class FakeCollection:
         update: dict[str, Any] | list[dict[str, Any]],
         upsert: bool = False,
         session: Any | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
     ) -> FakeUpdateResult:
         target_doc = None
         for document in self._documents:
@@ -162,21 +164,7 @@ class FakeCollection:
                 break
 
         if target_doc is not None:
-            if isinstance(update, list):
-                for stage in update:
-                    for key, expr in stage.get("$set", {}).items():
-                        resolved_key = self._resolve_positional_key(
-                            target_doc, query, key
-                        )
-                        _set_nested(
-                            target_doc, resolved_key, _eval_pipeline_expr(expr, target_doc)
-                        )
-            else:
-                for key, value in update.get("$set", {}).items():
-                    resolved_key = self._resolve_positional_key(
-                        target_doc, query, key
-                    )
-                    _set_nested(target_doc, resolved_key, deepcopy(value))
+            self._apply_update(target_doc, query, update, array_filters)
             return FakeUpdateResult(1)
 
         if upsert:
@@ -222,21 +210,65 @@ class FakeCollection:
         session: Any | None = None,
         sort: Any | None = None,
         return_document: Any | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
         for document in self._documents:
             if matches_query(document, query):
                 original_document = deepcopy(document)
-                for key, value in update.get("$set", {}).items():
-                    resolved_key = self._resolve_positional_key(document, query, key)
-                    _set_nested(document, resolved_key, deepcopy(value))
-                for key, value in update.get("$inc", {}).items():
-                    resolved_key = self._resolve_positional_key(document, query, key)
-                    _inc_nested(document, resolved_key, value)
+                self._apply_update(document, query, update, array_filters)
                 if return_document:
                     return deepcopy(document)
                 return original_document
         return None
+
+    def _apply_update(
+        self,
+        document: dict[str, Any],
+        query: dict[str, Any],
+        update: dict[str, Any] | list[dict[str, Any]],
+        array_filters: list[dict[str, Any]] | None,
+    ) -> None:
+        stages = update if isinstance(update, list) else [update]
+
+        # MongoDB resolves positional "$" indexes once, against the document
+        # state that matched the query, before applying any modification.
+        # Resolve every positional path up front so later keys in the same
+        # update do not observe earlier keys' mutations.
+        positional: dict[str, int] = {}
+        for stage in stages:
+            for operator in ("$set", "$unset", "$push", "$inc"):
+                for key in stage.get(operator, {}):
+                    if ".$." in key:
+                        array_path = key.split(".$.")[0]
+                        if array_path not in positional:
+                            positional[array_path] = self._resolve_array_index(
+                                document, query, array_path
+                            )
+
+        def _resolve(key: str) -> list[str]:
+            if ".$[" in key:
+                return self._resolve_array_filter_keys(document, key, array_filters)
+            if ".$." in key:
+                array_path = key.split(".$.")[0]
+                index = positional.get(array_path, 0)
+                return [key.replace(".$.", f".{index}.", 1)]
+            return [key]
+
+        for stage in stages:
+            for key, value in stage.get("$set", {}).items():
+                for resolved_key in _resolve(key):
+                    expr = _eval_pipeline_expr(value, document) if isinstance(update, list) else value
+                    _set_nested(document, resolved_key, deepcopy(expr))
+            for key, value in stage.get("$unset", {}).items():
+                for resolved_key in _resolve(key):
+                    _unset_nested(document, resolved_key)
+            for key, value in stage.get("$push", {}).items():
+                for resolved_key in _resolve(key):
+                    _push_nested(document, resolved_key, value)
+            for key, value in stage.get("$inc", {}).items():
+                for resolved_key in _resolve(key):
+                    _inc_nested(document, resolved_key, value)
 
     def _resolve_positional_key(
         self,
@@ -250,37 +282,78 @@ class FakeCollection:
         index = self._resolve_array_index(document, query, array_path)
         return key.replace(".$.", f".{index}.", 1)
 
+    def _resolve_array_filter_keys(
+        self,
+        document: dict[str, Any],
+        key: str,
+        array_filters: list[dict[str, Any]] | None,
+    ) -> list[str]:
+        """Expand an ``a.$[id].b`` path to one concrete path per matching element."""
+        head, rest = key.split(".$[", 1)
+        identifier, tail = rest.split("]", 1)
+        identifier_filter: dict[str, Any] = {}
+        for spec in array_filters or []:
+            if not isinstance(spec, dict):
+                continue
+            # The identifier may appear bare (``{"item": {...}}``) or as a
+            # dotted prefix on element fields (``{"item.imageId": ...}``);
+            # both constrain the element the same way.
+            element_query: dict[str, Any] = {}
+            for spec_key, spec_value in spec.items():
+                if spec_key == identifier and isinstance(spec_value, dict):
+                    element_query.update(spec_value)
+                elif spec_key.startswith(f"{identifier}."):
+                    element_query[spec_key[len(identifier) + 1 :]] = spec_value
+            if element_query or identifier in spec:
+                identifier_filter = element_query
+                break
+        target = document.get(head)
+        if not isinstance(target, list):
+            return []
+        return [
+            f"{head}.{index}{tail}"
+            for index, element in enumerate(target)
+            if matches_query(element, identifier_filter)
+        ]
+
     def _resolve_array_index(
         self,
         document: dict[str, Any],
         query: dict[str, Any],
         array_path: str,
     ) -> int:
+        def _walk_to_array(doc: Any, path: str) -> Any:
+            target = doc
+            for part in path.split("."):
+                if isinstance(target, dict):
+                    target = target.get(part)
+                elif isinstance(target, list) and part.isdigit():
+                    target = target[int(part)]
+                else:
+                    return None
+            return target
+
+        elements: list[Any] = []
         spec = query.get(array_path)
         if isinstance(spec, dict) and "$elemMatch" in spec:
             elem_match = spec["$elemMatch"]
-            array_values = get_nested_values(document, array_path.split("."))
-            for arr in array_values:
-                if isinstance(arr, list):
-                    for index, item in enumerate(arr):
-                        if matches_query(item, elem_match):
-                            return index
-            return 0
-
-        elem_query: dict[str, Any] = {}
-        prefix = f"{array_path}."
-        for query_key, query_value in query.items():
-            if query_key.startswith(prefix):
-                field = query_key[len(prefix) :]
-                elem_query[field] = query_value
-        if not elem_query:
-            return 0
-        array_values = get_nested_values(document, array_path.split("."))
-        for arr in array_values:
-            if isinstance(arr, list):
-                for index, item in enumerate(arr):
-                    if matches_query(item, elem_query):
-                        return index
+            array = _walk_to_array(document, array_path)
+            if isinstance(array, list):
+                elements = array
+        else:
+            elem_query: dict[str, Any] = {}
+            prefix = f"{array_path}."
+            for query_key, query_value in query.items():
+                if query_key.startswith(prefix):
+                    elem_query[query_key[len(prefix) :]] = query_value
+            if not elem_query:
+                return 0
+            array = _walk_to_array(document, array_path)
+            if isinstance(array, list):
+                elements = array
+        for index, item in enumerate(elements):
+            if isinstance(item, dict) and matches_query(item, elem_match if "$elemMatch" in (spec or {}) else elem_query):
+                return index
         return 0
 
     async def delete_one(self, query: dict[str, Any], session: Any | None = None) -> FakeDeleteResult:
@@ -441,6 +514,13 @@ def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
                                 break
                     if not matched:
                         return False
+                elif op == "$nin":
+                    for c in candidates:
+                        if isinstance(c, list):
+                            if any(item in op_val for item in c):
+                                return False
+                        elif c in op_val:
+                            return False
                 elif op == "$ne":
                     for c in candidates:
                         if isinstance(c, list):
@@ -509,6 +589,40 @@ def _set_nested(document: dict[str, Any], path: str, value: Any) -> None:
         else:
             target = target[part]
     target[parts[-1]] = value
+
+
+def _unset_nested(document: dict[str, Any], path: str) -> None:
+    parts = path.split(".")
+    target: Any = document
+    for part in parts[:-1]:
+        if isinstance(target, dict):
+            target = target.get(part)
+        elif isinstance(target, list) and part.isdigit():
+            target = target[int(part)]
+        else:
+            return
+    if isinstance(target, dict):
+        target.pop(parts[-1], None)
+
+
+def _push_nested(document: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.split(".")
+    target = document
+    for part in parts[:-1]:
+        if part.isdigit():
+            target = target[int(part)]
+        elif part not in target or not isinstance(target[part], dict):
+            target[part] = {}
+            target = target[part]
+        else:
+            target = target[part]
+    field = parts[-1]
+    if not isinstance(target.get(field), list):
+        target[field] = []
+    if isinstance(value, dict) and "$each" in value:
+        target[field].extend(deepcopy(value["$each"]))
+    else:
+        target[field].append(deepcopy(value))
 
 
 def _inc_nested(document: dict[str, Any], path: str, value: Any) -> None:

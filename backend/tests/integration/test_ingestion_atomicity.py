@@ -13,16 +13,29 @@ import pytest_asyncio
 from bson import ObjectId
 from pymongo import AsyncMongoClient
 
-from app.domain.ingestion import ItemState
+from app.domain.ingestion import ImageState, ItemState
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.ingestion import (
+    add_items_for_image,
+    add_source_image,
+    build_source_image,
+)
+from app.infrastructure.ingestion import repository as ingestion_repository
 from app.infrastructure.ingestion.repository import (
     INGESTION_BATCHES_COLLECTION,
+    commit_image_boxes,
     create_batch,
+    delete_batch_image,
     get_batch,
     mark_item_deleted,
     reset_item_for_retry,
+    save_image_boxes_and_subject,
+    save_image_detection_failure,
+    save_image_detection_success,
     save_item_extraction_failure,
     save_item_extraction_success,
+    start_image_detection,
+    submit_items_and_complete_batch,
     undo_item_deletion,
     update_item_draft,
 )
@@ -50,83 +63,6 @@ def validate_real_mongo_database_name(name: str | None) -> str:
             f"got {name!r}"
         )
     return name
-
-
-class _SynchronizedCollection:
-    """Delegating collection proxy that can pause find_one and update_one calls.
-
-    The proxy forwards every operation to the real Mongo collection. When a test
-    enables synchronization, each intercepted call waits on an event before
-    proceeding and signals another event once it completes. This lets a test
-    coordinate two repository calls so both read the same batch snapshot before
-    either write is released.
-    """
-
-    def __init__(self, real_collection: Any) -> None:
-        self._real = real_collection
-        self._sync_enabled = False
-        self._find_before: asyncio.Event | None = None
-        self._find_after: asyncio.Event | None = None
-        self._update_before: asyncio.Event | None = None
-        self._update_after: asyncio.Event | None = None
-
-    def enable_sync(
-        self,
-        *,
-        find_before: asyncio.Event,
-        find_after: asyncio.Event,
-        update_before: asyncio.Event,
-        update_after: asyncio.Event,
-    ) -> None:
-        self._sync_enabled = True
-        self._find_before = find_before
-        self._find_after = find_after
-        self._update_before = update_before
-        self._update_after = update_after
-
-    async def find_one(self, *args: Any, **kwargs: Any) -> Any:
-        if self._sync_enabled:
-            assert self._find_before is not None
-            assert self._find_after is not None
-            await self._find_before.wait()
-            result = await self._real.find_one(*args, **kwargs)
-            self._find_after.set()
-            return result
-        return await self._real.find_one(*args, **kwargs)
-
-    async def update_one(self, *args: Any, **kwargs: Any) -> Any:
-        if self._sync_enabled:
-            assert self._update_before is not None
-            assert self._update_after is not None
-            await self._update_before.wait()
-            result = await self._real.update_one(*args, **kwargs)
-            self._update_after.set()
-            return result
-        return await self._real.update_one(*args, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
-
-
-class _SynchronizedDatabase:
-    """Delegating database proxy that returns a synchronized collection."""
-
-    def __init__(self, real_database: Any) -> None:
-        self._real = real_database
-        self._collection: _SynchronizedCollection | None = None
-
-    def get_collection(self, name: str) -> _SynchronizedCollection:
-        if name == INGESTION_BATCHES_COLLECTION:
-            if self._collection is None:
-                self._collection = _SynchronizedCollection(self._real[name])
-            return self._collection
-        return self._real[name]
-
-    def __getitem__(self, name: str) -> Any:
-        return self.get_collection(name)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
 
 
 async def _real_database_core(
@@ -199,8 +135,6 @@ async def _batch_with_two_items(
     database: Any, user_id: ObjectId, settings: Settings
 ) -> tuple[ObjectId, str, str]:
     """Seed a batch with two queued items and return (batch_id, item_a_id, item_b_id)."""
-    from app.infrastructure.ingestion import add_source_image, add_items_for_image, build_source_image
-
     source_image = build_source_image(
         bucket="media",
         object_key="users/u/img.png",
@@ -218,6 +152,32 @@ async def _batch_with_two_items(
     return batch["_id"], items[0]["itemId"], items[1]["itemId"]
 
 
+async def _add_uncommitted_image_with_boxes(
+    database: Any,
+    batch_id: ObjectId,
+    user_id: ObjectId,
+    *,
+    boxes: list[dict[str, Any]],
+    order: int = 1,
+) -> str:
+    """Add a second image in ready state with boxes, ready for commit_image_boxes."""
+    source_image = build_source_image(
+        bucket="media",
+        object_key=f"users/u/img-{order}.png",
+        content_type="image/png",
+        size_bytes=42,
+        sha256=f"sha-{order}",
+        uploaded_at=NOW,
+    )
+    image = await add_source_image(database, batch_id, user_id, source_image, order=order, now=NOW)
+    result = await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "userId": user_id, "images.imageId": image["imageId"]},
+        {"$set": {"images.$.boxes": boxes, "images.$.status": "ready", "images.$.subject": "math"}},
+    )
+    assert result.modified_count == 1
+    return image["imageId"]
+
+
 async def _set_item_fields(
     database: Any,
     batch_id: ObjectId,
@@ -229,7 +189,60 @@ async def _set_item_fields(
         {"_id": batch_id, "userId": user_id, "items.itemId": item_id},
         {"$set": {f"items.$.{key}": value for key, value in fields.items()}},
     )
-    assert result.modified_count == 1
+    assert result.matched_count == 1
+
+
+class _ReadWriteGate:
+    """Holds each participant after its batch read until all have read."""
+
+    def __init__(self, participants: int) -> None:
+        self._pending = participants
+        self._released = asyncio.Event()
+
+    async def hold_after_read(
+        self,
+        original_load: Callable[..., Awaitable[Any]],
+        database: Any,
+        batch_id: ObjectId,
+        user_id: ObjectId,
+    ) -> Any:
+        doc = await original_load(database, batch_id, user_id)
+        self._pending -= 1
+        if self._pending == 0:
+            self._released.set()
+        await self._released.wait()
+        return doc
+
+
+def _source_image(*, order: int) -> dict[str, Any]:
+    return build_source_image(
+        bucket="media",
+        object_key=f"users/u/img-{order}.png",
+        content_type="image/png",
+        size_bytes=42,
+        sha256=f"sha-{order}",
+        uploaded_at=NOW,
+    )
+
+
+def _gate_first_reads(monkeypatch: pytest.MonkeyPatch, participants: int) -> None:
+    """Force a deterministic stale-snapshot interleaving.
+
+    The first ``participants`` batch reads all complete before any of them
+    returns, so every participant reads the same document version before any
+    participant writes. Later reads (OCC retries) pass through ungated.
+    """
+    original_load = ingestion_repository._load_batch_for_update
+    gate = _ReadWriteGate(participants)
+    ungated = {"remaining": participants}
+
+    async def gated_load(database: Any, batch_id: Any, user_id: Any) -> Any:
+        if ungated["remaining"] > 0:
+            ungated["remaining"] -= 1
+            return await gate.hold_after_read(original_load, database, batch_id, user_id)
+        return await original_load(database, batch_id, user_id)
+
+    monkeypatch.setattr(ingestion_repository, "_load_batch_for_update", gated_load)
 
 
 @pytest.mark.asyncio
@@ -247,86 +260,560 @@ async def test_harness_uses_real_mongo_not_fake(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_distinct_item_updates_lose_one_change(
-    real_database: Any, user_id: ObjectId, settings: Settings
+async def test_concurrent_distinct_item_draft_updates_both_survive(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Reproduce the whole-array lost update when two item drafts update concurrently."""
+    """Two synchronized draft edits to distinct items must both survive."""
     batch_id, item_a_id, item_b_id = await _batch_with_two_items(real_database, user_id, settings)
-
-    proxy_a = _SynchronizedDatabase(real_database)
-    proxy_b = _SynchronizedDatabase(real_database)
-    collection_a = proxy_a.get_collection(INGESTION_BATCHES_COLLECTION)
-    collection_b = proxy_b.get_collection(INGESTION_BATCHES_COLLECTION)
-
-    # Events for operation A.
-    a_find_before = asyncio.Event()
-    a_find_after = asyncio.Event()
-    a_update_before = asyncio.Event()
-    a_update_after = asyncio.Event()
-
-    # Events for operation B.
-    b_find_before = asyncio.Event()
-    b_find_after = asyncio.Event()
-    b_update_before = asyncio.Event()
-    b_update_after = asyncio.Event()
-
-    a_find_before.set()
-    b_find_before.set()
-
-    collection_a.enable_sync(
-        find_before=a_find_before,
-        find_after=a_find_after,
-        update_before=a_update_before,
-        update_after=a_update_after,
-    )
-    collection_b.enable_sync(
-        find_before=b_find_before,
-        find_after=b_find_after,
-        update_before=b_update_before,
-        update_after=b_update_after,
-    )
+    _gate_first_reads(monkeypatch, participants=2)
 
     async def update_a() -> None:
         await update_item_draft(
-            proxy_a, batch_id, user_id, item_a_id,
+            real_database, batch_id, user_id, item_a_id,
             draft_update={"text": "updated by A"}, now=NOW + timedelta(seconds=1),
         )
 
     async def update_b() -> None:
         await update_item_draft(
-            proxy_b, batch_id, user_id, item_b_id,
+            real_database, batch_id, user_id, item_b_id,
             draft_update={"text": "updated by B"}, now=NOW + timedelta(seconds=2),
         )
 
-    task_a = asyncio.create_task(update_a())
-    task_b = asyncio.create_task(update_b())
-
-    # Both real reads finish before either real write is released.
-    await asyncio.gather(a_find_after.wait(), b_find_after.wait())
-    assert not a_update_after.is_set()
-    assert not b_update_after.is_set()
-
-    # Write B first, then A. A still holds the original snapshot and therefore
-    # overwrites B's distinct-item change when its full items array is persisted.
-    b_update_before.set()
-    await b_update_after.wait()
-    await task_b
-    assert not a_update_after.is_set()
-
-    a_update_before.set()
-    await a_update_after.wait()
-    await task_a
+    await asyncio.gather(update_a(), update_b())
 
     final = await get_batch(real_database, batch_id, user_id)
     assert final is not None
 
     item_a = next(i for i in final["items"] if i["itemId"] == item_a_id)
     item_b = next(i for i in final["items"] if i["itemId"] == item_b_id)
-
-    # A's write is the last one, so item A reflects A's update.
     assert item_a["draft"]["text"] == "updated by A"
-    # B's change is lost because A's whole-array replacement did not include it.
-    assert item_b["draft"]["text"] is None
+    assert item_b["draft"]["text"] == "updated by B"
+
+
+@pytest.mark.asyncio
+async def test_extraction_completion_and_distinct_draft_edit_both_survive(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker completing item A must not erase a concurrent draft edit to item B."""
+    batch_id, item_a_id, item_b_id = await _batch_with_two_items(real_database, user_id, settings)
+    lease = NOW + timedelta(minutes=5)
+    await _set_item_fields(
+        real_database, batch_id, user_id, item_a_id,
+        status=ItemState.EXTRACTING.value, leaseUntil=lease,
+    )
+    _gate_first_reads(monkeypatch, participants=2)
+
+    async def complete_a() -> None:
+        saved = await save_item_extraction_success(
+            real_database, batch_id, user_id, item_a_id,
+            crop={"bucket": "b", "objectKey": "k"},
+            draft={"text": "A result"},
+            extraction={"success": True},
+            lease_until=lease,
+            now=NOW + timedelta(seconds=1),
+        )
+        assert saved is True
+
+    async def edit_b() -> None:
+        await update_item_draft(
+            real_database, batch_id, user_id, item_b_id,
+            draft_update={"text": "edited B"}, now=NOW + timedelta(seconds=2),
+        )
+
+    await asyncio.gather(complete_a(), edit_b())
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    item_a = next(i for i in final["items"] if i["itemId"] == item_a_id)
+    item_b = next(i for i in final["items"] if i["itemId"] == item_b_id)
+    assert item_a["status"] == ItemState.READY.value
+    assert item_a["draft"]["text"] == "A result"
+    assert item_b["draft"]["text"] == "edited B"
+
+
+@pytest.mark.asyncio
+async def test_stale_extraction_owner_cannot_replace_reclaimed_lease(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """A result from a lease lost to a reclaim must be discarded, not overwrite."""
+    batch_id, item_a_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+
+    first_lease = NOW + timedelta(seconds=30)
+    await _set_item_fields(
+        real_database, batch_id, user_id, item_a_id,
+        status=ItemState.EXTRACTING.value, leaseUntil=first_lease,
+    )
+
+    # Simulated reclaim: a newer owner takes the item with a fresh lease.
+    second_lease = NOW + timedelta(seconds=90)
+    await _set_item_fields(
+        real_database, batch_id, user_id, item_a_id, leaseUntil=second_lease,
+    )
+
+    # The stale owner's completion targets the old lease and must be rejected.
+    stale_saved = await save_item_extraction_success(
+        real_database, batch_id, user_id, item_a_id,
+        crop={"bucket": "b", "objectKey": "stale"},
+        draft={"text": "stale result"},
+        extraction={"success": True},
+        lease_until=first_lease,
+        now=NOW + timedelta(seconds=1),
+    )
+    assert stale_saved is False
+
+    loaded = await get_batch(real_database, batch_id, user_id)
+    assert loaded is not None
+    item = next(i for i in loaded["items"] if i["itemId"] == item_a_id)
+    assert item["status"] == ItemState.EXTRACTING.value
+    assert item["leaseUntil"].replace(tzinfo=UTC) == second_lease
+    assert "draft" not in item or item["draft"].get("text") is None
+
+    # The current owner can still complete the item.
+    fresh_saved = await save_item_extraction_success(
+        real_database, batch_id, user_id, item_a_id,
+        crop={"bucket": "b", "objectKey": "fresh"},
+        draft={"text": "fresh result"},
+        extraction={"success": True},
+        lease_until=second_lease,
+        now=NOW + timedelta(seconds=2),
+    )
+    assert fresh_saved is True
+    loaded = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in loaded["items"] if i["itemId"] == item_a_id)
+    assert item["status"] == ItemState.READY.value
+    assert item["draft"]["text"] == "fresh result"
+
+
+@pytest.mark.asyncio
+async def test_extraction_failure_cannot_resurrect_deleted_item(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Completion writes must not touch a deleted item."""
+    batch_id, item_a_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    lease = NOW + timedelta(minutes=5)
+    await _set_item_fields(
+        real_database, batch_id, user_id, item_a_id,
+        status=ItemState.EXTRACTING.value, leaseUntil=lease,
+    )
+    assert await mark_item_deleted(real_database, batch_id, user_id, item_a_id, now=NOW) is True
+
+    saved = await save_item_extraction_failure(
+        real_database, batch_id, user_id, item_a_id,
+        extraction={"success": False, "failureCode": "X"},
+        lease_until=lease,
+        now=NOW + timedelta(seconds=1),
+    )
+    assert saved is False
+
+    loaded = await get_batch(real_database, batch_id, user_id)
+    assert loaded is not None
+    item = next(i for i in loaded["items"] if i["itemId"] == item_a_id)
+    assert item["status"] == ItemState.DELETED.value
+
+
+@pytest.mark.asyncio
+async def test_commit_racing_with_edit_preserves_both(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Commit appending items must not erase a concurrent edit to an existing item."""
+    batch_id, existing_item_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    # A second, uncommitted image with ready boxes for the commit to append.
+    commit_image = await _add_uncommitted_image_with_boxes(
+        real_database, batch_id, user_id,
+        boxes=[{"x": 1, "y": 1, "w": 2, "h": 2}],
+    )
+    _gate_first_reads(monkeypatch, participants=2)
+
+    async def do_commit() -> None:
+        await commit_image_boxes(real_database, batch_id, user_id, commit_image, now=NOW + timedelta(seconds=1))
+
+    async def do_edit() -> None:
+        await update_item_draft(
+            real_database, batch_id, user_id, existing_item_id,
+            draft_update={"text": "edited during commit"}, now=NOW + timedelta(seconds=2),
+        )
+
+    await asyncio.gather(do_commit(), do_edit())
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    # Existing item kept its edit.
+    edited = next(i for i in final["items"] if i["itemId"] == existing_item_id)
+    assert edited["draft"]["text"] == "edited during commit"
+    # Appended item exists exactly once alongside the original two.
+    assert len(final["items"]) == 3
+    orders = [i["order"] for i in final["items"]]
+    assert len(orders) == len(set(orders))
+
+
+@pytest.mark.asyncio
+async def test_concurrent_commits_do_not_duplicate_items_or_orders(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two overlapping commits of the same image must land exactly once."""
+    batch_id, _existing_item_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    boxes = [{"x": 1, "y": 1, "w": 2, "h": 2}, {"x": 3, "y": 3, "w": 1, "h": 1}]
+    commit_image = await _add_uncommitted_image_with_boxes(
+        real_database, batch_id, user_id, boxes=boxes,
+    )
+    _gate_first_reads(monkeypatch, participants=2)
+
+    async def do_commit() -> list[dict[str, Any]]:
+        return await commit_image_boxes(
+            real_database, batch_id, user_id, commit_image, now=NOW + timedelta(seconds=1)
+        )
+
+    results = await asyncio.gather(do_commit(), do_commit())
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    # Two pre-existing items plus exactly one appended pair.
+    assert len(final["items"]) == 4
+    item_ids = [i["itemId"] for i in final["items"]]
+    assert len(set(item_ids)) == 4
+    orders = [i["order"] for i in final["items"]]
+    assert len(orders) == len(set(orders))
+    # Each caller either created the items or got the idempotent view.
+    created = [r for r in results if r]
+    assert len(created) == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_image_racing_with_other_item_edit_preserves_both(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting image A must not erase a concurrent edit to item B."""
+    batch_id, _item_a_unrelated, item_b_seed = await _batch_with_two_items(real_database, user_id, settings)
+
+    # Image A (committed, one item) gets deleted concurrently.
+    image_a = await _add_uncommitted_image_with_boxes(
+        real_database, batch_id, user_id, boxes=[{"x": 0, "y": 0, "w": 1, "h": 1}],
+    )
+    items_a = await commit_image_boxes(real_database, batch_id, user_id, image_a, now=NOW)
+    item_a_id = items_a[0]["itemId"]
+    _gate_first_reads(monkeypatch, participants=2)
+
+    async def do_delete() -> None:
+        await delete_batch_image(real_database, batch_id, user_id, image_a, now=NOW + timedelta(seconds=1))
+
+    async def do_edit() -> None:
+        await update_item_draft(
+            real_database, batch_id, user_id, item_b_seed,
+            draft_update={"text": "edited during delete"}, now=NOW + timedelta(seconds=2),
+        )
+
+    await asyncio.gather(do_delete(), do_edit())
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    item_a = next(i for i in final["items"] if i["itemId"] == item_a_id)
+    item_b = next(i for i in final["items"] if i["itemId"] == item_b_seed)
+    assert item_a["status"] == ItemState.DELETED.value
+    assert item_b["draft"]["text"] == "edited during delete"
+
+
+# ---------------------------------------------------------------------------
+# Collision-safety and deleted-image regressions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stale_submit_write_rejected_when_edit_lands_same_millisecond(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the OCC token must survive same-millisecond writes.
+
+    The submit writer's caller-supplied ``now`` equals the document's current
+    ``updatedAt``, and a targeted edit lands between the writer's read and
+    write with the same timestamp. A timestamp-equality guard would still
+    match and overwrite the edit; the revision guard rejects the stale write,
+    and the retry preserves both outcomes.
+    """
+    batch_id, item_a_id, item_b_id = await _batch_with_two_items(real_database, user_id, settings)
+    same_ts = NOW + timedelta(seconds=1)
+    # Warm the document so its updatedAt equals the writer's timestamp —
+    # the same-millisecond collision precondition.
+    await update_item_draft(
+        real_database, batch_id, user_id, item_a_id, draft_update={"text": "warm-up"}, now=same_ts
+    )
+
+    original_load = ingestion_repository._load_batch_for_update
+    landed = {"edit": False}
+
+    async def load_then_edit(database: Any, batch_id: Any, user_id: Any) -> Any:
+        doc = await original_load(database, batch_id, user_id)
+        if not landed["edit"]:
+            landed["edit"] = True
+            assert (
+                await update_item_draft(
+                    database, batch_id, user_id, item_b_id,
+                    draft_update={"text": "interleaved edit"}, now=same_ts,
+                )
+                is not None
+            )
+        return doc
+
+    monkeypatch.setattr(ingestion_repository, "_load_batch_for_update", load_then_edit)
+
+    submit = {"submittedProblemId": "p1", "success": True, "failureCode": None, "failureMessage": None}
+    await submit_items_and_complete_batch(
+        real_database,
+        batch_id,
+        user_id,
+        item_results=[{"itemId": item_a_id, "status": ItemState.SUBMITTED.value, "submit": submit}],
+        now=same_ts,
+    )
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    item_a = next(i for i in final["items"] if i["itemId"] == item_a_id)
+    item_b = next(i for i in final["items"] if i["itemId"] == item_b_id)
+    assert item_a["status"] == ItemState.SUBMITTED.value
+    # The interleaved same-timestamp edit survived the stale write.
+    assert item_b["draft"]["text"] == "interleaved edit"
+
+
+@pytest.mark.asyncio
+async def test_commit_racing_with_image_deletion_cannot_resurrect(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a commit that raced with delete must be rejected, not resurrect."""
+    batch_id, _existing_item_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    commit_image = await _add_uncommitted_image_with_boxes(
+        real_database, batch_id, user_id,
+        boxes=[{"x": 1, "y": 1, "w": 2, "h": 2}],
+    )
+
+    original_load = ingestion_repository._load_batch_for_update
+    landed = {"delete": False}
+
+    async def load_then_delete(database: Any, batch_id: Any, user_id: Any) -> Any:
+        doc = await original_load(database, batch_id, user_id)
+        if not landed["delete"]:
+            landed["delete"] = True
+            await delete_batch_image(
+                database, batch_id, user_id, commit_image, now=NOW + timedelta(seconds=1)
+            )
+        return doc
+
+    monkeypatch.setattr(ingestion_repository, "_load_batch_for_update", load_then_delete)
+
+    with pytest.raises(ValueError, match="Image not found"):
+        await commit_image_boxes(real_database, batch_id, user_id, commit_image, now=NOW)
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    image = next(i for i in final["images"] if i["imageId"] == commit_image)
+    assert image["status"] == ImageState.DELETED.value
+    # No items were appended for the deleted image.
+    assert not [i for i in final["items"] if i["imageId"] == commit_image]
+
+
+@pytest.mark.asyncio
+async def test_add_items_for_image_rejects_deleted_image(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression: items must not be appended to (and commit must not resurrect)
+    an image that delete_batch_image already removed."""
+    batch_id, _existing_item_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    image = await _add_uncommitted_image_with_boxes(
+        real_database, batch_id, user_id,
+        boxes=[{"x": 1, "y": 1, "w": 2, "h": 2}],
+    )
+    await delete_batch_image(real_database, batch_id, user_id, image, now=NOW + timedelta(seconds=1))
+
+    with pytest.raises(ValueError, match="Image not found"):
+        await add_items_for_image(
+            real_database,
+            batch_id,
+            user_id,
+            image,
+            item_count=2,
+            starting_order=5,
+            now=NOW + timedelta(seconds=2),
+        )
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    stored_image = next(i for i in final["images"] if i["imageId"] == image)
+    assert stored_image["status"] == ImageState.DELETED.value
+    assert not [i for i in final["items"] if i["imageId"] == image]
+
+
+# ---------------------------------------------------------------------------
+# Deletion vs late image-processing and stale submit regressions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_late_detection_result_cannot_resurrect_deleted_image(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression: a detection result landing after delete must be discarded."""
+    batch = await create_batch(real_database, user_id, settings, now=NOW)
+    image = await add_source_image(
+        real_database, batch["_id"], user_id, _source_image(order=0), order=0, now=NOW
+    )
+    await start_image_detection(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+    await delete_batch_image(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+
+    await save_image_detection_success(
+        real_database, batch["_id"], user_id, image["imageId"],
+        subject="math", boxes=[{"x": 1, "y": 1, "w": 2, "h": 2}],
+        model="vlm", raw_provider_response={}, now=NOW,
+    )
+
+    final = await get_batch(real_database, batch["_id"], user_id)
+    assert final is not None
+    stored = next(i for i in final["images"] if i["imageId"] == image["imageId"])
+    assert stored["status"] == ImageState.DELETED.value
+    assert stored["boxes"] == []
+
+
+@pytest.mark.asyncio
+async def test_late_detection_failure_cannot_resurrect_deleted_image(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression: a late failure write must not re-enter a deleted image."""
+    batch = await create_batch(real_database, user_id, settings, now=NOW)
+    image = await add_source_image(
+        real_database, batch["_id"], user_id, _source_image(order=0), order=0, now=NOW
+    )
+    await start_image_detection(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+    await delete_batch_image(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+
+    await save_image_detection_failure(
+        real_database, batch["_id"], user_id, image["imageId"],
+        failure_code="X", failure_message="boom", now=NOW,
+    )
+
+    final = await get_batch(real_database, batch["_id"], user_id)
+    assert final is not None
+    stored = next(i for i in final["images"] if i["imageId"] == image["imageId"])
+    assert stored["status"] == ImageState.DELETED.value
+
+
+@pytest.mark.asyncio
+async def test_late_box_save_cannot_resurrect_deleted_image(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression: a box edit landing after delete must not make the image ready."""
+    batch = await create_batch(real_database, user_id, settings, now=NOW)
+    image = await add_source_image(
+        real_database, batch["_id"], user_id, _source_image(order=0), order=0, now=NOW
+    )
+    await save_image_boxes_and_subject(
+        real_database, batch["_id"], user_id, image["imageId"],
+        subject="math", boxes=[{"x": 1, "y": 1, "w": 2, "h": 2}], now=NOW,
+    )
+    await delete_batch_image(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+
+    await save_image_boxes_and_subject(
+        real_database, batch["_id"], user_id, image["imageId"],
+        subject="math", boxes=[{"x": 3, "y": 3, "w": 1, "h": 1}], now=NOW,
+    )
+
+    final = await get_batch(real_database, batch["_id"], user_id)
+    assert final is not None
+    stored = next(i for i in final["images"] if i["imageId"] == image["imageId"])
+    assert stored["status"] == ImageState.DELETED.value
+    assert stored["boxes"] == [{"x": 1, "y": 1, "w": 2, "h": 2}]
+
+
+@pytest.mark.asyncio
+async def test_deleted_image_cannot_restart_detection(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression: a late detection start must not re-enter a deleted image."""
+    batch = await create_batch(real_database, user_id, settings, now=NOW)
+    image = await add_source_image(
+        real_database, batch["_id"], user_id, _source_image(order=0), order=0, now=NOW
+    )
+    await delete_batch_image(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+
+    await start_image_detection(real_database, batch["_id"], user_id, image["imageId"], now=NOW)
+
+    final = await get_batch(real_database, batch["_id"], user_id)
+    assert final is not None
+    stored = next(i for i in final["images"] if i["imageId"] == image["imageId"])
+    assert stored["status"] == ImageState.DELETED.value
+
+
+@pytest.mark.asyncio
+async def test_stale_submit_result_cannot_resurrect_deleted_item(
+    real_database: Any,
+    user_id: ObjectId,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a submit outcome racing a deletion must not resurrect the item
+    during the OCC retry, and the batch must not complete from the stale result."""
+    batch_id, item_a_id, item_b_id = await _batch_with_two_items(real_database, user_id, settings)
+    await _set_item_fields(
+        real_database, batch_id, user_id, item_a_id, status=ItemState.READY.value,
+    )
+    same_ts = NOW + timedelta(seconds=1)
+    # Make the document's updatedAt equal the submit timestamp (the
+    # same-millisecond precondition) so only the revision guard rejects the
+    # first write and the retry path is exercised deterministically.
+    await update_item_draft(
+        real_database, batch_id, user_id, item_b_id, draft_update={"text": "warm-up"}, now=same_ts
+    )
+
+    original_load = ingestion_repository._load_batch_for_update
+    landed = {"delete": False}
+
+    async def load_then_delete(database: Any, batch_id: Any, user_id: Any) -> Any:
+        doc = await original_load(database, batch_id, user_id)
+        if not landed["delete"]:
+            landed["delete"] = True
+            assert await mark_item_deleted(
+                database, batch_id, user_id, item_a_id, now=same_ts
+            ) is True
+        return doc
+
+    monkeypatch.setattr(ingestion_repository, "_load_batch_for_update", load_then_delete)
+
+    submit = {"submittedProblemId": "p1", "success": True, "failureCode": None, "failureMessage": None}
+    await submit_items_and_complete_batch(
+        real_database,
+        batch_id,
+        user_id,
+        item_results=[{"itemId": item_a_id, "status": ItemState.SUBMITTED.value, "submit": submit}],
+        now=same_ts,
+    )
+
+    final = await get_batch(real_database, batch_id, user_id)
+    assert final is not None
+    item_a = next(i for i in final["items"] if i["itemId"] == item_a_id)
+    item_b = next(i for i in final["items"] if i["itemId"] == item_b_id)
+    # The deleted item stays deleted and the stale submit payload never lands.
+    assert item_a["status"] == ItemState.DELETED.value
+    assert item_a["submit"]["submittedProblemId"] is None
+    # The batch is not completed from the stale result: B was never submitted.
+    assert item_b["status"] == ItemState.QUEUED.value
+    assert final["status"] == "active"
 
 
 # ---------------------------------------------------------------------------
@@ -339,13 +826,14 @@ async def test_save_item_extraction_success_sets_ready_clears_lease_and_timestam
     real_database: Any, user_id: ObjectId, settings: Settings
 ) -> None:
     batch_id, item_a_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    lease_until = NOW + timedelta(minutes=5)
     await _set_item_fields(
         real_database,
         batch_id,
         user_id,
         item_a_id,
         status=ItemState.EXTRACTING.value,
-        leaseUntil=NOW + timedelta(minutes=5),
+        leaseUntil=lease_until,
     )
 
     crop = {"bucket": "b", "objectKey": "k"}
@@ -357,10 +845,11 @@ async def test_save_item_extraction_success_sets_ready_clears_lease_and_timestam
         crop=crop,
         draft=draft,
         extraction=extraction,
+        lease_until=lease_until,
         now=NOW,
     )
 
-    assert result is None
+    assert result is True
     loaded = await get_batch(real_database, batch_id, user_id)
     assert loaded is not None
     item = next(i for i in loaded["items"] if i["itemId"] == item_a_id)
@@ -372,16 +861,17 @@ async def test_save_item_extraction_success_sets_ready_clears_lease_and_timestam
     assert item["updatedAt"].replace(tzinfo=UTC) == NOW
     assert loaded["updatedAt"].replace(tzinfo=UTC) == NOW
 
+    # Missing item: no write at all, result False.
     later = NOW + timedelta(seconds=1)
     items_before = loaded["items"]
     assert await save_item_extraction_success(
         real_database, batch_id, user_id, "missing",
-        crop={}, draft={}, extraction={}, now=later,
-    ) is None
+        crop={}, draft={}, extraction={}, lease_until=None, now=later,
+    ) is False
     loaded = await get_batch(real_database, batch_id, user_id)
     assert loaded is not None
     assert loaded["items"] == items_before
-    assert loaded["updatedAt"].replace(tzinfo=UTC) == later
+    assert loaded["updatedAt"].replace(tzinfo=UTC) == NOW
 
 
 @pytest.mark.asyncio
@@ -389,21 +879,23 @@ async def test_save_item_extraction_failure_sets_failed_clears_lease_and_timesta
     real_database: Any, user_id: ObjectId, settings: Settings
 ) -> None:
     batch_id, item_a_id, _ = await _batch_with_two_items(real_database, user_id, settings)
+    lease_until = NOW + timedelta(minutes=5)
     await _set_item_fields(
         real_database,
         batch_id,
         user_id,
         item_a_id,
         status=ItemState.EXTRACTING.value,
-        leaseUntil=NOW + timedelta(minutes=5),
+        leaseUntil=lease_until,
     )
 
     extraction = {"success": False, "failureCode": "X", "failureMessage": "boom"}
     result = await save_item_extraction_failure(
-        real_database, batch_id, user_id, item_a_id, extraction=extraction, now=NOW,
+        real_database, batch_id, user_id, item_a_id,
+        extraction=extraction, lease_until=lease_until, now=NOW,
     )
 
-    assert result is None
+    assert result is True
     loaded = await get_batch(real_database, batch_id, user_id)
     assert loaded is not None
     item = next(i for i in loaded["items"] if i["itemId"] == item_a_id)
@@ -413,15 +905,17 @@ async def test_save_item_extraction_failure_sets_failed_clears_lease_and_timesta
     assert item["updatedAt"].replace(tzinfo=UTC) == NOW
     assert loaded["updatedAt"].replace(tzinfo=UTC) == NOW
 
+    # Missing item: no write at all, result False.
     later = NOW + timedelta(seconds=1)
     items_before = loaded["items"]
     assert await save_item_extraction_failure(
-        real_database, batch_id, user_id, "missing", extraction={}, now=later,
-    ) is None
+        real_database, batch_id, user_id, "missing",
+        extraction={}, lease_until=None, now=later,
+    ) is False
     loaded = await get_batch(real_database, batch_id, user_id)
     assert loaded is not None
     assert loaded["items"] == items_before
-    assert loaded["updatedAt"].replace(tzinfo=UTC) == later
+    assert loaded["updatedAt"].replace(tzinfo=UTC) == NOW
 
 
 @pytest.mark.asyncio
@@ -463,11 +957,18 @@ async def test_reset_item_for_retry_eligibility_and_idempotency(
         status=ItemState.EXTRACTING.value,
         leaseUntil=NOW - timedelta(seconds=1),
     )
-    before = await get_batch(real_database, batch_id, user_id)
-    assert before is not None
-    with pytest.raises(TypeError, match="offset-naive and offset-aware"):
-        await reset_item_for_retry(real_database, batch_id, user_id, item_a_id, now=NOW)
-    assert await get_batch(real_database, batch_id, user_id) == before
+    # Lease eligibility is evaluated by the database write, so an expired
+    # lease requeues without any client-side datetime comparison.
+    changed_at = NOW + timedelta(seconds=3)
+    assert await reset_item_for_retry(
+        real_database, batch_id, user_id, item_a_id, now=changed_at,
+    ) is True
+    loaded = await get_batch(real_database, batch_id, user_id)
+    assert loaded is not None
+    item = next(i for i in loaded["items"] if i["itemId"] == item_a_id)
+    assert item["status"] == ItemState.QUEUED.value
+    assert item["leaseUntil"] is None
+    assert loaded["updatedAt"].replace(tzinfo=UTC) == changed_at
 
     await _set_item_fields(
         real_database,
@@ -512,7 +1013,7 @@ async def test_update_item_draft_allowed_keys_and_missing_item(
     for key in {"text", "problemType", "graphDsl", "correctAnswer", "tags", "subject"}:
         assert updated["draft"][key] == draft_update[key]
     assert "ignored" not in updated["draft"]
-    assert updated["updatedAt"] == NOW
+    assert updated["updatedAt"].replace(tzinfo=UTC) == NOW
 
     loaded = await get_batch(real_database, batch_id, user_id)
     assert loaded is not None
@@ -604,8 +1105,8 @@ async def test_undo_item_deletion_restores_and_requires_previous_status(
 @pytest.mark.parametrize(
     ("mutation", "kwargs"),
     [
-        (save_item_extraction_success, {"crop": {}, "draft": {}, "extraction": {}}),
-        (save_item_extraction_failure, {"extraction": {}}),
+        (save_item_extraction_success, {"crop": {}, "draft": {}, "extraction": {}, "lease_until": None}),
+        (save_item_extraction_failure, {"extraction": {}, "lease_until": None}),
         (reset_item_for_retry, {}),
         (update_item_draft, {"draft_update": {}}),
         (mark_item_deleted, {}),

@@ -1144,6 +1144,14 @@ async def test_extraction_populates_draft_after_worker_runs(
     assert batch is not None
     item = batch["items"][0]
 
+    from app.infrastructure.ingestion.repository import claim_item
+    claimed = await claim_item(
+        database, ObjectId(batch_id), item["itemId"], batch["userId"],
+        lease_timeout_seconds=60, now=datetime.now(UTC),
+    )
+    assert claimed is not None
+    item = claimed
+
     math_ingestion_vlm.responses.append(
         make_extraction_result(text="Extracted math text", model="math-model")
     )
@@ -1293,6 +1301,13 @@ async def create_ready_item(
     batch = await database["ingestion_batches"].find_one({"_id": ObjectId(batch_id)})
     assert batch is not None
 
+    from app.infrastructure.ingestion.repository import claim_item
+    claimed = await claim_item(
+        database, ObjectId(batch_id), batch["items"][0]["itemId"], batch["userId"],
+        lease_timeout_seconds=60, now=datetime.now(UTC),
+    )
+    assert claimed is not None
+
     math_ingestion_vlm.responses.append(
         make_extraction_result(text=f"Extracted {subject} text", model="math-model")
     )
@@ -1302,7 +1317,7 @@ async def create_ready_item(
 
     settings = AppSettings(s3_bucket="learnloop-media")
     await process_item(
-        batch["items"][0],
+        claimed,
         batch,
         database,
         storage,
@@ -1765,6 +1780,7 @@ async def create_two_ready_items(
 
     from app.infrastructure.worker.extraction_worker import process_item
     from app.infrastructure.config.settings import Settings as AppSettings
+    from app.infrastructure.ingestion.repository import claim_item
 
     settings = AppSettings(s3_bucket="learnloop-media")
     for _ in item_ids:
@@ -1773,8 +1789,13 @@ async def create_two_ready_items(
         )
 
     for item in batch["items"]:
+        claimed = await claim_item(
+            database, ObjectId(batch_id), item["itemId"], batch["userId"],
+            lease_timeout_seconds=60, now=datetime.now(UTC),
+        )
+        assert claimed is not None
         await process_item(
-            item,
+            claimed,
             batch,
             database,
             storage,
