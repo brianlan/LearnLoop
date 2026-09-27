@@ -114,6 +114,8 @@ services:
                 time.sleep(2)
         else:
             raise SystemExit(last_error)
+        buckets = [b["Name"] for b in storage.client.list_buckets()["Buckets"]]
+        print("buckets: " + ", ".join(buckets))
         PY
 
   app:
