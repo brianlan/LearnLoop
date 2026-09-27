@@ -20,6 +20,7 @@ from app.domain.ingestion.variation import (
     ProblemContent,
     VariantAssessment,
     VariantCandidate,
+    VariantGenerationResult,
     VariantMode,
     ValidatorReport,
     assess_variant,
@@ -44,6 +45,20 @@ from app.infrastructure.vlm.variant_prompts import (
 
 class VariantVLMError(BaseVLMError):
     pass
+
+
+# Non-transport failure code: the profile itself is misconfigured. Never
+# retryable and never a substitute for a provider call.
+FAILURE_CODE_PROFILE_INVALID = "vlm-profile-invalid"
+
+# Placeholder used by the settings defaults and .env.example for unconfigured
+# profiles; endpoints on the reserved .invalid TLD are equally non-configured.
+_PROFILE_PLACEHOLDER = "replace-me"
+
+
+def _profile_unconfigured(value: str | None) -> bool:
+    cleaned = (value or "").strip()
+    return not cleaned or cleaned == _PROFILE_PLACEHOLDER or cleaned.endswith(".invalid")
 
 
 class _ProviderPayload(BaseModel):
@@ -115,6 +130,7 @@ class _TextOnlyVLMClient(BaseVLMClient):
                     raw_provider_response=raw_body,
                 )
             content, _reasoning = self._strip_thinking_content(output_text)
+            return self._load_json_content(content)
         else:
             chat_request = _ChatCompletionRequest(
                 model=self._model,
@@ -127,28 +143,9 @@ class _TextOnlyVLMClient(BaseVLMClient):
                 ],
             )
             raw_body = await self._send_chat_completion(chat_request.model_dump(exclude_none=True))
-            content, _reasoning = self._parse_chat_content(raw_body)
-        return self._load_json_content(content)
-
-    def _parse_chat_content(self, raw_body: dict[str, Any]) -> tuple[str, str | None]:
-        choices = raw_body.get("choices") or []
-        if not choices:
-            raise self._make_error(
-                "VLM provider response had no choices",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            )
-        message = choices[0].get("message", {})
-        content = message.get("content")
-        if not content:
-            raise self._make_error(
-                "VLM provider response content was empty",
-                code=FAILURE_CODE_INVALID_RESPONSE,
-                retryable=False,
-                raw_provider_response=raw_body,
-            )
-        return self._strip_thinking_content(content)
+            # The base parser validates the chat shape, extracts the content,
+            # strips thinking blocks and parses the JSON payload.
+            return self._parse_chat_completion_response(raw_body)
 
     def _validate_payload(
         self,
@@ -237,8 +234,8 @@ class VariantHelperVLMClient(_TextOnlyVLMClient):
     async def compare_answer_pairs(
         self,
         *,
-        source_context: str,
-        candidate_context: str,
+        source_context: dict[str, Any],
+        candidate_context: dict[str, Any],
         source_expected_answer: str,
         source_solved_answer: str,
         variant_expected_answer: str,
@@ -263,11 +260,40 @@ class VariantHelperVLMClient(_TextOnlyVLMClient):
         )
 
 
+def _require_profile_settings(
+    name: str, *, endpoint: str | None, model: str | None, api_key: str | None
+) -> None:
+    """Fail clearly at construction time when a profile is not configured.
+
+    Without this, a placeholder/default profile would surface as a confusing
+    provider request failure (or silently fall back to another role's model)
+    instead of the required configuration error.
+    """
+    missing = [
+        field
+        for field, value in (("endpoint", endpoint), ("model", model), ("api_key", api_key))
+        if _profile_unconfigured(value)
+    ]
+    if missing:
+        raise VariantVLMError(
+            f"Variant VLM profile '{name}' is missing required configuration: "
+            f"{', '.join(missing)}",
+            code=FAILURE_CODE_PROFILE_INVALID,
+            retryable=False,
+        )
+
+
 def build_variant_generator_vlm_client(
     settings: Settings,
     completion_fn: Callable[..., Any] | None = None,
     responses_fn: Callable[..., Any] | None = None,
 ) -> VariantGeneratorVLMClient:
+    _require_profile_settings(
+        "variant_generator_vlm_*",
+        endpoint=settings.variant_generator_vlm_endpoint,
+        model=settings.variant_generator_vlm_model,
+        api_key=settings.variant_generator_vlm_api_key,
+    )
     return VariantGeneratorVLMClient(
         endpoint=settings.variant_generator_vlm_endpoint,
         model=settings.variant_generator_vlm_model,
@@ -289,6 +315,12 @@ def build_variant_validator_vlm_client(
     responses_fn: Callable[..., Any] | None = None,
 ) -> VariantValidatorVLMClient:
     if second:
+        _require_profile_settings(
+            "variant_validator2_vlm_*",
+            endpoint=settings.variant_validator2_vlm_endpoint,
+            model=settings.variant_validator2_vlm_model,
+            api_key=settings.variant_validator2_vlm_api_key,
+        )
         return VariantValidatorVLMClient(
             endpoint=settings.variant_validator2_vlm_endpoint,
             model=settings.variant_validator2_vlm_model,
@@ -300,6 +332,12 @@ def build_variant_validator_vlm_client(
             responses_fn=responses_fn,
             error_factory=VariantVLMError,
         )
+    _require_profile_settings(
+        "variant_validator_vlm_*",
+        endpoint=settings.variant_validator_vlm_endpoint,
+        model=settings.variant_validator_vlm_model,
+        api_key=settings.variant_validator_vlm_api_key,
+    )
     return VariantValidatorVLMClient(
         endpoint=settings.variant_validator_vlm_endpoint,
         model=settings.variant_validator_vlm_model,
@@ -318,6 +356,12 @@ def build_variant_helper_vlm_client(
     completion_fn: Callable[..., Any] | None = None,
     responses_fn: Callable[..., Any] | None = None,
 ) -> VariantHelperVLMClient:
+    _require_profile_settings(
+        "helper_vlm_*",
+        endpoint=settings.helper_vlm_endpoint,
+        model=settings.helper_vlm_model,
+        api_key=settings.helper_vlm_api_key,
+    )
     return VariantHelperVLMClient(
         endpoint=settings.helper_vlm_endpoint,
         model=settings.helper_vlm_model,
@@ -331,6 +375,15 @@ def build_variant_helper_vlm_client(
     )
 
 
+def _problem_context(problem: ProblemContent | VariantCandidate) -> dict[str, Any]:
+    """Full task context for helper comparisons (multi-part/diagram-aware)."""
+    return {
+        "text": problem.text,
+        "problemType": problem.problem_type,
+        "graphDsl": problem.graph_dsl,
+    }
+
+
 async def generate_and_validate(
     *,
     mode: VariantMode,
@@ -338,32 +391,44 @@ async def generate_and_validate(
     generator: VariantGeneratorVLMClient,
     validators: Sequence[VariantValidatorVLMClient],
     helper: VariantHelperVLMClient,
-) -> VariantAssessment:
+) -> VariantGenerationResult:
     """The callable interface the later worker crosses.
 
-    Fails closed: generator/validator/helper provider or invalid-response
-    failures become non-content failures and the verdict is FAIL. Conclusively
-    invalid candidates short-circuit before validator calls.
+    Returns the generated candidate, every completed validator report (with
+    model identity, independently solved answers and helper comparisons) and
+    the deterministic assessment, so approval provenance stays inspectable
+    even on failure. Fails closed: generator/validator/helper provider or
+    invalid-response failures become non-content failures and the verdict is
+    FAIL. Conclusively invalid candidates short-circuit before validator
+    calls.
     """
     try:
         candidate = await generator.generate_candidate(mode=mode, source=source)
     except BaseVLMError as exc:
-        return VariantAssessment(
-            verdict="fail",
-            failures=[
-                AssessmentFailure(
-                    kind=_failure_kind(exc),
-                    evidence=(
-                        f"generator {generator.identity['provider']}/{generator.identity['model']} "
-                        f"failed: {exc}"
-                    ),
-                )
-            ],
+        return VariantGenerationResult(
+            candidate=None,
+            reports=[],
+            assessment=VariantAssessment(
+                verdict="fail",
+                failures=[
+                    AssessmentFailure(
+                        kind=_failure_kind(exc),
+                        evidence=(
+                            f"generator {generator.identity['provider']}/{generator.identity['model']} "
+                            f"failed: {exc}"
+                        ),
+                    )
+                ],
+            ),
         )
 
     cheap_failures = check_candidate(mode, source, candidate)
     if cheap_failures:
-        return VariantAssessment(verdict="fail", failures=cheap_failures)
+        return VariantGenerationResult(
+            candidate=candidate,
+            reports=[],
+            assessment=VariantAssessment(verdict="fail", failures=cheap_failures),
+        )
 
     reports: list[ValidatorReport] = []
     extra_failures: list[AssessmentFailure] = []
@@ -395,8 +460,8 @@ async def generate_and_validate(
             continue
         try:
             original_cmp, variant_cmp = await helper.compare_answer_pairs(
-                source_context=source.text,
-                candidate_context=candidate.text,
+                source_context=_problem_context(source),
+                candidate_context=_problem_context(candidate),
                 source_expected_answer=source.correct_answer,
                 source_solved_answer=report.original_solved_answer,
                 variant_expected_answer=candidate.correct_answer,
@@ -421,7 +486,11 @@ async def generate_and_validate(
     assessment = assess_variant(
         mode=mode, source=source, candidate=candidate, reports=reports
     )
-    return VariantAssessment(
-        verdict="pass" if assessment.verdict == "pass" and not extra_failures else "fail",
-        failures=assessment.failures + extra_failures,
+    if extra_failures:
+        assessment = VariantAssessment(
+            verdict="fail",
+            failures=assessment.failures + extra_failures,
+        )
+    return VariantGenerationResult(
+        candidate=candidate, reports=reports, assessment=assessment
     )

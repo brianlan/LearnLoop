@@ -15,8 +15,10 @@ from app.domain.ingestion.variation import ModelIdentity, ProblemContent
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.base_client import FAILURE_CODE_INVALID_RESPONSE
 from app.infrastructure.vlm.variant_client import (
+    FAILURE_CODE_PROFILE_INVALID,
     VariantGeneratorVLMClient,
     VariantVLMError,
+    _problem_context,
     VariantHelperVLMClient,
     VariantValidatorVLMClient,
     build_variant_generator_vlm_client,
@@ -261,8 +263,8 @@ async def test_helper_runs_after_validator_with_only_that_validators_answers() -
     )
     report = await validator.produce_report(mode="data-only", source=SOURCE, candidate=candidate)
     original_cmp, variant_cmp = await helper.compare_answer_pairs(
-        source_context=SOURCE.text,
-        candidate_context=candidate.text,
+        source_context=_problem_context(SOURCE),
+        candidate_context=_problem_context(candidate),
         source_expected_answer=SOURCE.correct_answer,
         source_solved_answer=report.original_solved_answer or "",
         variant_expected_answer=candidate.correct_answer,
@@ -298,16 +300,16 @@ async def test_helper_receives_only_the_owning_validators_answers() -> None:
     report1 = await first.produce_report(mode="data-only", source=SOURCE, candidate=candidate)
     report2 = await second.produce_report(mode="data-only", source=SOURCE, candidate=candidate)
     await helper.compare_answer_pairs(
-        source_context=SOURCE.text,
-        candidate_context=candidate.text,
+        source_context=_problem_context(SOURCE),
+        candidate_context=_problem_context(candidate),
         source_expected_answer=SOURCE.correct_answer,
         source_solved_answer=report1.original_solved_answer or "",
         variant_expected_answer=candidate.correct_answer,
         variant_solved_answer=report1.variant_solved_answer or "",
     )
     await helper.compare_answer_pairs(
-        source_context=SOURCE.text,
-        candidate_context=candidate.text,
+        source_context=_problem_context(SOURCE),
+        candidate_context=_problem_context(candidate),
         source_expected_answer=SOURCE.correct_answer,
         source_solved_answer=report2.original_solved_answer or "",
         variant_expected_answer=candidate.correct_answer,
@@ -335,7 +337,7 @@ async def test_incomplete_candidate_short_circuits_before_validators() -> None:
     validator_recorder = _Recorder([])
     helper_recorder = _Recorder([])
 
-    assessment = await generate_and_validate(
+    result = await generate_and_validate(
         mode="data-only",
         source=SOURCE,
         generator=_generator_client(generator_recorder),
@@ -343,10 +345,14 @@ async def test_incomplete_candidate_short_circuits_before_validators() -> None:
         helper=_helper_client(helper_recorder),
     )
 
+    assessment = result.assessment
     assert assessment.verdict == "fail"
     assert any(
         "problemType mismatch: source 'short-answer'" in f.evidence for f in assessment.failures
     )
+    # Short-circuit still returns the candidate for inspection, with no reports.
+    assert result.candidate is not None
+    assert result.reports == []
     assert validator_recorder.payloads == []
     assert helper_recorder.payloads == []
 
@@ -356,40 +362,53 @@ async def test_generator_provider_failure_fails_closed() -> None:
     generator_recorder = _Recorder(
         [APIConnectionError(message="boom", model="gen-model", llm_provider="openai")]
     )
-    assessment = await generate_and_validate(
+    result = await generate_and_validate(
         mode="data-only",
         source=SOURCE,
         generator=_generator_client(generator_recorder),
         validators=[],
         helper=_helper_client(_Recorder([])),
     )
+    assessment = result.assessment
     assert assessment.verdict == "fail"
     assert assessment.failures[0].kind == "provider"
     assert "gen-model" in assessment.failures[0].evidence
+    # Generation itself failed: no candidate, no reports.
+    assert result.candidate is None
+    assert result.reports == []
 
 
 @pytest.mark.asyncio
 async def test_full_flow_single_validator_pass() -> None:
-    assessment = await generate_and_validate(
+    result = await generate_and_validate(
         mode="data-only",
         source=SOURCE,
         generator=_generator_client(_Recorder([_generator_json()])),
         validators=[_validator_client(_Recorder([_validator_json()]))],
         helper=_helper_client(_Recorder([_helper_json()])),
     )
+    assessment = result.assessment
     assert assessment.verdict == "pass"
     assert assessment.failures == []
+    # The seam returns the complete provenance: candidate + structured reports.
+    assert result.candidate is not None
+    assert result.candidate.generator.model == "gen-model"
+    assert [r.validator_model.model for r in result.reports] == ["val-model"]
+    assert result.reports[0].original_solved_answer == "60"
+    assert result.reports[0].answer_comparison_original.result == "equivalent"
+    assert result.reports[0].answer_comparison_variant.result == "equivalent"
 
 
 @pytest.mark.asyncio
 async def test_full_flow_helper_uncertain_fails_closed() -> None:
-    assessment = await generate_and_validate(
+    result = await generate_and_validate(
         mode="data-only",
         source=SOURCE,
         generator=_generator_client(_Recorder([_generator_json()])),
         validators=[_validator_client(_Recorder([_validator_json()]))],
         helper=_helper_client(_Recorder([_helper_json(variant="uncertain")])),
     )
+    assessment = result.assessment
     assert assessment.verdict == "fail"
     assert any(f.kind == "content" for f in assessment.failures)
 
@@ -409,7 +428,7 @@ async def test_full_flow_two_validators_with_disagreement_fails() -> None:
             },
         }
     )
-    assessment = await generate_and_validate(
+    result = await generate_and_validate(
         mode="data-only",
         source=SOURCE,
         generator=_generator_client(_Recorder([_generator_json()])),
@@ -419,7 +438,127 @@ async def test_full_flow_two_validators_with_disagreement_fails() -> None:
         ],
         helper=_helper_client(_Recorder([_helper_json(), _helper_json()])),
     )
+    assessment = result.assessment
     assert assessment.verdict == "fail"
     assert any(
         "validators disagree on difficultyShift" in f.evidence for f in assessment.failures
     )
+    # Both completed reports survive for failure inspection.
+    assert len(result.reports) == 2
+
+
+# ---------------------------------------------------------------------------
+# Responses-transport validator/helper capture, result contract, config.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_responses_validator_and_helper_isolation_and_task_context() -> None:
+    """Blind isolation and helper task context must hold in the Responses transport too."""
+    candidate = await _generator_client(_Recorder([_generator_json()])).generate_candidate(
+        mode="data-only", source=SOURCE
+    )
+    validator_recorder = _ResponsesRecorder([_validator_json()])
+    helper_recorder = _ResponsesRecorder([_helper_json()])
+    settings = _settings().model_copy(
+        update={"variant_validator_vlm_api_mode": "responses", "helper_vlm_api_mode": "responses"}
+    )
+    validator = build_variant_validator_vlm_client(settings, responses_fn=validator_recorder)
+    helper = build_variant_helper_vlm_client(settings, responses_fn=helper_recorder)
+
+    calls: list[str] = []
+    original_produce = validator.produce_report
+    original_compare = helper.compare_answer_pairs
+
+    async def traced_produce(**kwargs: Any) -> Any:
+        calls.append("validator")
+        return await original_produce(**kwargs)
+
+    async def traced_compare(**kwargs: Any) -> Any:
+        calls.append("helper")
+        return await original_compare(**kwargs)
+
+    validator.produce_report = traced_produce  # type: ignore[method-assign]
+    helper.compare_answer_pairs = traced_compare  # type: ignore[method-assign]
+
+    report = await validator.produce_report(mode="data-only", source=SOURCE, candidate=candidate)
+    original_cmp, variant_cmp = await helper.compare_answer_pairs(
+        source_context=_problem_context(SOURCE),
+        candidate_context=_problem_context(candidate),
+        source_expected_answer=SOURCE.correct_answer,
+        source_solved_answer=report.original_solved_answer or "",
+        variant_expected_answer=candidate.correct_answer,
+        variant_solved_answer=report.variant_solved_answer or "",
+    )
+
+    assert calls == ["validator", "helper"]
+    # Validator: text-only Responses input, no expected answers, full task data.
+    v_kwargs = validator_recorder.payloads[0]
+    v_dumped = json.dumps(v_kwargs)
+    assert "60" not in v_dumped
+    assert "image" not in v_dumped.lower()
+    input_items = v_kwargs["input"][0]["content"]
+    assert all(item["type"] == "input_text" for item in input_items)
+    task_text = input_items[0]["text"]
+    assert "short-answer" in task_text
+    assert SOURCE.text in task_text
+    assert candidate.text in task_text
+    # Helper: full task context (problemType) plus this validator's answers only.
+    h_kwargs = helper_recorder.payloads[0]
+    assert all(
+        item["type"] == "input_text" for item in h_kwargs["input"][0]["content"]
+    )
+    h_task = h_kwargs["input"][0]["content"][0]["text"]
+    assert '"problemType": "short-answer"' in h_task
+    assert '"expectedAnswer": "60"' in h_task
+    assert "image" not in h_task.lower()
+    assert original_cmp.result == "equivalent"
+    assert variant_cmp.result == "equivalent"
+
+
+@pytest.mark.asyncio
+async def test_reports_preserved_when_helper_fails() -> None:
+    """A helper failure must not discard the validator's completed report."""
+    helper_recorder = _Recorder(
+        [APIConnectionError(message="boom", model="helper-model", llm_provider="openai")]
+    )
+    result = await generate_and_validate(
+        mode="data-only",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([_generator_json()])),
+        validators=[_validator_client(_Recorder([_validator_json()]))],
+        helper=_helper_client(helper_recorder),
+    )
+    assert result.assessment.verdict == "fail"
+    assert any(
+        f.kind == "provider" and "helper" in f.evidence for f in result.assessment.failures
+    )
+    assert len(result.reports) == 1
+    report = result.reports[0]
+    assert report.original_solved_answer == "60"
+    assert report.variant_solved_answer == "60"
+    # The comparison never ran: default uncertain comparison, not a fake pass.
+    assert report.answer_comparison_original.result == "uncertain"
+    assert result.candidate is not None
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected_profile"),
+    [
+        (lambda s: build_variant_generator_vlm_client(s), "variant_generator_vlm_*"),
+        (lambda s: build_variant_validator_vlm_client(s), "variant_validator_vlm_*"),
+        (
+            lambda s: build_variant_validator_vlm_client(s, second=True),
+            "variant_validator2_vlm_*",
+        ),
+        (lambda s: build_variant_helper_vlm_client(s), "helper_vlm_*"),
+    ],
+)
+def test_missing_profile_configuration_fails_at_construction(
+    builder: Callable[[Any], Any], expected_profile: str
+) -> None:
+    """Missing endpoint/model/key is a clear configuration failure, before any I/O."""
+    with pytest.raises(VariantVLMError) as exc_info:
+        builder(Settings())
+    assert exc_info.value.code == FAILURE_CODE_PROFILE_INVALID
+    assert expected_profile in str(exc_info.value)

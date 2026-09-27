@@ -127,14 +127,19 @@ def build_variant_validator_user_prompt(
 
 def build_variant_helper_user_prompt(
     *,
-    source_context: str,
-    candidate_context: str,
+    source_context: dict[str, Any],
+    candidate_context: dict[str, Any],
     source_expected_answer: str,
     source_solved_answer: str,
     variant_expected_answer: str,
     variant_solved_answer: str,
 ) -> str:
-    """One request compares both answer pairs for one validator."""
+    """One request compares both answer pairs for one validator.
+
+    Each problem context carries the full task (text, problemType, graphDsl)
+    so multi-part and diagram-dependent answers are judged with the right
+    subquestion context.
+    """
     task = {
         "sourceProblem": source_context,
         "candidateProblem": candidate_context,

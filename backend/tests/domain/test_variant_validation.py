@@ -237,3 +237,45 @@ def test_provider_failure_kind_values() -> None:
     assert AssessmentFailure(kind="provider", evidence="x").kind == "provider"
     assert AssessmentFailure(kind="invalid-response", evidence="x").kind == "invalid-response"
     assert AssessmentFailure(kind="content", evidence="x").kind == "content"
+
+
+# ---------------------------------------------------------------------------
+# GraphDSL presence parity between source and candidate.
+# ---------------------------------------------------------------------------
+
+SAFE_GRAPH = "var A = board.create('point', [0, 0]);"
+
+
+def test_missing_candidate_graph_for_graph_source_fails() -> None:
+    source = SOURCE.model_copy(update={"graph_dsl": SAFE_GRAPH})
+    failures = check_candidate("data-only", source, CANDIDATE)
+    assert any(
+        "candidate graphDsl is missing but the source problem has a graph" in f.evidence
+        for f in failures
+    )
+
+
+def test_added_candidate_graph_for_graphless_source_fails() -> None:
+    candidate = CANDIDATE.model_copy(update={"graph_dsl": SAFE_GRAPH})
+    failures = check_candidate("data-only", SOURCE, candidate)
+    assert any(
+        "candidate graphDsl is set but the source problem has no graph" in f.evidence
+        for f in failures
+    )
+
+
+def test_empty_candidate_graph_fails() -> None:
+    candidate = CANDIDATE.model_copy(update={"graph_dsl": "   "})
+    failures = check_candidate("data-only", SOURCE, candidate)
+    assert any("candidate graphDsl is present but empty" in f.evidence for f in failures)
+
+
+def test_graph_parity_with_matching_graphs_passes_gate() -> None:
+    source = SOURCE.model_copy(update={"graph_dsl": SAFE_GRAPH})
+    candidate = CANDIDATE.model_copy(update={"graph_dsl": SAFE_GRAPH})
+    assert check_candidate("data-only", source, candidate) == []
+    report = _report(categories={**PASSING_CATEGORIES, "graphConsistency": "consistent"})
+    assessment = assess_variant(
+        mode="data-only", source=source, candidate=candidate, reports=[report]
+    )
+    assert assessment.verdict == "pass"

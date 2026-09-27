@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.domain.ingestion.variation import ProblemContent  # noqa: E402
 from app.infrastructure.config.settings import get_settings  # noqa: E402
 from app.infrastructure.vlm.variant_client import (  # noqa: E402
+    _profile_unconfigured,
     build_variant_generator_vlm_client,
     build_variant_helper_vlm_client,
     build_variant_validator_vlm_client,
@@ -40,7 +41,19 @@ CASES = [
         "pass",
     ),
     (
-        "multi-blank-partial-answer",
+        "exact-division-remainder",
+        "data-only",
+        ProblemContent(
+            text="A teacher shares 17 pencils equally among 5 students. "
+            "How many whole pencils does each student get, and how many are left over?",
+            problemType="short-answer",
+            graphDsl=None,
+            correctAnswer="3 remainder 2",
+        ),
+        "pass",
+    ),
+    (
+        "multi-blank-complete-equivalent",
         "data-only",
         ProblemContent(
             text="Solve for x and y: x + y = 10 and x - y = 4.",
@@ -51,6 +64,17 @@ CASES = [
         "pass",
     ),
     (
+        "multi-blank-omission",
+        "data-only",
+        ProblemContent(
+            text="Solve for x and y: x + y = 10 and x - y = 4.",
+            problemType="short-answer",
+            graphDsl=None,
+            correctAnswer="x=7; y=3",
+        ),
+        "fail",
+    ),
+    (
         "numeric-blowup-harder",
         "data-and-wording",
         ProblemContent(
@@ -58,6 +82,28 @@ CASES = [
             problemType="short-answer",
             graphDsl=None,
             correctAnswer="25",
+        ),
+        "fail",
+    ),
+    (
+        "changed-reasoning-direction",
+        "data-and-wording",
+        ProblemContent(
+            text="A train travels 120 km in 2 hours. What is its speed in km/h?",
+            problemType="short-answer",
+            graphDsl=None,
+            correctAnswer="60",
+        ),
+        "fail",
+    ),
+    (
+        "wording-violation-data-only",
+        "data-only",
+        ProblemContent(
+            text="A car travels 150 km in 3 hours. What is its speed in km/h?",
+            problemType="short-answer",
+            graphDsl=None,
+            correctAnswer="50",
         ),
         "fail",
     ),
@@ -92,9 +138,9 @@ def _profile_missing() -> list[str]:
     settings = get_settings()
     missing = []
     for prefix in ("variant_generator_vlm", "variant_validator_vlm", "helper_vlm"):
-        if getattr(settings, f"{prefix}_model") == _PLACEHOLDER or getattr(
-            settings, f"{prefix}_api_key"
-        ) == _PLACEHOLDER:
+        if _profile_unconfigured(getattr(settings, f"{prefix}_model")) or _profile_unconfigured(
+            getattr(settings, f"{prefix}_api_key")
+        ):
             missing.append(prefix)
     return missing
 
@@ -111,19 +157,24 @@ async def _run() -> int:
     settings = get_settings()
     generator = build_variant_generator_vlm_client(settings)
     validator1 = build_variant_validator_vlm_client(settings)
-    validator2 = build_variant_validator_vlm_client(settings, second=True)
-    validators = [validator1] if validator2._model == _PLACEHOLDER else [validator1, validator2]
+    second_model = (settings.variant_validator2_vlm_model or "").strip()
+    validators = (
+        [validator1, build_variant_validator_vlm_client(settings, second=True)]
+        if second_model and second_model != _PLACEHOLDER
+        else [validator1]
+    )
     helper = build_variant_helper_vlm_client(settings)
 
     discrepancies = 0
     for name, mode, source, expected in CASES:
-        assessment = await generate_and_validate(
+        result = await generate_and_validate(
             mode=mode,  # type: ignore[arg-type]
             source=source,
             generator=generator,
             validators=validators,
             helper=helper,
         )
+        assessment = result.assessment
         status = "OK" if assessment.verdict == expected else "DISCREPANCY"
         if status == "DISCREPANCY":
             discrepancies += 1

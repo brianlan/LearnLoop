@@ -101,6 +101,20 @@ class VariantAssessment(BaseModel):
     failures: list[AssessmentFailure] = Field(default_factory=list)
 
 
+class VariantGenerationResult(BaseModel):
+    """Complete orchestration outcome consumed by the later worker.
+
+    ``candidate`` is None only when generation itself failed. ``reports``
+    preserves every completed validator report (with model identity, solved
+    answers and helper comparisons) even when a later step failed, so failure
+    evidence stays inspectable.
+    """
+
+    candidate: VariantCandidate | None = None
+    reports: list[ValidatorReport] = Field(default_factory=list)
+    assessment: VariantAssessment
+
+
 def _content_failure(evidence: str) -> AssessmentFailure:
     return AssessmentFailure(kind="content", evidence=evidence)
 
@@ -119,7 +133,23 @@ def check_candidate(mode: VariantMode, source: ProblemContent, candidate: Varian
                 f"'{candidate.problem_type}'"
             )
         )
-    if candidate.graph_dsl:
+    source_has_graph = bool((source.graph_dsl or "").strip())
+    candidate_graph = (candidate.graph_dsl or "").strip()
+    if candidate.graph_dsl is not None and not candidate_graph:
+        failures.append(_content_failure("candidate graphDsl is present but empty"))
+    elif source_has_graph and not candidate_graph:
+        failures.append(
+            _content_failure(
+                "candidate graphDsl is missing but the source problem has a graph"
+            )
+        )
+    elif candidate_graph and not source_has_graph:
+        failures.append(
+            _content_failure(
+                "candidate graphDsl is set but the source problem has no graph"
+            )
+        )
+    if candidate_graph:
         cleaned = sanitize_whiteboard_dsl(candidate.graph_dsl)
         if cleaned is None:
             failures.append(
