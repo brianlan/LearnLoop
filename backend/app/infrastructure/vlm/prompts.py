@@ -613,15 +613,18 @@ def build_grading_user_prompt(
     user_answer: str,
     correct_answer: str,
     subject: str = "math",
+    graph_dsl: str | None = None,
     expected_response_schema: dict[str, Any],
 ) -> str:
-    data = {
+    data: dict[str, Any] = {
         "problemText": problem_text,
         "userAnswer": user_answer,
         "correctAnswer": correct_answer,
         "subject": subject,
-        "expectedResponseSchema": expected_response_schema,
     }
+    if graph_dsl is not None:
+        data["graphDsl"] = graph_dsl
+    data["expectedResponseSchema"] = expected_response_schema
     return (
         "Grade the user's answer against the stored answer key.\n"
         'Return only JSON with keys "isCorrect", "feedback", and optional "providerMetadata".\n'
