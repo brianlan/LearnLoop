@@ -42,6 +42,27 @@ class Settings(BaseSettings):
     helper_vlm_provider: str = Field(default="openai")
     helper_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
 
+    variant_generator_vlm_endpoint: str = Field(default="https://example-variant-generator-vlm-provider.invalid/api")
+    variant_generator_vlm_model: str = Field(default="replace-me")
+    variant_generator_vlm_api_key: str = Field(default="replace-me")
+    variant_generator_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+    variant_generator_vlm_provider: str = Field(default="openai")
+    variant_generator_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+
+    variant_validator_vlm_endpoint: str = Field(default="https://example-variant-validator-vlm-provider.invalid/api")
+    variant_validator_vlm_model: str = Field(default="replace-me")
+    variant_validator_vlm_api_key: str = Field(default="replace-me")
+    variant_validator_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+    variant_validator_vlm_provider: str = Field(default="openai")
+    variant_validator_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+
+    variant_validator2_vlm_endpoint: str = Field(default="https://example-variant-validator2-vlm-provider.invalid/api")
+    variant_validator2_vlm_model: str = Field(default="replace-me")
+    variant_validator2_vlm_api_key: str = Field(default="replace-me")
+    variant_validator2_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
+    variant_validator2_vlm_provider: str = Field(default="openai")
+    variant_validator2_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+
     math_ingestion_vlm_endpoint: str = Field(default="https://example-math-ingestion-vlm-provider.invalid/api")
     math_ingestion_vlm_model: str = Field(default="replace-me")
     math_ingestion_vlm_api_key: str = Field(default="replace-me")
