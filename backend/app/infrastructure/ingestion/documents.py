@@ -7,6 +7,7 @@ from uuid import uuid4
 from bson import ObjectId
 
 from app.domain.ingestion import BatchState, ImageState, ItemState
+from app.problem_variation import VariationStatus
 
 
 def new_image_id() -> str:
@@ -124,6 +125,20 @@ def build_item_document(
             "requestFinishedAt": None,
         },
         "retryCount": 0,
+        # Per-item semantic revision: bumped by semantic source/candidate
+        # changes and new generation; tags and worker progress never bump it.
+        "contentRevision": 0,
+        "variation": {
+            "status": VariationStatus.NOT_REQUESTED.value,
+            "generationCount": 0,
+            "original": None,
+            "candidate": None,
+            "validation": None,
+            "validatedRevision": None,
+            "claimToken": None,
+            "leaseUntil": None,
+            "queuedAt": None,
+        },
         "submit": {
             "submittedProblemId": None,
             "success": None,
@@ -148,11 +163,14 @@ def build_batch_document(
     user_id: Any,
     expires_at: datetime,
     now: datetime,
+    ingestion_mode: Any = None,
 ) -> dict[str, Any]:
     return {
         "_id": batch_id,
         "userId": user_id,
         "status": BatchState.ACTIVE.value,
+        # Immutable after creation; missing on legacy batches means original.
+        "ingestionMode": ingestion_mode,
         "images": [],
         "items": [],
         # Monotonic mutation counter used as the optimistic-concurrency token

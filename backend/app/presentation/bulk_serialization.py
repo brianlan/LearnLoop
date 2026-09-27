@@ -11,6 +11,7 @@ from app.presentation.helpers import (
     build_ingestion_source_image_url,
 )
 from app.presentation.schemas import SourceImagePayload, UTCDatetime
+from app.problem_variation import serialize_variation_for_response
 
 
 class DetectionResponse(BaseModel):
@@ -42,6 +43,8 @@ class ItemResponse(BaseModel):
     draft: dict[str, Any]
     extraction: dict[str, Any]
     retryCount: int
+    contentRevision: int = 0
+    variation: dict[str, Any] | None = None
     submit: dict[str, Any]
     origin: dict[str, Any]
     crop: dict[str, Any] | None
@@ -54,6 +57,7 @@ class BatchPayload(BaseModel):
     id: str
     userId: str
     status: str
+    ingestionMode: str | None = None
     images: list[ImageResponse]
     items: list[ItemResponse]
     createdAt: UTCDatetime
@@ -140,6 +144,8 @@ def _serialize_item(item: dict[str, Any], batch_id: str | None = None) -> dict[s
         "draft": dict(item.get("draft", {})),
         "extraction": dict(item.get("extraction", {})),
         "retryCount": item.get("retryCount", 0),
+        "contentRevision": item.get("contentRevision", 0),
+        "variation": serialize_variation_for_response(item.get("variation")),
         "submit": dict(item.get("submit", {})),
         "origin": dict(item.get("origin", {})),
         "crop": crop,
@@ -168,6 +174,7 @@ def serialize_batch(batch: Document, *, include_deleted: bool = False) -> dict[s
             "id": batch_id,
             "userId": str(batch["userId"]),
             "status": batch["status"],
+            "ingestionMode": batch.get("ingestionMode") or "original",
             "images": [_serialize_image(image, batch_id=batch_id) for image in images],
             "items": [_serialize_item(item, batch_id=batch_id) for item in items],
             "createdAt": batch["createdAt"],

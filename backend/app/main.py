@@ -19,6 +19,13 @@ from app.infrastructure.vlm.client import (
 from app.infrastructure.worker.extraction_worker import run_extraction_worker
 from app.infrastructure.worker.solution_worker import run_solution_worker
 from app.infrastructure.worker.exam_grading_worker import run_exam_grading_worker
+from app.infrastructure.worker.variation_worker import run_variation_worker
+from app.infrastructure.vlm.variant_client import (
+    VariantVLMError,
+    build_variant_generator_vlm_client,
+    build_variant_helper_vlm_client,
+    build_variant_validator_vlm_client,
+)
 from app.solution_generation import backfill_solution_generation_tasks
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
@@ -78,6 +85,37 @@ async def _run_exam_grading_worker_with_logging(database, storage, settings, sto
         raise
 
 
+async def _run_variation_worker_with_logging(database, settings, stop_event):
+    generator = None
+    validator = None
+    validator2 = None
+    helper = None
+    try:
+        generator = build_variant_generator_vlm_client(settings)
+        validator = build_variant_validator_vlm_client(settings)
+        validator2 = build_variant_validator_vlm_client(settings, second=True)
+        helper = build_variant_helper_vlm_client(settings)
+        await run_variation_worker(
+            database,
+            settings,
+            generator,
+            [validator, validator2],
+            helper,
+            stop_event,
+        )
+    except VariantVLMError as exc:
+        # Unconfigured model profiles: do not run the worker and do not crash
+        # the app; queueing endpoints reject with the same explicit error.
+        logger.warning("Variation worker disabled: %s", exc)
+    except Exception:
+        logger.exception("Variation worker crashed")
+        raise
+    finally:
+        for client in (generator, validator, validator2, helper):
+            if client is not None:
+                await client.aclose()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database = get_database()
@@ -101,6 +139,12 @@ async def lifespan(app: FastAPI):
     if settings.exam_grading_worker_enabled:
         worker_tasks.append(
             asyncio.create_task(_run_exam_grading_worker_with_logging(database, storage, settings, stop_event, get_mongo_adapter()))
+        )
+    if settings.variation_worker_enabled:
+        worker_tasks.append(
+            asyncio.create_task(
+                _run_variation_worker_with_logging(database, settings, stop_event)
+            )
         )
     
     yield

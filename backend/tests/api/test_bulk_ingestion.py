@@ -2098,3 +2098,662 @@ async def test_review_routes_require_authentication(
             f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/crop"
         )
     ).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Variant ingestion lifecycle (issue #613)
+# ---------------------------------------------------------------------------
+
+from app.infrastructure.ingestion.repository import (  # noqa: E402
+    INGESTION_BATCHES_COLLECTION,
+    claim_item,
+    claim_variation_work,
+    request_variation_generation,
+    save_variation_candidate_checkpoint,
+    save_variation_result,
+)
+
+
+VARIANT_ORIGINAL = {
+    "text": "What is 2+2?",
+    "problemType": "short-answer",
+    "graphDsl": None,
+    "correctAnswer": "4",
+    "subject": "math",
+}
+VARIANT_CANDIDATE = {
+    "text": "What is 3+5?",
+    "problemType": "short-answer",
+    "graphDsl": None,
+    "correctAnswer": "8",
+    "subject": "math",
+    "generator": {"provider": "fake", "model": "gen-model"},
+}
+
+
+def _enable_variant_profiles(bulk_app: FastAPI) -> None:
+    base = bulk_app.dependency_overrides[get_app_settings]()
+    configured = base.model_copy(
+        update={
+            "variant_generator_vlm_endpoint": "https://variant-generator.test/api",
+            "variant_generator_vlm_model": "gen-model",
+            "variant_generator_vlm_api_key": "sk-gen",
+            "variant_validator_vlm_endpoint": "https://variant-validator.test/api",
+            "variant_validator_vlm_model": "val-model",
+            "variant_validator_vlm_api_key": "sk-val",
+            "variant_validator2_vlm_endpoint": "https://variant-validator2.test/api",
+            "variant_validator2_vlm_model": "val2-model",
+            "variant_validator2_vlm_api_key": "sk-val2",
+            "helper_vlm_endpoint": "https://helper.test/api",
+            "helper_vlm_model": "helper-model",
+            "helper_vlm_api_key": "sk-helper",
+        }
+    )
+    bulk_app.dependency_overrides[get_app_settings] = lambda: configured
+
+
+async def _create_variant_batch(
+    client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    *,
+    mode: str = "data-only",
+    username: str = "student1",
+) -> tuple[str, str, str]:
+    """A variant-mode batch with one committed, extraction-ready item."""
+    create_response = await client.post(
+        "/api/v1/ingestion-batches", json={"ingestionMode": mode}
+    )
+    assert create_response.status_code == 201
+    batch = create_response.json()["batch"]
+    assert batch["ingestionMode"] == mode
+    batch_id = batch["id"]
+
+    image_bytes = make_valid_png_bytes()
+    upload_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images",
+        files={"images": ("test.png", image_bytes, "image/png")},
+    )
+    assert upload_response.status_code == 201
+    image_id = upload_response.json()["batch"]["images"][0]["imageId"]
+
+    helper_vlm.responses.append(
+        make_detection_result(subject="math", boxes=[ProblemBox(x=0, y=0, width=1, height=1)])
+    )
+    detect_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/detect"
+    )
+    assert detect_response.status_code == 200
+    commit_response = await client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/commit"
+    )
+    assert commit_response.status_code == 200
+    item_id = commit_response.json()["batch"]["items"][0]["itemId"]
+
+    # Extraction produces the reviewed draft the variant flow starts from.
+    database = bulk_app.state.fake_database
+    user = await database["users"].find_one({"username": username})
+    math_vlm = bulk_app.state.fake_math_ingestion_vlm
+    math_vlm.responses.append(make_extraction_result())
+    extract_response = await client.post(f"/api/v1/ingestion-batches/{batch_id}/extract")
+    assert extract_response.status_code == 202
+
+    from app.infrastructure.worker.extraction_worker import process_item
+
+    claimed = await claim_item(
+        database, ObjectId(batch_id), item_id, user["_id"],
+        lease_timeout_seconds=60, now=datetime.now(UTC),
+    )
+    assert claimed is not None
+    stored_batch = await database[INGESTION_BATCHES_COLLECTION].find_one(
+        {"_id": ObjectId(batch_id)}
+    )
+    await process_item(
+        claimed,
+        stored_batch,
+        database,
+        bulk_app.state.fake_storage,
+        math_vlm,
+        bulk_app.state.fake_english_ingestion_vlm,
+        Settings(s3_bucket="learnloop-media"),
+    )
+    return batch_id, image_id, item_id
+
+
+async def _drive_to_ready_candidate(
+    bulk_app: FastAPI,
+    user_id: Any,
+    batch_id: str,
+    item_id: str,
+) -> None:
+    """Drive a queued item to a ready validated candidate via repo writers."""
+    database = bulk_app.state.fake_database
+    now = datetime.now(UTC)
+    batch_object_id = ObjectId(batch_id)
+    await request_variation_generation(
+        database, batch_object_id, user_id, item_id,
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=now,
+    )
+    claimed = await claim_variation_work(
+        database, batch_object_id, user_id, item_id,
+        lease_timeout_seconds=300, now=now,
+    )
+    assert claimed is not None
+    token = claimed["variation"]["claimToken"]
+    assert await save_variation_candidate_checkpoint(
+        database, batch_object_id, user_id, item_id,
+        token=token, claimed_revision=1,
+        candidate=dict(VARIANT_CANDIDATE), now=now,
+    )
+    assert await save_variation_result(
+        database, batch_object_id, user_id, item_id,
+        token=token, claimed_revision=1, verdict="pass",
+        validation={"verdict": "pass", "failures": [], "reports": []},
+        now=now,
+    )
+
+
+def _variation_of(batch_body: dict[str, Any], item_id: str) -> dict[str, Any]:
+    item = next(i for i in batch_body["batch"]["items"] if i["itemId"] == item_id)
+    return item
+
+
+@pytest.mark.asyncio
+async def test_create_batch_defaults_to_original_mode(
+    authenticated_bulk_client: AsyncClient,
+) -> None:
+    response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    assert response.status_code == 201
+    assert response.json()["batch"]["ingestionMode"] == "original"
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_rejects_original_mode_batch(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    batch_id = create_response.json()["batch"]["id"]
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/some-item/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "INGESTION_MODE_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_requires_configured_profiles(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    # Default fixture settings keep the reserved .invalid endpoints.
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "vlm-profile-invalid"
+    # Nothing was queued.
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["variation"]["status"] == "not-requested"
+    assert item["variation"]["generationCount"] == 0
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_confirms_source_and_queues(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={
+            "expectedRevision": 0,
+            "original": dict(VARIANT_ORIGINAL, text="What is 10+10?"),
+        },
+    )
+    assert response.status_code == 202
+    item = _variation_of(response.json(), item_id)
+    variation = item["variation"]
+    assert variation["status"] == "queued"
+    assert variation["generationCount"] == 1
+    assert variation["original"]["text"] == "What is 10+10?"
+    assert variation["candidate"] is None
+    assert variation["validatedRevision"] is None
+    assert "claimToken" not in variation
+    assert "leaseUntil" not in variation
+    # The confirmed draft replaces the extracted source text.
+    assert item["draft"]["text"] == "What is 10+10?"
+    assert item["contentRevision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_missing_required_fields_blocked(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    for missing in ("text", "problemType", "correctAnswer"):
+        payload = {k: v for k, v in VARIANT_ORIGINAL.items() if k != missing}
+        response = await authenticated_bulk_client.post(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+            json={"expectedRevision": 0, "original": payload},
+        )
+        assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_stale_revision_conflict(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 7, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_duplicate_in_flight_not_counted_twice(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    first = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert first.status_code == 202
+    # A second generate against the new revision hits the in-flight guard.
+    second = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 1, "original": VARIANT_ORIGINAL},
+    )
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "VARIATION_BUSY"
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["variation"]["generationCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_other_user_batch_not_found(
+    bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    await register_and_login(bulk_client, bulk_app, username="owner")
+    batch_id, _, item_id = await _create_variant_batch(bulk_client, bulk_app, helper_vlm, username="owner")
+    await register_and_login(bulk_client, bulk_app, username="attacker")
+    _enable_variant_profiles(bulk_app)
+    response = await bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_variant_candidate_semantic_edit_enters_needs_validation(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 4+4?"},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    variation = item["variation"]
+    assert variation["status"] == "needs-validation"
+    assert variation["candidate"]["text"] == "What is 4+4?"
+    assert variation["candidate"]["correctAnswer"] == "8"
+    assert variation["validation"] is None
+    assert variation["validatedRevision"] is None
+    assert variation["generationCount"] == 1
+    assert item["contentRevision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_variant_candidate_tags_only_does_not_invalidate(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "tags": ["algebra"]},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["validatedRevision"] == 1
+    assert item["contentRevision"] == 1
+    assert item["draft"]["tags"] == ["algebra"]
+
+
+@pytest.mark.asyncio
+async def test_variant_candidate_type_mismatch_preserved_for_evidence(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "problemType": "fill-in-the-blank"},
+    )
+    assert response.status_code == 200
+    variation = _variation_of(response.json(), item_id)["variation"]
+    assert variation["status"] == "needs-validation"
+    assert variation["candidate"]["problemType"] == "fill-in-the-blank"
+
+
+@pytest.mark.asyncio
+async def test_variant_revalidate_queues_validator_only_run(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    # A candidate edit makes it needs-validation.
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 5+5?"},
+    )
+    assert edit.status_code == 200
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 202
+    variation = _variation_of(response.json(), item_id)["variation"]
+    assert variation["status"] == "queued"
+    assert variation["candidate"]["text"] == "What is 5+5?"
+    assert variation["generationCount"] == 1
+    assert _variation_of(response.json(), item_id)["contentRevision"] == 2
+
+    # Revalidate is only legal from needs-validation.
+    second = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": 2},
+    )
+    assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_variant_source_semantic_edit_invalidates(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"expectedRevision": 1, "text": "A changed problem statement?"},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    variation = item["variation"]
+    assert variation["status"] == "not-requested"
+    assert variation["original"] is None
+    assert variation["candidate"] is None
+    assert variation["validation"] is None
+    assert variation["generationCount"] == 1
+    assert item["contentRevision"] == 2
+    assert item["draft"]["text"] == "A changed problem statement?"
+
+
+@pytest.mark.asyncio
+async def test_variant_source_tags_only_edit_keeps_ready(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"expectedRevision": 1, "tags": ["arithmetic"]},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["validatedRevision"] == 1
+    assert item["contentRevision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_source_edit_requires_expected_revision(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"text": "no revision"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REVISION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_variant_source_edit_stale_revision_conflict(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"expectedRevision": 9, "text": "stale edit"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_original_mode_patch_without_expected_revision_still_works(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    # _create_variant_batch creates a variant batch; use a fresh original one.
+    create_response = await authenticated_bulk_client.post("/api/v1/ingestion-batches")
+    original_batch_id = create_response.json()["batch"]["id"]
+    assert create_response.json()["batch"]["ingestionMode"] == "original"
+
+    upload = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{original_batch_id}/images",
+        files={"images": ("test.png", make_valid_png_bytes(), "image/png")},
+    )
+    image_id = upload.json()["batch"]["images"][0]["imageId"]
+    helper_vlm.responses.append(
+        make_detection_result(subject="math", boxes=[ProblemBox(x=0, y=0, width=1, height=1)])
+    )
+    await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{original_batch_id}/images/{image_id}/detect"
+    )
+    commit = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{original_batch_id}/images/{image_id}/commit"
+    )
+    original_item_id = commit.json()["batch"]["items"][0]["itemId"]
+
+    # Legacy request shape: no expectedRevision at all.
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{original_batch_id}/items/{original_item_id}",
+        json={"text": "Edited without revision", "correctAnswer": "9"},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), original_item_id)
+    assert item["draft"]["text"] == "Edited without revision"
+    assert item["contentRevision"] == 0
+
+
+@pytest.mark.asyncio
+async def test_variant_submit_skips_variant_items_and_keeps_batch_active(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, variant_item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, variant_item_id)
+
+    # A second item in the same batch that never requested a variant.
+    database = bulk_app.state.fake_database
+    batch_object_id = ObjectId(batch_id)
+    second_update = await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_object_id, "userId": user_id},
+        {
+            "$push": {
+                "items": {
+                    "itemId": "plain-item",
+                    "imageId": "image-1",
+                    "batchId": batch_object_id,
+                    "status": "ready",
+                    "order": 1,
+                    "draft": {"text": "Plain original", "problemType": "short-answer",
+                              "graphDsl": None, "correctAnswer": "1", "tags": [], "subject": "math"},
+                    "extraction": {}, "retryCount": 0, "contentRevision": 0,
+                    "variation": {"status": "not-requested", "generationCount": 0,
+                                  "original": None, "candidate": None, "validation": None,
+                                  "validatedRevision": None, "claimToken": None,
+                                  "leaseUntil": None, "queuedAt": None},
+                    "submit": {}, "origin": {"itemId": "plain-item"}, "crop": None,
+                    "leaseUntil": None,
+                    "createdAt": datetime.now(UTC), "updatedAt": datetime.now(UTC),
+                }
+            }
+        },
+    )
+    assert second_update.modified_count == 1
+
+    submit_response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert submit_response.status_code == 200
+    summary = submit_response.json()["submitSummary"]
+    submitted_ids = [r["itemId"] for r in summary["items"]]
+    assert submitted_ids == ["plain-item"]
+    assert summary["status"] == "active"
+
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    items = {i["itemId"]: i for i in detail.json()["batch"]["items"]}
+    assert items["plain-item"]["status"] == "submitted"
+    variant_item = items[variant_item_id]
+    # The variant item was never pushed through the original-draft path.
+    assert variant_item["status"] == "ready"
+    assert variant_item["submit"]["submittedProblemId"] is None
+    assert variant_item["variation"]["status"] == "ready"
+    assert variant_item["variation"]["candidate"]["text"] == VARIANT_CANDIDATE["text"]
+
+
+@pytest.mark.asyncio
+async def test_variant_submit_failure_retry_does_not_reextract(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    # Simulate a submission failure on the variant item (e.g. from a
+    # dedicated save path): the retry must return it to ready without
+    # re-extraction, never back to the extraction queue.
+    database = bulk_app.state.fake_database
+    updated = await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "userId": user_id, "items.itemId": item_id},
+        {"$set": {"items.$.status": "submit-failed"}},
+    )
+    assert updated.modified_count == 1
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/retry"
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["status"] == "ready"
+    assert item["variation"]["original"] == VARIANT_ORIGINAL
+    assert item["variation"]["candidate"] is not None

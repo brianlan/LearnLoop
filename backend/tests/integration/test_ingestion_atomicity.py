@@ -1262,3 +1262,272 @@ async def test_fixture_skips_when_sentinel_name_absent(
     )
     assert client.setup_database_name is None
     assert client.dropped_database_name is None
+
+
+# ---------------------------------------------------------------------------
+# Variant lifecycle concurrency (issue #613)
+# ---------------------------------------------------------------------------
+
+from app.problem_variation import IngestionMode  # noqa: E402
+from app.infrastructure.ingestion.repository import (  # noqa: E402
+    claim_variation_work,
+    request_variation_generation,
+    save_variation_candidate_checkpoint,
+    save_variation_result,
+    update_item_draft_variant,
+)
+
+VARIANT_ORIGINAL = {
+    "text": "What is 2+2?",
+    "problemType": "short-answer",
+    "graphDsl": None,
+    "correctAnswer": "4",
+    "subject": "math",
+}
+VARIANT_CANDIDATE = {
+    "text": "What is 3+5?",
+    "problemType": "short-answer",
+    "graphDsl": None,
+    "correctAnswer": "8",
+    "subject": "math",
+    "generator": {"provider": "fake", "model": "gen-model"},
+}
+
+
+async def _variant_batch_with_items(
+    database: Any, user_id: ObjectId, settings: Settings, *, item_count: int = 2
+) -> tuple[ObjectId, list[str]]:
+    """Seed an active data-only batch with ready items awaiting variant work."""
+    source_image = build_source_image(
+        bucket="media",
+        object_key="users/u/variant.png",
+        content_type="image/png",
+        size_bytes=42,
+        sha256="sha-variant",
+        uploaded_at=NOW,
+    )
+    batch = await create_batch(
+        database, user_id, settings,
+        ingestion_mode=IngestionMode.DATA_ONLY, now=NOW,
+    )
+    image = await add_source_image(database, batch["_id"], user_id, source_image, order=0, now=NOW)
+    items = await add_items_for_image(
+        database, batch["_id"], user_id, image["imageId"],
+        item_count=item_count, starting_order=0, now=NOW,
+    )
+    # Extraction done: items are ready for variant work.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch["_id"], "userId": user_id},
+        {
+            "$set": {
+                **{
+                    f"items.{index}.status": ItemState.READY.value
+                    for index in range(item_count)
+                },
+            }
+        },
+    )
+    return batch["_id"], [item["itemId"] for item in items]
+
+
+@pytest.mark.real_mongo
+async def test_same_item_source_edit_cancels_queued_generation_before_claim(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_id = item_ids[0]
+
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_id,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+
+    # The user semantically edits the confirmed source while generation is queued.
+    await update_item_draft_variant(
+        real_database, batch_id, user_id, item_id,
+        draft_update={"text": "Edited problem statement?"},
+        expected_revision=1, now=NOW,
+    )
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == item_id)
+    assert item["variation"]["status"] == "not-requested"
+    assert item["variation"]["original"] is None
+    assert item["contentRevision"] == 2
+
+    # The queued work can no longer be claimed.
+    assert await claim_variation_work(
+        real_database, batch_id, user_id, item_id,
+        lease_timeout_seconds=300, now=NOW,
+    ) is None
+
+
+@pytest.mark.real_mongo
+async def test_same_item_source_edit_invalidates_in_flight_claim_and_result(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_id = item_ids[0]
+
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_id,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        real_database, batch_id, user_id, item_id,
+        lease_timeout_seconds=300, now=NOW,
+    )
+    assert claimed is not None
+    token = claimed["variation"]["claimToken"]
+
+    # The user edits the source while the worker is generating.
+    await update_item_draft_variant(
+        real_database, batch_id, user_id, item_id,
+        draft_update={"text": "Edited problem statement?"},
+        expected_revision=1, now=NOW,
+    )
+
+    # The stale worker result cannot land.
+    assert await save_variation_result(
+        real_database, batch_id, user_id, item_id,
+        token=token, claimed_revision=1, verdict="pass",
+        validation={"verdict": "pass", "failures": [], "reports": []},
+        now=NOW,
+    ) is False
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == item_id)
+    assert item["variation"]["status"] == "not-requested"
+
+
+@pytest.mark.real_mongo
+async def test_distinct_item_background_work_and_edit_both_survive(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_a, item_b = item_ids
+
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_a,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+    claimed_a = await claim_variation_work(
+        real_database, batch_id, user_id, item_a,
+        lease_timeout_seconds=300, now=NOW,
+    )
+    assert claimed_a is not None
+
+    start_b = asyncio.Event()
+    claim_checkpoint_done = asyncio.Event()
+
+    async def _checkpoint_a() -> None:
+        await save_variation_candidate_checkpoint(
+            real_database, batch_id, user_id, item_a,
+            token=claimed_a["variation"]["claimToken"], claimed_revision=1,
+            candidate=VARIANT_CANDIDATE, now=NOW,
+        )
+        claim_checkpoint_done.set()
+        await start_b.wait()
+        await save_variation_result(
+            real_database, batch_id, user_id, item_a,
+            token=claimed_a["variation"]["claimToken"], claimed_revision=1,
+            verdict="pass",
+            validation={"verdict": "pass", "failures": [], "reports": []},
+            now=NOW,
+        )
+
+    async def _edit_b() -> None:
+        await claim_checkpoint_done.wait()
+        await update_item_draft_variant(
+            real_database, batch_id, user_id, item_b,
+            draft_update={"text": "Edited other item?"},
+            expected_revision=0, now=NOW,
+        )
+        start_b.set()
+
+    await asyncio.gather(_checkpoint_a(), _edit_b())
+
+    batch = await get_batch(real_database, batch_id, user_id)
+    items = {i["itemId"]: i for i in batch["items"]}
+    assert items[item_a]["variation"]["status"] == "ready"
+    assert items[item_a]["variation"]["validatedRevision"] == 1
+    assert items[item_a]["variation"]["candidate"]["text"] == VARIANT_CANDIDATE["text"]
+    assert items[item_b]["draft"]["text"] == "Edited other item?"
+    assert items[item_b]["variation"]["status"] == "not-requested"
+    assert items[item_b]["contentRevision"] == 1
+
+
+@pytest.mark.real_mongo
+async def test_expired_batch_rejects_variation_claims_and_results(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_id = item_ids[0]
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_id,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        real_database, batch_id, user_id, item_id,
+        lease_timeout_seconds=300, now=NOW,
+    )
+    assert claimed is not None
+    token = claimed["variation"]["claimToken"]
+
+    # Expire the batch underneath the in-flight attempt.
+    await real_database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id},
+        {"$set": {"expiresAt": NOW - timedelta(seconds=1)}},
+    )
+    assert await save_variation_result(
+        real_database, batch_id, user_id, item_id,
+        token=token, claimed_revision=1, verdict="pass",
+        validation={"verdict": "pass", "failures": [], "reports": []},
+        now=NOW,
+    ) is False
+    # And no new work can be claimed on the expired batch.
+    assert await claim_variation_work(
+        real_database, batch_id, user_id, item_ids[1],
+        lease_timeout_seconds=300, now=NOW,
+    ) is None
+
+
+@pytest.mark.real_mongo
+async def test_old_candidate_checkpoint_cannot_land_after_regeneration(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_id = item_ids[0]
+
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_id,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+    first_claim = await claim_variation_work(
+        real_database, batch_id, user_id, item_id,
+        lease_timeout_seconds=300, now=NOW,
+    )
+    first_token = first_claim["variation"]["claimToken"]
+
+    # First attempt fails; the user manually regenerates.
+    assert await save_variation_result(
+        real_database, batch_id, user_id, item_id,
+        token=first_token, claimed_revision=1, verdict="fail",
+        validation={"verdict": "fail", "failures": [], "reports": []},
+        now=NOW,
+    )
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_id,
+        original=VARIANT_ORIGINAL, expected_revision=1, now=NOW,
+    )
+
+    # The stale claim's checkpoint can never overwrite the new attempt.
+    assert await save_variation_candidate_checkpoint(
+        real_database, batch_id, user_id, item_id,
+        token=first_token, claimed_revision=1,
+        candidate={"text": "stale candidate"},
+        now=NOW,
+    ) is False
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == item_id)
+    assert item["variation"]["candidate"] is None
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["generationCount"] == 2

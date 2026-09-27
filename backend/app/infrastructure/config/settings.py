@@ -144,6 +144,12 @@ class Settings(BaseSettings):
     bulk_ingestion_extraction_poll_interval_seconds: float = Field(default=5.0, gt=0)
     bulk_ingestion_extraction_worker_enabled: bool = Field(default=True)
 
+    # Variation worker configuration (per-item variant generation/validation)
+    variation_worker_enabled: bool = Field(default=True)
+    variation_worker_poll_interval_seconds: float = Field(default=5.0, gt=0)
+    variation_lease_timeout_seconds: int = Field(default=300, ge=1)
+    variation_worker_concurrency: int = Field(default=2, ge=1)
+
     # Teacher password configuration
     teacher_password_default: str = Field(default="default-teacher-password")
 

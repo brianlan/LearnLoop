@@ -66,6 +66,8 @@ def _make_item(**overrides: Any) -> dict[str, Any]:
         "draft": {"text": "question"},
         "extraction": {"raw": "data"},
         "retryCount": 0,
+        "contentRevision": 0,
+        "variation": None,
         "submit": {},
         "origin": {"source": "upload"},
         "crop": {
@@ -153,6 +155,8 @@ def test_serialize_batch_complete_shape():
         "draft": {"text": "question"},
         "extraction": {"raw": "data"},
         "retryCount": 0,
+        "contentRevision": 0,
+        "variation": None,
         "submit": {},
         "origin": {"source": "upload"},
         "crop": {
