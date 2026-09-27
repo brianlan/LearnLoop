@@ -141,14 +141,14 @@ GATE_CASES: list[tuple[str, str, ProblemContent, VariantCandidate, str]] = [
         "fraction-decimal-form-equivalent",
         "data-only",
         ProblemContent(
-            text="A recipe uses 1/2 litre of milk. How much is that in decimal litres?",
+            text="A recipe uses 1/2 litre of milk. How much milk is that in litres?",
             problemType="short-answer",
             subject="mathematics",
             graphDsl=None,
             correctAnswer="1/2",
         ),
         _gate_candidate(
-            text="A recipe uses 1/2 litre of milk. Write the amount as a decimal number of litres.",
+            text="A recipe uses 2/4 litre of milk. How much milk is that in litres?",
             correct_answer="0.5",
         ),
         "pass",

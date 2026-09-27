@@ -196,6 +196,17 @@ def test_type_mismatch_fails_with_source_and_candidate_type() -> None:
     )
 
 
+def test_subject_mismatch_fails_with_source_and_candidate_subject() -> None:
+    """The candidate contract requires the inherited source subject."""
+    mismatched = CANDIDATE.model_copy(update={"subject": "geography"})
+    failures = check_candidate("data-only", SOURCE, mismatched)
+    assert any(
+        "subject mismatch: source 'mathematics', candidate returned 'geography'"
+        in f.evidence
+        for f in failures
+    )
+
+
 def test_incomplete_candidate_rejected_before_validators() -> None:
     empty_text = CANDIDATE.model_copy(update={"text": "  "})
     empty_answer = CANDIDATE.model_copy(update={"correct_answer": ""})

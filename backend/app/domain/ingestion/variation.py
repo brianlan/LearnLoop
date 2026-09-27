@@ -135,6 +135,16 @@ def check_candidate(mode: VariantMode, source: ProblemContent, candidate: Varian
                 f"'{candidate.problem_type}'"
             )
         )
+    # Subject inheritance is part of the candidate contract: the variant must
+    # carry the confirmed source subject (the generator path assigns it
+    # server-side; this guard also covers pre-built/injected candidates).
+    if candidate.subject != source.subject:
+        failures.append(
+            _content_failure(
+                f"subject mismatch: source '{source.subject}', candidate returned "
+                f"'{candidate.subject}'"
+            )
+        )
     source_has_graph = bool((source.graph_dsl or "").strip())
     candidate_graph = (candidate.graph_dsl or "").strip()
     if candidate.graph_dsl is not None and not candidate_graph:

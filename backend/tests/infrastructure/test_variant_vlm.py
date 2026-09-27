@@ -33,7 +33,7 @@ from app.infrastructure.vlm.variant_prompts import (
     build_variant_generator_user_prompt,
     build_variant_helper_user_prompt,
 )
-from tests.domain.test_variant_validation import PASSING_CATEGORIES, SOURCE
+from tests.domain.test_variant_validation import CANDIDATE, PASSING_CATEGORIES, SOURCE
 
 SOURCE_WITH_GRAPH = ProblemContent(
     text=SOURCE.text,
@@ -408,6 +408,30 @@ async def test_full_flow_single_validator_pass() -> None:
     assert result.reports[0].original_solved_answer == "60"
     assert result.reports[0].answer_comparison_original.result == "equivalent"
     assert result.reports[0].answer_comparison_variant.result == "equivalent"
+
+
+@pytest.mark.asyncio
+async def test_injected_candidate_subject_mismatch_fails_before_provider_calls() -> None:
+    """The injected seam obeys the same candidate contract: a pre-built
+    candidate that does not inherit the source subject fails conclusively
+    before any validator or helper call."""
+    mismatched = CANDIDATE.model_copy(update={"subject": "geography"})
+    validator_recorder = _Recorder([_validator_json()])
+    helper_recorder = _Recorder([_helper_json()])
+    result = await generate_and_validate(
+        mode="data-only",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([])),
+        validators=[_validator_client(validator_recorder)],
+        helper=_helper_client(helper_recorder),
+        candidate=mismatched,
+    )
+    assert result.assessment.verdict == "fail"
+    assert any("subject mismatch" in f.evidence for f in result.assessment.failures)
+    assert result.candidate is mismatched
+    # Short-circuited: no validator or helper provider I/O happened.
+    assert validator_recorder.payloads == []
+    assert helper_recorder.payloads == []
 
 
 @pytest.mark.asyncio
