@@ -6,6 +6,7 @@ import {
   deleteBatchItem,
   deleteImage,
   detectImageBoxes,
+  editVariationCandidate,
   getActiveBatch,
   getBatch,
   retryItem,
@@ -28,6 +29,7 @@ import { BulkUploadStep } from "./BulkUploadStep";
 import { BulkDetectStep } from "./BulkDetectStep";
 import { BulkReviewStep } from "./BulkReviewStep";
 import { BulkSubmitStep } from "./BulkSubmitStep";
+import type { EditTarget } from "./BulkReviewStep.helpers";
 
 export type { BulkWizardStep };
 
@@ -353,16 +355,40 @@ export function BulkIngestionWizard({
   );
 
   const handleUpdateItemDraft = useCallback(
-    async (itemId: string, draft: Partial<BulkDraft>) => {
+    async (
+      itemId: string,
+      changes: Partial<BulkDraft>,
+      options: { target: EditTarget; expectedRevision: number },
+    ) => {
       if (!batch) return;
       try {
-        const response = await updateItemDraft(batch.id, itemId, draft);
+        const response =
+          options.target === "candidate"
+            ? await editVariationCandidate(batch.id, itemId, {
+                expectedRevision: options.expectedRevision,
+                text: changes.text ?? undefined,
+                problemType: changes.problemType ?? undefined,
+                graphDsl: changes.graphDsl,
+                correctAnswer: changes.correctAnswer ?? undefined,
+                tags: changes.tags,
+              })
+            : await updateItemDraft(
+                batch.id,
+                itemId,
+                changes,
+                options.expectedRevision,
+              );
         setBatchAndStep(response.batch);
       } catch (err) {
-        await handleMutationError(err, "Failed to save draft");
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        }
+        // Reject to the caller so the review step keeps the editor mounted and
+        // reports the failure per item instead of replacing the whole wizard.
+        throw err;
       }
     },
-    [batch, handleMutationError, setBatchAndStep],
+    [batch, handleExpiredBatch, setBatchAndStep],
   );
 
   const handleRetryItem = useCallback(

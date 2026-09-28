@@ -4,15 +4,21 @@ import { TagInput } from "./TagInput";
 import { GraphSandbox } from "./GraphSandbox";
 import { LatexText } from "./LatexText";
 import {
-  defaultDraft,
+  bufferKey,
   getRequiredFieldGaps,
+  isStaleStamp,
   retryDelayMs,
   serializeDraft,
   statusLabel,
+  targetDraft,
+  targetStamp,
+  type EditTarget,
+  type TargetStamp,
 } from "./BulkReviewStep.helpers";
 
 const POLL_INTERVAL_MS = 2500;
 const ACTION_REQUIRED_BORDER = "2px solid var(--color-error, #dc2626)";
+const TARGETS: EditTarget[] = ["source", "candidate"];
 
 const PROBLEM_TYPES = [
   { value: "single-choice", label: "Single choice" },
@@ -32,7 +38,8 @@ export interface BulkReviewStepProps {
   onRefresh: (batchId: string) => void | Promise<void>;
   onUpdateDraft: (
     itemId: string,
-    draft: Partial<BulkDraft>,
+    changes: Partial<BulkDraft>,
+    options: { target: EditTarget; expectedRevision: number },
   ) => void | Promise<void>;
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
@@ -60,24 +67,48 @@ export function BulkReviewStep({
     const firstActionable = items.find((item) => item.status !== "deleted");
     return firstActionable?.itemId ?? items[0]?.itemId ?? "";
   });
+  // Autosave buffers are keyed by itemId AND target so source and candidate
+  // edits never share content, dirty state, or in-flight save identity.
   const [localDrafts, setLocalDrafts] = useState<Record<string, BulkDraft>>({});
-  const [dirtyItems, setDirtyItems] = useState<Set<string>>(new Set());
-  const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
+  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
+  const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
   const [saveFailures, setSaveFailures] = useState<Record<string, number>>({});
+  // Preferred editing target when the selected item has a candidate.
+  const [editTarget, setEditTarget] = useState<EditTarget>("candidate");
   const [recentTags, setRecentTags] = useState<string[]>([]);
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
   const saveFailuresRef = useRef<Record<string, number>>({});
   const serverDraftRefs = useRef<Record<string, string>>({});
+  const stampRefs = useRef<Record<string, TargetStamp>>({});
+  const inFlightRefs = useRef<
+    Record<
+      string,
+      | {
+          seq: number;
+          revision: number;
+          generation: number;
+        }
+      | undefined
+    >
+  >({});
+  const saveSeqRef = useRef(0);
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
     [items, selectedItemId],
   );
 
-  const getItemDraft = useCallback(
-    (item: BulkItem): BulkDraft => {
-      return localDrafts[item.itemId] ?? defaultDraft(item);
+  const activeTarget: EditTarget = selectedItem?.variation?.candidate
+    ? editTarget
+    : "source";
+  const activeKey = selectedItem
+    ? bufferKey(selectedItem.itemId, activeTarget)
+    : "";
+
+  const getDraft = useCallback(
+    (item: BulkItem, target: EditTarget): BulkDraft => {
+      return localDrafts[bufferKey(item.itemId, target)] ?? targetDraft(item, target);
     },
     [localDrafts],
   );
@@ -97,25 +128,28 @@ export function BulkReviewStep({
       addTag(tag);
     }
     for (const item of items) {
-      for (const tag of getItemDraft(item).tags ?? []) {
-        addTag(tag);
+      for (const target of TARGETS) {
+        if (target === "candidate" && !item.variation?.candidate) continue;
+        for (const tag of getDraft(item, target).tags ?? []) {
+          addTag(tag);
+        }
       }
     }
 
     return merged;
-  }, [getItemDraft, items, tagSuggestions]);
+  }, [getDraft, items, tagSuggestions]);
 
   const updateDraft = useCallback(
-    (itemId: string, next: Partial<BulkDraft>) => {
-      setLocalDrafts((prev) => {
-        const updated = { ...prev[itemId], ...next };
-        const merged = { ...prev, [itemId]: updated };
-        draftRefs.current = merged;
-        return merged;
-      });
-      setDirtyItems((prev) => {
+    (key: string, next: Partial<BulkDraft>) => {
+      const merged = {
+        ...draftRefs.current,
+        [key]: { ...draftRefs.current[key], ...next },
+      };
+      draftRefs.current = merged;
+      setLocalDrafts(merged);
+      setDirtyKeys((prev) => {
         const nextSet = new Set(prev);
-        nextSet.add(itemId);
+        nextSet.add(key);
         dirtyRefs.current = nextSet;
         return nextSet;
       });
@@ -124,7 +158,7 @@ export function BulkReviewStep({
   );
 
   const handleTagsChange = useCallback(
-    (itemId: string, nextTags: string[], prevTags: string[]) => {
+    (key: string, nextTags: string[], prevTags: string[]) => {
       const prevSet = new Set(prevTags);
       const added = nextTags.filter((tag) => !prevSet.has(tag));
       if (added.length > 0) {
@@ -143,117 +177,185 @@ export function BulkReviewStep({
           return next.slice(0, 5);
         });
       }
-      updateDraft(itemId, { tags: nextTags });
+      updateDraft(key, { tags: nextTags });
     },
     [updateDraft],
   );
 
   useEffect(() => {
     if (!selectedItem) return;
-    setLocalDrafts((prev) => {
-      if (prev[selectedItem.itemId] !== undefined) return prev;
-      const initial = defaultDraft(selectedItem);
-      const merged = { ...prev, [selectedItem.itemId]: initial };
-      draftRefs.current = merged;
-      return merged;
-    });
-  }, [selectedItem]);
+    const key = bufferKey(selectedItem.itemId, activeTarget);
+    if (draftRefs.current[key] !== undefined) return;
+    const merged = {
+      ...draftRefs.current,
+      [key]: targetDraft(selectedItem, activeTarget),
+    };
+    draftRefs.current = merged;
+    setLocalDrafts(merged);
+  }, [selectedItem, activeTarget]);
 
   useEffect(() => {
-    setLocalDrafts((prev) => {
-      let next = prev;
-      for (const item of items) {
-        const itemId = item.itemId;
-        const serverDraft = defaultDraft(item);
+    let nextDrafts: Record<string, BulkDraft> | undefined;
+
+    for (const item of items) {
+      for (const target of TARGETS) {
+        if (target === "candidate" && !item.variation?.candidate) continue;
+        const key = bufferKey(item.itemId, target);
+        const incoming = targetStamp(item, target);
+        const previousStamp = stampRefs.current[key];
+        // A stale save/poll response never replaces newer state.
+        if (isStaleStamp(incoming, previousStamp)) continue;
+        stampRefs.current[key] = incoming;
+
+        const serverDraft = targetDraft(item, target);
         const serializedServerDraft = serializeDraft(serverDraft);
-        const previousServerDraft = serverDraftRefs.current[itemId];
-        serverDraftRefs.current[itemId] = serializedServerDraft;
+        const previousServerDraft = serverDraftRefs.current[key];
+        serverDraftRefs.current[key] = serializedServerDraft;
 
-        if (previousServerDraft === serializedServerDraft) continue;
-        if (prev[itemId] === undefined) continue;
-        if (dirtyRefs.current.has(itemId)) continue;
-        if (savingItems.has(itemId)) continue;
-        if (saveFailuresRef.current[itemId] !== undefined) continue;
-        if (serializeDraft(prev[itemId]) === serializedServerDraft) continue;
+        // A regenerated candidate replaces the buffer entirely: local edits
+        // and save failures belong to the dead candidate.
+        const generationChanged =
+          target === "candidate" &&
+          previousStamp !== undefined &&
+          incoming.generation !== previousStamp.generation;
 
-        if (next === prev) {
-          next = { ...prev };
+        if (!generationChanged && previousServerDraft === serializedServerDraft) {
+          continue;
         }
-        next[itemId] = serverDraft;
-      }
+        if (
+          !generationChanged &&
+          (dirtyRefs.current.has(key) ||
+            savingKeys.has(key) ||
+            saveFailuresRef.current[key] !== undefined)
+        ) {
+          continue;
+        }
 
-      if (next !== prev) {
-        draftRefs.current = next;
+        if (nextDrafts === undefined) {
+          nextDrafts = { ...draftRefs.current };
+        }
+        nextDrafts[key] = serverDraft;
+
+        if (generationChanged) {
+          const nextDirty = new Set(dirtyRefs.current);
+          nextDirty.delete(key);
+          dirtyRefs.current = nextDirty;
+          setDirtyKeys(nextDirty);
+          setSaveFailures((prev) => {
+            if (prev[key] === undefined) return prev;
+            const next = { ...prev };
+            delete next[key];
+            saveFailuresRef.current = next;
+            return next;
+          });
+        }
       }
-      return next;
-    });
-  }, [items, savingItems]);
+    }
+
+    if (nextDrafts !== undefined) {
+      draftRefs.current = nextDrafts;
+      setLocalDrafts(nextDrafts);
+    }
+  }, [items, savingKeys]);
 
   useEffect(() => {
     const timeoutIds: Record<string, number> = {};
 
-    const scheduleSave = (itemId: string) => {
-      window.clearTimeout(timeoutIds[itemId]);
-      const failures = saveFailuresRef.current[itemId] ?? 0;
-      timeoutIds[itemId] = window.setTimeout(() => {
-        const draft = draftRefs.current[itemId];
-        if (!draft) return;
-        const sentDraft = JSON.parse(JSON.stringify(draft)) as BulkDraft;
-        setSavingItems((prev) => {
-          const next = new Set(prev);
-          next.add(itemId);
+    const finishSave = (
+      key: string,
+      seq: number,
+      outcome: "success" | "failure",
+      sentSerialized: string,
+    ) => {
+      const sent = inFlightRefs.current[key];
+      if (!sent || sent.seq !== seq) return;
+      inFlightRefs.current[key] = undefined;
+      setSavingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+
+      // Response-ordering guard keyed by target + version: a response for an
+      // older candidate version is ignored, newer state wins.
+      const stamp = stampRefs.current[key];
+      if (
+        stamp &&
+        (stamp.revision !== sent.revision ||
+          stamp.generation !== sent.generation)
+      ) {
+        return;
+      }
+
+      if (outcome === "success") {
+        setSaveFailures((prev) => {
+          if (prev[key] === undefined) return prev;
+          const next = { ...prev };
+          delete next[key];
+          saveFailuresRef.current = next;
           return next;
         });
-        Promise.resolve(onUpdateDraft(itemId, draft))
-          .then(() => {
-            setSaveFailures((prev) => {
-              const next = { ...prev };
-              delete next[itemId];
-              saveFailuresRef.current = next;
-              return next;
-            });
-            setSavingItems((prev) => {
-              const next = new Set(prev);
-              next.delete(itemId);
-              return next;
-            });
-            setDirtyItems((prevDirty) => {
-              const nextDirty = new Set(prevDirty);
-              if (
-                JSON.stringify(draftRefs.current[itemId]) ===
-                JSON.stringify(sentDraft)
-              ) {
-                nextDirty.delete(itemId);
-              }
-              dirtyRefs.current = nextDirty;
-              return nextDirty;
-            });
-          })
-          .catch(() => {
-            setSaveFailures((prev) => {
-              const next = { ...prev, [itemId]: (prev[itemId] ?? 0) + 1 };
-              saveFailuresRef.current = next;
-              return next;
-            });
-            setSavingItems((prev) => {
-              const next = new Set(prev);
-              next.delete(itemId);
-              return next;
-            });
-          });
+        setDirtyKeys((prevDirty) => {
+          const nextDirty = new Set(prevDirty);
+          if (
+            JSON.stringify(draftRefs.current[key]) === sentSerialized
+          ) {
+            nextDirty.delete(key);
+          }
+          dirtyRefs.current = nextDirty;
+          return nextDirty;
+        });
+      } else {
+        setSaveFailures((prev) => {
+          const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
+          saveFailuresRef.current = next;
+          return next;
+        });
+      }
+    };
+
+    const scheduleSave = (key: string) => {
+      window.clearTimeout(timeoutIds[key]);
+      const failures = saveFailuresRef.current[key] ?? 0;
+      timeoutIds[key] = window.setTimeout(() => {
+        const draft = draftRefs.current[key];
+        if (!draft) return;
+        const sentDraft = JSON.parse(JSON.stringify(draft)) as BulkDraft;
+        const sentSerialized = JSON.stringify(sentDraft);
+        const stamp = stampRefs.current[key];
+        const seq = (saveSeqRef.current += 1);
+        inFlightRefs.current[key] = {
+          seq,
+          revision: stamp?.revision ?? 0,
+          generation: stamp?.generation ?? 0,
+        };
+        setSavingKeys((prev) => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+        const [itemId, target] = key.split("::") as [string, EditTarget];
+        Promise.resolve(
+          onUpdateDraft(itemId, sentDraft, {
+            target,
+            expectedRevision: stamp?.revision ?? 0,
+          }),
+        )
+          .then(() => finishSave(key, seq, "success", sentSerialized))
+          .catch(() => finishSave(key, seq, "failure", sentSerialized));
       }, retryDelayMs(failures));
     };
 
-    dirtyItems.forEach((itemId) => {
-      if (!savingItems.has(itemId)) {
-        scheduleSave(itemId);
+    dirtyKeys.forEach((key) => {
+      if (!savingKeys.has(key)) {
+        scheduleSave(key);
       }
     });
 
     return () => {
       Object.values(timeoutIds).forEach((id) => window.clearTimeout(id));
     };
-  }, [dirtyItems, savingItems, onUpdateDraft]);
+  }, [dirtyKeys, savingKeys, onUpdateDraft]);
 
   useEffect(() => {
     const hasActiveExtraction = items.some(
@@ -316,15 +418,24 @@ export function BulkReviewStep({
     selectedItem.status !== "queued" &&
     selectedItem.status !== "extracting" &&
     selectedItem.status !== "submitted";
-  const currentDraft = getItemDraft(selectedItem);
-  const isActionWorking = isLoading || savingItems.has(selectedItem.itemId);
+  const currentDraft = getDraft(selectedItem, activeTarget);
+  const activeKeyPrefix = `${selectedItem.itemId}::`;
+  const isActionWorking =
+    isLoading ||
+    [...savingKeys].some((key) => key.startsWith(activeKeyPrefix));
   const isFieldDisabled = !isEditable || isLoading;
-  const saveFailureCount = saveFailures[selectedItem.itemId] ?? 0;
-  const hasSaveFailed = saveFailureCount > 0;
+  const hasSaveFailed = Object.keys(saveFailures).some((key) =>
+    key.startsWith(activeKeyPrefix),
+  );
+  const failedItemIds = new Set(
+    Object.keys(saveFailures).map((key) => key.split("::")[0]),
+  );
   const activeItems = items.filter((item) => item.status !== "deleted");
   const itemValidation = activeItems.map((item) => {
     const reasons: string[] = [];
-    const draft = getItemDraft(item);
+    // Continue gating keeps checking the source draft; variant PASS gating
+    // arrives with the review-gating slice.
+    const draft = getDraft(item, "source");
     const requiredFieldGaps = getRequiredFieldGaps(draft);
     if (item.status === "queued" || item.status === "extracting") {
       reasons.push(`Item ${item.order + 1}: Extraction is still running`);
@@ -356,7 +467,7 @@ export function BulkReviewStep({
   if (activeItems.length === 0) {
     continueDisabledReasons.push("No items to submit");
   }
-  if (dirtyItems.size > 0 || savingItems.size > 0) {
+  if (dirtyKeys.size > 0 || savingKeys.size > 0) {
     continueDisabledReasons.push("Draft changes are still saving");
   }
   if (Object.keys(saveFailures).length > 0) {
@@ -371,7 +482,7 @@ export function BulkReviewStep({
     if (isFieldDisabled) return;
     const currentTags = currentDraft.tags ?? [];
     if (currentTags.includes(tag)) return;
-    handleTagsChange(selectedItem.itemId, [...currentTags, tag], currentTags);
+    handleTagsChange(activeKey, [...currentTags, tag], currentTags);
   };
 
   return (
@@ -446,7 +557,7 @@ export function BulkReviewStep({
                   }}
                 >
                   {item.order + 1}. {statusLabel(item.status)}
-                  {saveFailures[item.itemId] !== undefined && (
+                  {failedItemIds.has(item.itemId) && (
                     <span style={{ fontSize: "0.85em", opacity: 0.8 }}>
                       {" "}
                       (save failed)
@@ -536,6 +647,34 @@ export function BulkReviewStep({
             />
           )}
 
+          {selectedItem.variation?.candidate && (
+            <div
+              data-testid="bulk-review-edit-target"
+              role="group"
+              aria-label="Editing target"
+              style={{ display: "flex", gap: "8px", marginBottom: "12px" }}
+            >
+              <button
+                type="button"
+                data-testid="bulk-review-edit-candidate"
+                aria-pressed={activeTarget === "candidate"}
+                onClick={() => setEditTarget("candidate")}
+                disabled={isFieldDisabled}
+              >
+                Edit candidate
+              </button>
+              <button
+                type="button"
+                data-testid="bulk-review-edit-source"
+                aria-pressed={activeTarget === "source"}
+                onClick={() => setEditTarget("source")}
+                disabled={isFieldDisabled}
+              >
+                Edit source
+              </button>
+            </div>
+          )}
+
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <label>
               Text
@@ -543,7 +682,7 @@ export function BulkReviewStep({
                 data-testid="bulk-review-text"
                 value={currentDraft.text ?? ""}
                 onChange={(event) =>
-                  updateDraft(selectedItem.itemId, { text: event.target.value })
+                  updateDraft(activeKey, { text: event.target.value })
                 }
                 disabled={isFieldDisabled}
                 rows={4}
@@ -590,7 +729,7 @@ export function BulkReviewStep({
                   data-testid="bulk-review-type"
                   value={currentDraft.problemType ?? "short-answer"}
                   onChange={(event) =>
-                    updateDraft(selectedItem.itemId, {
+                    updateDraft(activeKey, {
                       problemType: event.target.value,
                     })
                   }
@@ -616,11 +755,16 @@ export function BulkReviewStep({
                   data-testid="bulk-review-subject"
                   value={currentDraft.subject ?? "math"}
                   onChange={(event) =>
-                    updateDraft(selectedItem.itemId, {
+                    updateDraft(activeKey, {
                       subject: event.target.value,
                     })
                   }
-                  disabled={isFieldDisabled}
+                  disabled={isFieldDisabled || activeTarget === "candidate"}
+                  title={
+                    activeTarget === "candidate"
+                      ? "Candidates share the source subject"
+                      : undefined
+                  }
                   style={{ width: "100%" }}
                 >
                   {SUBJECTS.map((option) => (
@@ -639,7 +783,7 @@ export function BulkReviewStep({
                 data-testid="bulk-review-answer"
                 value={currentDraft.correctAnswer ?? ""}
                 onChange={(event) =>
-                  updateDraft(selectedItem.itemId, {
+                  updateDraft(activeKey, {
                     correctAnswer: event.target.value,
                   })
                 }
@@ -659,7 +803,7 @@ export function BulkReviewStep({
                 data-testid="bulk-review-graphdsl"
                 value={currentDraft.graphDsl ?? ""}
                 onChange={(event) =>
-                  updateDraft(selectedItem.itemId, {
+                  updateDraft(activeKey, {
                     graphDsl: event.target.value,
                   })
                 }
@@ -737,7 +881,7 @@ export function BulkReviewStep({
             <TagInput
               tags={currentDraft.tags ?? []}
               onChange={(tags) =>
-                handleTagsChange(selectedItem.itemId, tags, currentDraft.tags ?? [])
+                handleTagsChange(activeKey, tags, currentDraft.tags ?? [])
               }
               suggestions={reviewTagSuggestions}
               placeholder="Add a tag..."

@@ -316,6 +316,27 @@ describe("bulk ingestion API client", () => {
       );
       expect(result).toEqual(response);
     });
+
+    it("includes expectedRevision for variant-batch edits", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await updateItemDraft("batch-1", "item-1", { text: "updated" }, 4);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ text: "updated", expectedRevision: 4 }),
+        },
+      );
+    });
   });
 
   describe("retryItem", () => {
