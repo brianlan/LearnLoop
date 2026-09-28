@@ -93,6 +93,47 @@ const baseTracking = {
   },
 };
 
+const variantProblem = {
+  ...baseProblem,
+  text: "What is 2+2?",
+  imageUrl: "/api/v1/problems/abc123/image",
+  variation: {
+    mode: "data-only",
+    original: {
+      text: "What is 2+2?",
+      problemType: "single-choice",
+      subject: "math",
+      graphDsl: "board.create('point', [0, 0]);",
+      correctAnswer: {
+        display: "4",
+        normalizedText: "4",
+        normalizedSet: ["4"],
+        format: "single",
+      },
+      auditImageUrl: "/api/v1/problems/abc123/variation/original/image",
+    },
+    acceptedVariant: {
+      text: "What is 3+3?",
+      problemType: "single-choice",
+      subject: "math",
+      graphDsl: "board.create('point', [1, 1]);",
+      correctAnswer: {
+        display: "6",
+        normalizedText: "6",
+        normalizedSet: ["6"],
+        format: "single",
+      },
+    },
+    generator: { provider: "openai", model: "gpt-gen" },
+    generationCount: 2,
+    validation: {
+      verdict: "PASS",
+      helperModel: { provider: "openai", model: "gpt-helper" },
+      reports: [{ hidden: true }],
+    },
+  },
+};
+
 describe("ProblemDetailPage", () => {
   beforeEach(() => {
     vi.mocked(api.get).mockReset();
@@ -1175,5 +1216,127 @@ describe("ProblemDetailPage", () => {
     expect(history.querySelectorAll("tbody tr")).toHaveLength(22);
     expect(screen.getByText(/Showing 22 of 22/)).toBeInTheDocument();
     expect(vi.mocked(api.getAttemptHistory).mock.calls.length).toBe(callsBefore);
+  });
+
+  it("shows collapsed provenance evidence for a variant problem and expands on demand", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: variantProblem })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("problem-variation-provenance")).toBeInTheDocument();
+    });
+
+    // Collapsed by default: no evidence content is rendered yet.
+    expect(
+      screen.queryByTestId("problem-variation-provenance-body"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("problem-variation-provenance-toggle"));
+
+    const body = screen.getByTestId("problem-variation-provenance-body");
+    expect(body).toHaveTextContent("Read-only evidence captured at admission.");
+
+    // Original snapshot as stored.
+    expect(within(body).getByText("Original (source at admission)")).toBeInTheDocument();
+    expect(within(body).getByText("board.create('point', [0, 0]);")).toBeInTheDocument();
+
+    // Admitted snapshot with the historical-approval labeling.
+    expect(
+      within(body).getByTestId("problem-variation-admitted-note"),
+    ).toHaveTextContent("not a re-approval of later edits");
+    expect(within(body).getByText("What is 3+3?")).toBeInTheDocument();
+    expect(within(body).getByText("6")).toBeInTheDocument();
+
+    // Validation outcome and generation provenance.
+    expect(within(body).getByText("PASS")).toBeInTheDocument();
+    expect(within(body).getByText("openai / gpt-helper")).toBeInTheDocument();
+    expect(within(body).getByText("openai / gpt-gen · generation 2")).toBeInTheDocument();
+
+    // Hidden reasoning from raw reports is never rendered.
+    expect(within(body).queryByText("hidden")).not.toBeInTheDocument();
+
+    // The audit image loads from the owned URL, never the normal image field.
+    await user.click(within(body).getByRole("button", { name: /source audit image/i }));
+    const auditImage = within(body).getByAltText("Source audit image");
+    expect(auditImage).toHaveAttribute(
+      "src",
+      "/api/v1/problems/abc123/variation/original/image",
+    );
+    expect(auditImage).not.toHaveAttribute("src", variantProblem.imageUrl);
+  });
+
+  it("keeps the main edit request identical for variant problems and leaves provenance untouched", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: variantProblem })
+      .mockResolvedValueOnce(baseTracking)
+      .mockResolvedValueOnce({ problem: { ...variantProblem, text: "Edited variant text" } })
+      .mockResolvedValueOnce(baseTracking);
+    vi.mocked(api.patch).mockResolvedValueOnce({
+      problem: { ...variantProblem, text: "Edited variant text" },
+    });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const textInput = screen.getByDisplayValue("What is 2+2?");
+    await user.clear(textInput);
+    await user.type(textInput, "Edited variant text");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Same request shape as an ordinary problem; nothing variation-shaped.
+    await waitFor(() => {
+      expect(api.patch).toHaveBeenCalledTimes(1);
+    });
+    const [patchPath, patchBody] = vi.mocked(api.patch).mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(patchPath).toBe("/problems/abc123");
+    expect(patchBody).toEqual(
+      expect.objectContaining({
+        text: "Edited variant text",
+        problemType: "single-choice",
+        tags: ["algebra", "basic"],
+        graphDsl: "",
+      }),
+    );
+    expect(patchBody).not.toHaveProperty("variation");
+    expect(patchBody).not.toHaveProperty("validation");
+
+    // No validation/revalidation call happened on any endpoint.
+    const fetchedPaths = vi.mocked(api.get).mock.calls.map((call) => call[0] as string);
+    expect(fetchedPaths.every((path) => !/validat/i.test(path))).toBe(true);
+
+    // Provenance evidence is unchanged after the edit.
+    await user.click(screen.getByTestId("problem-variation-provenance-toggle"));
+    const body = screen.getByTestId("problem-variation-provenance-body");
+    expect(within(body).getByText("What is 3+3?")).toBeInTheDocument();
+    expect(
+      within(body).getByTestId("problem-variation-admitted-note"),
+    ).toHaveTextContent("not a re-approval of later edits");
+  });
+
+  it("renders no provenance section for ordinary problems", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("problem-variation-provenance"),
+    ).not.toBeInTheDocument();
   });
 });

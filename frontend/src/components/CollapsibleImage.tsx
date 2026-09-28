@@ -5,10 +5,16 @@ import { ProblemImage } from "./ProblemImage";
 interface CollapsibleImageProps {
   src?: string | null;
   alt?: string;
+  label?: string;
   style?: CSSProperties;
 }
 
-export function CollapsibleImage({ src, alt = "Problem", style }: CollapsibleImageProps) {
+export function CollapsibleImage({
+  src,
+  alt = "Problem",
+  label = "Original Image",
+  style,
+}: CollapsibleImageProps) {
   const [expanded, setExpanded] = useState(false);
 
   if (!src) {
@@ -43,7 +49,7 @@ export function CollapsibleImage({ src, alt = "Problem", style }: CollapsibleIma
         >
           ▶
         </span>
-        {expanded ? "Hide Original Image" : "Show Original Image"}
+        {expanded ? `Hide ${label}` : `Show ${label}`}
       </button>
       {expanded && (
         <ProblemImage

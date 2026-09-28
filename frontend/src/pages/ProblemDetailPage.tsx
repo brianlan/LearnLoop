@@ -10,7 +10,14 @@ import { TagInput } from "@/components/TagInput";
 import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
-import type { ProblemDetail, ProblemResponse, PracticeWeight, AttemptHistoryItem } from "@/types/problem";
+import type {
+  ProblemDetail,
+  ProblemResponse,
+  ProblemVariation,
+  PracticeWeight,
+  AttemptHistoryItem,
+  VariationContent,
+} from "@/types/problem";
 import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
 
 interface TrackingData {
@@ -257,6 +264,157 @@ function ProblemAttemptHistory({ problemId }: { problemId: string }) {
       <div style={{ marginTop: "0.25rem", color: "var(--color-text-muted)", fontSize: "0.75rem" }}>
         Showing {items.length} of {total}
       </div>
+    </div>
+  );
+}
+
+const evidenceLabelStyle: React.CSSProperties = {
+  fontSize: "0.75rem",
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  color: "var(--color-text-muted)",
+  display: "block",
+  marginBottom: "0.25rem",
+};
+
+// Read-only rendering of one immutable content snapshot (original or
+// admitted variant). No edit affordances by construction.
+function VariationContentSnapshot({
+  title,
+  content,
+}: {
+  title: string;
+  content: VariationContent;
+}) {
+  return (
+    <div>
+      <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>{title}</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        <div>
+          <label style={evidenceLabelStyle}>Text</label>
+          <LatexText text={content.text} style={{ whiteSpace: "pre-wrap" }} />
+        </div>
+        <div>
+          <label style={evidenceLabelStyle}>Problem Type</label>
+          <div style={{ fontSize: "0.95rem" }}>{content.problemType}</div>
+        </div>
+        {content.graphDsl ? (
+          <div>
+            <label style={evidenceLabelStyle}>Graph DSL</label>
+            <pre
+              style={{
+                margin: 0,
+                padding: "0.5rem 0.75rem",
+                backgroundColor: "var(--color-surface-muted)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-md)",
+                fontFamily: "monospace",
+                fontSize: "0.875rem",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {content.graphDsl}
+            </pre>
+          </div>
+        ) : null}
+        <div>
+          <label style={evidenceLabelStyle}>Correct Answer</label>
+          <div style={{ fontSize: "0.95rem", fontWeight: 600 }}>
+            {content.correctAnswer?.display ?? ""}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VariationProvenance({ variation }: { variation: ProblemVariation }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div
+      className="card-premium"
+      data-testid="problem-variation-provenance"
+      style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}
+    >
+      <button
+        type="button"
+        data-testid="problem-variation-provenance-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((prev) => !prev)}
+        className="btn btn-secondary"
+        style={{ alignSelf: "flex-start", padding: "0.4rem 0.875rem", fontSize: "0.8125rem", borderRadius: "var(--radius-md)" }}
+      >
+        {expanded ? "Hide" : "Show"} original & approval evidence
+      </button>
+      {expanded && (
+        <div
+          data-testid="problem-variation-provenance-body"
+          style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
+        >
+          <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+            Read-only evidence captured at admission.
+          </div>
+
+          <VariationContentSnapshot title="Original (source at admission)" content={variation.original} />
+
+          <div>
+            <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>
+              Admitted variant (approved snapshot)
+            </h3>
+            <div
+              data-testid="problem-variation-admitted-note"
+              style={{
+                fontSize: "0.85rem",
+                color: "var(--color-text-muted)",
+                marginBottom: "0.75rem",
+              }}
+            >
+              This is the approval recorded at admission. It is not a
+              re-approval of later edits to the main fields.
+            </div>
+            <VariationContentSnapshot title="Admitted content" content={variation.acceptedVariant} />
+          </div>
+
+          <div>
+            <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>
+              Validation & generation
+            </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", fontSize: "0.95rem" }}>
+              <div>
+                <label style={evidenceLabelStyle}>Verdict</label>
+                {variation.validation.verdict}
+              </div>
+              {variation.validation.helperModel && (
+                <div>
+                  <label style={evidenceLabelStyle}>Helper model</label>
+                  {variation.validation.helperModel.provider} / {variation.validation.helperModel.model}
+                </div>
+              )}
+              <div>
+                <label style={evidenceLabelStyle}>Generator</label>
+                {variation.generator.provider} / {variation.generator.model} · generation{" "}
+                {variation.generationCount}
+              </div>
+            </div>
+          </div>
+
+          {variation.original.auditImageUrl && (
+            <div>
+              <label style={evidenceLabelStyle}>
+                Source audit image (reference evidence)
+              </label>
+              <CollapsibleImage
+                src={variation.original.auditImageUrl}
+                alt="Source audit image"
+                label="source audit image"
+                style={{ maxWidth: "100%", maxHeight: "300px", borderRadius: "var(--radius-md)" }}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -798,6 +956,10 @@ export function ProblemDetailPage() {
           )}
         </div>
       </div>
+
+      {problem.variation && (
+        <VariationProvenance variation={problem.variation} />
+      )}
 
       <div
         className="card-premium"
