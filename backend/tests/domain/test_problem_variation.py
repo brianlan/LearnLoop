@@ -117,7 +117,7 @@ def test_serialize_generation_result_keeps_structured_evidence() -> None:
     assert evidence["failures"] == [{"kind": "content", "evidence": "something broke"}]
     assert evidence["reports"] == []
     # Provenance stays inspectable via the candidate stored beside it.
-    assert CANDIDATE.generator.model == "gen-model" or True
+    assert result.candidate.generator.model == "gen-1"
 
 
 def test_variation_response_serialization_hides_fencing_state() -> None:

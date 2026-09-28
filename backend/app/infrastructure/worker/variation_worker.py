@@ -12,8 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
+
+from pydantic import ValidationError
 
 from app.domain.ingestion import BatchState
 from app.infrastructure.config.settings import Settings
@@ -42,6 +46,55 @@ logger = logging.getLogger(__name__)
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+async def _run_with_lease_heartbeat(
+    call: Callable[[], Any],
+    *,
+    database: Any,
+    batch_id: Any,
+    user_id: Any,
+    item_id: str,
+    token: str,
+    lease_timeout_seconds: int,
+) -> Any:
+    """Run one model call while a heartbeat keeps the variation lease alive.
+
+    Returns the call's result, or None when a heartbeat renewal lost the
+    claim (another worker reclaimed the item): the caller must discard the
+    stale result instead of racing a fenced write it cannot win.
+    """
+    lost = asyncio.Event()
+
+    async def heartbeat() -> None:
+        # Renew a third of the lease before expiry; the 1s floor keeps tiny
+        # test leases from spinning.
+        interval = max(lease_timeout_seconds / 3, 1)
+        while True:
+            await asyncio.sleep(interval)
+            renewed = await renew_variation_lease(
+                database,
+                batch_id,
+                user_id,
+                item_id,
+                token=token,
+                lease_timeout_seconds=lease_timeout_seconds,
+                now=_utc_now(),
+            )
+            if not renewed:
+                lost.set()
+                return
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        result = await call()
+    finally:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+    if lost.is_set():
+        return None
+    return result
 
 
 def _failed_validation_evidence(
@@ -159,7 +212,15 @@ async def process_variation(
 
     if status == VariationStatus.GENERATING.value:
         try:
-            candidate = await generator.generate_candidate(mode=mode, source=source)
+            candidate = await _run_with_lease_heartbeat(
+                lambda: generator.generate_candidate(mode=mode, source=source),
+                database=database,
+                batch_id=batch_id,
+                user_id=user_id,
+                item_id=item_id,
+                token=token,
+                lease_timeout_seconds=settings.variation_lease_timeout_seconds,
+            )
         except BaseVLMError as exc:
             saved = await save_variation_result(
                 database,
@@ -180,6 +241,11 @@ async def process_variation(
                     "Discarding variation failure for %s: claim no longer owned",
                     item_id,
                 )
+            return
+        if candidate is None:
+            logger.info(
+                "Discarding variation generation for %s: lease lost mid-call", item_id
+            )
             return
         # Candidate checkpoint before any validator call: the attempt resumes
         # validation from this snapshot after a crash or reclaim.
@@ -224,15 +290,69 @@ async def process_variation(
         logger.info("Discarding variation work for %s: lease renewal lost", item_id)
         return
 
-    candidate = VariantCandidate.model_validate(candidate_dict)
+    # A persisted candidate edited into a malformed shape (or written by an
+    # older schema) must fail closed with evidence, never crash the task and
+    # leave the item in-flight forever.
     try:
-        result: VariantGenerationResult = await generate_and_validate(
-            mode=mode,
-            source=source,
-            generator=generator,
-            validators=validators,
-            helper=helper,
-            candidate=candidate,
+        candidate = VariantCandidate.model_validate(candidate_dict)
+    except ValidationError as exc:
+        saved = await save_variation_result(
+            database,
+            batch_id,
+            user_id,
+            item_id,
+            token=token,
+            claimed_revision=claimed_revision,
+            verdict="fail",
+            validation={
+                "verdict": "fail",
+                "failures": [
+                    {
+                        "kind": "invalid-candidate",
+                        "evidence": f"Persisted candidate failed schema validation: {exc}",
+                    }
+                ],
+                "reports": [],
+            },
+            now=_utc_now(),
+        )
+        if not saved:
+            logger.info(
+                "Discarding variation failure for %s: claim no longer owned",
+                item_id,
+            )
+        return
+
+    # Long validation phase: renew the lease before starting model calls.
+    renewed = await renew_variation_lease(
+        database,
+        batch_id,
+        user_id,
+        item_id,
+        token=token,
+        lease_timeout_seconds=settings.variation_lease_timeout_seconds,
+        now=_utc_now(),
+    )
+    if not renewed:
+        logger.info("Discarding variation work for %s: lease renewal lost", item_id)
+        return
+
+    try:
+        result: VariantGenerationResult | None = await _run_with_lease_heartbeat(
+            lambda: generate_and_validate(
+                mode=mode,
+                source=source,
+                generator=generator,
+                validators=validators,
+                helper=helper,
+                candidate=candidate,
+            ),
+            database=database,
+            batch_id=batch_id,
+            user_id=user_id,
+            item_id=item_id,
+            token=token,
+            lease_timeout_seconds=settings.variation_lease_timeout_seconds,
         )
     except BaseVLMError as exc:
         # Provider/transport failure during an orchestration step that does
@@ -253,8 +373,12 @@ async def process_variation(
                 "Discarding variation failure for %s: claim no longer owned",
                 item_id,
             )
-            return
-
+        return
+    if result is None:
+        logger.info(
+            "Discarding variation validation for %s: lease lost mid-call", item_id
+        )
+        return
     verdict = result.assessment.verdict
     saved = await save_variation_result(
         database,

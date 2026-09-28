@@ -107,6 +107,8 @@ def _classify_variation_conflict(item: dict[str, Any] | None, expected_revision:
         raise GenerationInProgressError(
             f"Variation work is already in flight (status {status})"
         )
+    if (item.get("variation") or {}).get("submitReservation"):
+        raise InvalidVariationStateError("Item is reserved for submission")
     raise InvalidVariationStateError(f"Variation status {status} does not allow this action")
 
 
@@ -725,43 +727,41 @@ async def reset_item_for_retry(
     now: datetime,
 ) -> bool:
     collection = _collection(database)
-    for _ in range(_MAX_OCC_ATTEMPTS):
-        batch = await _load_batch_for_update(database, batch_id, user_id)
-        item = _find_item(batch, item_id)
-        if item is None:
-            return False
+    batch = await _load_batch_for_update(database, batch_id, user_id)
+    item = _find_item(batch, item_id)
+    if item is None:
+        return False
 
-        # A confirmed variant source is never re-extracted: a submit-failed
-        # variant item returns straight to ready so the submit can be retried
-        # without clobbering the confirmed draft/variation data.
-        variation = item.get("variation") or {}
-        if variation.get("original"):
-            result = await collection.find_one_and_update(
-                {
-                    "_id": _object_id(batch_id),
-                    "userId": user_id,
-                    "items": {
-                        "$elemMatch": {
-                            "itemId": item_id,
-                            "status": ItemState.SUBMIT_FAILED.value,
-                        }
-                    },
+    # A confirmed variant source is never re-extracted: a submit-failed
+    # variant item returns straight to ready so the submit can be retried
+    # without clobbering the confirmed draft/variation data.
+    variation = item.get("variation") or {}
+    if variation.get("original"):
+        result = await collection.find_one_and_update(
+            {
+                "_id": _object_id(batch_id),
+                "userId": user_id,
+                "items": {
+                    "$elemMatch": {
+                        "itemId": item_id,
+                        "status": ItemState.SUBMIT_FAILED.value,
+                    }
                 },
-                {
-                    "$set": {
-                        "items.$.status": ItemState.READY.value,
-                        "items.$.leaseUntil": None,
-                        "items.$.updatedAt": now,
-                        "updatedAt": now,
-                    },
-                    "$inc": {"revision": 1},
+            },
+            {
+                "$set": {
+                    "items.$.status": ItemState.READY.value,
+                    "items.$.leaseUntil": None,
+                    "items.$.updatedAt": now,
+                    "updatedAt": now,
                 },
-            )
-            return result is not None
-        return await _reset_item_for_retry_unclaimed(
-            collection, batch_id, user_id, item, now=now
+                "$inc": {"revision": 1},
+            },
         )
-    raise RuntimeError("reset_item_for_retry lost too many concurrent races")
+        return result is not None
+    return await _reset_item_for_retry_unclaimed(
+        collection, batch_id, user_id, item, now=now
+    )
 
 
 async def _reset_item_for_retry_unclaimed(
@@ -953,15 +953,82 @@ async def undo_item_deletion(
     return result is not None
 
 
+# How long an original-submit reservation blocks Generate. ponytail: fixed
+# window; expiry reclaim keeps a crashed submit request from blocking
+# Generate forever, at the cost of a possible duplicate save if problem
+# creation stalls past it.
+_SUBMIT_RESERVATION_TIMEOUT = timedelta(minutes=10)
+
+
+async def reserve_items_for_original_submit(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_ids: list[str],
+    *,
+    now: datetime,
+) -> tuple[str, list[str]]:
+    """Atomically reserve still-eligible original-submit items.
+
+    Closes the Generate-vs-submit side-effect race: only items that are
+    still ready, non-deleted and variant-free get a reservation, Generate
+    refuses reserved items, and the submit completion only lands on items
+    holding this token. Reservations expire (crashed submit request) and
+    are then reclaimable.
+    """
+    token = str(uuid4())
+    reservation = {"token": token, "expiresAt": now + _SUBMIT_RESERVATION_TIMEOUT}
+    reserved: list[str] = []
+    for item_id in item_ids:
+        result = await _collection(database).update_one(
+            {
+                "_id": _object_id(batch_id),
+                "userId": user_id,
+                "status": BatchState.ACTIVE.value,
+                "items": {
+                    "$elemMatch": {
+                        "itemId": item_id,
+                        "status": ItemState.READY.value,
+                        "variation.original": {"$in": [None]},
+                        "variation.status": {
+                            "$in": [None, VariationStatus.NOT_REQUESTED.value]
+                        },
+                        "$or": [
+                            {"variation.submitReservation": {"$in": [None]}},
+                            {"variation.submitReservation.expiresAt": {"$lte": now}},
+                        ],
+                    }
+                },
+            },
+            {
+                "$set": {
+                    "items.$.variation.submitReservation": reservation,
+                    "items.$.updatedAt": now,
+                    "updatedAt": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        if result.matched_count == 1:
+            reserved.append(item_id)
+    return token, reserved
+
+
 async def submit_items_and_complete_batch(
     database: Any,
     batch_id: str | ObjectId,
     user_id: Any,
     *,
     item_results: list[dict[str, Any]],
+    reservation_token: str,
     now: datetime,
 ) -> Document | None:
     """Persist per-item submit outcomes and mark the batch completed if appropriate.
+
+    Results only land on items this submit reserved (matching token, still
+    non-variant): a variant confirmed after the reservation expired can
+    never be recorded as an original submission. Reserved items without a
+    result keep their status and just drop the reservation.
 
     The batch is marked ``completed`` when every non-deleted item has status
     ``submitted``. Items in other states (including ``submit-failed``) keep the
@@ -975,13 +1042,28 @@ async def submit_items_and_complete_batch(
 
         items = [dict(item) for item in batch.get("items", [])]
         for item in items:
+            variation = item.get("variation") or {}
+            reservation = variation.get("submitReservation")
+            if not reservation or reservation.get("token") != reservation_token:
+                continue
+            # This submit owns the reservation: release it either way.
+            if isinstance(item.get("variation"), dict):
+                item["variation"]["submitReservation"] = None
             result = result_by_item.get(item.get("itemId"))
             if result is None:
+                # Reserved but never processed (crash window): keep status.
                 continue
             if item.get("status") == ItemState.DELETED.value:
                 # Deletion won the race (possibly between this OCC retry's
                 # read and the first, rejected attempt): a stale submit
                 # result must not resurrect the deleted item.
+                continue
+            if variation.get("original") or variation.get("status") not in (
+                None,
+                "not-requested",
+            ):
+                # A variant was confirmed after the reservation expired:
+                # an original submission can never be recorded for it.
                 continue
             item["status"] = result["status"]
             item["submit"] = result["submit"]
@@ -1057,6 +1139,12 @@ async def request_variation_generation(
                     "variation.status": {
                         "$nin": [status.value for status in VARIATION_IN_FLIGHT]
                     },
+                    # A live submit reservation wins the Generate-vs-submit
+                    # race: never confirm a variant into an in-flight submit.
+                    "$or": [
+                        {"variation.submitReservation": {"$in": [None]}},
+                        {"variation.submitReservation.expiresAt": {"$lte": now}},
+                    ],
                     **_ITEM_ACTIONABLE_PREDICATE,
                 }
             },
@@ -1076,6 +1164,9 @@ async def request_variation_generation(
                 "items.$.variation.queuedAt": now,
                 "items.$.variation.claimToken": None,
                 "items.$.variation.leaseUntil": None,
+                # Generate won over an expired reservation: clear it so the
+                # stale submit completion can never record a submission.
+                "items.$.variation.submitReservation": None,
                 "items.$.updatedAt": now,
                 "updatedAt": now,
             },

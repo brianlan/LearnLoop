@@ -8,6 +8,7 @@ stale-result rejection and deletion cancellation deterministically.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -64,11 +65,12 @@ GENERATED_CANDIDATE = {
 
 
 def make_settings(**overrides: Any) -> Settings:
-    return Settings(
-        variation_lease_timeout_seconds=300,
-        variation_worker_poll_interval_seconds=3600,
-        **overrides,
-    )
+    values: dict[str, Any] = {
+        "variation_lease_timeout_seconds": 300,
+        "variation_worker_poll_interval_seconds": 3600,
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 async def seed_variant_batch(
@@ -494,3 +496,168 @@ async def test_worker_loop_stops_gracefully(monkeypatch: pytest.MonkeyPatch) -> 
         run_variation_worker(database, make_settings(), FakeGenerator(), [], None, stop_event),
         timeout=5,
     )
+
+
+async def test_validation_provider_failure_completes_without_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+    )
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+
+    async def failing_generate_and_validate(**kwargs: Any) -> VariantGenerationResult:
+        raise BaseVLMError("validator down", code="vlm-provider-error", retryable=True)
+
+    monkeypatch.setattr(
+        variation_worker_module, "generate_and_validate", failing_generate_and_validate
+    )
+
+    # Previously this raised UnboundLocalError after the failure write.
+    await process_variation(
+        claimed, batch, database, generator, [], None, make_settings(), now=NOW
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.FAILED.value
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "vlm-provider-error"
+    assert "variation validation" in failure["evidence"]
+
+
+async def test_malformed_persisted_candidate_fails_with_evidence() -> None:
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+    )
+    token = claimed["variation"]["claimToken"]
+    # A candidate edited (or persisted) into a schema-invalid shape.
+    malformed = dict(GENERATED_CANDIDATE, text=None)
+    assert await save_variation_candidate_checkpoint(
+        database, batch["_id"], "user-1", item_id,
+        token=token, claimed_revision=1, candidate=malformed, now=NOW,
+    )
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch["_id"], "items.itemId": item_id},
+        {"$set": {"items.$.variation.leaseUntil": NOW - timedelta(seconds=1)}},
+    )
+    reclaimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+    )
+    assert reclaimed is not None
+
+    generator = FakeGenerator()
+    await process_variation(
+        reclaimed, batch, database, generator, [], None, make_settings(), now=NOW
+    )
+
+    # The task must not crash and leave the item in-flight forever.
+    assert generator.calls == []
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.FAILED.value
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "invalid-candidate"
+    assert "text" in failure["evidence"]
+
+
+class SlowGenerator(FakeGenerator):
+    def __init__(self, seconds: float) -> None:
+        super().__init__()
+        self._seconds = seconds
+
+    async def generate_candidate(self, *, mode: str, source: Any) -> VariantCandidate:
+        await asyncio.sleep(self._seconds)
+        return VariantCandidate.model_validate(GENERATED_CANDIDATE)
+
+
+async def test_heartbeat_maintains_lease_across_slow_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=1, now=NOW
+    )
+    assert claimed is not None
+
+    async def fake_generate_and_validate(**kwargs: Any) -> VariantGenerationResult:
+        return passing_result(GENERATED_CANDIDATE)
+
+    monkeypatch.setattr(
+        variation_worker_module, "generate_and_validate", fake_generate_and_validate
+    )
+
+    task = asyncio.create_task(
+        process_variation(
+            claimed, batch, database, SlowGenerator(2.5), [], None,
+            make_settings(variation_lease_timeout_seconds=1), now=NOW,
+        )
+    )
+    # Cross the original lease boundary (1s) while the provider call runs:
+    # the heartbeat renewed at ~1s, so a reclaiming worker is refused.
+    await asyncio.sleep(1.5)
+    assert await claim_variation_work(
+        database, batch["_id"], "user-1", item_id,
+        lease_timeout_seconds=1, now=datetime.now(UTC),
+    ) is None
+    await asyncio.wait_for(task, timeout=10)
+
+    item = await _load_item(database, batch["_id"], item_id)
+    assert item["variation"]["status"] == VariationStatus.READY.value
+
+
+async def test_heartbeat_loss_discards_stale_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=1, now=NOW
+    )
+    assert claimed is not None
+    token = claimed["variation"]["claimToken"]
+
+    async def losing_renew(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(variation_worker_module, "renew_variation_lease", losing_renew)
+
+    await asyncio.wait_for(
+        process_variation(
+            claimed, batch, database, SlowGenerator(1.5), [], None,
+            make_settings(variation_lease_timeout_seconds=1), now=NOW,
+        ),
+        timeout=10,
+    )
+
+    # The first heartbeat tick lost the claim: the stale result is discarded
+    # and the item stays in-flight for the reclaiming worker.
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.GENERATING.value
+    assert variation["candidate"] is None
+    assert variation["claimToken"] == token

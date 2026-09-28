@@ -28,6 +28,7 @@ from app.infrastructure.ingestion.repository import (
     delete_batch_image,
     get_batch,
     mark_item_deleted,
+    reserve_items_for_original_submit,
     reset_item_for_retry,
     save_image_boxes_and_subject,
     save_image_detection_failure,
@@ -548,11 +549,16 @@ async def test_stale_submit_write_rejected_when_edit_lands_same_millisecond(
     and the retry preserves both outcomes.
     """
     batch_id, item_a_id, item_b_id = await _batch_with_two_items(real_database, user_id, settings)
+    # Only reserved, ready items are submitted: mirror the real submit flow.
+    await _set_item_fields(real_database, batch_id, user_id, item_a_id, status=ItemState.READY.value)
     same_ts = NOW + timedelta(seconds=1)
     # Warm the document so its updatedAt equals the writer's timestamp —
     # the same-millisecond collision precondition.
     await update_item_draft(
         real_database, batch_id, user_id, item_a_id, draft_update={"text": "warm-up"}, now=same_ts
+    )
+    token, _reserved = await reserve_items_for_original_submit(
+        real_database, batch_id, user_id, [item_a_id], now=same_ts,
     )
 
     original_load = ingestion_repository._load_batch_for_update
@@ -579,6 +585,7 @@ async def test_stale_submit_write_rejected_when_edit_lands_same_millisecond(
         batch_id,
         user_id,
         item_results=[{"itemId": item_a_id, "status": ItemState.SUBMITTED.value, "submit": submit}],
+        reservation_token=token,
         now=same_ts,
     )
 
@@ -780,6 +787,9 @@ async def test_stale_submit_result_cannot_resurrect_deleted_item(
     await update_item_draft(
         real_database, batch_id, user_id, item_b_id, draft_update={"text": "warm-up"}, now=same_ts
     )
+    token, _reserved = await reserve_items_for_original_submit(
+        real_database, batch_id, user_id, [item_a_id], now=same_ts,
+    )
 
     original_load = ingestion_repository._load_batch_for_update
     landed = {"delete": False}
@@ -801,6 +811,7 @@ async def test_stale_submit_result_cannot_resurrect_deleted_item(
         batch_id,
         user_id,
         item_results=[{"itemId": item_a_id, "status": ItemState.SUBMITTED.value, "submit": submit}],
+        reservation_token=token,
         now=same_ts,
     )
 
@@ -1531,3 +1542,112 @@ async def test_old_candidate_checkpoint_cannot_land_after_regeneration(
     assert item["variation"]["candidate"] is None
     assert item["variation"]["status"] == "queued"
     assert item["variation"]["generationCount"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Submit reservation vs Generate race (issue #613 reviewer fixes)
+# ---------------------------------------------------------------------------
+
+
+def _submitted_result(item_id: str) -> dict[str, Any]:
+    return {
+        "itemId": item_id,
+        "status": "submitted",
+        "submit": {
+            "submittedProblemId": str(ObjectId()),
+            "success": True,
+            "failureCode": None,
+            "failureMessage": None,
+        },
+    }
+
+
+@pytest.mark.real_mongo
+async def test_submit_reservation_blocks_generate_until_expiry(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_id = item_ids[0]
+
+    token, reserved = await reserve_items_for_original_submit(
+        real_database, batch_id, user_id, [item_id], now=NOW,
+    )
+    assert reserved == [item_id]
+
+    # Generate loses against a live reservation.
+    from app.problem_variation import InvalidVariationStateError
+
+    with pytest.raises(InvalidVariationStateError):
+        await request_variation_generation(
+            real_database, batch_id, user_id, item_id,
+            original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+        )
+
+    # After expiry, Generate wins and clears the stale reservation.
+    await real_database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": item_id},
+        {"$set": {"items.$.variation.submitReservation.expiresAt": NOW - timedelta(seconds=1)}},
+    )
+    await request_variation_generation(
+        real_database, batch_id, user_id, item_id,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == item_id)
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["submitReservation"] is None
+
+    # The stale submit completion can no longer record an original submission.
+    await submit_items_and_complete_batch(
+        real_database, batch_id, user_id,
+        item_results=[_submitted_result(item_id)],
+        reservation_token=token,
+        now=NOW,
+    )
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == item_id)
+    assert item["status"] == ItemState.READY.value
+    assert item["submit"]["submittedProblemId"] is None
+    assert item["variation"]["original"] == VARIANT_ORIGINAL
+
+
+@pytest.mark.real_mongo
+async def test_submit_completion_records_only_for_own_reservation(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    item_id = item_ids[0]
+
+    token, reserved = await reserve_items_for_original_submit(
+        real_database, batch_id, user_id, [item_id], now=NOW,
+    )
+    assert reserved == [item_id]
+
+    await submit_items_and_complete_batch(
+        real_database, batch_id, user_id,
+        item_results=[_submitted_result(item_id)],
+        reservation_token=token,
+        now=NOW,
+    )
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == item_id)
+    assert item["status"] == ItemState.SUBMITTED.value
+    assert item["variation"]["submitReservation"] is None
+
+
+@pytest.mark.real_mongo
+async def test_submit_reservation_skips_variant_flagged_items(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    variant_item, plain_item = item_ids
+
+    # The variant was confirmed between the submit read and the reserve.
+    await request_variation_generation(
+        real_database, batch_id, user_id, variant_item,
+        original=VARIANT_ORIGINAL, expected_revision=0, now=NOW,
+    )
+    _, reserved = await reserve_items_for_original_submit(
+        real_database, batch_id, user_id, item_ids, now=NOW,
+    )
+    assert reserved == [plain_item]

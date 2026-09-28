@@ -27,6 +27,7 @@ from app.infrastructure.ingestion.repository import (
     commit_image_boxes,
     delete_batch_image,
     mark_item_deleted,
+    reserve_items_for_original_submit,
     reset_item_for_retry,
     save_image_boxes_and_subject,
     save_image_detection_failure,
@@ -883,11 +884,20 @@ async def test_submit_items_and_complete_batch_completes_only_when_all_submitted
     batch, image, items = await _batch_with_items(database, user_id, settings)
     item_id = items[0]["itemId"]
     submit = {"submittedProblemId": "prob-1", "success": True}
+    # Mirror the real submit flow: only reserved, ready items are submitted.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch["_id"], "userId": user_id, "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.READY.value}},
+    )
+    token, _reserved = await reserve_items_for_original_submit(
+        database, batch["_id"], user_id, [item_id], now=NOW,
+    )
 
     # Not all submitted (submit-failed) -> batch stays ACTIVE.
     result = await submit_items_and_complete_batch(
         database, batch["_id"], user_id,
         item_results=[{"itemId": item_id, "status": ItemState.SUBMIT_FAILED.value, "submit": submit}],
+        reservation_token=token,
         now=NOW,
     )
     assert result["status"] == BatchState.ACTIVE.value
@@ -897,11 +907,20 @@ async def test_submit_items_and_complete_batch_completes_only_when_all_submitted
     assert item["submit"] == submit
     assert item["updatedAt"] == NOW
 
-    # All submitted -> batch COMPLETED.
+    # All submitted -> batch COMPLETED: a retried submit re-reserves the
+    # item (the first completion released the reservation).
     later = NOW + timedelta(seconds=5)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch["_id"], "userId": user_id, "items.itemId": item_id},
+        {"$set": {"items.$.status": ItemState.READY.value}},
+    )
+    token2, _reserved2 = await reserve_items_for_original_submit(
+        database, batch["_id"], user_id, [item_id], now=later,
+    )
     result = await submit_items_and_complete_batch(
         database, batch["_id"], user_id,
         item_results=[{"itemId": item_id, "status": ItemState.SUBMITTED.value, "submit": submit}],
+        reservation_token=token2,
         now=later,
     )
     assert result["status"] == BatchState.COMPLETED.value
@@ -939,7 +958,8 @@ async def test_missing_batch_raises_value_error(
 
     with pytest.raises(ValueError, match="Batch not found"):
         await submit_items_and_complete_batch(
-            database, missing_batch_id, user_id, item_results=[], now=NOW,
+            database, missing_batch_id, user_id,
+            item_results=[], reservation_token="unused", now=NOW,
         )
 
 

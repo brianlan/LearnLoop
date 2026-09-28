@@ -2108,9 +2108,13 @@ from app.infrastructure.ingestion.repository import (  # noqa: E402
     INGESTION_BATCHES_COLLECTION,
     claim_item,
     claim_variation_work,
+    create_batch,
     request_variation_generation,
+    request_variation_revalidation,
+    reserve_items_for_original_submit,
     save_variation_candidate_checkpoint,
     save_variation_result,
+    submit_items_and_complete_batch,
 )
 
 
@@ -2757,3 +2761,341 @@ async def test_variant_submit_failure_retry_does_not_reextract(
     assert item["status"] == "ready"
     assert item["variation"]["original"] == VARIANT_ORIGINAL
     assert item["variation"]["candidate"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Submit reservation vs Generate race (issue #613 reviewer fixes)
+# ---------------------------------------------------------------------------
+
+from app.problem_variation import IngestionMode  # noqa: E402
+
+
+async def _seed_submit_ready_batch(
+    database: FakeDatabase,
+    *,
+    item_ids: list[str],
+) -> tuple[ObjectId, list[str]]:
+    """Seed an active data-only batch whose items are ready for submit."""
+    settings = Settings(s3_bucket="learnloop-media")
+    batch = await create_batch(
+        database, "user-1", settings,
+        ingestion_mode=IngestionMode.DATA_ONLY, now=datetime.now(UTC),
+    )
+    items = []
+    for index, item_id in enumerate(item_ids):
+        items.append(
+            {
+                "itemId": item_id,
+                "imageId": "image-1",
+                "batchId": batch["_id"],
+                "status": "ready",
+                "order": index,
+                "draft": {
+                    "text": f"What is {index}+{index}?",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "correctAnswer": str(2 * index),
+                    "tags": [],
+                    "subject": "math",
+                },
+                "extraction": {},
+                "retryCount": 0,
+                "contentRevision": 0,
+                "variation": {
+                    "status": "not-requested",
+                    "generationCount": 0,
+                    "original": None,
+                    "candidate": None,
+                    "validation": None,
+                    "validatedRevision": None,
+                    "claimToken": None,
+                    "leaseUntil": None,
+                    "queuedAt": None,
+                },
+                "submit": {
+                    "submittedProblemId": None,
+                    "success": None,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+                "origin": {"itemId": item_id},
+                "crop": None,
+                "leaseUntil": None,
+                "createdAt": datetime.now(UTC),
+                "updatedAt": datetime.now(UTC),
+            }
+        )
+    batch["items"] = items
+    await database[INGESTION_BATCHES_COLLECTION].replace_one(
+        {"_id": batch["_id"]}, dict(batch)
+    )
+    return batch["_id"], list(item_ids)
+
+
+def _stored_item(batch_doc: dict[str, Any], item_id: str) -> dict[str, Any]:
+    return next(i for i in batch_doc["items"] if i["itemId"] == item_id)
+
+
+@pytest.mark.asyncio
+async def test_reserve_skips_variant_flagged_items() -> None:
+    database = FakeDatabase()
+    batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a", "b"])
+    # Item "a" had its variant confirmed between the submit read and the
+    # reserve: it must never be reserved for the original path.
+    await request_variation_generation(
+        database, batch_id, "user-1", "a",
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=datetime.now(UTC),
+    )
+
+    _, reserved = await reserve_items_for_original_submit(
+        database, batch_id, "user-1", item_ids, now=datetime.now(UTC),
+    )
+    assert reserved == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_submit_reserved_item_until_expiry() -> None:
+    database = FakeDatabase()
+    batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a"])
+    now = datetime.now(UTC)
+    token, reserved = await reserve_items_for_original_submit(
+        database, batch_id, "user-1", item_ids, now=now,
+    )
+    assert reserved == ["a"]
+
+    from app.problem_variation import InvalidVariationStateError
+
+    with pytest.raises(InvalidVariationStateError, match="reserved for submission"):
+        await request_variation_generation(
+            database, batch_id, "user-1", "a",
+            original=dict(VARIANT_ORIGINAL), expected_revision=0, now=now,
+        )
+
+    # The reservation expires (crashed submit request): Generate wins and
+    # clears the stale reservation.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": "a"},
+        {"$set": {"items.$.variation.submitReservation.expiresAt": now - timedelta(seconds=1)}},
+    )
+    await request_variation_generation(
+        database, batch_id, "user-1", "a",
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=now,
+    )
+    batch_doc = await database[INGESTION_BATCHES_COLLECTION].find_one({"_id": batch_id})
+    item = _stored_item(batch_doc, "a")
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["submitReservation"] is None
+    assert token  # the stale token can no longer reserve anything
+
+
+@pytest.mark.asyncio
+async def test_submit_completion_requires_matching_reservation_token() -> None:
+    database = FakeDatabase()
+    batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a"])
+    now = datetime.now(UTC)
+    token, _ = await reserve_items_for_original_submit(
+        database, batch_id, "user-1", item_ids, now=now,
+    )
+
+    def submitted_result(item_id: str) -> dict[str, Any]:
+        return {
+            "itemId": item_id,
+            "status": "submitted",
+            "submit": {
+                "submittedProblemId": str(ObjectId()),
+                "success": True,
+                "failureCode": None,
+                "failureMessage": None,
+            },
+        }
+
+    # A submit holding a different token can never record its result.
+    await submit_items_and_complete_batch(
+        database, batch_id, "user-1",
+        item_results=[submitted_result("a")],
+        reservation_token="not-the-owner",
+        now=now,
+    )
+    batch_doc = await database[INGESTION_BATCHES_COLLECTION].find_one({"_id": batch_id})
+    item = _stored_item(batch_doc, "a")
+    assert item["status"] == "ready"
+    assert item["submit"]["submittedProblemId"] is None
+
+    # The owning token lands the result and releases the reservation.
+    await submit_items_and_complete_batch(
+        database, batch_id, "user-1",
+        item_results=[submitted_result("a")],
+        reservation_token=token,
+        now=now,
+    )
+    batch_doc = await database[INGESTION_BATCHES_COLLECTION].find_one({"_id": batch_id})
+    item = _stored_item(batch_doc, "a")
+    assert item["status"] == "submitted"
+    assert item["variation"]["submitReservation"] is None
+
+
+@pytest.mark.asyncio
+async def test_stale_submit_completion_cannot_record_after_generate_wins() -> None:
+    database = FakeDatabase()
+    batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a"])
+    now = datetime.now(UTC)
+    token, _ = await reserve_items_for_original_submit(
+        database, batch_id, "user-1", item_ids, now=now,
+    )
+
+    # The reservation expired while the submit was stalled; Generate confirms
+    # the variant and clears the stale reservation.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": "a"},
+        {"$set": {"items.$.variation.submitReservation.expiresAt": now - timedelta(seconds=1)}},
+    )
+    await request_variation_generation(
+        database, batch_id, "user-1", "a",
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=now,
+    )
+
+    # The stalled submit's completion can no longer record the item as an
+    # original submission.
+    await submit_items_and_complete_batch(
+        database, batch_id, "user-1",
+        item_results=[
+            {
+                "itemId": "a",
+                "status": "submitted",
+                "submit": {
+                    "submittedProblemId": str(ObjectId()),
+                    "success": True,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+            }
+        ],
+        reservation_token=token,
+        now=now,
+    )
+    batch_doc = await database[INGESTION_BATCHES_COLLECTION].find_one({"_id": batch_id})
+    item = _stored_item(batch_doc, "a")
+    assert item["status"] == "ready"
+    assert item["submit"]["submittedProblemId"] is None
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["original"] == VARIANT_ORIGINAL
+
+
+@pytest.mark.asyncio
+async def test_generate_blocked_while_submit_creates_problem(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    # The extracted draft lacks the user-supplied answer; submit requires it.
+    # (Variant-mode edit: revision-aware, and the semantic edit bumps the
+    # item's contentRevision.)
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": "4", "expectedRevision": 0},
+    )
+    assert patch_response.status_code == 200
+    item_revision = _variation_of(patch_response.json(), item_id)["contentRevision"]
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+
+    from app.presentation import bulk_ingestion as bulk_ingestion_module
+    from app.problem_variation import InvalidVariationStateError
+
+    real_create = bulk_ingestion_module.create_problem_from_draft
+    blocked_errors: list[InvalidVariationStateError] = []
+
+    async def probing_create(*args: Any, **kwargs: Any) -> Any:
+        # Deterministic submit-pause point: while submit holds the item's
+        # reservation inside the problem-creation window, Generate must lose.
+        try:
+            await request_variation_generation(
+                database, ObjectId(batch_id), user_id, item_id,
+                original=dict(VARIANT_ORIGINAL), expected_revision=item_revision,
+                now=datetime.now(UTC),
+            )
+        except InvalidVariationStateError as exc:
+            blocked_errors.append(exc)
+        return await real_create(*args, **kwargs)
+
+    monkeypatch.setattr(
+        bulk_ingestion_module, "create_problem_from_draft", probing_create
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert [r["itemId"] for r in summary["items"]] == [item_id]
+    assert summary["items"][0]["status"] == "submitted"
+
+    # Generate was refused exactly once: the reservation covered the window.
+    assert len(blocked_errors) == 1
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "submitted"
+    assert item["variation"]["status"] == "not-requested"
+
+
+@pytest.mark.asyncio
+async def test_null_candidate_edit_revalidation_fails_with_evidence(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    revision = _variation_of(detail.json(), item_id)["contentRevision"]
+
+    # An explicit null for a required candidate field is accepted and marks
+    # the candidate needs-validation...
+    edit_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": revision, "text": None},
+    )
+    assert edit_response.status_code == 200
+    assert _variation_of(edit_response.json(), item_id)["variation"]["status"] == "needs-validation"
+    revision = _variation_of(edit_response.json(), item_id)["contentRevision"]
+
+    revalidate_response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": revision},
+    )
+    assert revalidate_response.status_code == 202
+
+    # ...and the worker fails it closed with structured evidence instead of
+    # crashing and leaving the item in-flight forever.
+    database = bulk_app.state.fake_database
+    batch_object_id = ObjectId(batch_id)
+    claimed = await claim_variation_work(
+        database, batch_object_id, user_id, item_id,
+        lease_timeout_seconds=300, now=datetime.now(UTC),
+    )
+    assert claimed is not None
+    stored_batch = await database[INGESTION_BATCHES_COLLECTION].find_one(
+        {"_id": batch_object_id}
+    )
+    from app.infrastructure.worker.variation_worker import process_variation
+
+    await process_variation(
+        claimed, stored_batch, database, [], [], None,
+        Settings(s3_bucket="learnloop-media"), now=datetime.now(UTC),
+    )
+
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    variation = _variation_of(detail.json(), item_id)["variation"]
+    assert variation["status"] == "failed"
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "invalid-candidate"
+    assert "text" in failure["evidence"]

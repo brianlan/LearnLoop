@@ -29,7 +29,6 @@ from app.infrastructure.ingestion.image_size import get_image_size
 from app.infrastructure.ingestion.pdf import PdfRenderError, render_pdf_pages
 from app.infrastructure.ingestion.repository import (
     add_source_image,
-    claim_variation_work,
     commit_image_boxes,
     create_batch as create_batch_repo,
     delete_batch_image,
@@ -38,15 +37,13 @@ from app.infrastructure.ingestion.repository import (
     get_batch,
     is_batch_expired,
     mark_item_deleted,
-    renew_variation_lease,
     request_variation_generation,
     request_variation_revalidation,
     reset_item_for_retry,
+    reserve_items_for_original_submit,
     save_image_boxes_and_subject,
     save_image_detection_failure,
     save_image_detection_success,
-    save_variation_candidate_checkpoint,
-    save_variation_result,
     start_image_detection,
     submit_items_and_complete_batch,
     undo_item_deletion,
@@ -877,21 +874,31 @@ async def submit_batch(
         )
 
     now = datetime.now(UTC)
-    item_results: list[dict[str, Any]] = []
-    for item in batch.get("items", []):
-        if item.get("status") != ItemState.READY.value:
-            continue
-
+    candidate_item_ids = [
+        item["itemId"]
+        for item in batch.get("items", [])
+        if item.get("status") == ItemState.READY.value
         # Variant items never enter the original-draft submit path: pending
         # or invalid variants must not save the confirmed source by accident
         # (the dedicated variant save integration lands with #614).
-        variation = item.get("variation") or {}
-        if (
-            variation.get("original")
-            or variation.get("status") not in (None, "not-requested")
-        ):
-            continue
+        and not (
+            (item.get("variation") or {}).get("original")
+            or (item.get("variation") or {}).get("status") not in (None, "not-requested")
+        )
+    ]
+    # Atomically reserve the still-eligible items before creating problems.
+    # Generate refuses reserved items, so a variant can never be confirmed
+    # into the submit window, and the completion only records results for
+    # items this token reserved.
+    reservation_token, reserved_ids = await reserve_items_for_original_submit(
+        database, batch_id, user["_id"], candidate_item_ids, now=now,
+    )
+    reserved_items = [
+        item for item in batch.get("items", []) if item["itemId"] in set(reserved_ids)
+    ]
 
+    item_results: list[dict[str, Any]] = []
+    for item in reserved_items:
         try:
             problem = await create_problem_from_draft(
                 database,
@@ -932,6 +939,7 @@ async def submit_batch(
         batch_id,
         user["_id"],
         item_results=item_results,
+        reservation_token=reservation_token,
         now=now,
     )
     if updated_batch is None:
