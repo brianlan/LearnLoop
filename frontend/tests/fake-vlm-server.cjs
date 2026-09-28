@@ -88,6 +88,15 @@ function classifyRequestType(systemPrompt, userPrompt) {
   if (combined.includes("grading a short-answer response")) {
     return "grading";
   }
+  if (systemPrompt?.includes("generate one new math practice problem")) {
+    return "variant-generator";
+  }
+  if (systemPrompt?.includes("independent math problem validator")) {
+    return "variant-validator";
+  }
+  if (systemPrompt?.includes("compare answers to math problems for equivalence")) {
+    return "variant-helper";
+  }
   if (systemPrompt?.includes("solution writer") || userPrompt?.includes("Solve the problem")) {
     return "solution";
   }
@@ -119,7 +128,175 @@ function createCompletion(content) {
 const state = {
   boxes: null,
   overrides: {},
+  // Variant role scenarios (issue #629). Validators are addressed by the
+  // model name from the profile config ("validator-1" / "validator-2").
+  variants: {
+    generator: "pass", // pass | fail | invalid | slow
+    "validator-1": "pass", // pass | unsolvable | invalid | fail | slow
+    "validator-2": "pass",
+    helper: "equivalent", // equivalent | different | uncertain | fail
+  },
+  variantCounts: {
+    generator: 0,
+    "validator-1": 0,
+    "validator-2": 0,
+    helper: 0,
+  },
+  grading: { count: 0, hadImage: false },
 };
+
+function fakeState() {
+  return {
+    variants: state.variants,
+    variantCounts: state.variantCounts,
+    grading: state.grading,
+  };
+}
+
+function resetVariantState() {
+  state.variants = {
+    generator: "pass",
+    "validator-1": "pass",
+    "validator-2": "pass",
+    helper: "equivalent",
+  };
+  state.variantCounts = { generator: 0, "validator-1": 0, "validator-2": 0, helper: 0 };
+  state.grading = { count: 0, hadImage: false };
+}
+
+// The variant prompts embed the task as "Task data:\n{json}".
+function parseTaskData(userPrompt) {
+  const marker = "Task data:";
+  const index = (userPrompt || "").indexOf(marker);
+  if (index === -1) return null;
+  try {
+    return JSON.parse(userPrompt.slice(index + marker.length));
+  } catch {
+    return null;
+  }
+}
+
+function hasGraph(value) {
+  return Boolean((value || "").trim());
+}
+
+function validatorReport(task) {
+  const sourceGraph = hasGraph(task?.source?.graphDsl);
+  const candidateGraph = hasGraph(task?.candidate?.graphDsl);
+  const graphCategory = sourceGraph || candidateGraph ? "consistent" : "not-applicable";
+  const passing = {
+    originalWellPosed: ["yes", "Fake evidence: original is well-posed."],
+    variantWellPosed: ["yes", "Fake evidence: variant is well-posed."],
+    coreKnowledge: ["preserved", "Fake evidence: same skill required."],
+    solutionStructure: ["preserved", "Fake evidence: same solution steps."],
+    quantityRoles: ["preserved", "Fake evidence: same quantity roles."],
+    difficultyShift: ["comparable", "Fake evidence: comparable difficulty."],
+    numericComplexityShift: ["comparable", "Fake evidence: comparable numbers."],
+    representationShift: ["none-or-nonmaterial", "Fake evidence: same representation."],
+    modeCompliance: ["compliant", "Fake evidence: mode rules obeyed."],
+    graphConsistency: [graphCategory, "Fake evidence: graph matches its problem."],
+    dataChange: ["changed", "Fake evidence: mathematical data changed."],
+  };
+  return Object.fromEntries(
+    Object.entries(passing).map(([name, [category, evidence]]) => [
+      name,
+      { category, evidence },
+    ]),
+  );
+}
+
+function messageText(message) {
+  if (!message) return "";
+  if (typeof message.content === "string") return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content.map((part) => part.text || "").join("\n");
+  }
+  return "";
+}
+
+function handleVariantRole(res, type, body) {
+  const messages = body.messages || [];
+  const systemMessage = messages.find((m) => m.role === "system") || {};
+  const userMessage = messages.find((m) => m.role === "user") || {};
+  const systemPrompt = messageText(systemMessage);
+  const userPrompt = messageText(userMessage);
+  const scenario = state.variants[type];
+  state.variantCounts[type] += 1;
+  const task = parseTaskData(userPrompt) || {};
+
+  const failTransport = () =>
+    sendJson(res, 503, {
+      error: { message: `Fake ${type} failure`, type: "fake_error" },
+    });
+  const invalidJson = () => sendJson(res, 200, createCompletion("not valid json"));
+
+  // The generator bumps every number in a statement; re-solve simple `a + b`
+  // statements so text and correctAnswer stay consistent (fallback keeps the
+  // source answer for non-arithmetic text).
+  function solveSimpleSum(text, fallback) {
+    const m = String(text || "").match(/(-?\d+)\s*\+\s*(-?\d+)/);
+    return m ? String(Number(m[1]) + Number(m[2])) : fallback;
+  }
+
+  if (type === "generator") {
+    const finish = () => {
+      if (scenario === "fail") return failTransport();
+      if (scenario === "invalid") return invalidJson();
+      const source = task.source || {};
+      // data-only-safe data change: bump every number in the statement.
+      const text = String(source.text || "").replace(/\d+/g, (n) => String(Number(n) + 1));
+      const payload = {
+        text,
+        problemType: source.problemType || "short-answer",
+        graphDsl: source.graphDsl ?? null,
+        correctAnswer: solveSimpleSum(text, source.correctAnswer || "4"),
+        providerMetadata: {},
+      };
+      return sendJson(res, 200, createCompletion(JSON.stringify(payload)));
+    };
+    if (scenario === "slow") {
+      // Keep the generation phase in flight so tests can reload mid-generation.
+      setTimeout(finish, 3000);
+      return;
+    }
+    return finish();
+  }
+
+  if (type === "helper") {
+    if (scenario === "fail") return failTransport();
+    const variantResult =
+      scenario === "different" ? "different" : scenario === "uncertain" ? "uncertain" : "equivalent";
+    const payload = {
+      original: { result: "equivalent", evidence: "Fake evidence: original answers match." },
+      variant: { result: variantResult, evidence: `Fake evidence: variant comparison ${variantResult}.` },
+      providerMetadata: {},
+    };
+    return sendJson(res, 200, createCompletion(JSON.stringify(payload)));
+  }
+
+  // variant-validator: scenario keys match the profile model names.
+  const finish = () => {
+    if (scenario === "fail") return failTransport();
+    if (scenario === "invalid") return invalidJson();
+    const payload = {
+      originalSolvedAnswer:
+        scenario === "unsolvable" ? null : solveSimpleSum(task?.source?.text, "4"),
+      variantSolvedAnswer:
+        scenario === "unsolvable" ? null : solveSimpleSum(task?.candidate?.text, "4"),
+      originalSolutionSummary: "Fake original solution summary.",
+      variantSolutionSummary: "Fake variant solution summary.",
+      checks: validatorReport(task),
+      providerMetadata: {},
+    };
+    return sendJson(res, 200, createCompletion(JSON.stringify(payload)));
+  };
+  if (scenario === "slow") {
+    // Keep the validation phase in flight so tests can reload mid-generation.
+    setTimeout(finish, 3000);
+    return;
+  }
+  finish();
+}
 
 function consumeOverride(type) {
   const overrides = state.overrides[type];
@@ -133,6 +310,10 @@ function consumeOverride(type) {
 }
 
 function handleControl(req, res) {
+  if (req.method === "GET") {
+    sendJson(res, 200, fakeState());
+    return;
+  }
   if (req.method !== "POST") {
     sendJson(res, 405, { error: "Method not allowed" });
     return;
@@ -151,10 +332,17 @@ function handleControl(req, res) {
           remaining: body.remaining ?? 1,
         });
       }
+      if (body.variants) {
+        for (const [role, scenario] of Object.entries(body.variants)) {
+          if (role in state.variants) state.variants[role] = scenario;
+        }
+      }
       if (body.clear) {
         state.overrides = {};
+        state.boxes = null;
+        resetVariantState();
       }
-      sendJson(res, 200, { status: "ok", boxes: state.boxes, overrides: state.overrides });
+      sendJson(res, 200, fakeState());
     })
     .catch((err) => sendJson(res, 400, { error: err.message }));
 }
@@ -192,6 +380,17 @@ function handleChatCompletion(req, res) {
         return;
       }
 
+      if (type === "variant-generator" || type === "variant-validator" || type === "variant-helper") {
+        const role =
+          type === "variant-validator"
+            ? String(body.model || "").includes("validator-2")
+              ? "validator-2"
+              : "validator-1"
+            : type.replace("variant-", "");
+        handleVariantRole(res, role, body);
+        return;
+      }
+
       switch (type) {
         case "detection": {
           const boxes = state.boxes ?? defaultBoxes(body.messages);
@@ -214,6 +413,14 @@ function handleChatCompletion(req, res) {
           break;
         }
         case "grading": {
+          // Grading must be text-only: assert the source crop never leaks in.
+          state.grading.count += 1;
+          const hadImage = messages.some(
+            (m) =>
+              Array.isArray(m.content) &&
+              m.content.some((part) => part.type === "image_url"),
+          );
+          if (hadImage) state.grading.hadImage = true;
           const payload = {
             isCorrect: true,
             feedback: "Fake feedback: correct.",
