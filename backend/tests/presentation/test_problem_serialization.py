@@ -13,6 +13,7 @@ from typing import Any
 
 from bson import ObjectId
 
+from app.domain.ingestion.variation import ProblemVariation
 from app.domain.models import Problem, ProblemSubject, ProblemType
 from app.presentation.errors import ApiError
 import pytest
@@ -122,6 +123,7 @@ def test_problem_detail_payload_key_order() -> None:
         "folderId",
         "correctAnswer",
         "origin",
+        "variation",
     ]
 
 
@@ -397,3 +399,109 @@ def test_naive_optional_datetime_serializes_with_utc_timezone() -> None:
     assert '"lastTestedAt":"2026-05-25T13:51:04Z"' in json
     assert '"deletedAt":"2026-05-25T13:51:04Z"' in json
 
+
+
+# ---------------------------------------------------------------------------
+# Permanent variation provenance serialization (issue #614)
+# ---------------------------------------------------------------------------
+
+VARIATION_PROVENANCE = {
+    "mode": "data-only",
+    "original": {
+        "text": "What is 2+2?",
+        "problemType": "short-answer",
+        "subject": "math",
+        "graphDsl": None,
+        "correctAnswer": {
+            "display": "4",
+            "normalizedText": "4",
+            "normalizedSet": [],
+            "format": "single",
+        },
+        "auditImage": {
+            "bucket": "learnloop-media",
+            "objectKey": "users/u1/problems/audit/b1/i1.png",
+            "contentType": "image/png",
+            "sizeBytes": 10,
+            "sha256": "abc",
+            "uploadedAt": None,
+        },
+    },
+    "acceptedVariant": {
+        "text": "What is 3+5?",
+        "problemType": "short-answer",
+        "subject": "math",
+        "graphDsl": None,
+        "correctAnswer": {
+            "display": "8",
+            "normalizedText": "8",
+            "normalizedSet": [],
+            "format": "single",
+        },
+    },
+    "generator": {"provider": "fake", "model": "gen-model"},
+    "generationCount": 1,
+    "validation": {
+        "verdict": "pass",
+        "helperModel": {"provider": "fake", "model": "val-model"},
+        "reports": [{"validatorModel": {"provider": "fake", "model": "val-model"}}],
+    },
+}
+
+
+def test_problem_detail_serializes_immutable_variation_provenance() -> None:
+    problem = _make_problem(sourceImage=None, variation=VARIATION_PROVENANCE)
+
+    detail = _serialize_problem_detail(problem)
+    variation = detail.variation
+    assert variation is not None
+    assert variation.mode == "data-only"
+    assert variation.original.text == "What is 2+2?"
+    assert variation.original.correctAnswer.display == "4"
+    assert variation.original.auditImageUrl == (
+        f"/api/v1/problems/{problem['_id']}/variation/original/image"
+    )
+    assert variation.acceptedVariant.text == "What is 3+5?"
+    assert variation.acceptedVariant.correctAnswer.display == "8"
+    assert variation.generator.model == "gen-model"
+    assert variation.generationCount == 1
+    assert variation.validation.verdict == "pass"
+    assert variation.validation.helperModel is not None
+    assert variation.validation.helperModel.model == "val-model"
+    assert variation.validation.reports == (
+        VARIATION_PROVENANCE["validation"]["reports"]
+    )
+    # Summary never carries the provenance.
+    summary = _serialize_problem_summary(problem)
+    assert not hasattr(summary, "variation")
+
+
+def test_problem_detail_without_variation_serializes_none() -> None:
+    for variation in (None, {},):
+        problem = _make_problem(variation=variation)
+        assert _serialize_problem_detail(problem).variation is None
+    problem = _make_problem()
+    assert "variation" not in problem
+    assert _serialize_problem_detail(problem).variation is None
+
+
+def test_problem_document_to_model_preserves_variation_provenance() -> None:
+    problem = _make_problem(sourceImage=None, variation=VARIATION_PROVENANCE)
+
+    model = problem_document_to_model(problem)
+
+    assert isinstance(model.variation, ProblemVariation)
+    assert model.variation.mode == "data-only"
+    assert model.variation.original.text == "What is 2+2?"
+    assert model.variation.original.correctAnswer["display"] == "4"
+    assert model.variation.original.auditImage["objectKey"] == (
+        "users/u1/problems/audit/b1/i1.png"
+    )
+    assert model.variation.acceptedVariant.text == "What is 3+5?"
+    assert model.variation.acceptedVariant.correctAnswer["display"] == "8"
+    assert model.variation.generator.model == "gen-model"
+    assert model.variation.generationCount == 1
+    assert model.variation.validation.verdict == "pass"
+
+    legacy = _make_problem()
+    assert problem_document_to_model(legacy).variation is None

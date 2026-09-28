@@ -1,0 +1,70 @@
+"""Typed admission provenance for variant problems (issue #614).
+
+Leaf module so that ``app.domain.models`` can type ``Problem.variation``
+without importing the ingestion package (which transitively imports
+``app.domain.models`` via ``app.domain.state``).
+
+These models type the value stored on Problem.variation after a PASS
+candidate is admitted. They intentionally exclude all worker fencing state
+(status/claimToken/leaseUntil/contentRevision/validatedRevision) — that
+state lives on the ingestion item only. Frozen content snapshots carry the
+existing CorrectAnswer storage shape (display/normalizedText/normalizedSet/
+format), and equivalence at admission remains helper-based, never a
+normalized-string comparison.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+VariantMode = Literal["data-only", "data-and-wording"]
+
+
+class ModelIdentity(BaseModel):
+    provider: str
+    model: str
+
+
+class FrozenContentSnapshot(BaseModel):
+    """Immutable content snapshot in the Problem's own storage shape."""
+
+    text: str
+    problemType: str
+    subject: str
+    graphDsl: str | None = None
+    correctAnswer: dict[str, Any]
+
+
+class OriginalProvenance(FrozenContentSnapshot):
+    """The confirmed source content plus its permanent audit image.
+
+    ``auditImage`` uses the existing SourceImage metadata shape; the object
+    lives in a permanent audit namespace and is never an active task image.
+    """
+
+    auditImage: dict[str, Any]
+
+
+class ValidationProvenance(BaseModel):
+    """Successful validation evidence frozen at admission time."""
+
+    verdict: Literal["pass"]
+    helperModel: ModelIdentity | None = None
+    reports: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProblemVariation(BaseModel):
+    """Typed Problem.variation value for admitted variant problems.
+
+    Every field is written once at admission and is never updated afterwards;
+    top-level Problem edits only ever touch the main fields.
+    """
+
+    mode: VariantMode
+    original: OriginalProvenance
+    acceptedVariant: FrozenContentSnapshot
+    generator: ModelIdentity
+    generationCount: int
+    validation: ValidationProvenance

@@ -30,6 +30,7 @@ from app.infrastructure.ingestion.pdf import PdfRenderError, render_pdf_pages
 from app.infrastructure.ingestion.repository import (
     add_source_image,
     commit_image_boxes,
+    complete_variant_batch_if_all_submitted,
     create_batch as create_batch_repo,
     delete_batch_image,
     edit_variation_candidate,
@@ -65,9 +66,11 @@ from app.problem_variation import (
     InvalidVariationStateError,
     RevisionMismatchError,
     VariationNotFoundError,
+    VariationStatus,
     is_variant_mode,
 )
 from app.presentation.deps import (
+    AdapterDependency,
     CurrentUserDependency,
     DatabaseDependency,
     HelperVLMDependency,
@@ -90,6 +93,11 @@ from app.presentation.helpers import (
     stream_storage_metadata,
 )
 from app.presentation.problem_creation import create_problem_from_draft
+from app.presentation.variant_submission import (
+    admit_variant_item,
+    copy_crop_to_audit_storage,
+    register_admitted_problem_tags,
+)
 
 router = APIRouter(prefix="/ingestion-batches", tags=["bulk-ingestion"])
 
@@ -841,6 +849,98 @@ async def revalidate_variation(
     return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
 
 
+async def _submit_variant_batch(
+    database: DatabaseDependency,
+    adapter: AdapterDependency,
+    storage: StorageDependency,
+    batch_id: str,
+    user_id: Any,
+    batch: Document,
+    now: datetime,
+) -> SubmitSummaryResponse:
+    """Submit variant-mode items: admit each current PASS candidate transactionally.
+
+    Only items whose validated variant is still the current revision are
+    actionable; a concurrent invalidation re-checked inside the item's own
+    transaction leaves the batch active with a per-item failure and never
+    saves the source or a stale candidate. The audit crop copy happens
+    outside the transaction; the Problem insert, item record and solution
+    task enqueue commit or roll back together on one session.
+    """
+    item_results: list[dict[str, Any]] = []
+    for item in batch.get("items", []):
+        if item.get("status") != ItemState.READY.value:
+            continue
+        variation = item.get("variation") or {}
+        if not variation.get("original"):
+            continue
+        if variation.get("status") != VariationStatus.READY.value:
+            continue
+        validation = variation.get("validation") or {}
+        if validation.get("verdict") != "pass":
+            continue
+        if not variation.get("candidate"):
+            continue
+        if variation.get("validatedRevision") != item.get("contentRevision"):
+            continue
+
+        item_id = item["itemId"]
+        tags = normalize_tags(list((item.get("draft") or {}).get("tags") or []))
+        try:
+            audit_image = copy_crop_to_audit_storage(
+                storage, user_id, batch_id, item_id, item.get("crop"), now=now,
+            )
+            outcome = await admit_variant_item(
+                database,
+                adapter,
+                user_id,
+                batch_id,
+                item_id,
+                audit_image=audit_image,
+                tags=tags,
+                now=now,
+            )
+        except ApiError as exc:
+            item_results.append(_submit_item_failure(item_id, exc.code, exc.message))
+            continue
+        item_results.append(
+            {
+                "itemId": item_id,
+                "status": ItemState.SUBMITTED.value,
+                "submit": {
+                    "submittedProblemId": outcome["problemId"],
+                    "success": True,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+            }
+        )
+        # Post-commit only: a tag failure must never delete the committed
+        # Problem, so registration is best-effort.
+        await register_admitted_problem_tags(database, user_id, tags)
+
+    await complete_variant_batch_if_all_submitted(database, batch_id, user_id, now=now)
+    updated_batch = await get_batch(database, batch_id, user_id)
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return SubmitSummaryResponse(
+        submitSummary=SubmitSummaryPayload(
+            batchId=batch_id,
+            status=updated_batch["status"],
+            items=[
+                SubmitItemResult(
+                    itemId=result["itemId"],
+                    status=result["status"],
+                    submittedProblemId=result["submit"]["submittedProblemId"],
+                    failureCode=result["submit"]["failureCode"],
+                    failureMessage=result["submit"]["failureMessage"],
+                )
+                for result in item_results
+            ],
+        )
+    )
+
+
 def _submit_item_failure(item_id: str, code: str, message: str) -> dict[str, Any]:
     return {
         "itemId": item_id,
@@ -859,6 +959,8 @@ async def submit_batch(
     batch_id: str,
     database: DatabaseDependency,
     user: CurrentUserDependency,
+    adapter: AdapterDependency,
+    storage: StorageDependency,
 ) -> SubmitSummaryResponse:
     batch = await _load_owned_batch_for_read(database, batch_id, user["_id"])
     if is_batch_expired(batch):
@@ -888,6 +990,11 @@ async def submit_batch(
         )
 
     now = datetime.now(UTC)
+    if is_variant_mode(batch.get("ingestionMode")):
+        return await _submit_variant_batch(
+            database, adapter, storage, batch_id, user["_id"], batch, now
+        )
+
     candidate_item_ids = [
         item["itemId"]
         for item in batch.get("items", [])

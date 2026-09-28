@@ -7,13 +7,34 @@ as the future worker.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.domain.whiteboard import sanitize_whiteboard_dsl
 
-VariantMode = Literal["data-only", "data-and-wording"]
+from app.domain.variation_provenance import (
+    FrozenContentSnapshot,
+    ModelIdentity,
+    OriginalProvenance,
+    ProblemVariation,
+    ValidationProvenance,
+    VariantMode,
+)
+
+__all__ = [
+    "VariantMode",
+    "ModelIdentity",
+    "ProblemContent",
+    "VariantCandidate",
+    "AssessmentFailure",
+    "VariantAssessment",
+    "VariantGenerationResult",
+    "FrozenContentSnapshot",
+    "OriginalProvenance",
+    "ValidationProvenance",
+    "ProblemVariation",
+]
 
 Preservation = Literal["preserved", "changed"]
 ComplexityShift = Literal["comparable", "materially-easier", "materially-harder"]
@@ -38,11 +59,6 @@ PASSING_CHECK_VALUES: dict[str, frozenset[str]] = {
     "graphConsistency": frozenset({"consistent", "not-applicable"}),
     "dataChange": frozenset({"changed"}),
 }
-
-
-class ModelIdentity(BaseModel):
-    provider: str
-    model: str
 
 
 class Check(BaseModel):

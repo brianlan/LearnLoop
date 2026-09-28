@@ -149,10 +149,10 @@ async def test_enqueue_solution_logs_observability(caplog):
         def __init__(self):
             self.docs = []
 
-        async def find_one(self, query):
+        async def find_one(self, query, session=None):
             return None
 
-        async def insert_one(self, doc):
+        async def insert_one(self, doc, session=None):
             self.docs.append(doc)
 
     class FakeDb:

@@ -3,6 +3,8 @@ from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
+from app.domain.variation_provenance import ProblemVariation
+
 
 # Enumerations
 class ProblemType(str, Enum):
@@ -196,6 +198,9 @@ class Problem(BaseModel):
     correctAnswer: CorrectAnswer
     tags: List[str] = Field(default_factory=list)
     sourceImage: Optional[SourceImage] = None
+    # Permanent admission provenance for variant problems (issue #614).
+    # Absent/None for legacy and original-mode problems.
+    variation: Optional[ProblemVariation] = None
     origin: Origin = Field(default_factory=Origin)
     tracking: Tracking = Field(default_factory=Tracking)
     isDeleted: bool = False

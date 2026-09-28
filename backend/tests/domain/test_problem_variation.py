@@ -139,3 +139,67 @@ def test_variation_response_serialization_hides_fencing_state() -> None:
     assert "claimToken" not in view
     assert "leaseUntil" not in view
     assert serialize_variation_for_response(None) is None
+
+
+def test_problem_domain_model_types_variation_with_legacy_default() -> None:
+    """Problem.variation is typed; legacy documents without variation parse as None (issue #614)."""
+    from app.domain.ingestion.variation import ProblemVariation
+    from app.domain.models import Problem
+
+    audit = {
+        "bucket": "learnloop-media",
+        "objectKey": "users/u1/problems/audit/b1/i1.png",
+        "contentType": "image/png",
+        "sizeBytes": 10,
+        "sha256": "abc",
+        "uploadedAt": None,
+    }
+    correct = {
+        "display": "4",
+        "normalizedText": "4",
+        "normalizedSet": [],
+        "format": "single",
+    }
+    doc = {
+        "userId": "u1",
+        "text": "What is 3+5?",
+        "problemType": "short-answer",
+        "correctAnswer": correct,
+        "variation": {
+            "mode": "data-only",
+            "original": {
+                "text": "What is 2+2?",
+                "problemType": "short-answer",
+                "subject": "math",
+                "graphDsl": None,
+                "correctAnswer": correct,
+                "auditImage": audit,
+            },
+            "acceptedVariant": {
+                "text": "What is 3+5?",
+                "problemType": "short-answer",
+                "subject": "math",
+                "graphDsl": None,
+                "correctAnswer": correct,
+            },
+            "generator": {"provider": "fake", "model": "gen-model"},
+            "generationCount": 1,
+            "validation": {"verdict": "pass", "helperModel": None, "reports": []},
+        },
+    }
+
+    parsed = Problem(**doc)
+    assert isinstance(parsed.variation, ProblemVariation)
+    assert parsed.variation.mode == "data-only"
+    assert parsed.variation.original.auditImage == audit
+    assert parsed.variation.acceptedVariant.text == "What is 3+5?"
+    assert parsed.variation.generationCount == 1
+    assert parsed.variation.validation.verdict == "pass"
+
+    legacy = Problem(
+        userId="u1",
+        text="What is 2+2?",
+        problemType="short-answer",
+        correctAnswer=correct,
+    )
+    assert legacy.variation is None

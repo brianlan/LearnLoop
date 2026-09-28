@@ -93,6 +93,7 @@ async def enqueue_solution_generation_task_for_problem(
     problem: Mapping[str, Any],
     *,
     now: datetime | None = None,
+    session: Any = None,
 ) -> bool:
     """Enqueue a pending solution-generation task for a problem.
 
@@ -100,6 +101,9 @@ async def enqueue_solution_generation_task_for_problem(
     canonical solution already exists for the problem (idempotent no-op).
     Raises ``KeyError`` when the solution-generation collections are
     unavailable.
+
+    ``session`` threads an optional Mongo transaction session through every
+    read and write so the enqueue can join a caller's transaction.
     """
     tasks = _safe_get_collection(database, SOLUTION_GENERATION_TASKS_COLLECTION)
     solutions = _safe_get_collection(database, CANONICAL_SOLUTIONS_COLLECTION)
@@ -110,11 +114,13 @@ async def enqueue_solution_generation_task_for_problem(
     problem_id = str(problem["_id"])
     user_id = str(problem["userId"])
 
-    existing_task = await tasks.find_one({"problem_id": problem_id})
+    existing_task = await tasks.find_one({"problem_id": problem_id}, session=session)
     if existing_task is not None:
         return False
 
-    existing_solution = await solutions.find_one({"problem_id": problem_id})
+    existing_solution = await solutions.find_one(
+        {"problem_id": problem_id}, session=session
+    )
     if existing_solution is not None:
         return False
 
@@ -123,7 +129,8 @@ async def enqueue_solution_generation_task_for_problem(
             problem_id=problem_id,
             user_id=user_id,
             now=current_time,
-        )
+        ),
+        session=session,
     )
     log_solution_generation_event("enqueued", problem_id)
     return True

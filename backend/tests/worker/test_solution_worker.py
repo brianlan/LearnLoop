@@ -350,3 +350,52 @@ async def test_process_task_closes_internal_client_on_unexpected_failure():
     updated = await tasks_col.find_one({"_id": task_id})
     assert updated["status"] == "failed"
     assert internal_client.closed
+
+
+@pytest.mark.asyncio
+async def test_variant_problem_solution_input_excludes_audit_image():
+    """Audit-context isolation: the solution model never sees the audit image.
+
+    An admitted variant problem has sourceImage=None and its provenance lives
+    under variation.original.auditImage; the worker must use the accepted
+    variant content and must not read any storage object.
+    """
+
+    class NoReadStorage(FakeStorage):
+        def get_object(self, bucket, object_key):
+            raise AssertionError("solution worker must not read the audit image")
+
+    client = FakeSolutionVLMClient()
+    storage = NoReadStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+
+    problem_id = str(ObjectId())
+    task_id = ObjectId()
+    problems_col.seed(
+        {
+            "_id": ObjectId(problem_id),
+            "text": "What is 3+5?",
+            "correctAnswer": {"display": "8"},
+            "graphDsl": None,
+            "sourceImage": None,
+            "variation": {
+                "mode": "data-only",
+                "original": {
+                    "text": "What is 2+2?",
+                    "auditImage": {"bucket": "b", "objectKey": "audit/k"},
+                },
+                "acceptedVariant": {"text": "What is 3+5?"},
+            },
+        }
+    )
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending"}
+    tasks_col.seed(task)
+
+    await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
+
+    assert len(client.calls) == 1
+    assert client.calls[0].problem_text == "What is 3+5?"
+    assert client.calls[0].image_base64 is None
+    assert client.calls[0].image_media_type is None

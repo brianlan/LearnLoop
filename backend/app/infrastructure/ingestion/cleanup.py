@@ -8,6 +8,7 @@ from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 
 from .repository import INGESTION_BATCHES_COLLECTION, find_cleanup_candidates, mark_batch_cleaned
+from .documents import build_audit_image_key
 
 
 def _delete_media(storage: Any, bucket: str | None, key: str | None) -> None:
@@ -24,10 +25,14 @@ def _delete_media(storage: Any, bucket: str | None, key: str | None) -> None:
         raise
 
 
-async def cleanup_batch_media(storage: Any, batch: Document) -> None:
+async def cleanup_batch_media(database: Any, storage: Any, batch: Document) -> None:
     """Delete all temporary source images and item crops for a batch.
 
-    Missing objects are ignored so the cleanup remains idempotent.
+    Permanent audit images referenced by a Problem are protected: a copy is
+    only deleted when no problem (including a soft-deleted one) references
+    it, so abandoned pending copies from failed admissions are removed while
+    admitted provenance survives. Missing objects are ignored so the cleanup
+    remains idempotent.
     """
     for image in batch.get("images", []):
         source_image = image.get("sourceImage") or {}
@@ -36,6 +41,19 @@ async def cleanup_batch_media(storage: Any, batch: Document) -> None:
     for item in batch.get("items", []):
         crop = item.get("crop") or {}
         _delete_media(storage, crop.get("bucket"), crop.get("objectKey"))
+        if not crop.get("bucket") or not (item.get("variation") or {}).get("original"):
+            continue
+        audit_key = build_audit_image_key(
+            batch.get("userId"),
+            batch["_id"],
+            item["itemId"],
+            crop.get("contentType"),
+        )
+        referenced = await database["problems"].count_documents(
+            {"variation.original.auditImage.objectKey": audit_key}
+        )
+        if referenced == 0:
+            _delete_media(storage, crop.get("bucket"), audit_key)
 
 
 async def run_batch_cleanup(
@@ -48,7 +66,7 @@ async def run_batch_cleanup(
     candidates = await find_cleanup_candidates(database, now=now)
     cleaned = 0
     for batch in candidates:
-        await cleanup_batch_media(storage, batch)
+        await cleanup_batch_media(database, storage, batch)
         await mark_batch_cleaned(database, batch["_id"], now=now)
         cleaned += 1
     return cleaned

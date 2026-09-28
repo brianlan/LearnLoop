@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -213,3 +214,46 @@ def test_find_item_raises_when_not_found() -> None:
         find_item(exam, "missing")
     assert exc_info.value.status_code == 404
     assert exc_info.value.code == "NOT_FOUND"
+
+
+def test_make_exam_item_variant_problem_snapshot_excludes_audit_image() -> None:
+    """Captured exam input for a variant problem uses variant content and no audit image (issue #614)."""
+    problem = _problem_document()
+    problem["text"] = "What is 3 + 5?"
+    problem["sourceImage"] = None
+    problem["variation"] = {
+        "mode": "data-only",
+        "original": {
+            "text": "What is 2 + 2?",
+            "problemType": problem["problemType"],
+            "subject": problem["subject"],
+            "graphDsl": None,
+            "correctAnswer": problem["correctAnswer"],
+            "auditImage": {
+                "bucket": "learnloop-media",
+                "objectKey": "users/u1/problems/audit/b1/i1.png",
+                "contentType": "image/png",
+                "sizeBytes": 10,
+                "sha256": "abc",
+                "uploadedAt": None,
+            },
+        },
+        "acceptedVariant": {
+            "text": "What is 3 + 5?",
+            "problemType": problem["problemType"],
+            "subject": problem["subject"],
+            "graphDsl": None,
+            "correctAnswer": problem["correctAnswer"],
+        },
+        "generator": {"provider": "fake", "model": "gen-model"},
+        "generationCount": 1,
+        "validation": {"verdict": "pass", "helperModel": None, "reports": []},
+    }
+
+    item = make_exam_item(problem, order=0)
+    snapshot = item["problemSnapshot"]
+    assert snapshot["text"] == "What is 3 + 5?"
+    assert snapshot["sourceImage"] is None
+    assert "variation" not in snapshot
+    # The audit image reference never enters the captured exam input.
+    assert "auditImage" not in json.dumps(snapshot, default=str)

@@ -1988,3 +1988,180 @@ async def test_attempt_history_excludes_other_problem_records(
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Permanent variation provenance (issue #614)
+# ---------------------------------------------------------------------------
+
+def make_variant_problem(user_id: ObjectId) -> dict[str, Any]:
+    problem = make_problem(user_id, text="What is 3+5?")
+    problem["sourceImage"] = None
+    problem["variation"] = {
+        "mode": "data-only",
+        "original": {
+            "text": "What is 2+2?",
+            "problemType": "short-answer",
+            "subject": "math",
+            "graphDsl": None,
+            "correctAnswer": problem["correctAnswer"],
+            "auditImage": {
+                "bucket": "learnloop-media",
+                "objectKey": f"users/{user_id}/problems/audit/b1/i1.png",
+                "contentType": "image/png",
+                "sizeBytes": 10,
+                "sha256": "abc",
+                "uploadedAt": None,
+            },
+        },
+        "acceptedVariant": {
+            "text": "What is 3+5?",
+            "problemType": "short-answer",
+            "subject": "math",
+            "graphDsl": None,
+            "correctAnswer": problem["correctAnswer"],
+        },
+        "generator": {"provider": "fake", "model": "gen-model"},
+        "generationCount": 1,
+        "validation": {
+            "verdict": "pass",
+            "helperModel": {"provider": "fake", "model": "val-model"},
+            "reports": [],
+        },
+    }
+    return problem
+
+
+@pytest.mark.asyncio
+async def test_variant_problem_detail_and_audit_image_route(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    storage: FakeStorage = problems_app.state.fake_storage
+    problem = make_variant_problem(problems_app.state.primary_user["_id"])
+    database["problems"].seed(problem)
+    audit = problem["variation"]["original"]["auditImage"]
+    storage.seed(audit["bucket"], audit["objectKey"], b"auditpng")
+
+    detail = await client.get(f"/api/v1/problems/{problem['_id']}")
+    assert detail.status_code == 200
+    variation = detail.json()["problem"]["variation"]
+    assert variation is not None
+    assert variation["mode"] == "data-only"
+    assert variation["original"]["text"] == "What is 2+2?"
+    assert variation["original"]["auditImageUrl"] == (
+        f"/api/v1/problems/{problem['_id']}/variation/original/image"
+    )
+    assert variation["acceptedVariant"]["text"] == "What is 3+5?"
+    assert variation["validation"]["verdict"] == "pass"
+
+    audit_response = await client.get(
+        f"/api/v1/problems/{problem['_id']}/variation/original/image"
+    )
+    assert audit_response.status_code == 200
+    assert audit_response.headers["content-type"] == "image/png"
+    assert audit_response.content == b"auditpng"
+
+    # An ordinary image-only problem has no variation route payload.
+    plain = make_problem(problems_app.state.primary_user["_id"])
+    database["problems"].seed(plain)
+    plain_audit = await client.get(
+        f"/api/v1/problems/{plain['_id']}/variation/original/image"
+    )
+    assert plain_audit.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_variant_problem_patch_edits_leave_variation_unchanged_and_skip_validation(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """Every editable Problem field changes while variation stays frozen.
+
+    Deep-equality is asserted on the entire persisted variation after each
+    edit (text, problem type, graph DSL, correct answer, tags), and no variant
+    revalidation work is enqueued by any edit.
+    """
+    database: FakeDatabase = problems_app.state.fake_database
+    problem = make_variant_problem(problems_app.state.primary_user["_id"])
+    database["problems"].seed(problem)
+    original_variation = deepcopy(problem["variation"])
+
+    edits = [
+        ({"text": "What is 7+9?"}, "text", "What is 7+9?"),
+        ({"problemType": "fill-in-the-blank"}, "problemType", "fill-in-the-blank"),
+        ({"graphDsl": "graph { x -- y }"}, "graphDsl", "graph { x -- y }"),
+        ({"correctAnswer": "16"}, "correctAnswer", "16"),
+        ({"tags": ["edited"]}, "tags", ["edited"]),
+    ]
+    for payload, field, expected in edits:
+        response = await client.patch(
+            f"/api/v1/problems/{problem['_id']}",
+            json=payload,
+        )
+        assert response.status_code == 200
+        body = response.json()["problem"]
+        if field == "correctAnswer":
+            assert body[field]["display"] == expected
+        else:
+            assert body[field] == expected
+        # Provenance is exposed read-only with the same frozen content.
+        assert body["variation"]["original"]["text"] == "What is 2+2?"
+        assert body["variation"]["acceptedVariant"]["text"] == "What is 3+5?"
+
+        stored = await database["problems"].find_one({"_id": problem["_id"]})
+        assert stored["variation"] == original_variation
+    # No variant revalidation or ingestion work was enqueued by any edit.
+    assert database["ingestion_batches"]._documents == []
+
+
+@pytest.mark.asyncio
+async def test_correct_answer_patch_updates_both_problem_kinds(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """Top-level correctAnswer updates apply to both Problem kinds; provenance stays frozen."""
+    database: FakeDatabase = problems_app.state.fake_database
+    user_id = problems_app.state.primary_user["_id"]
+
+    original = make_problem(user_id)
+    database["problems"].seed(original)
+    response = await client.patch(
+        f"/api/v1/problems/{original['_id']}",
+        json={"correctAnswer": "7"},
+    )
+    assert response.status_code == 200
+    stored = await database["problems"].find_one({"_id": original["_id"]})
+    assert stored["correctAnswer"]["display"] == "7"
+
+    variant = make_variant_problem(user_id)
+    database["problems"].seed(variant)
+    response = await client.patch(
+        f"/api/v1/problems/{variant['_id']}",
+        json={"correctAnswer": "16"},
+    )
+    assert response.status_code == 200
+    body = response.json()["problem"]
+    assert body["correctAnswer"]["display"] == "16"
+    assert body["variation"]["acceptedVariant"]["correctAnswer"]["display"] == "4"
+    assert body["variation"]["original"]["correctAnswer"]["display"] == "4"
+    stored = await database["problems"].find_one({"_id": variant["_id"]})
+    assert stored["correctAnswer"]["display"] == "16"
+    assert stored["variation"] == variant["variation"]
+
+
+@pytest.mark.asyncio
+async def test_variant_audit_image_route_denies_other_users(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = problems_app.state.fake_database
+    other_problem = make_variant_problem(problems_app.state.secondary_user["_id"])
+    database["problems"].seed(other_problem)
+
+    response = await client.get(
+        f"/api/v1/problems/{other_problem['_id']}/variation/original/image"
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
