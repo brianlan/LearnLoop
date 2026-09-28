@@ -74,9 +74,8 @@ function VariationFailureEvidence({
         type: {variation.candidate?.problemType ?? "unknown"}
       </div>
       <div data-testid="bulk-review-evidence-answers">
-        Expected answer (candidate): {variation.candidate?.correctAnswer ?? "—"}{" "}
-        · Solved (variant): {reports[0]?.variantSolvedAnswer ?? "—"} · Solved
-        (original): {reports[0]?.originalSolvedAnswer ?? "—"}
+        Expected answer (source): {variation.original?.correctAnswer ?? "—"} ·
+        Expected answer (candidate): {variation.candidate?.correctAnswer ?? "—"}
       </div>
       {failures.map((failure, index) => (
         <div key={index} data-testid="bulk-review-evidence-failure">
@@ -88,9 +87,21 @@ function VariationFailureEvidence({
       ))}
       {reports.map((report, index) => (
         <div key={index} data-testid="bulk-review-evidence-report">
-          <div data-testid="bulk-review-evidence-helper">
+          <div data-testid="bulk-review-evidence-solved">
+            Solved (original): {report.originalSolvedAnswer ?? "—"} · Solved
+            (variant): {report.variantSolvedAnswer ?? "—"}
+          </div>
+          <div data-testid="bulk-review-evidence-helper-original">
             Helper {report.validatorModel?.provider ?? "?"} /{" "}
-            {report.validatorModel?.model ?? "?"}:{" "}
+            {report.validatorModel?.model ?? "?"} (original):{" "}
+            {report.answerComparisonOriginal?.result ?? "no judgement"}
+            {report.answerComparisonOriginal?.evidence
+              ? ` — ${report.answerComparisonOriginal.evidence}`
+              : ""}
+          </div>
+          <div data-testid="bulk-review-evidence-helper-variant">
+            Helper {report.validatorModel?.provider ?? "?"} /{" "}
+            {report.validatorModel?.model ?? "?"} (variant):{" "}
             {report.answerComparisonVariant?.result ?? "no judgement"}
             {report.answerComparisonVariant?.evidence
               ? ` — ${report.answerComparisonVariant.evidence}`
@@ -181,7 +192,9 @@ export function BulkReviewStep({
   const saveSeqRef = useRef(0);
   // Generate confirms the reviewed source at click time and fires only after
   // that save settles: never a stale stored answer, never a race with the
-  // debounce. One in-flight/pending generate per item ("exactly once").
+  // debounce. Pending Generate is keyed by the SOURCE save key so only that
+  // save's completion can release or cancel it — a candidate save of the same
+  // item must not. One in-flight/pending generate per item ("exactly once").
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [generateErrors, setGenerateErrors] = useState<Record<string, string>>(
     {},
@@ -210,10 +223,11 @@ export function BulkReviewStep({
   );
 
   const firePendingGenerate = useCallback(
-    (itemId: string, revision: number) => {
-      const original = pendingGenerateRef.current.get(itemId);
+    (key: string, revision: number) => {
+      const original = pendingGenerateRef.current.get(key);
       if (!original) return;
-      pendingGenerateRef.current.delete(itemId);
+      pendingGenerateRef.current.delete(key);
+      const itemId = key.split("::")[0];
       Promise.resolve(onGenerate(itemId, original, revision))
         .catch((err: unknown) => {
           setGenerateErrors((prev) => ({
@@ -235,13 +249,16 @@ export function BulkReviewStep({
   const handleGenerate = useCallback(
     (item: BulkItem) => {
       const { itemId } = item;
-      if (generatingIds.has(itemId) || pendingGenerateRef.current.has(itemId)) {
+      const sourceKey = bufferKey(itemId, "source");
+      if (
+        generatingIds.has(itemId) ||
+        pendingGenerateRef.current.has(sourceKey)
+      ) {
         return;
       }
-      const sourceKey = bufferKey(itemId, "source");
       // Snapshot the reviewed source at click time.
       pendingGenerateRef.current.set(
-        itemId,
+        sourceKey,
         sourcePayloadFromDraft(getDraft(item, "source")),
       );
       setGenerateErrors((prev) => {
@@ -252,7 +269,7 @@ export function BulkReviewStep({
       });
       setGeneratingIds((prev) => new Set(prev).add(itemId));
       if (!dirtyKeys.has(sourceKey) && !savingKeys.has(sourceKey)) {
-        firePendingGenerate(itemId, item.contentRevision);
+        firePendingGenerate(sourceKey, item.contentRevision);
       }
       // Otherwise the save pipeline fires it once the reviewed save settles.
     },
@@ -417,7 +434,6 @@ export function BulkReviewStep({
       const sent = inFlightRefs.current[key];
       if (!sent || sent.seq !== seq) return;
       inFlightRefs.current[key] = undefined;
-      const itemId = key.split("::")[0];
       setSavingKeys((prev) => {
         const next = new Set(prev);
         next.delete(key);
@@ -453,21 +469,23 @@ export function BulkReviewStep({
           dirtyRefs.current = nextDirty;
           return nextDirty;
         });
-        // The reviewed save settled: confirm the queued Generate with the
-        // post-save revision (falls back to the sent revision for saves that
-        // do not bump contentRevision, e.g. tag-only edits).
+        // The reviewed SOURCE save settled: confirm the queued Generate with
+        // the post-save revision (falls back to the sent revision for saves
+        // that do not bump contentRevision, e.g. tag-only edits). Candidate
+        // saves pass their own key and never match the pending entry.
         firePendingGenerate(
-          itemId,
+          key,
           result && typeof result === "object"
             ? result.contentRevision
             : sent.revision,
         );
       } else {
-        // A failed save prevents a stale Generate.
-        if (pendingGenerateRef.current.delete(itemId)) {
+        // A failed SOURCE save prevents a stale Generate; a failed candidate
+        // save cannot cancel it.
+        if (pendingGenerateRef.current.delete(key)) {
           setGeneratingIds((prev) => {
             const next = new Set(prev);
-            next.delete(itemId);
+            next.delete(key.split("::")[0]);
             return next;
           });
         }

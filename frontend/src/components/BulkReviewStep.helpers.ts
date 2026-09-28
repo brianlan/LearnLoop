@@ -200,8 +200,16 @@ export function evidenceChecks(report: EvidenceReport): EvidenceCheck[] {
   return Object.values(report.checks ?? {});
 }
 
-// "content" is a generated-content failure; any other kind comes from the
-// model/provider side (execution failure).
+// Backend failure kinds: "content" (generated-content mismatch) and
+// "invalid-candidate" (checkpointed candidate failed schema validation) are
+// content/schema failures; "provider" and "invalid-response" come from the
+// model side. Unknown kinds are shown verbatim, never misclassified.
 export function failureKindLabel(kind: string | undefined): string {
-  return kind === "content" ? "Content failure" : "Model execution failure";
+  if (kind === "content" || kind === "invalid-candidate") {
+    return "Content failure";
+  }
+  if (kind === "provider" || kind === "invalid-response") {
+    return "Model execution failure";
+  }
+  return kind ? `${kind} failure` : "Failure";
 }

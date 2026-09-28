@@ -1630,6 +1630,10 @@ describe("BulkReviewStep variant generate", () => {
                     evidence: "inconsistent graph",
                   },
                 },
+                answerComparisonOriginal: {
+                  result: "agree",
+                  evidence: "4 == 4",
+                },
                 answerComparisonVariant: {
                   result: "mismatch",
                   evidence: "7 != 6",
@@ -1649,17 +1653,23 @@ describe("BulkReviewStep variant generate", () => {
     expect(screen.getByTestId("bulk-review-evidence-types")).toHaveTextContent(
       "single-choice",
     );
-    // Expected vs solved answers.
+    // Expected (source + candidate) and solved answers.
     expect(screen.getByTestId("bulk-review-evidence-answers")).toHaveTextContent(
-      "6",
+      "Expected answer (source): 4",
     );
     expect(screen.getByTestId("bulk-review-evidence-answers")).toHaveTextContent(
-      "7",
+      "Expected answer (candidate): 6",
     );
-    // Helper judgement and check categories/reasons.
-    expect(screen.getByTestId("bulk-review-evidence-helper")).toHaveTextContent(
-      "mismatch",
+    expect(screen.getByTestId("bulk-review-evidence-solved")).toHaveTextContent(
+      "Solved (variant): 7",
     );
+    // Helper judgements (both comparison paths) and check categories/reasons.
+    expect(
+      screen.getByTestId("bulk-review-evidence-helper-original"),
+    ).toHaveTextContent("agree");
+    expect(
+      screen.getByTestId("bulk-review-evidence-helper-variant"),
+    ).toHaveTextContent("mismatch");
     expect(screen.getByTestId("bulk-review-evidence-checks")).toHaveTextContent(
       "graphConsistency",
     );
@@ -1727,5 +1737,209 @@ describe("BulkReviewStep variant generate", () => {
       vi.advanceTimersByTime(2500);
     });
     expect(handlers.onRefresh).toHaveBeenCalledWith("batch-1");
+  });
+
+  it("releases the source Generate only from the source save, not a candidate save", async () => {
+    const resolvers: Record<string, (value: unknown) => void> = {};
+    handlers.onUpdateDraft.mockImplementation(
+      (_itemId, _changes, options: { target: string }) =>
+        new Promise((resolve) => {
+          resolvers[options.target] = resolve;
+        }),
+    );
+    renderReview([
+      makeItem("item-1", { contentRevision: 1, variation: makeVariation() }),
+    ]);
+
+    // The candidate buffer is the default target; dirty it first.
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "44" },
+    });
+    // Generate queues behind the pending SOURCE save.
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    // The candidate save settles first: it must not release the Generate.
+    await act(async () => {
+      resolvers.candidate({ contentRevision: 99 });
+    });
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+
+    // The source save settles with the reviewed source: Generate fires once.
+    await act(async () => {
+      resolvers.source({ contentRevision: 5 });
+    });
+    await waitFor(() => {
+      expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onGenerate).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({ correctAnswer: "44" }),
+      5,
+    );
+  });
+
+  it("does not cancel the source Generate when a candidate save fails", async () => {
+    const resolvers: Record<string, (value: unknown) => void> = {};
+    const rejecters: Record<string, (error: unknown) => void> = {};
+    handlers.onUpdateDraft.mockImplementation(
+      (_itemId, _changes, options: { target: string }) =>
+        new Promise((resolve, reject) => {
+          resolvers[options.target] = resolve;
+          rejecters[options.target] = reject;
+        }),
+    );
+    renderReview([
+      makeItem("item-1", { contentRevision: 1, variation: makeVariation() }),
+    ]);
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "44" },
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    // A failed candidate save must not drop the queued source Generate.
+    await act(async () => {
+      rejecters.candidate(new Error("candidate save exploded"));
+    });
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolvers.source({ contentRevision: 5 });
+    });
+    await waitFor(() => {
+      expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onGenerate).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({ correctAnswer: "44" }),
+      5,
+    );
+  });
+
+  it("classifies persisted failure kinds as content or model-execution failures", () => {
+    renderReview([
+      makeItem("item-1", {
+        variation: makeVariation({
+          status: "failed",
+          candidate: null,
+          validation: {
+            verdict: "fail",
+            failures: [
+              { kind: "content", evidence: "category-conflict: type changed" },
+              {
+                kind: "invalid-candidate",
+                evidence: "candidate failed schema validation",
+              },
+              { kind: "provider", evidence: "helper failed: timeout" },
+              { kind: "invalid-response", evidence: "unparseable completion" },
+            ],
+            reports: [],
+          },
+        }),
+      }),
+    ]);
+
+    const kinds = screen
+      .getAllByTestId("bulk-review-evidence-failure-kind")
+      .map((element) => element.textContent);
+    expect(kinds).toEqual([
+      "Content failure",
+      "Content failure",
+      "Model execution failure",
+      "Model execution failure",
+    ]);
+    // The persisted invalid-candidate evidence stays inspectable.
+    expect(screen.getByTestId("bulk-review-evidence")).toHaveTextContent(
+      "candidate failed schema validation",
+    );
+  });
+
+  it("renders both answer-comparison judgements and expected-vs-solved pairs for every report", () => {
+    renderReview([
+      makeItem("item-1", {
+        variation: makeVariation({
+          status: "failed",
+          validation: {
+            verdict: "fail",
+            failures: [{ kind: "content", evidence: "answer mismatch" }],
+            reports: [
+              {
+                validatorModel: { provider: "fake-vlm", model: "helper-1" },
+                originalSolvedAnswer: "4",
+                variantSolvedAnswer: "7",
+                answerComparisonOriginal: {
+                  result: "agree",
+                  evidence: "4 == 4",
+                },
+                answerComparisonVariant: {
+                  result: "mismatch",
+                  evidence: "7 != 6",
+                },
+                checks: {},
+              },
+              {
+                validatorModel: { provider: "fake-vlm", model: "helper-2" },
+                originalSolvedAnswer: "2+2",
+                variantSolvedAnswer: "6.5",
+                answerComparisonOriginal: { result: "agree", evidence: "same" },
+                answerComparisonVariant: {
+                  result: "mismatch",
+                  evidence: "6.5 != 6",
+                },
+                checks: {},
+              },
+            ],
+          },
+        }),
+      }),
+    ]);
+
+    // Both expected answers are inspectable.
+    expect(screen.getByTestId("bulk-review-evidence-answers")).toHaveTextContent(
+      "Expected answer (source): 4",
+    );
+    expect(screen.getByTestId("bulk-review-evidence-answers")).toHaveTextContent(
+      "Expected answer (candidate): 6",
+    );
+    // Every report shows its solved pair and both comparison judgements.
+    const solved = screen.getAllByTestId("bulk-review-evidence-solved");
+    expect(solved[0]).toHaveTextContent("Solved (original): 4");
+    expect(solved[0]).toHaveTextContent("Solved (variant): 7");
+    expect(solved[1]).toHaveTextContent("Solved (original): 2+2");
+    expect(solved[1]).toHaveTextContent("Solved (variant): 6.5");
+    const originalComparisons = screen.getAllByTestId(
+      "bulk-review-evidence-helper-original",
+    );
+    expect(originalComparisons[0]).toHaveTextContent("agree");
+    expect(originalComparisons[0]).toHaveTextContent("4 == 4");
+    expect(originalComparisons[1]).toHaveTextContent("same");
+    const variantComparisons = screen.getAllByTestId(
+      "bulk-review-evidence-helper-variant",
+    );
+    expect(variantComparisons[0]).toHaveTextContent("7 != 6");
+    expect(variantComparisons[1]).toHaveTextContent("6.5 != 6");
   });
 });
