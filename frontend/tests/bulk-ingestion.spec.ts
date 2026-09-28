@@ -895,6 +895,52 @@ test.describe("Variant ingestion E2E", () => {
     expect(fakeState.variantCounts.generator).toBe(1);
   });
 
+  test("reload mid-generation resumes without restarting generation", async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(120000);
+
+    const session = await createSession(request);
+    await addAuthenticatedSession(page, session);
+
+    await setVariantScenario(request, { generator: "slow" });
+    const batchId = await startVariantBatch(
+      page,
+      request,
+      session,
+      "data-only",
+      ["problem-a.png"],
+    );
+    const itemId = (await getItemIds(request, session, batchId))[0];
+
+    await page.getByTestId("bulk-review-generate").click();
+    await waitForVariation(
+      request,
+      session,
+      batchId,
+      itemId,
+      (variation) => variation?.status === "generating",
+      `variant for ${itemId} enters generation`,
+    );
+
+    await page.reload();
+    await expect(page.getByTestId("bulk-review-variation-status")).toHaveText(
+      "Variant: generating...",
+      { timeout: 15000 },
+    );
+    await expect(page.getByTestId("bulk-review-variation-status")).toHaveText(
+      "Variant: ready",
+      { timeout: 45000 },
+    );
+    await expect(page.getByTestId("bulk-review-continue")).toBeEnabled();
+
+    const fakeState = await getFakeVariantState(request);
+    // The reload resumed the in-flight generation instead of starting another
+    // one.
+    expect(fakeState.variantCounts.generator).toBe(1);
+  });
+
   test("generator failure shows evidence and Generate Again recovers", async ({
     page,
     request,

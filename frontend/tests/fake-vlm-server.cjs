@@ -131,7 +131,7 @@ const state = {
   // Variant role scenarios (issue #629). Validators are addressed by the
   // model name from the profile config ("validator-1" / "validator-2").
   variants: {
-    generator: "pass", // pass | fail | invalid
+    generator: "pass", // pass | fail | invalid | slow
     "validator-1": "pass", // pass | unsolvable | invalid | fail | slow
     "validator-2": "pass",
     helper: "equivalent", // equivalent | different | uncertain | fail
@@ -239,19 +239,27 @@ function handleVariantRole(res, type, body) {
   }
 
   if (type === "generator") {
-    if (scenario === "fail") return failTransport();
-    if (scenario === "invalid") return invalidJson();
-    const source = task.source || {};
-    // data-only-safe data change: bump every number in the statement.
-    const text = String(source.text || "").replace(/\d+/g, (n) => String(Number(n) + 1));
-    const payload = {
-      text,
-      problemType: source.problemType || "short-answer",
-      graphDsl: source.graphDsl ?? null,
-      correctAnswer: solveSimpleSum(text, source.correctAnswer || "4"),
-      providerMetadata: {},
+    const finish = () => {
+      if (scenario === "fail") return failTransport();
+      if (scenario === "invalid") return invalidJson();
+      const source = task.source || {};
+      // data-only-safe data change: bump every number in the statement.
+      const text = String(source.text || "").replace(/\d+/g, (n) => String(Number(n) + 1));
+      const payload = {
+        text,
+        problemType: source.problemType || "short-answer",
+        graphDsl: source.graphDsl ?? null,
+        correctAnswer: solveSimpleSum(text, source.correctAnswer || "4"),
+        providerMetadata: {},
+      };
+      return sendJson(res, 200, createCompletion(JSON.stringify(payload)));
     };
-    return sendJson(res, 200, createCompletion(JSON.stringify(payload)));
+    if (scenario === "slow") {
+      // Keep the generation phase in flight so tests can reload mid-generation.
+      setTimeout(finish, 3000);
+      return;
+    }
+    return finish();
   }
 
   if (type === "helper") {
