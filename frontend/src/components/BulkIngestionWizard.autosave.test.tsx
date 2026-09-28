@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   undoDeleteBatchItem: vi.fn<() => Promise<BatchResponse>>(),
   updateItemDraft: vi.fn<() => Promise<BatchResponse>>(),
   editVariationCandidate: vi.fn<() => Promise<BatchResponse>>(),
+  generateVariation: vi.fn<() => Promise<BatchResponse>>(),
 }));
 
 vi.mock("@/api/bulkIngestion", () => ({
@@ -37,6 +38,7 @@ vi.mock("@/api/bulkIngestion", () => ({
   undoDeleteBatchItem: mocks.undoDeleteBatchItem,
   updateItemDraft: mocks.updateItemDraft,
   editVariationCandidate: mocks.editVariationCandidate,
+  generateVariation: mocks.generateVariation,
 }));
 
 function makeImage(overrides: Partial<BulkImage> = {}): BulkImage {
@@ -310,6 +312,31 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         expect.objectContaining({ correctAnswer: "44" }),
         3,
       );
+    });
+  });
+
+  it("routes Generate to the generate endpoint with the reviewed source and expectedRevision", async () => {
+    const variantItem = makeItem({ contentRevision: 5 });
+    const variantBatch = makeBatch({
+      ingestionMode: "data-and-wording",
+      items: [variantItem],
+    });
+    mocks.generateVariation.mockResolvedValue({ batch: variantBatch });
+
+    await renderAtReviewStep({ batch: variantBatch });
+
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+
+    await waitFor(() => {
+      expect(mocks.generateVariation).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.generateVariation).toHaveBeenCalledWith("batch-1", "item-1", {
+      expectedRevision: 5,
+      original: expect.objectContaining({
+        text: "What is 2+2?",
+        problemType: "short-answer",
+        correctAnswer: "4",
+      }),
     });
   });
 });

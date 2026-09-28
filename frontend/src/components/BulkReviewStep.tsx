@@ -1,17 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BulkBatch, BulkDraft, BulkItem } from "@/types/bulkIngestion";
+import type {
+  BulkBatch,
+  BulkDraft,
+  BulkItem,
+  VariationOriginalPayload,
+} from "@/types/bulkIngestion";
 import { TagInput } from "./TagInput";
 import { GraphSandbox } from "./GraphSandbox";
 import { LatexText } from "./LatexText";
 import {
   bufferKey,
+  evidenceChecks,
+  evidenceView,
+  failureKindLabel,
   getRequiredFieldGaps,
+  hasActiveVariantWork,
   isStaleStamp,
+  isVariantBusy,
   retryDelayMs,
   serializeDraft,
+  sourcePayloadFromDraft,
   statusLabel,
   targetDraft,
   targetStamp,
+  variationStatusLabel,
   type EditTarget,
   type TargetStamp,
 } from "./BulkReviewStep.helpers";
@@ -32,6 +44,71 @@ const SUBJECTS = [
   { value: "english", label: "English" },
 ];
 
+// Read-only structured failure evidence for a failed variant run (#613
+// report payload). No accept/override/fallback controls exist here.
+function VariationFailureEvidence({
+  variation,
+}: {
+  variation: NonNullable<BulkItem["variation"]>;
+}) {
+  const validation = evidenceView(variation.validation);
+  const failures = validation?.failures ?? [];
+  const reports = validation?.reports ?? [];
+  return (
+    <div
+      data-testid="bulk-review-evidence"
+      style={{
+        border: "1px solid var(--color-border)",
+        borderRadius: "6px",
+        padding: "12px",
+        marginBottom: "12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        fontSize: "0.9em",
+      }}
+    >
+      <div style={{ fontWeight: 600 }}>Generation evidence (read-only)</div>
+      <div data-testid="bulk-review-evidence-types">
+        Source type: {variation.original?.problemType ?? "unknown"} · Candidate
+        type: {variation.candidate?.problemType ?? "unknown"}
+      </div>
+      <div data-testid="bulk-review-evidence-answers">
+        Expected answer (candidate): {variation.candidate?.correctAnswer ?? "—"}{" "}
+        · Solved (variant): {reports[0]?.variantSolvedAnswer ?? "—"} · Solved
+        (original): {reports[0]?.originalSolvedAnswer ?? "—"}
+      </div>
+      {failures.map((failure, index) => (
+        <div key={index} data-testid="bulk-review-evidence-failure">
+          <strong data-testid="bulk-review-evidence-failure-kind">
+            {failureKindLabel(failure.kind)}
+          </strong>
+          : {failure.evidence}
+        </div>
+      ))}
+      {reports.map((report, index) => (
+        <div key={index} data-testid="bulk-review-evidence-report">
+          <div data-testid="bulk-review-evidence-helper">
+            Helper {report.validatorModel?.provider ?? "?"} /{" "}
+            {report.validatorModel?.model ?? "?"}:{" "}
+            {report.answerComparisonVariant?.result ?? "no judgement"}
+            {report.answerComparisonVariant?.evidence
+              ? ` — ${report.answerComparisonVariant.evidence}`
+              : ""}
+          </div>
+          <ul data-testid="bulk-review-evidence-checks" style={{ margin: 0 }}>
+            {evidenceChecks(report).map((check) => (
+              <li key={check.category}>
+                {check.category}: {check.evidence}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export interface BulkReviewStepProps {
   batch: BulkBatch;
   isLoading: boolean;
@@ -40,6 +117,14 @@ export interface BulkReviewStepProps {
     itemId: string,
     changes: Partial<BulkDraft>,
     options: { target: EditTarget; expectedRevision: number },
+  ) =>
+    | void
+    | { contentRevision: number }
+    | Promise<void | { contentRevision: number }>;
+  onGenerate: (
+    itemId: string,
+    original: VariationOriginalPayload,
+    expectedRevision: number,
   ) => void | Promise<void>;
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
@@ -53,6 +138,7 @@ export function BulkReviewStep({
   isLoading,
   onRefresh,
   onUpdateDraft,
+  onGenerate,
   onRetry,
   onDelete,
   onUndoDelete,
@@ -93,6 +179,16 @@ export function BulkReviewStep({
     >
   >({});
   const saveSeqRef = useRef(0);
+  // Generate confirms the reviewed source at click time and fires only after
+  // that save settles: never a stale stored answer, never a race with the
+  // debounce. One in-flight/pending generate per item ("exactly once").
+  const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
+  const [generateErrors, setGenerateErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const pendingGenerateRef = useRef<Map<string, VariationOriginalPayload>>(
+    new Map(),
+  );
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
@@ -111,6 +207,56 @@ export function BulkReviewStep({
       return localDrafts[bufferKey(item.itemId, target)] ?? targetDraft(item, target);
     },
     [localDrafts],
+  );
+
+  const firePendingGenerate = useCallback(
+    (itemId: string, revision: number) => {
+      const original = pendingGenerateRef.current.get(itemId);
+      if (!original) return;
+      pendingGenerateRef.current.delete(itemId);
+      Promise.resolve(onGenerate(itemId, original, revision))
+        .catch((err: unknown) => {
+          setGenerateErrors((prev) => ({
+            ...prev,
+            [itemId]: err instanceof Error ? err.message : "Generate failed",
+          }));
+        })
+        .finally(() => {
+          setGeneratingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(itemId);
+            return next;
+          });
+        });
+    },
+    [onGenerate],
+  );
+
+  const handleGenerate = useCallback(
+    (item: BulkItem) => {
+      const { itemId } = item;
+      if (generatingIds.has(itemId) || pendingGenerateRef.current.has(itemId)) {
+        return;
+      }
+      const sourceKey = bufferKey(itemId, "source");
+      // Snapshot the reviewed source at click time.
+      pendingGenerateRef.current.set(
+        itemId,
+        sourcePayloadFromDraft(getDraft(item, "source")),
+      );
+      setGenerateErrors((prev) => {
+        if (prev[itemId] === undefined) return prev;
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setGeneratingIds((prev) => new Set(prev).add(itemId));
+      if (!dirtyKeys.has(sourceKey) && !savingKeys.has(sourceKey)) {
+        firePendingGenerate(itemId, item.contentRevision);
+      }
+      // Otherwise the save pipeline fires it once the reviewed save settles.
+    },
+    [dirtyKeys, firePendingGenerate, getDraft, generatingIds, savingKeys],
   );
 
   const reviewTagSuggestions = useMemo(() => {
@@ -266,10 +412,12 @@ export function BulkReviewStep({
       seq: number,
       outcome: "success" | "failure",
       sentSerialized: string,
+      result?: void | { contentRevision: number },
     ) => {
       const sent = inFlightRefs.current[key];
       if (!sent || sent.seq !== seq) return;
       inFlightRefs.current[key] = undefined;
+      const itemId = key.split("::")[0];
       setSavingKeys((prev) => {
         const next = new Set(prev);
         next.delete(key);
@@ -305,7 +453,24 @@ export function BulkReviewStep({
           dirtyRefs.current = nextDirty;
           return nextDirty;
         });
+        // The reviewed save settled: confirm the queued Generate with the
+        // post-save revision (falls back to the sent revision for saves that
+        // do not bump contentRevision, e.g. tag-only edits).
+        firePendingGenerate(
+          itemId,
+          result && typeof result === "object"
+            ? result.contentRevision
+            : sent.revision,
+        );
       } else {
+        // A failed save prevents a stale Generate.
+        if (pendingGenerateRef.current.delete(itemId)) {
+          setGeneratingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(itemId);
+            return next;
+          });
+        }
         setSaveFailures((prev) => {
           const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
           saveFailuresRef.current = next;
@@ -341,7 +506,7 @@ export function BulkReviewStep({
             expectedRevision: stamp?.revision ?? 0,
           }),
         )
-          .then(() => finishSave(key, seq, "success", sentSerialized))
+          .then((result) => finishSave(key, seq, "success", sentSerialized, result))
           .catch(() => finishSave(key, seq, "failure", sentSerialized));
       }, retryDelayMs(failures));
     };
@@ -355,13 +520,17 @@ export function BulkReviewStep({
     return () => {
       Object.values(timeoutIds).forEach((id) => window.clearTimeout(id));
     };
-  }, [dirtyKeys, savingKeys, onUpdateDraft]);
+  }, [dirtyKeys, savingKeys, firePendingGenerate, onUpdateDraft]);
 
   useEffect(() => {
-    const hasActiveExtraction = items.some(
-      (item) => item.status === "queued" || item.status === "extracting",
+    // Extraction and variant work both keep the batch being observed.
+    const hasActiveWork = items.some(
+      (item) =>
+        item.status === "queued" ||
+        item.status === "extracting" ||
+        hasActiveVariantWork(item),
     );
-    if (!hasActiveExtraction || batch.status !== "active") return;
+    if (!hasActiveWork || batch.status !== "active") return;
 
     const id = window.setInterval(() => {
       onRefresh(batch.id);
@@ -427,6 +596,33 @@ export function BulkReviewStep({
   const hasSaveFailed = Object.keys(saveFailures).some((key) =>
     key.startsWith(activeKeyPrefix),
   );
+  const variation = selectedItem.variation;
+  const variationBusy = variation ? isVariantBusy(variation.status) : false;
+  const isGenerating = generatingIds.has(selectedItem.itemId);
+  const sourceKey = bufferKey(selectedItem.itemId, "source");
+  const sourceGaps = getRequiredFieldGaps(getDraft(selectedItem, "source"));
+  const sourceSaveFailed = saveFailures[sourceKey] !== undefined;
+  const sourceSavePending =
+    dirtyKeys.has(sourceKey) || savingKeys.has(sourceKey);
+  let generateDisabledReason = "";
+  if (!isEditable) {
+    generateDisabledReason = "Item is not editable";
+  } else if (sourceGaps.text || sourceGaps.problemType || sourceGaps.correctAnswer) {
+    generateDisabledReason =
+      "Source needs text, problem type and a confirmed answer";
+  } else if (sourceSaveFailed) {
+    generateDisabledReason = "Draft save failed, retrying";
+  } else if (isGenerating) {
+    generateDisabledReason = "Generating...";
+  } else if (variationBusy) {
+    generateDisabledReason = "Variant work is still running";
+  }
+  const generateHint =
+    generateDisabledReason ||
+    (sourceSavePending
+      ? "Generate confirms the reviewed source once its save settles"
+      : "");
+  const generateError = generateErrors[selectedItem.itemId];
   const failedItemIds = new Set(
     Object.keys(saveFailures).map((key) => key.split("::")[0]),
   );
@@ -557,6 +753,15 @@ export function BulkReviewStep({
                   }}
                 >
                   {item.order + 1}. {statusLabel(item.status)}
+                  {item.variation && (
+                    <span
+                      data-testid={`bulk-review-item-variation-${item.itemId}`}
+                      style={{ fontSize: "0.85em", opacity: 0.8 }}
+                    >
+                      {" "}
+                      {variationStatusLabel(item.variation.status)}
+                    </span>
+                  )}
                   {failedItemIds.has(item.itemId) && (
                     <span style={{ fontSize: "0.85em", opacity: 0.8 }}>
                       {" "}
@@ -582,6 +787,14 @@ export function BulkReviewStep({
               <span data-testid="bulk-review-status">
                 {statusLabel(selectedItem.status)}
               </span>
+              {variation && (
+                <span
+                  data-testid="bulk-review-variation-status"
+                  style={{ fontSize: "0.85em" }}
+                >
+                  {variationStatusLabel(variation.status)}
+                </span>
+              )}
               {hasSaveFailed && (
                 <span
                   data-testid="bulk-review-save-status"
@@ -590,8 +803,37 @@ export function BulkReviewStep({
                   Save failed, retrying...
                 </span>
               )}
+              {generateHint && (
+                <span
+                  data-testid="bulk-review-generate-hint"
+                  style={{ fontSize: "0.85em", opacity: 0.8 }}
+                >
+                  {generateHint}
+                </span>
+              )}
+              {generateError && (
+                <span
+                  data-testid="bulk-review-generate-error"
+                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
+                >
+                  Generate failed: {generateError}
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", gap: "8px" }}>
+              {isEditable && batch.ingestionMode !== "original" && (
+                <button
+                  type="button"
+                  data-testid="bulk-review-generate"
+                  onClick={() => handleGenerate(selectedItem)}
+                  disabled={generateDisabledReason !== ""}
+                  title={generateHint || undefined}
+                >
+                  {variation?.status === "failed"
+                    ? "Generate Again"
+                    : "Generate variant"}
+                </button>
+              )}
               {selectedItem.status === "failed" && (
                 <button
                   type="button"
@@ -673,6 +915,10 @@ export function BulkReviewStep({
                 Edit source
               </button>
             </div>
+          )}
+
+          {variation?.status === "failed" && (
+            <VariationFailureEvidence variation={variation} />
           )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>

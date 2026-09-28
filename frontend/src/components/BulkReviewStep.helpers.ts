@@ -1,4 +1,10 @@
-import type { BulkDraft, BulkItem } from "@/types/bulkIngestion";
+import type {
+  BulkDraft,
+  BulkItem,
+  BulkVariationValidation,
+  VariationOriginalPayload,
+  VariationStatus,
+} from "@/types/bulkIngestion";
 
 const BASE_RETRY_MS = 500;
 const MAX_RETRY_MS = 4000;
@@ -111,4 +117,91 @@ export function getRequiredFieldGaps(draft: BulkDraft) {
     problemType: !draft.problemType,
     correctAnswer: !draft.correctAnswer || draft.correctAnswer.trim() === "",
   };
+}
+
+export function variationStatusLabel(status: VariationStatus | string): string {
+  switch (status) {
+    case "not-requested":
+      return "Variant: not generated";
+    case "queued":
+      return "Variant: queued";
+    case "generating":
+      return "Variant: generating...";
+    case "validating":
+      return "Variant: validating...";
+    case "ready":
+      return "Variant: ready";
+    case "failed":
+      return "Variant: failed";
+    case "needs-validation":
+      return "Variant: needs validation";
+    default:
+      return `Variant: ${status}`;
+  }
+}
+
+// Variant work still running in the background worker.
+export function isVariantBusy(status: VariationStatus): boolean {
+  return (
+    status === "queued" || status === "generating" || status === "validating"
+  );
+}
+
+export function hasActiveVariantWork(item: BulkItem): boolean {
+  return Boolean(item.variation && isVariantBusy(item.variation.status));
+}
+
+// The reviewed source confirmed by Generate.
+export function sourcePayloadFromDraft(draft: BulkDraft): VariationOriginalPayload {
+  return {
+    text: draft.text ?? "",
+    problemType: draft.problemType ?? "short-answer",
+    correctAnswer: draft.correctAnswer ?? "",
+    graphDsl: draft.graphDsl ?? null,
+    subject: draft.subject ?? null,
+  };
+}
+
+// Failure evidence as stored by the #613 validation contract:
+// {verdict, failures: [{kind, evidence}], reports: [ValidatorReport]}.
+// The backend presents these dicts verbatim.
+export interface EvidenceCheck {
+  category: string;
+  evidence: string;
+}
+
+export interface EvidenceReport {
+  validatorModel?: { provider?: string; model?: string };
+  originalSolvedAnswer?: string | null;
+  variantSolvedAnswer?: string | null;
+  checks?: Record<string, EvidenceCheck>;
+  answerComparisonOriginal?: { result?: string; evidence?: string };
+  answerComparisonVariant?: { result?: string; evidence?: string };
+}
+
+export interface EvidenceFailure {
+  kind?: string;
+  evidence?: string;
+}
+
+export interface EvidenceView {
+  verdict?: string | null;
+  failures?: EvidenceFailure[];
+  reports?: EvidenceReport[];
+}
+
+export function evidenceView(
+  validation: BulkVariationValidation | null | undefined,
+): EvidenceView | null {
+  return (validation as EvidenceView | null | undefined) ?? null;
+}
+
+export function evidenceChecks(report: EvidenceReport): EvidenceCheck[] {
+  return Object.values(report.checks ?? {});
+}
+
+// "content" is a generated-content failure; any other kind comes from the
+// model/provider side (execution failure).
+export function failureKindLabel(kind: string | undefined): string {
+  return kind === "content" ? "Content failure" : "Model execution failure";
 }

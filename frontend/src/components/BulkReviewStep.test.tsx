@@ -71,6 +71,7 @@ describe("BulkReviewStep", () => {
   const handlers = {
     onRefresh: vi.fn(),
     onUpdateDraft: vi.fn(),
+    onGenerate: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1140,6 +1141,7 @@ describe("BulkReviewStep source/candidate autosave identity", () => {
   const handlers = {
     onRefresh: vi.fn(),
     onUpdateDraft: vi.fn(),
+    onGenerate: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1437,5 +1439,293 @@ describe("BulkReviewStep source/candidate autosave identity", () => {
         "Newer server text",
       );
     });
+  });
+});
+
+describe("BulkReviewStep variant generate", () => {
+  const handlers = {
+    onRefresh: vi.fn(),
+    onUpdateDraft: vi.fn(),
+    onGenerate: vi.fn(),
+    onRetry: vi.fn(),
+    onDelete: vi.fn(),
+    onUndoDelete: vi.fn(),
+    onContinue: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Object.values(handlers).forEach((fn) => fn.mockReset());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function renderReview(items: BulkItem[], overrides: Partial<BulkBatch> = {}) {
+    return render(
+      <BulkReviewStep
+        batch={makeBatch({
+          ingestionMode: "data-and-wording",
+          items,
+          ...overrides,
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+  }
+
+  it("confirms the reviewed source with Generate exactly once, waiting for the autosave", async () => {
+    handlers.onUpdateDraft.mockResolvedValue({ contentRevision: 3 });
+    renderReview([makeItem("item-1", { contentRevision: 2 })]);
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    // Unsaved state is explained before the click.
+    expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
+      "once its save settles",
+    );
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+
+    // Generate waits for the reviewed save: no stale generate, no debounce race.
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
+      "Generating...",
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onGenerate).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({
+        text: "What is 2+2?",
+        problemType: "short-answer",
+        correctAnswer: "66",
+      }),
+      3,
+    );
+  });
+
+  it("sends Generate with the current revision when the source is already saved", () => {
+    renderReview([makeItem("item-1", { contentRevision: 2 })]);
+
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+
+    expect(handlers.onUpdateDraft).not.toHaveBeenCalled();
+    expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
+    expect(handlers.onGenerate).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({ correctAnswer: "4" }),
+      2,
+    );
+  });
+
+  it("prevents a stale Generate when the source save fails and explains the disabled state", async () => {
+    handlers.onUpdateDraft.mockRejectedValue(new Error("save exploded"));
+    renderReview([makeItem("item-1")]);
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-generate")).toBeDisabled();
+    expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
+      "Draft save failed",
+    );
+  });
+
+  it("explains why Generate is disabled when the source is unprepared", () => {
+    renderReview([makeItem("item-1")]);
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "" },
+    });
+
+    expect(screen.getByTestId("bulk-review-generate")).toBeDisabled();
+    expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
+      "confirmed answer",
+    );
+  });
+
+  it("keeps other items editable while a variant generates and restores server state without restarting", async () => {
+    const itemA = makeItem("item-a", {
+      order: 0,
+      variation: makeVariation({ status: "generating" }),
+    });
+    const itemB = makeItem("item-b", { order: 1 });
+    const { rerender } = renderReview([itemA, itemB]);
+
+    expect(screen.getByTestId("bulk-review-variation-status")).toHaveTextContent(
+      "generating",
+    );
+    // Variant work keeps the batch being polled.
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(handlers.onRefresh).toHaveBeenCalledWith("batch-1");
+
+    // Item B stays fully editable while A processes in the background.
+    fireEvent.click(screen.getByTestId("bulk-review-item-item-b"));
+    expect(screen.getByTestId("bulk-review-answer")).toBeEnabled();
+
+    // Reloading server-backed state never restarts generation.
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          ingestionMode: "data-and-wording",
+          items: [
+            makeItem("item-a", {
+              order: 0,
+              variation: makeVariation({ status: "validating" }),
+            }),
+            itemB,
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+    expect(
+      screen.getByTestId("bulk-review-item-variation-item-a"),
+    ).toHaveTextContent("validating");
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+  });
+
+  it("renders structured content-failure evidence with no accept or override control", () => {
+    renderReview([
+      makeItem("item-1", {
+        variation: makeVariation({
+          status: "failed",
+          candidate: {
+            text: "What is 3+3?",
+            problemType: "single-choice",
+            graphDsl: "",
+            correctAnswer: "6",
+          },
+          validation: {
+            verdict: "fail",
+            failures: [
+              { kind: "content", evidence: "category-conflict: type changed" },
+            ],
+            reports: [
+              {
+                validatorModel: { provider: "fake-vlm", model: "helper-1" },
+                originalSolvedAnswer: "4",
+                variantSolvedAnswer: "7",
+                checks: {
+                  graphConsistency: {
+                    category: "graphConsistency",
+                    evidence: "inconsistent graph",
+                  },
+                },
+                answerComparisonVariant: {
+                  result: "mismatch",
+                  evidence: "7 != 6",
+                },
+              },
+            ],
+          },
+        }),
+      }),
+    ]);
+
+    expect(screen.getByTestId("bulk-review-evidence")).toBeInTheDocument();
+    // Type mismatch between source and candidate is concrete.
+    expect(screen.getByTestId("bulk-review-evidence-types")).toHaveTextContent(
+      "short-answer",
+    );
+    expect(screen.getByTestId("bulk-review-evidence-types")).toHaveTextContent(
+      "single-choice",
+    );
+    // Expected vs solved answers.
+    expect(screen.getByTestId("bulk-review-evidence-answers")).toHaveTextContent(
+      "6",
+    );
+    expect(screen.getByTestId("bulk-review-evidence-answers")).toHaveTextContent(
+      "7",
+    );
+    // Helper judgement and check categories/reasons.
+    expect(screen.getByTestId("bulk-review-evidence-helper")).toHaveTextContent(
+      "mismatch",
+    );
+    expect(screen.getByTestId("bulk-review-evidence-checks")).toHaveTextContent(
+      "graphConsistency",
+    );
+    expect(screen.getByTestId("bulk-review-evidence-checks")).toHaveTextContent(
+      "inconsistent graph",
+    );
+    expect(
+      screen.getByTestId("bulk-review-evidence-failure-kind"),
+    ).toHaveTextContent("Content failure");
+    // No accept/override/fallback path exists.
+    expect(
+      screen.queryByRole("button", { name: /accept|override|fallback/i }),
+    ).toBeNull();
+  });
+
+  it("distinguishes model execution failures from content failures", () => {
+    renderReview([
+      makeItem("item-1", {
+        variation: makeVariation({
+          status: "failed",
+          candidate: null,
+          validation: {
+            verdict: "fail",
+            failures: [{ kind: "provider", evidence: "helper failed: timeout" }],
+            reports: [],
+          },
+        }),
+      }),
+    ]);
+
+    expect(
+      screen.getByTestId("bulk-review-evidence-failure-kind"),
+    ).toHaveTextContent("Model execution failure");
+    expect(screen.getByTestId("bulk-review-evidence")).toHaveTextContent(
+      "helper failed: timeout",
+    );
+  });
+
+  it("re-runs the flow only via manual Generate Again", () => {
+    renderReview([
+      makeItem("item-1", {
+        contentRevision: 4,
+        variation: makeVariation({ status: "failed" }),
+      }),
+    ]);
+
+    const button = screen.getByTestId("bulk-review-generate");
+    expect(button).toHaveTextContent("Generate Again");
+    fireEvent.click(button);
+
+    expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
+    expect(handlers.onGenerate).toHaveBeenCalledWith(
+      "item-1",
+      expect.anything(),
+      4,
+    );
+  });
+
+  it("keeps polling for background extraction (original-mode compatibility)", async () => {
+    renderReview([makeItem("item-1", { status: "queued" })], {
+      ingestionMode: "original",
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(handlers.onRefresh).toHaveBeenCalledWith("batch-1");
   });
 });

@@ -7,6 +7,7 @@ import {
   deleteImage,
   detectImageBoxes,
   editVariationCandidate,
+  generateVariation,
   getActiveBatch,
   getBatch,
   retryItem,
@@ -23,6 +24,7 @@ import type {
   BulkImageBox,
   BulkWizardStep,
   IngestionMode,
+  VariationOriginalPayload,
 } from "@/types/bulkIngestion";
 import { expandBoxWithMargins } from "@/utils/boxGeometry";
 import { BulkUploadStep } from "./BulkUploadStep";
@@ -379,12 +381,42 @@ export function BulkIngestionWizard({
                 options.expectedRevision,
               );
         setBatchAndStep(response.batch);
+        // The review step needs the post-save revision to confirm Generate.
+        return {
+          contentRevision:
+            response.batch.items.find((item) => item.itemId === itemId)
+              ?.contentRevision ?? options.expectedRevision,
+        };
       } catch (err) {
         if (isBatchExpiredError(err)) {
           await handleExpiredBatch();
         }
         // Reject to the caller so the review step keeps the editor mounted and
         // reports the failure per item instead of replacing the whole wizard.
+        throw err;
+      }
+    },
+    [batch, handleExpiredBatch, setBatchAndStep],
+  );
+
+  const handleGenerateVariation = useCallback(
+    async (
+      itemId: string,
+      original: VariationOriginalPayload,
+      expectedRevision: number,
+    ) => {
+      if (!batch) return;
+      try {
+        const response = await generateVariation(batch.id, itemId, {
+          expectedRevision,
+          original,
+        });
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        }
+        // Reject to the caller so the review step reports the failure per item.
         throw err;
       }
     },
@@ -657,6 +689,7 @@ export function BulkIngestionWizard({
             isLoading={isLoading}
             onRefresh={handleRefreshBatch}
             onUpdateDraft={handleUpdateItemDraft}
+            onGenerate={handleGenerateVariation}
             onRetry={handleRetryItem}
             onDelete={handleDeleteItem}
             onUndoDelete={handleUndoDeleteItem}
