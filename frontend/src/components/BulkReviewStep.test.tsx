@@ -22,6 +22,8 @@ function makeItem(itemId: string, overrides: Partial<BulkItem> = {}): BulkItem {
     retryCount: 0,
     submit: {},
     origin: {},
+    contentRevision: 0,
+    variation: null,
     crop: {
       mediaUrl: `http://example.com/crop-${itemId}.png`,
     },
@@ -36,6 +38,7 @@ function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
     id: "batch-1",
     userId: "user-1",
     status: "active",
+    ingestionMode: "original",
     images: [
       {
         imageId: "img-a",

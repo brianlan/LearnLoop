@@ -3,16 +3,18 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { BulkUploadStep } from "./BulkUploadStep";
 import type { BulkBatch } from "@/types/bulkIngestion";
 
-function makeBatch(): BulkBatch {
+function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
   return {
     id: "batch-1",
     userId: "user-1",
     status: "active",
+    ingestionMode: "original",
     images: [],
     items: [],
     createdAt: "2026-07-03T00:00:00Z",
     updatedAt: "2026-07-03T00:00:00Z",
     expiresAt: "2026-07-04T00:00:00Z",
+    ...overrides,
   };
 }
 
@@ -22,6 +24,8 @@ describe("BulkUploadStep", () => {
       <BulkUploadStep
         batch={makeBatch()}
         isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
         onCreateBatch={() => {}}
         onUpload={() => {}}
       />,
@@ -38,6 +42,8 @@ describe("BulkUploadStep", () => {
       <BulkUploadStep
         batch={makeBatch()}
         isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
         onCreateBatch={() => {}}
         onUpload={() => {}}
       />,
@@ -56,6 +62,8 @@ describe("BulkUploadStep", () => {
       <BulkUploadStep
         batch={makeBatch()}
         isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
         onCreateBatch={() => {}}
         onUpload={onUpload}
       />,
@@ -68,5 +76,99 @@ describe("BulkUploadStep", () => {
     expect(onUpload).toHaveBeenCalledTimes(1);
     const passedFiles = onUpload.mock.calls[0][0] as FileList;
     expect(passedFiles[0]).toBe(file);
+  });
+
+  it("shows the mode radio group before batch creation with Original preselected", () => {
+    render(
+      <BulkUploadStep
+        batch={null}
+        isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
+        onCreateBatch={() => {}}
+        onUpload={() => {}}
+      />,
+    );
+
+    const group = screen.getByRole("group", { name: /ingestion mode/i });
+    expect(group).toBeInTheDocument();
+
+    const original = screen.getByTestId(
+      "bulk-wizard-mode-original",
+    ) as HTMLInputElement;
+    const dataOnly = screen.getByTestId(
+      "bulk-wizard-mode-data-only",
+    ) as HTMLInputElement;
+    const dataAndWording = screen.getByTestId(
+      "bulk-wizard-mode-data-and-wording",
+    ) as HTMLInputElement;
+
+    expect(original.checked).toBe(true);
+    expect(dataOnly.checked).toBe(false);
+    expect(dataAndWording.checked).toBe(false);
+  });
+
+  it("fires onModeChange when another mode is selected", () => {
+    const onModeChange = vi.fn();
+    render(
+      <BulkUploadStep
+        batch={null}
+        isLoading={false}
+        mode="original"
+        onModeChange={onModeChange}
+        onCreateBatch={() => {}}
+        onUpload={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-mode-data-only"));
+
+    expect(onModeChange).toHaveBeenCalledTimes(1);
+    expect(onModeChange).toHaveBeenCalledWith("data-only");
+  });
+
+  it("shows the batch mode as locked text instead of radios when a batch exists", () => {
+    render(
+      <BulkUploadStep
+        batch={makeBatch({ ingestionMode: "data-only" })}
+        isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
+        onCreateBatch={() => {}}
+        onUpload={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-wizard-mode-locked")).toHaveTextContent(
+      "Ingestion mode: Variant (data-only) (locked for this batch)",
+    );
+    expect(screen.queryByRole("group", { name: /ingestion mode/i })).not.toBeInTheDocument();
+  });
+
+  it("labels the mode radios with accessible descriptions", () => {
+    render(
+      <BulkUploadStep
+        batch={null}
+        isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
+        onCreateBatch={() => {}}
+        onUpload={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByLabelText(/Original — Ingest the problems exactly as they are\./i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        /Variant \(data-only\) — Generate a new practice problem with different numbers/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        /Variant \(data-and-wording\) — Generate a new practice problem with different data/i,
+      ),
+    ).toBeInTheDocument();
   });
 });
