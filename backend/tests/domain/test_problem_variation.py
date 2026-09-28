@@ -83,6 +83,19 @@ def test_semantic_change_rules() -> None:
     assert has_semantic_change(None, before) is True
 
 
+def test_semantic_change_treats_empty_graphdsl_as_none() -> None:
+    before = {"text": "a", "problemType": "short-answer", "graphDsl": None,
+              "correctAnswer": "1", "subject": "math"}
+    empty = {**before, "graphDsl": ""}
+    assert has_semantic_change(before, empty) is False
+    assert has_semantic_change(empty, before) is False
+    # A real graph change is still semantic in both directions.
+    assert has_semantic_change(before, {**before, "graphDsl": "create('board', {});"}) is True
+    assert has_semantic_change(
+        {**before, "graphDsl": "create('board', {});"}, before
+    ) is True
+
+
 def test_original_snapshot_covers_semantic_fields_only() -> None:
     snapshot = build_original_snapshot(
         {"text": "a", "problemType": "short-answer", "correctAnswer": "1",
