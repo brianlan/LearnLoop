@@ -2069,6 +2069,35 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
     expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
   });
 
+  it("treats submitted items as done for Continue gating", () => {
+    const submitted = makeItem("item-done", {
+      status: "submitted",
+      contentRevision: 2,
+      variation: makeVariation({ validatedRevision: 2 }),
+    });
+    const remaining = makeItem("item-2", {
+      order: 1,
+      contentRevision: 2,
+      variation: makeVariation({ validatedRevision: 2 }),
+    });
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          ingestionMode: "data-and-wording",
+          items: [submitted, remaining],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    expect(screen.getByTestId("bulk-review-item-item-done")).toHaveAttribute(
+      "data-action-required",
+      "false",
+    );
+  });
+
   it("blocks Continue after a semantic candidate edit and re-approves via validator-only revalidation", async () => {
     const { rerender } = render(variantReviewUi(passedItem()));
     expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();

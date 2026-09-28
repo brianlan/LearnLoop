@@ -707,9 +707,13 @@ export function BulkReviewStep({
   );
   const activeItems = items.filter((item) => item.status !== "deleted");
   const itemValidation = activeItems.map((item) => {
-    const reasons: string[] = [];
     const draft = getDraft(item, "source");
     const requiredFieldGaps = getRequiredFieldGaps(draft);
+    // Submitted items are done; they must not block the remaining flow.
+    if (item.status === "submitted") {
+      return { itemId: item.itemId, reasons: [] as string[], requiredFieldGaps };
+    }
+    const reasons: string[] = [];
     if (item.status === "queued" || item.status === "extracting") {
       reasons.push(`Item ${item.order + 1}: Extraction is still running`);
     } else if (item.status === "failed") {
@@ -726,8 +730,8 @@ export function BulkReviewStep({
     if (!draft.correctAnswer || draft.correctAnswer.trim() === "") {
       reasons.push(`Item ${item.order + 1}: Correct answer is required`);
     }
-    if (batch.ingestionMode !== "original" && item.status !== "submitted") {
-      // Only current-PASS candidates gate Continue; submitted items are done.
+    if (batch.ingestionMode !== "original") {
+      // Only current-PASS candidates gate Continue.
       const variantReason = variantPassGateReason(item);
       if (variantReason) {
         reasons.push(`Item ${item.order + 1}: ${variantReason}`);
