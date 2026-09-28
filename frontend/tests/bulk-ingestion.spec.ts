@@ -647,6 +647,18 @@ test.describe("Variant ingestion E2E", () => {
       .map((item) => item.submit!.submittedProblemId!);
     expect(problemIds, "two submitted variant problems").toHaveLength(2);
 
+    // The submitted candidates must be self-consistent: the fake generator
+    // bumps `2 + 2` to `3 + 3`, so each problem's answer must be `6`.
+    for (const problemId of problemIds) {
+      const problemResponse = await request.get(`${API_BASE}/problems/${problemId}`, {
+        headers: { Cookie: session.cookieHeader },
+      });
+      await expect(problemResponse, "fetch submitted problem").toBeOK();
+      const problem = (await problemResponse.json()).problem;
+      expect(problem.text).toBe("What is 3 + 3?");
+      expect(problem.correctAnswer.display).toBe("6");
+    }
+
     // Practice grading of a submitted variant; the fake grading role must
     // never receive an image.
     await gradeVariantInPractice(page);
@@ -962,9 +974,10 @@ test.describe("Variant ingestion E2E", () => {
     const itemId = (await getItemIds(request, session, batchId))[0];
     await generateVariant(page, request, session, batchId, itemId);
 
-    // Semantic edit on the candidate invalidates the approval.
+    // Semantic edit on the candidate invalidates the approval. The value only
+    // needs to differ from the generated answer (`6` for `What is 3 + 3?`).
     await page.getByTestId("bulk-review-edit-candidate").click();
-    await page.getByTestId("bulk-review-answer").fill("6");
+    await page.getByTestId("bulk-review-answer").fill("7");
     await page.waitForResponse(
       (r) =>
         r.request().method() === "PATCH" &&

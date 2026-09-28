@@ -230,6 +230,14 @@ function handleVariantRole(res, type, body) {
     });
   const invalidJson = () => sendJson(res, 200, createCompletion("not valid json"));
 
+  // The generator bumps every number in a statement; re-solve simple `a + b`
+  // statements so text and correctAnswer stay consistent (fallback keeps the
+  // source answer for non-arithmetic text).
+  function solveSimpleSum(text, fallback) {
+    const m = String(text || "").match(/(-?\d+)\s*\+\s*(-?\d+)/);
+    return m ? String(Number(m[1]) + Number(m[2])) : fallback;
+  }
+
   if (type === "generator") {
     if (scenario === "fail") return failTransport();
     if (scenario === "invalid") return invalidJson();
@@ -240,7 +248,7 @@ function handleVariantRole(res, type, body) {
       text,
       problemType: source.problemType || "short-answer",
       graphDsl: source.graphDsl ?? null,
-      correctAnswer: source.correctAnswer || "4",
+      correctAnswer: solveSimpleSum(text, source.correctAnswer || "4"),
       providerMetadata: {},
     };
     return sendJson(res, 200, createCompletion(JSON.stringify(payload)));
@@ -263,8 +271,10 @@ function handleVariantRole(res, type, body) {
     if (scenario === "fail") return failTransport();
     if (scenario === "invalid") return invalidJson();
     const payload = {
-      originalSolvedAnswer: scenario === "unsolvable" ? null : "4",
-      variantSolvedAnswer: scenario === "unsolvable" ? null : "4",
+      originalSolvedAnswer:
+        scenario === "unsolvable" ? null : solveSimpleSum(task?.source?.text, "4"),
+      variantSolvedAnswer:
+        scenario === "unsolvable" ? null : solveSimpleSum(task?.candidate?.text, "4"),
       originalSolutionSummary: "Fake original solution summary.",
       variantSolutionSummary: "Fake variant solution summary.",
       checks: validatorReport(task),
