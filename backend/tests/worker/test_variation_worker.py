@@ -46,6 +46,22 @@ from tests.test_utils.db_fakes import FakeDatabase
 
 NOW = datetime.now(UTC)  # repo-direct tests only; process_variation writes with real now, so leases it consumes must anchor to datetime.now(UTC)
 
+
+@pytest.fixture(autouse=True)
+def _fresh_now():
+    """Re-anchor NOW at every test's execution time.
+
+    ``NOW`` anchors leases that the worker compares against the real clock
+    (``process_variation`` renews and saves with ``datetime.now(UTC)``). A
+    module-level value goes stale on slow runs: once a test executes more
+    than the 300s lease window after import, ``renew_variation_lease``
+    refuses and resume tests get stuck in ``validating``. CI observed
+    exactly that (5.5-minute suite). Re-stamping per test keeps the 300s
+    window anchored to actual execution time.
+    """
+    global NOW
+    NOW = datetime.now(UTC)
+
 SOURCE_SNAPSHOT = {
     "text": "A train travels 180 km in 3 hours. What is its speed in km/h?",
     "problemType": "short-answer",
