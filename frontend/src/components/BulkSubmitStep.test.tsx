@@ -503,3 +503,139 @@ describe("BulkSubmitStep", () => {
     );
   });
 });
+
+describe("BulkSubmitStep variant submit gating", () => {
+  const handlers = {
+    onSubmit: vi.fn(),
+    onRefresh: vi.fn(),
+    onRetry: vi.fn(),
+    onDelete: vi.fn(),
+    onBackToReview: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.values(handlers).forEach((fn) => fn.mockReset());
+  });
+
+  function makeVariation(
+    overrides: Partial<NonNullable<BulkItem["variation"]>> = {},
+  ): NonNullable<BulkItem["variation"]> {
+    return {
+      status: "ready",
+      generationCount: 1,
+      original: {
+        text: "What is 2+2?",
+        problemType: "short-answer",
+        graphDsl: "",
+        correctAnswer: "4",
+        subject: "math",
+      },
+      candidate: {
+        text: "What is 3+3?",
+        problemType: "short-answer",
+        graphDsl: "",
+        correctAnswer: "6",
+      },
+      validation: { verdict: "pass" },
+      validatedRevision: 2,
+      queuedAt: null,
+      ...overrides,
+    };
+  }
+
+  function passedItem(overrides: Partial<BulkItem> = {}): BulkItem {
+    return makeItem("item-1", {
+      contentRevision: 2,
+      variation: makeVariation(),
+      ...overrides,
+    });
+  }
+
+  function renderSubmit(items: BulkItem[]) {
+    return render(
+      <BulkSubmitStep
+        batch={makeBatch({ ingestionMode: "data-and-wording", items })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+  }
+
+  it("submits when every remaining item holds a current PASS candidate", () => {
+    renderSubmit([passedItem()]);
+
+    expect(screen.getByTestId("bulk-submit-button")).toBeEnabled();
+    expect(
+      screen.getByTestId("bulk-submit-item-status-item-1"),
+    ).toHaveTextContent("Variant: ready");
+  });
+
+  it("blocks submit with reasons while an item lacks a current PASS candidate", () => {
+    renderSubmit([
+      passedItem(),
+      makeItem("item-2", {
+        order: 1,
+        contentRevision: 3,
+        variation: makeVariation({
+          status: "needs-validation",
+          validation: null,
+          validatedRevision: null,
+        }),
+      }),
+    ]);
+
+    expect(screen.getByTestId("bulk-submit-button")).toBeDisabled();
+    expect(screen.getByTestId("bulk-submit-disabled-reasons")).toHaveTextContent(
+      "Variant needs validation",
+    );
+    expect(
+      screen.getByTestId("bulk-submit-item-status-item-2"),
+    ).toHaveTextContent("Variant: needs validation");
+  });
+
+  it("retries a submit-failed item whose candidate and variant state are preserved", async () => {
+    renderSubmit([
+      passedItem({
+        status: "submit-failed",
+        submit: {
+          status: "submit-failed",
+          failureCode: "PROBLEM_CREATE_FAILED",
+          failureMessage: "admission exploded",
+        },
+      }),
+    ]);
+
+    // Candidate/evidence preserved: variation still ready + passed.
+    expect(
+      screen.getByTestId("bulk-submit-item-status-item-1"),
+    ).toHaveTextContent("Variant: ready");
+    expect(
+      screen.getByTestId("bulk-submit-item-failure-item-1"),
+    ).toHaveTextContent("admission exploded");
+    expect(screen.getByTestId("bulk-submit-button")).toBeEnabled();
+
+    fireEvent.click(screen.getByTestId("bulk-submit-button"));
+    expect(handlers.onSubmit).toHaveBeenCalledTimes(1);
+    // Let the submit's isSubmitting state settle before retrying.
+    await act(async () => {});
+
+    fireEvent.click(screen.getByTestId("bulk-submit-retry-item-1"));
+    expect(handlers.onRetry).toHaveBeenCalledWith("item-1");
+  });
+
+  it("does not let submitted items block re-submitting the remaining ones", () => {
+    renderSubmit([
+      passedItem({ status: "submitted", submit: { submittedProblemId: "p-1" } }),
+      makeItem("item-2", {
+        order: 1,
+        contentRevision: 3,
+        variation: makeVariation({ validatedRevision: 3 }),
+      }),
+    ]);
+
+    expect(screen.getByTestId("bulk-submit-button")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("bulk-submit-button"));
+    expect(handlers.onSubmit).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BulkBatch, BulkItem } from "@/types/bulkIngestion";
+import { variantPassGateReason, variationStatusLabel } from "./BulkReviewStep.helpers";
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -51,8 +52,27 @@ function itemDisabledReasons(item: BulkItem): string[] {
   return reasons;
 }
 
-function isItemSubmittable(item: BulkItem): boolean {
-  return itemDisabledReasons(item).length === 0;
+// Variant items submit their current PASS candidate, not the source draft:
+// mirroring the backend admission check, a submit-failed variant item with an
+// untouched approved candidate stays retryable.
+function variantItemDisabledReasons(item: BulkItem): string[] {
+  const reasons: string[] = [];
+  if (item.status === "queued" || item.status === "extracting") {
+    reasons.push("Extraction is still running");
+  } else if (item.status === "failed") {
+    reasons.push("Extraction failed");
+  } else if (item.status !== "ready" && item.status !== "submit-failed") {
+    reasons.push("Item is not ready");
+  }
+  const variantReason = variantPassGateReason(item);
+  if (variantReason) {
+    reasons.push(variantReason);
+  }
+  return reasons;
+}
+
+function isItemSubmittable(item: BulkItem, variantMode: boolean): boolean {
+  return (variantMode ? variantItemDisabledReasons(item) : itemDisabledReasons(item)).length === 0;
 }
 
 export function BulkSubmitStep({
@@ -87,12 +107,21 @@ export function BulkSubmitStep({
     [items],
   );
 
-  const submittableItems = useMemo(
-    () => activeItems.filter(isItemSubmittable),
-    [activeItems],
+  const variantMode = batch.ingestionMode !== "original";
+
+  // Variant retry: submitted items are done and must not block re-submitting
+  // the remaining ones; original mode keeps its all-submittable rule.
+  const pendingItems = useMemo(
+    () =>
+      variantMode
+        ? activeItems.filter((item) => item.status !== "submitted")
+        : activeItems,
+    [activeItems, variantMode],
   );
 
-  const canSubmit = activeItems.length > 0 && activeItems.length === submittableItems.length;
+  const canSubmit =
+    pendingItems.length > 0 &&
+    pendingItems.every((item) => isItemSubmittable(item, variantMode));
 
   const summary = useMemo(() => {
     return {
@@ -120,17 +149,19 @@ export function BulkSubmitStep({
 
   const disabledReasons = useMemo(() => {
     const reasons: string[] = [];
-    if (activeItems.length === 0) {
+    if (pendingItems.length === 0) {
       reasons.push("No items to submit");
     }
-    activeItems.forEach((item) => {
-      const itemReasons = itemDisabledReasons(item);
+    pendingItems.forEach((item) => {
+      const itemReasons = variantMode
+        ? variantItemDisabledReasons(item)
+        : itemDisabledReasons(item);
       if (itemReasons.length > 0) {
         reasons.push(`Item ${item.order + 1}: ${itemReasons.join(", ")}`);
       }
     });
     return reasons;
-  }, [activeItems]);
+  }, [pendingItems, variantMode]);
 
   return (
     <div data-testid="bulk-wizard-submit-step">
@@ -191,7 +222,9 @@ export function BulkSubmitStep({
         style={{ listStyle: "none", padding: 0, marginBottom: "16px" }}
       >
         {activeItems.map((item) => {
-          const reasons = itemDisabledReasons(item);
+          const reasons = variantMode
+            ? variantItemDisabledReasons(item)
+            : itemDisabledReasons(item);
           const isSubmittable = reasons.length === 0;
           return (
             <li
@@ -213,6 +246,8 @@ export function BulkSubmitStep({
               >
                 <span data-testid={`bulk-submit-item-status-${item.itemId}`}>
                   Item {item.order + 1}: {statusLabel(item.status)}
+                  {item.variation &&
+                    ` · ${variationStatusLabel(item.variation.status)}`}
                 </span>
                 {item.status === "submit-failed" && (
                   <div style={{ display: "flex", gap: "8px" }}>
