@@ -21,6 +21,7 @@ import type {
   BulkDraft,
   BulkImageBox,
   BulkWizardStep,
+  IngestionMode,
 } from "@/types/bulkIngestion";
 import { expandBoxWithMargins } from "@/utils/boxGeometry";
 import { BulkUploadStep } from "./BulkUploadStep";
@@ -115,6 +116,7 @@ export function BulkIngestionWizard({
 }: BulkIngestionWizardProps) {
   const [batch, setBatch] = useState<BulkBatch | null>(null);
   const [step, setStep] = useState<BulkWizardStep>("upload");
+  const [mode, setMode] = useState<IngestionMode>("original");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
@@ -203,14 +205,25 @@ export function BulkIngestionWizard({
     setError("");
     setUploadError("");
     try {
-      const response = await createBatch();
+      const response = await createBatch(mode);
       setBatchAndStep(response.batch);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create batch");
     } finally {
       setIsLoading(false);
     }
-  }, [setBatchAndStep]);
+  }, [mode, setBatchAndStep]);
+
+  // "Start a new batch" returns to a fresh upload step so the mode selector
+  // is shown before the next batch is created (mode always precedes
+  // creation and defaults back to Original).
+  const handleStartNewBatch = useCallback(() => {
+    setBatch(null);
+    setStep("upload");
+    setMode("original");
+    setError("");
+    setUploadError("");
+  }, []);
 
   const handleUploadFiles = useCallback(
     async (files: FileList | null) => {
@@ -482,7 +495,7 @@ export function BulkIngestionWizard({
         <p style={{ fontSize: "0.9em", color: "var(--color-text-muted)" }}>
           Your work could not be saved. Start a new ingestion session.
         </p>
-        <button type="button" onClick={handleCreateBatch} style={{ marginTop: "16px" }}>
+        <button type="button" onClick={handleStartNewBatch} style={{ marginTop: "16px" }}>
           Start a new batch
         </button>
       </div>
@@ -502,7 +515,7 @@ export function BulkIngestionWizard({
           {submittedCount} problem(s) created
         </p>
         <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginTop: "16px" }}>
-          <button type="button" onClick={handleCreateBatch} data-testid="bulk-wizard-start-new">
+          <button type="button" onClick={handleStartNewBatch} data-testid="bulk-wizard-start-new">
             Start a new batch
           </button>
           {onComplete && (
@@ -594,6 +607,8 @@ export function BulkIngestionWizard({
             batch={batch}
             isLoading={isLoading}
             error={uploadError}
+            mode={mode}
+            onModeChange={setMode}
             onCreateBatch={handleCreateBatch}
             onUpload={handleUploadFiles}
           />

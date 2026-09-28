@@ -21,6 +21,8 @@ function makeItem(draft: Partial<BulkDraft> = {}): BulkItem {
     retryCount: 0,
     submit: {},
     origin: {},
+    contentRevision: 0,
+    variation: null,
     createdAt: "",
     updatedAt: "",
   };

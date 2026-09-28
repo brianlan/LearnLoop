@@ -5,8 +5,11 @@ import {
   deleteBatchItem,
   deleteImage,
   detectImageBoxes,
+  editVariationCandidate,
+  generateVariation,
   getActiveBatch,
   getBatch,
+  revalidateVariation,
   retryItem,
   saveImageBoxes,
   startBatchExtraction,
@@ -23,6 +26,7 @@ function makeBatchResponse(id = "batch-1"): BatchResponse {
       id,
       userId: "user-1",
       status: "active",
+      ingestionMode: "original",
       images: [],
       items: [],
       createdAt: "2026-07-03T00:00:00Z",
@@ -42,7 +46,7 @@ describe("bulk ingestion API client", () => {
   });
 
   describe("createBatch", () => {
-    it("creates a batch with a POST to /ingestion-batches", async () => {
+    it("creates an Original batch by default with the ingestionMode payload", async () => {
       const response = makeBatchResponse("batch-new");
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -57,9 +61,27 @@ describe("bulk ingestion API client", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: undefined,
+        body: JSON.stringify({ ingestionMode: "original" }),
       });
       expect(result).toEqual(response);
+    });
+
+    it("sends the selected variant mode on batch creation", async () => {
+      const response = makeBatchResponse("batch-variant");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await createBatch("data-and-wording");
+
+      expect(mockFetch).toHaveBeenCalledWith("/api/v1/ingestion-batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ingestionMode: "data-and-wording" }),
+      });
     });
   });
 
@@ -398,6 +420,93 @@ describe("bulk ingestion API client", () => {
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: undefined,
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("generateVariation", () => {
+    it("posts the confirmed source with expectedRevision to the generate endpoint", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const request = {
+        expectedRevision: 3,
+        original: {
+          text: "What is 3+3?",
+          problemType: "short-answer",
+          correctAnswer: "6",
+          graphDsl: null,
+          subject: "math",
+        },
+      };
+      const result = await generateVariation("batch-1", "item-1", request);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1/variation/generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(request),
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("editVariationCandidate", () => {
+    it("patches the candidate with expectedRevision", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const request = {
+        expectedRevision: 5,
+        text: "Edited candidate text",
+        tags: ["algebra"],
+      };
+      const result = await editVariationCandidate("batch-1", "item-1", request);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1/variation/candidate",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(request),
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("revalidateVariation", () => {
+    it("posts expectedRevision to the revalidate endpoint", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await revalidateVariation("batch-1", "item-1", 7);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1/variation/revalidate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ expectedRevision: 7 }),
         },
       );
       expect(result).toEqual(response);

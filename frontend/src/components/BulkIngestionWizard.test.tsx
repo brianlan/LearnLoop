@@ -43,6 +43,7 @@ function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
     id: "batch-1",
     userId: "user-1",
     status: "active",
+    ingestionMode: "original",
     images: [],
     items: [],
     createdAt: "2026-07-03T00:00:00Z",
@@ -82,6 +83,8 @@ function queuedItem(overrides: Partial<BulkItem> = {}): BulkItem {
     retryCount: 0,
     submit: {},
     origin: {},
+    contentRevision: 0,
+    variation: null,
     createdAt: "2026-07-03T00:00:00Z",
     updatedAt: "2026-07-03T00:00:00Z",
     ...overrides,
@@ -104,6 +107,8 @@ function readyItem(overrides: Partial<BulkItem> = {}): BulkItem {
     retryCount: 0,
     submit: {},
     origin: {},
+    contentRevision: 0,
+    variation: null,
     createdAt: "2026-07-03T00:00:00Z",
     updatedAt: "2026-07-03T00:00:00Z",
     ...overrides,
@@ -126,6 +131,8 @@ function submittedItem(overrides: Partial<BulkItem> = {}): BulkItem {
     retryCount: 0,
     submit: { submittedProblemId: "problem-1" },
     origin: {},
+    contentRevision: 0,
+    variation: null,
     createdAt: "2026-07-03T00:00:00Z",
     updatedAt: "2026-07-03T00:00:00Z",
     ...overrides,
@@ -226,6 +233,48 @@ describe("BulkIngestionWizard", () => {
       expect(screen.getByTestId("bulk-wizard-upload-input")).toBeInTheDocument();
     });
     expect(mocks.createBatch).toHaveBeenCalledTimes(1);
+    expect(mocks.createBatch).toHaveBeenCalledWith("original");
+  });
+
+  it("creates a variant batch with the selected mode", async () => {
+    mocks.getActiveBatch.mockRejectedValue(
+      new ApiError("No active batch found", 404, "NOT_FOUND"),
+    );
+    mocks.createBatch.mockResolvedValue({
+      batch: makeBatch({ id: "batch-variant", ingestionMode: "data-only" }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-create-batch")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-mode-data-only"));
+    fireEvent.click(screen.getByTestId("bulk-wizard-create-batch"));
+
+    await waitFor(() => {
+      expect(mocks.createBatch).toHaveBeenCalledWith("data-only");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-mode-locked")).toHaveTextContent(
+        "Variant (data-only)",
+      );
+    });
+  });
+
+  it("shows the stored mode as locked when resuming a batch", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({ ingestionMode: "data-and-wording", images: [] }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-mode-locked")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("bulk-wizard-mode-locked")).toHaveTextContent(
+      "Variant (data-and-wording)",
+    );
+    expect(screen.queryByTestId("bulk-wizard-mode-original")).not.toBeInTheDocument();
   });
 
   it("advances to review step when batch has committed images and queued items", async () => {
@@ -255,6 +304,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -312,6 +363,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -344,6 +397,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -376,6 +431,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -638,6 +695,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1245,6 +1304,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1303,6 +1364,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1327,6 +1390,7 @@ describe("BulkIngestionWizard", () => {
     mocks.getBatch.mockResolvedValue({
       batch: makeBatch({
         status: "completed",
+        ingestionMode: "original",
         images: [
           {
             imageId: "img-1",
@@ -1355,6 +1419,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: { submittedProblemId: "problem-1" },
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1412,6 +1478,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1430,6 +1498,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: {},
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1488,6 +1558,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: { submittedProblemId: "problem-1" },
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1506,6 +1578,8 @@ describe("BulkIngestionWizard", () => {
             retryCount: 0,
             submit: { failureMessage: "Invalid draft" },
             origin: {},
+            contentRevision: 0,
+            variation: null,
             createdAt: "2026-07-03T00:00:00Z",
             updatedAt: "2026-07-03T00:00:00Z",
           },
@@ -1822,6 +1896,7 @@ describe("BulkIngestionWizard", () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         status: "completed",
+        ingestionMode: "original",
         images: [committedImage()],
         items: [submittedItem()],
       }),
@@ -1845,6 +1920,7 @@ describe("BulkIngestionWizard", () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         status: "completed",
+        ingestionMode: "original",
         images: [committedImage()],
         items: [submittedItem()],
       }),
@@ -1859,10 +1935,11 @@ describe("BulkIngestionWizard", () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
-  it("starts a new batch from the completed state", async () => {
+  it("returns to a fresh upload step with mode selection when starting a new batch", async () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         status: "completed",
+        ingestionMode: "original",
         images: [committedImage()],
         items: [submittedItem()],
       }),
@@ -1878,8 +1955,20 @@ describe("BulkIngestionWizard", () => {
 
     fireEvent.click(screen.getByTestId("bulk-wizard-start-new"));
 
+    // Mode selection is shown again before the next batch is created.
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-mode-original")).toBeInTheDocument();
+    });
+    const original = screen.getByTestId(
+      "bulk-wizard-mode-original",
+    ) as HTMLInputElement;
+    expect(original.checked).toBe(true);
+    expect(mocks.createBatch).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("bulk-wizard-create-batch"));
     await waitFor(() => {
       expect(mocks.createBatch).toHaveBeenCalledTimes(1);
+      expect(mocks.createBatch).toHaveBeenCalledWith("original");
     });
     await waitFor(() => {
       expect(screen.getByTestId("bulk-wizard-upload-input")).toBeInTheDocument();

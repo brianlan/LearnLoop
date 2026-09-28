@@ -1,10 +1,42 @@
 import { useRef } from "react";
-import type { BulkBatch } from "@/types/bulkIngestion";
+import type { BulkBatch, IngestionMode } from "@/types/bulkIngestion";
+
+export const INGESTION_MODE_OPTIONS: {
+  value: IngestionMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "original",
+    label: "Original",
+    description: "Ingest the problems exactly as they are.",
+  },
+  {
+    value: "data-only",
+    label: "Variant (data-only)",
+    description:
+      "Generate a new practice problem with different numbers while keeping the wording, roles, and what is asked.",
+  },
+  {
+    value: "data-and-wording",
+    label: "Variant (data-and-wording)",
+    description:
+      "Generate a new practice problem with different data and surface context while keeping the same math structure.",
+  },
+];
+
+export function ingestionModeLabel(mode: IngestionMode): string {
+  return (
+    INGESTION_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode
+  );
+}
 
 export interface BulkUploadStepProps {
   batch: BulkBatch | null;
   isLoading: boolean;
   error?: string;
+  mode: IngestionMode;
+  onModeChange: (mode: IngestionMode) => void;
   onCreateBatch: () => void;
   onUpload: (files: FileList | null) => void;
 }
@@ -13,6 +45,8 @@ export function BulkUploadStep({
   batch,
   isLoading,
   error,
+  mode,
+  onModeChange,
   onCreateBatch,
   onUpload,
 }: BulkUploadStepProps) {
@@ -31,6 +65,13 @@ export function BulkUploadStep({
       )}
       {batch ? (
         <>
+          <p
+            data-testid="bulk-wizard-mode-locked"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Ingestion mode: {ingestionModeLabel(batch.ingestionMode)} (locked
+            for this batch)
+          </p>
           <p>Add images or PDFs to your batch.</p>
           {batch.images.length > 0 && (
             <ul data-testid="bulk-upload-image-list">
@@ -63,6 +104,41 @@ export function BulkUploadStep({
       ) : (
         <>
           <p>No active batch found. Create one to get started.</p>
+          <fieldset
+            style={{ border: "none", padding: 0, margin: "0 0 16px" }}
+          >
+            <legend
+              style={{
+                fontWeight: 500,
+                marginBottom: "8px",
+                padding: 0,
+              }}
+            >
+              Ingestion mode
+            </legend>
+            {INGESTION_MODE_OPTIONS.map((option) => (
+              <label
+                key={option.value}
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  cursor: isLoading ? "default" : "pointer",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="ingestion-mode"
+                  value={option.value}
+                  data-testid={`bulk-wizard-mode-${option.value}`}
+                  checked={mode === option.value}
+                  disabled={isLoading}
+                  onChange={() => onModeChange(option.value)}
+                  style={{ marginRight: "8px" }}
+                />
+                <strong>{option.label}</strong> — {option.description}
+              </label>
+            ))}
+          </fieldset>
           <button
             type="button"
             onClick={onCreateBatch}

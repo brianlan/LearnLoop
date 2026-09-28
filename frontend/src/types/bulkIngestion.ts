@@ -1,5 +1,21 @@
 export type BatchState = "active" | "completed" | "expired" | "deleted";
 
+// Batch-level ingestion mode, immutable after creation; mirrors the backend
+// IngestionMode enum. Missing on legacy batches means original.
+export type IngestionMode = "original" | "data-only" | "data-and-wording";
+
+// Per-item variant lifecycle: not-requested → queued → generating →
+// validating → ready | failed; ready → needs-validation; failed → queued
+// only via manual Generate Again.
+export type VariationStatus =
+  | "not-requested"
+  | "queued"
+  | "generating"
+  | "validating"
+  | "ready"
+  | "failed"
+  | "needs-validation";
+
 export type ImageState =
   | "uploaded"
   | "detecting"
@@ -87,6 +103,30 @@ export interface BulkItemSubmit {
   failureMessage?: string | null;
 }
 
+// The confirmed source draft sent with Generate; mirrors the backend
+// VariationOriginalPayload.
+export interface VariationOriginalPayload {
+  text: string;
+  problemType: string;
+  correctAnswer: string;
+  graphDsl?: string | null;
+  subject?: string | null;
+}
+
+export interface GenerateVariationRequest {
+  expectedRevision: number;
+  original: VariationOriginalPayload;
+}
+
+export interface EditVariationCandidateRequest {
+  expectedRevision: number;
+  text?: string;
+  problemType?: string;
+  graphDsl?: string | null;
+  correctAnswer?: string;
+  tags?: string[];
+}
+
 export interface BulkCrop {
   bucket?: string;
   objectKey?: string;
@@ -108,14 +148,57 @@ export interface BulkItem {
   origin: Record<string, unknown>;
   crop?: BulkCrop | null;
   leaseUntil?: string | null;
+  // Per-item semantic revision: bumped by semantic source/candidate changes
+  // and new generation; tags and worker progress never bump it.
+  contentRevision: number;
+  variation: BulkItemVariation | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// Variant content stored/edited on the candidate.
+export interface BulkVariationCandidate {
+  text?: string | null;
+  problemType?: string | null;
+  graphDsl?: string | null;
+  correctAnswer?: string | null;
+  tags?: string[];
+}
+
+// Validator evidence record; the backend presents it verbatim (alias-shaped
+// dict with model identities, checks, evidence and answer comparisons) and
+// it never contains provider secrets. Typed loosely until the evidence UI
+// slice owns its exact shape.
+export interface BulkVariationValidation {
+  verdict?: string | null;
+  [key: string]: unknown;
+}
+
+// Client-facing per-item variation view: status, progress and evidence only;
+// the backend never exposes claimToken/leaseUntil fencing state.
+export interface BulkItemVariation {
+  status: VariationStatus;
+  generationCount: number;
+  original: BulkVariationOriginal | null;
+  candidate: BulkVariationCandidate | null;
+  validation: BulkVariationValidation | null;
+  validatedRevision: number | null;
+  queuedAt: string | null;
+}
+
+export interface BulkVariationOriginal {
+  text: string;
+  problemType: string;
+  graphDsl?: string | null;
+  correctAnswer: string;
+  subject?: string | null;
 }
 
 export interface BulkBatch {
   id: string;
   userId: string;
   status: BatchState;
+  ingestionMode: IngestionMode;
   images: BulkImage[];
   items: BulkItem[];
   createdAt: string;

@@ -3,11 +3,16 @@ import type {
   BatchResponse,
   BulkDraft,
   BulkImageBox,
+  EditVariationCandidateRequest,
+  GenerateVariationRequest,
+  IngestionMode,
   SubmitSummaryResponse,
 } from "@/types/bulkIngestion";
 
-export async function createBatch(): Promise<BatchResponse> {
-  return api.post<BatchResponse>("/ingestion-batches", undefined);
+export async function createBatch(
+  ingestionMode: IngestionMode = "original",
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>("/ingestion-batches", { ingestionMode });
 }
 
 export async function getActiveBatch(): Promise<BatchResponse> {
@@ -128,5 +133,38 @@ export async function submitBatch(
   return api.post<SubmitSummaryResponse>(
     `/ingestion-batches/${batchId}/submit`,
     undefined,
+  );
+}
+
+export async function generateVariation(
+  batchId: string,
+  itemId: string,
+  request: GenerateVariationRequest,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}/variation/generate`,
+    request,
+  );
+}
+
+export async function editVariationCandidate(
+  batchId: string,
+  itemId: string,
+  request: EditVariationCandidateRequest,
+): Promise<BatchResponse> {
+  return api.patch<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}/variation/candidate`,
+    request,
+  );
+}
+
+export async function revalidateVariation(
+  batchId: string,
+  itemId: string,
+  expectedRevision: number,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}/variation/revalidate`,
+    { expectedRevision },
   );
 }
