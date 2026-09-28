@@ -3027,6 +3027,79 @@ async def test_stale_submit_completion_cannot_record_after_generate_wins() -> No
 
 
 @pytest.mark.asyncio
+async def test_delete_serializes_with_live_submit_reservation(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guard-passing create cannot lose its item to a concurrent deletion.
+
+    Once the in-creation ownership guard succeeds the reservation is live,
+    so a competing delete is refused before the insert: the problem, its
+    solution task and its tags commit coherently and no orphan problem can
+    exist after a reservation loss.
+    """
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": "4", "expectedRevision": 0},
+    )
+    assert patch_response.status_code == 200
+    database = bulk_app.state.fake_database
+
+    from app.presentation import bulk_ingestion as bulk_ingestion_module
+
+    creation_started = asyncio.Event()
+    release_creation = asyncio.Event()
+    renewal_calls = {"n": 0}
+
+    async def fake_renew(*args: Any, **kwargs: Any) -> bool:
+        renewal_calls["n"] += 1
+        if renewal_calls["n"] == 1:
+            return True  # pre-creation ownership proof
+        # The second call is the guard inside real problem creation, right
+        # before the irreversible insert: pause it while a competing delete
+        # runs. The guard itself SUCCEEDS — deletion must lose to the live
+        # reservation, not to a failed guard.
+        creation_started.set()
+        await release_creation.wait()
+        return True
+
+    monkeypatch.setattr(bulk_ingestion_module, "renew_submit_reservation", fake_renew)
+
+    submit_task = asyncio.create_task(
+        authenticated_bulk_client.post(f"/api/v1/ingestion-batches/{batch_id}/submit")
+    )
+    await asyncio.wait_for(creation_started.wait(), timeout=5)
+
+    # Deletion races the submit between the successful guard and the insert.
+    delete_response = await authenticated_bulk_client.delete(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}"
+    )
+    assert delete_response.status_code == 200
+    assert _variation_of(delete_response.json(), item_id)["status"] == "ready"
+
+    release_creation.set()
+    response = await asyncio.wait_for(submit_task, timeout=5)
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    assert summary["items"][0]["failureCode"] is None
+
+    # The side effects committed coherently with the recorded submission:
+    # no orphan problem and no dropped reservation.
+    assert await database["problems"].count_documents({}) == 1
+    assert await database["solution_generation_tasks"].count_documents({}) == 1
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "submitted"
+
+
+@pytest.mark.asyncio
 async def test_generate_blocked_while_submit_creates_problem(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,

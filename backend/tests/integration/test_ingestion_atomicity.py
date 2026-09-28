@@ -775,12 +775,19 @@ async def test_stale_submit_result_cannot_resurrect_deleted_item(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression: a submit outcome racing a deletion must not resurrect the item
-    during the OCC retry, and the batch must not complete from the stale result."""
+    during the OCC retry, and the batch must not complete from the stale result.
+
+    The deletion wins against an expired reservation (a crashed submit): a
+    live reservation now refuses deletion outright so problem creation can
+    never lose its item mid-submit."""
     batch_id, item_a_id, item_b_id = await _batch_with_two_items(real_database, user_id, settings)
     await _set_item_fields(
         real_database, batch_id, user_id, item_a_id, status=ItemState.READY.value,
     )
     same_ts = NOW + timedelta(seconds=1)
+    # The crashed submit's reservation is long past its deadline when the
+    # deletion arrives, so the deletion legitimately wins.
+    expired_ts = same_ts + timedelta(minutes=11)
     # Make the document's updatedAt equal the submit timestamp (the
     # same-millisecond precondition) so only the revision guard rejects the
     # first write and the retry path is exercised deterministically.
@@ -799,7 +806,7 @@ async def test_stale_submit_result_cannot_resurrect_deleted_item(
         if not landed["delete"]:
             landed["delete"] = True
             assert await mark_item_deleted(
-                database, batch_id, user_id, item_a_id, now=same_ts
+                database, batch_id, user_id, item_a_id, now=expired_ts
             ) is True
         return doc
 

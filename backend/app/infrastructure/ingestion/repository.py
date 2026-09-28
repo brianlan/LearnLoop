@@ -847,6 +847,17 @@ async def mark_item_deleted(
 ) -> bool:
     await _load_batch_for_update(database, batch_id, user_id)
 
+    # A live submit reservation owns the item: deleting it mid-submit would
+    # strand the problem creation that reservation is about to commit (the
+    # ownership guard would pass, then deletion wins before the insert).
+    # Expired reservations belong to crashed submits and do not block.
+    live_reservation_block = {
+        "$or": [
+            {"variation.submitReservation": {"$in": [None]}},
+            {"variation.submitReservation.expiresAt": {"$lte": now}},
+        ],
+    }
+
     # previousStatus must record the observed status, so each candidate state
     # gets its own conditional attempt; the first match wins atomically.
     # ponytail: enumerated states; extend here when ItemState gains members.
@@ -861,7 +872,13 @@ async def mark_item_deleted(
             {
                 "_id": _object_id(batch_id),
                 "userId": user_id,
-                "items": {"$elemMatch": {"itemId": item_id, "status": status}},
+                "items": {
+                    "$elemMatch": {
+                        "itemId": item_id,
+                        "status": status,
+                        **live_reservation_block,
+                    }
+                },
             },
             {
                 "$set": {
