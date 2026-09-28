@@ -1025,11 +1025,13 @@ async def renew_submit_reservation(
 ) -> bool:
     """Extend one item's submit reservation while its side effect runs.
 
-    Problem creation can outlive the fixed reservation window, so the submit
-    proves ownership and extends the deadline immediately before and after
-    creating the original problem (plus a keep-alive heartbeat during it).
-    Losing the renewal — batch expired/cancelled, item deleted, or the
-    reservation taken over — fails the submit closed.
+    Ownership requires a live reservation: once the deadline passes the
+    former owner cannot revive it (Generate reclaims the item), so a submit
+    must renew strictly inside the window — its heartbeat does. Problem
+    creation can outlive a single window, so the submit proves ownership
+    and extends the deadline immediately before and after creating the
+    original problem, and creation itself re-proves ownership right before
+    its irreversible insert. Losing any proof fails the submit closed.
     """
     result = await _collection(database).update_one(
         {
@@ -1042,6 +1044,7 @@ async def renew_submit_reservation(
                     "itemId": item_id,
                     "status": {"$ne": ItemState.DELETED.value},
                     "variation.submitReservation.token": token,
+                    "variation.submitReservation.expiresAt": {"$gt": now},
                 }
             },
         },

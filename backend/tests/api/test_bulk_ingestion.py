@@ -2891,7 +2891,7 @@ async def test_generate_rejects_submit_reserved_item_until_expiry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_renewed_submit_reservation_blocks_generate_past_window() -> None:
+async def test_submit_reservation_renewal_requires_live_window() -> None:
     database = FakeDatabase()
     batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a"])
     now = datetime.now(UTC)
@@ -2901,22 +2901,36 @@ async def test_renewed_submit_reservation_blocks_generate_past_window() -> None:
 
     from app.problem_variation import InvalidVariationStateError
 
-    # Problem creation stalled; the live submit renewed its reservation past
-    # the original 10-minute window (the keep-alive heartbeat's job).
-    later = now + timedelta(minutes=11)
+    # A renewal strictly inside the window extends it: Generate stays locked
+    # out past the original 10-minute deadline (the live submit's heartbeat).
+    within = now + timedelta(minutes=5)
     assert await renew_submit_reservation(
-        database, batch_id, "user-1", "a", token=token, now=later,
+        database, batch_id, "user-1", "a", token=token, now=within,
     ) is True
+    past_original = now + timedelta(minutes=11)
     with pytest.raises(InvalidVariationStateError, match="reserved for submission"):
         await request_variation_generation(
             database, batch_id, "user-1", "a",
-            original=dict(VARIANT_ORIGINAL), expected_revision=0, now=later,
+            original=dict(VARIANT_ORIGINAL), expected_revision=0, now=past_original,
         )
 
-    # A different token can never renew someone else's reservation.
+    # A foreign token can never renew someone else's reservation.
     assert await renew_submit_reservation(
-        database, batch_id, "user-1", "a", token="not-the-owner", now=later,
+        database, batch_id, "user-1", "a", token="not-the-owner", now=within,
     ) is False
+
+    # Once the renewed window passes, the old token cannot revive the
+    # reservation and Generate reclaims the item.
+    expired = now + timedelta(minutes=16)
+    assert await renew_submit_reservation(
+        database, batch_id, "user-1", "a", token=token, now=expired,
+    ) is False
+    await request_variation_generation(
+        database, batch_id, "user-1", "a",
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=expired,
+    )
+    batch_doc = await database[INGESTION_BATCHES_COLLECTION].find_one({"_id": batch_id})
+    assert _stored_item(batch_doc, "a")["variation"]["submitReservation"] is None
 
 
 @pytest.mark.asyncio
@@ -3147,28 +3161,28 @@ async def test_generate_wins_mid_creation_without_stale_submission(
 
     creation_started = asyncio.Event()
     release_creation = asyncio.Event()
+    renewal_open = {"ok": True}
+    renewal_calls = {"n": 0}
 
-    async def paused_create(*args: Any, **kwargs: Any) -> Any:
+    async def fake_renew(*args: Any, **kwargs: Any) -> bool:
+        renewal_calls["n"] += 1
+        if renewal_calls["n"] == 1:
+            return True  # pre-creation ownership proof
+        # The second call is the guard inside real problem creation, right
+        # before the irreversible insert: pause it until Generate has won.
         creation_started.set()
         await release_creation.wait()
-        return {"_id": ObjectId()}
-
-    renewal_open = {"ok": True}
-
-    async def stateful_renewal(*args: Any, **kwargs: Any) -> bool:
         return renewal_open["ok"]
 
-    monkeypatch.setattr(bulk_ingestion_module, "create_problem_from_draft", paused_create)
-    monkeypatch.setattr(bulk_ingestion_module, "renew_submit_reservation", stateful_renewal)
+    monkeypatch.setattr(bulk_ingestion_module, "renew_submit_reservation", fake_renew)
 
     submit_task = asyncio.create_task(
         authenticated_bulk_client.post(f"/api/v1/ingestion-batches/{batch_id}/submit")
     )
     await asyncio.wait_for(creation_started.wait(), timeout=5)
 
-    # Ownership is lost mid-creation (as if the reservation had been taken
-    # over after expiring): Generate confirms the variant while the stalled
-    # submit still holds its in-flight problem creation.
+    # Ownership is lost while creation is paused: Generate confirms the
+    # variant (the reservation expired, renewals never extended it).
     renewal_open["ok"] = False
     await request_variation_generation(
         database, ObjectId(batch_id), user_id, item_id,
@@ -3177,14 +3191,17 @@ async def test_generate_wins_mid_creation_without_stale_submission(
     )
     release_creation.set()
 
-    # The post-creation ownership proof fails closed: the response and the
-    # database never claim the source was submitted.
+    # The in-creation ownership guard aborts before any write: the response
+    # and the database never claim the source was submitted, and no problem
+    # or solution-task side effect is left behind.
     response = await asyncio.wait_for(submit_task, timeout=5)
     assert response.status_code == 200
     summary = response.json()["submitSummary"]
     assert summary["items"][0]["status"] == "submit-failed"
     assert summary["items"][0]["failureCode"] == "RESERVATION_LOST"
 
+    assert await database["problems"].count_documents({}) == 0
+    assert await database["solution_generation_tasks"].count_documents({}) == 0
     detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
     item = _variation_of(detail.json(), item_id)
     assert item["status"] == "ready"
