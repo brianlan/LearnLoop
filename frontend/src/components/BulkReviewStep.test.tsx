@@ -1128,7 +1128,6 @@ function makeVariation(overrides: Partial<BulkItemVariation> = {}): BulkItemVari
       problemType: "short-answer",
       graphDsl: "",
       correctAnswer: "6",
-      tags: ["math"],
     },
     validation: { verdict: "PASS" },
     validatedRevision: 1,
@@ -1223,6 +1222,56 @@ describe("BulkReviewStep source/candidate autosave identity", () => {
     expect(screen.getByTestId("bulk-review-answer")).toHaveValue("66");
   });
 
+  it("preserves shared draft tags in the candidate buffer and candidate saves", async () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              contentRevision: 1,
+              draft: {
+                text: "What is 2+2?",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: ["math", "algebra"],
+                subject: "math",
+              },
+              variation: makeVariation(),
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // The candidate editor starts from the shared draft tags (the candidate
+    // payload carries none).
+    expect(screen.getByTestId("bulk-review-tags-tag-math")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-tags-tag-algebra")).toBeInTheDocument();
+
+    // A semantic candidate edit keeps the shared tags untouched.
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({
+          correctAnswer: "66",
+          tags: ["math", "algebra"],
+        }),
+        expect.objectContaining({ target: "candidate", expectedRevision: 1 }),
+      );
+    });
+  });
+
   it("replaces the candidate buffer on regeneration and ignores the old write", async () => {
     let resolveSave: (value: unknown) => void = () => undefined;
     handlers.onUpdateDraft.mockImplementation(
@@ -1273,7 +1322,6 @@ describe("BulkReviewStep source/candidate autosave identity", () => {
                   problemType: "short-answer",
                   graphDsl: "",
                   correctAnswer: "10",
-                  tags: ["math"],
                 },
               }),
             }),

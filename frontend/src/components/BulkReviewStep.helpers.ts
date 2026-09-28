@@ -47,7 +47,10 @@ export function targetDraft(item: BulkItem, target: EditTarget): BulkDraft {
       problemType: candidate.problemType ?? "short-answer",
       graphDsl: candidate.graphDsl ?? "",
       correctAnswer: candidate.correctAnswer ?? "",
-      tags: candidate.tags ?? [],
+      // Tags are shared metadata living in the item draft; the candidate
+      // payload never carries them (seeding from the candidate would send an
+      // empty tag list and clear the shared tags on every candidate save).
+      tags: item.draft.tags ?? [],
       // Display-only: a candidate has no subject of its own and candidate
       // saves never send this field.
       subject: item.variation.original?.subject ?? item.draft.subject ?? "math",

@@ -260,7 +260,6 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
           problemType: "short-answer",
           graphDsl: "",
           correctAnswer: "6",
-          tags: ["math"],
         },
         validation: { verdict: "PASS" },
         validatedRevision: 3,
@@ -286,7 +285,12 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       expect(mocks.editVariationCandidate).toHaveBeenCalledWith(
         "batch-1",
         "item-1",
-        expect.objectContaining({ expectedRevision: 3, correctAnswer: "66" }),
+        expect.objectContaining({
+          expectedRevision: 3,
+          correctAnswer: "66",
+          // Shared draft tags are preserved on candidate saves.
+          tags: ["math"],
+        }),
       );
     });
     expect(mocks.updateItemDraft).not.toHaveBeenCalled();

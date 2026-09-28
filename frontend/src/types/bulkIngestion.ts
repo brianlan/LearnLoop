@@ -156,13 +156,14 @@ export interface BulkItem {
   updatedAt: string;
 }
 
-// Variant content stored/edited on the candidate.
+// Variant content stored/edited on the candidate. Tags are shared metadata
+// and live in the item draft (`BulkDraft.tags`); the backend candidate
+// deliberately never carries them.
 export interface BulkVariationCandidate {
   text?: string | null;
   problemType?: string | null;
   graphDsl?: string | null;
   correctAnswer?: string | null;
-  tags?: string[];
 }
 
 // Validator evidence record; the backend presents it verbatim (alias-shaped

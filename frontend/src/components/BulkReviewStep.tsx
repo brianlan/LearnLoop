@@ -86,7 +86,6 @@ export function BulkReviewStep({
       string,
       | {
           seq: number;
-          serialized: string;
           revision: number;
           generation: number;
         }
@@ -327,7 +326,6 @@ export function BulkReviewStep({
         const seq = (saveSeqRef.current += 1);
         inFlightRefs.current[key] = {
           seq,
-          serialized: sentSerialized,
           revision: stamp?.revision ?? 0,
           generation: stamp?.generation ?? 0,
         };
