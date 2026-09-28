@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   updateItemDraft: vi.fn<() => Promise<BatchResponse>>(),
   editVariationCandidate: vi.fn<() => Promise<BatchResponse>>(),
   generateVariation: vi.fn<() => Promise<BatchResponse>>(),
+  revalidateVariation: vi.fn<() => Promise<BatchResponse>>(),
 }));
 
 vi.mock("@/api/bulkIngestion", () => ({
@@ -39,6 +40,7 @@ vi.mock("@/api/bulkIngestion", () => ({
   updateItemDraft: mocks.updateItemDraft,
   editVariationCandidate: mocks.editVariationCandidate,
   generateVariation: mocks.generateVariation,
+  revalidateVariation: mocks.revalidateVariation,
 }));
 
 function makeImage(overrides: Partial<BulkImage> = {}): BulkImage {
@@ -263,7 +265,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
           graphDsl: "",
           correctAnswer: "6",
         },
-        validation: { verdict: "PASS" },
+        validation: { verdict: "pass" },
         validatedRevision: 3,
         queuedAt: null,
       },
@@ -290,6 +292,10 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         expect.objectContaining({
           expectedRevision: 3,
           correctAnswer: "66",
+          // Empty graphDsl is sent as null: "" vs the stored None would
+          // count as a semantic change and falsely invalidate the
+          // candidate on tags-only saves.
+          graphDsl: null,
           // Shared draft tags are preserved on candidate saves.
           tags: ["math"],
         }),
@@ -338,5 +344,51 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         correctAnswer: "4",
       }),
     });
+  });
+
+  it("routes Revalidate to the validator-only endpoint with the candidate revision, never generate", async () => {
+    const itemNeedingValidation = makeItem({
+      contentRevision: 4,
+      variation: {
+        status: "needs-validation",
+        generationCount: 1,
+        original: {
+          text: "What is 2+2?",
+          problemType: "short-answer",
+          graphDsl: "",
+          correctAnswer: "4",
+          subject: "math",
+        },
+        candidate: {
+          text: "What is 3+3?",
+          problemType: "short-answer",
+          graphDsl: "",
+          correctAnswer: "6",
+        },
+        validation: null,
+        validatedRevision: null,
+        queuedAt: null,
+      },
+    });
+    const variantBatch = makeBatch({
+      ingestionMode: "data-and-wording",
+      items: [itemNeedingValidation],
+    });
+    mocks.revalidateVariation.mockResolvedValue({ batch: variantBatch });
+
+    await renderAtReviewStep({ batch: variantBatch });
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("bulk-review-revalidate"));
+
+    await waitFor(() => {
+      expect(mocks.revalidateVariation).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.revalidateVariation).toHaveBeenCalledWith(
+      "batch-1",
+      "item-1",
+      4,
+    );
+    expect(mocks.generateVariation).not.toHaveBeenCalled();
   });
 });

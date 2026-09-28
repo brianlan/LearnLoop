@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { BulkReviewStep } from "./BulkReviewStep";
+import { variantPassGateReason } from "./BulkReviewStep.helpers";
 import type {
   BulkBatch,
   BulkItem,
@@ -72,6 +73,7 @@ describe("BulkReviewStep", () => {
     onRefresh: vi.fn(),
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
+    onRevalidate: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1130,7 +1132,7 @@ function makeVariation(overrides: Partial<BulkItemVariation> = {}): BulkItemVari
       graphDsl: "",
       correctAnswer: "6",
     },
-    validation: { verdict: "PASS" },
+    validation: { verdict: "pass" },
     validatedRevision: 1,
     queuedAt: null,
     ...overrides,
@@ -1142,6 +1144,7 @@ describe("BulkReviewStep source/candidate autosave identity", () => {
     onRefresh: vi.fn(),
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
+    onRevalidate: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1447,6 +1450,7 @@ describe("BulkReviewStep variant generate", () => {
     onRefresh: vi.fn(),
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
+    onRevalidate: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1948,5 +1952,240 @@ describe("BulkReviewStep variant generate", () => {
     );
     expect(variantComparisons[0]).toHaveTextContent("7 != 6");
     expect(variantComparisons[1]).toHaveTextContent("6.5 != 6");
+  });
+});
+
+describe("BulkReviewStep variant pass gating and revalidation", () => {
+  const handlers = {
+    onRefresh: vi.fn(),
+    onUpdateDraft: vi.fn(),
+    onGenerate: vi.fn(),
+    onRevalidate: vi.fn(),
+    onRetry: vi.fn(),
+    onDelete: vi.fn(),
+    onUndoDelete: vi.fn(),
+    onContinue: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Object.values(handlers).forEach((fn) => fn.mockReset());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Current PASS baseline: contentRevision and validatedRevision must match.
+  function passedItem(
+    overrides: Partial<BulkItem> = {},
+    variationOverrides: Partial<BulkItemVariation> = {},
+  ): BulkItem {
+    return makeItem("item-1", {
+      contentRevision: 2,
+      variation: makeVariation({ validatedRevision: 2, ...variationOverrides }),
+      ...overrides,
+    });
+  }
+
+  function variantReviewUi(item: BulkItem) {
+    return (
+      <BulkReviewStep
+        batch={makeBatch({ ingestionMode: "data-and-wording", items: [item] })}
+        isLoading={false}
+        {...handlers}
+      />
+    );
+  }
+
+  it("continues when every item holds a current PASS candidate", () => {
+    render(variantReviewUi(passedItem()));
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+    expect(handlers.onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "not generated",
+      { status: "not-requested", original: null, candidate: null, generationCount: 0, validation: null, validatedRevision: null } as Partial<BulkItemVariation>,
+      "Variant not generated",
+    ],
+    [
+      "queued",
+      { status: "queued" } as Partial<BulkItemVariation>,
+      "Variant generation is queued",
+    ],
+    [
+      "generating",
+      { status: "generating" } as Partial<BulkItemVariation>,
+      "Variant generation is running",
+    ],
+    [
+      "validating",
+      { status: "validating" } as Partial<BulkItemVariation>,
+      "Variant validation is running",
+    ],
+    [
+      "needs-validation",
+      { status: "needs-validation", validation: null, validatedRevision: null } as Partial<BulkItemVariation>,
+      "Variant needs validation",
+    ],
+    [
+      "failed",
+      { status: "failed", candidate: null, validation: null, validatedRevision: null } as Partial<BulkItemVariation>,
+      "Variant failed — generate again",
+    ],
+    [
+      "ready with a fail verdict",
+      { validation: { verdict: "fail" }, validatedRevision: null } as Partial<BulkItemVariation>,
+      "Variant validation failed",
+    ],
+    [
+      "ready with a stale validatedRevision",
+      { validatedRevision: 1 } as Partial<BulkItemVariation>,
+      "Variant needs revalidation",
+    ],
+  ])(
+    "blocks Continue while the variant is %s",
+    (_label, variationOverrides, reason) => {
+      const item = passedItem({}, variationOverrides);
+      // The exact gate reason comes from the shared helper.
+      expect(variantPassGateReason(item)).toBe(reason);
+
+      render(variantReviewUi(item));
+      expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
+      expect(screen.getByTestId("bulk-review-item-item-1")).toHaveAttribute(
+        "data-action-required",
+        "true",
+      );
+    },
+  );
+
+  it("lets a submit-failed item with a current PASS candidate continue", () => {
+    render(variantReviewUi(passedItem({ status: "submit-failed" })));
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+  });
+
+  it("blocks Continue after a semantic candidate edit and re-approves via validator-only revalidation", async () => {
+    const { rerender } = render(variantReviewUi(passedItem()));
+    expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();
+
+    // Semantic candidate edit lands on the server: needs-validation, approval
+    // cleared, contentRevision bumped by the backend edit contract.
+    rerender(
+      variantReviewUi(
+        passedItem(
+          { contentRevision: 3 },
+          { status: "needs-validation", validation: null, validatedRevision: null },
+        ),
+      ),
+    );
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
+    expect(screen.getByTestId("bulk-review-revalidate")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("bulk-review-revalidate"));
+    await waitFor(() => {
+      expect(handlers.onRevalidate).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onRevalidate).toHaveBeenCalledWith("item-1", 3);
+    // Validator-only: revalidation never triggers generation.
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+
+    // The validator-only run re-approves the same generation (generationCount
+    // stays 1 in the fixture; validatedRevision returns to the revision).
+    rerender(
+      variantReviewUi(
+        passedItem({ contentRevision: 3 }, { validatedRevision: 3 }),
+      ),
+    );
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();
+  });
+
+  it("surfaces a failed revalidation and keeps the action available", async () => {
+    handlers.onRevalidate.mockRejectedValue(new Error("validator offline"));
+    render(
+      variantReviewUi(
+        passedItem(
+          {},
+          { status: "needs-validation", validation: null, validatedRevision: null },
+        ),
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-revalidate"));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("bulk-review-revalidate-error"),
+      ).toHaveTextContent("validator offline");
+    });
+    expect(screen.getByTestId("bulk-review-revalidate")).toBeEnabled();
+  });
+
+  it("keeps a passed item submittable across a tags-only candidate save", async () => {
+    handlers.onUpdateDraft.mockResolvedValue({ contentRevision: 2 });
+    render(variantReviewUi(passedItem()));
+
+    const tagField = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagField, { target: { value: "calculus" } });
+    fireEvent.keyDown(tagField, { key: "Enter", code: "Enter" });
+
+    // Tags-only save: no invalidation, no revision bump, still current PASS.
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ tags: ["math", "calculus"] }),
+        expect.objectContaining({ target: "candidate", expectedRevision: 2 }),
+      );
+    });
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();
+  });
+
+  it("warns that source edits invalidate the candidate and gates Continue after the reset lands", () => {
+    const { rerender } = render(variantReviewUi(passedItem()));
+
+    // Candidate is the default target: no warning.
+    expect(
+      screen.queryByTestId("bulk-review-source-invalidation-warning"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    expect(
+      screen.getByTestId("bulk-review-source-invalidation-warning"),
+    ).toHaveTextContent("invalidates the current variant");
+
+    // Source semantic edit lands: candidate discarded, back to not-requested.
+    rerender(
+      variantReviewUi(
+        passedItem(
+          { contentRevision: 3 },
+          {
+            status: "not-requested",
+            original: null,
+            candidate: null,
+            generationCount: 0,
+            validation: null,
+            validatedRevision: null,
+          },
+        ),
+      ),
+    );
+
+    expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
+    expect(screen.getByTestId("bulk-review-variation-status")).toHaveTextContent(
+      "Variant: not generated",
+    );
+    expect(
+      screen.queryByTestId("bulk-review-source-invalidation-warning"),
+    ).not.toBeInTheDocument();
   });
 });

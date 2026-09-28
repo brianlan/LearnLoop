@@ -11,6 +11,7 @@ import {
   getActiveBatch,
   getBatch,
   retryItem,
+  revalidateVariation,
   saveImageBoxes,
   startBatchExtraction,
   submitBatch,
@@ -364,20 +365,25 @@ export function BulkIngestionWizard({
     ) => {
       if (!batch) return;
       try {
+        // Empty graphDsl is sent as null: the backend compares candidate/
+        // draft content with None-vs-"" strictness, so sending "" would
+        // count as a semantic change and falsely invalidate the candidate
+        // on tags-only saves (#613 edit contract, FR-tags-no-revalidation).
+        const normalized = { ...changes, graphDsl: changes.graphDsl || null };
         const response =
           options.target === "candidate"
             ? await editVariationCandidate(batch.id, itemId, {
                 expectedRevision: options.expectedRevision,
-                text: changes.text ?? undefined,
-                problemType: changes.problemType ?? undefined,
-                graphDsl: changes.graphDsl,
-                correctAnswer: changes.correctAnswer ?? undefined,
-                tags: changes.tags,
+                text: normalized.text ?? undefined,
+                problemType: normalized.problemType ?? undefined,
+                graphDsl: normalized.graphDsl,
+                correctAnswer: normalized.correctAnswer ?? undefined,
+                tags: normalized.tags,
               })
             : await updateItemDraft(
                 batch.id,
                 itemId,
-                changes,
+                normalized,
                 options.expectedRevision,
               );
         setBatchAndStep(response.batch);
@@ -411,6 +417,27 @@ export function BulkIngestionWizard({
           expectedRevision,
           original,
         });
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        }
+        // Reject to the caller so the review step reports the failure per item.
+        throw err;
+      }
+    },
+    [batch, handleExpiredBatch, setBatchAndStep],
+  );
+
+  const handleRevalidateVariation = useCallback(
+    async (itemId: string, expectedRevision: number) => {
+      if (!batch) return;
+      try {
+        const response = await revalidateVariation(
+          batch.id,
+          itemId,
+          expectedRevision,
+        );
         setBatchAndStep(response.batch);
       } catch (err) {
         if (isBatchExpiredError(err)) {
@@ -690,6 +717,7 @@ export function BulkIngestionWizard({
             onRefresh={handleRefreshBatch}
             onUpdateDraft={handleUpdateItemDraft}
             onGenerate={handleGenerateVariation}
+            onRevalidate={handleRevalidateVariation}
             onRetry={handleRetryItem}
             onDelete={handleDeleteItem}
             onUndoDelete={handleUndoDeleteItem}

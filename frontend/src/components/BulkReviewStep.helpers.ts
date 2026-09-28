@@ -151,13 +151,47 @@ export function hasActiveVariantWork(item: BulkItem): boolean {
   return Boolean(item.variation && isVariantBusy(item.variation.status));
 }
 
+// Current PASS, mirroring the backend variant-submit admission check
+// (variation ready + verdict pass + validatedRevision matching the current
+// contentRevision): only this state may enter final review or submission.
+// Returns null when the item is passed, otherwise a short reason why
+// Continue/submit is blocked.
+export function variantPassGateReason(item: BulkItem): string | null {
+  const variation = item.variation;
+  if (!variation || !variation.original) return "Variant not generated";
+  switch (variation.status) {
+    case "ready":
+      if (variation.validation?.verdict !== "pass") {
+        return "Variant validation failed";
+      }
+      if (variation.validatedRevision !== item.contentRevision) {
+        return "Variant needs revalidation";
+      }
+      return null;
+    case "needs-validation":
+      return "Variant needs validation";
+    case "failed":
+      return "Variant failed — generate again";
+    case "queued":
+      return "Variant generation is queued";
+    case "generating":
+      return "Variant generation is running";
+    case "validating":
+      return "Variant validation is running";
+    default:
+      return `Variant status: ${variation.status}`;
+  }
+}
+
 // The reviewed source confirmed by Generate.
 export function sourcePayloadFromDraft(draft: BulkDraft): VariationOriginalPayload {
   return {
     text: draft.text ?? "",
     problemType: draft.problemType ?? "short-answer",
     correctAnswer: draft.correctAnswer ?? "",
-    graphDsl: draft.graphDsl ?? null,
+    // Empty graphDsl is null for the same reason as draft saves: the
+    // backend treats "" and None as distinct semantic values.
+    graphDsl: draft.graphDsl || null,
     subject: draft.subject ?? null,
   };
 }

@@ -23,6 +23,7 @@ import {
   statusLabel,
   targetDraft,
   targetStamp,
+  variantPassGateReason,
   variationStatusLabel,
   type EditTarget,
   type TargetStamp,
@@ -137,6 +138,10 @@ export interface BulkReviewStepProps {
     original: VariationOriginalPayload,
     expectedRevision: number,
   ) => void | Promise<void>;
+  onRevalidate: (
+    itemId: string,
+    expectedRevision: number,
+  ) => void | Promise<void>;
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
   onUndoDelete: (itemId: string) => void | Promise<void>;
@@ -150,6 +155,7 @@ export function BulkReviewStep({
   onRefresh,
   onUpdateDraft,
   onGenerate,
+  onRevalidate,
   onRetry,
   onDelete,
   onUndoDelete,
@@ -202,6 +208,14 @@ export function BulkReviewStep({
   const pendingGenerateRef = useRef<Map<string, VariationOriginalPayload>>(
     new Map(),
   );
+  // Validator-only revalidation for needs-validation candidates (#613 edit
+  // contract): never a generate call, never a generationCount change.
+  const [revalidatingIds, setRevalidatingIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [revalidateErrors, setRevalidateErrors] = useState<
+    Record<string, string>
+  >({});
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
@@ -274,6 +288,36 @@ export function BulkReviewStep({
       // Otherwise the save pipeline fires it once the reviewed save settles.
     },
     [dirtyKeys, firePendingGenerate, getDraft, generatingIds, savingKeys],
+  );
+
+  const handleRevalidate = useCallback(
+    (item: BulkItem) => {
+      const { itemId } = item;
+      if (revalidatingIds.has(itemId)) return;
+      setRevalidateErrors((prev) => {
+        if (prev[itemId] === undefined) return prev;
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setRevalidatingIds((prev) => new Set(prev).add(itemId));
+      Promise.resolve(onRevalidate(itemId, item.contentRevision))
+        .catch((err: unknown) => {
+          setRevalidateErrors((prev) => ({
+            ...prev,
+            [itemId]:
+              err instanceof Error ? err.message : "Revalidate failed",
+          }));
+        })
+        .finally(() => {
+          setRevalidatingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(itemId);
+            return next;
+          });
+        });
+    },
+    [onRevalidate, revalidatingIds],
   );
 
   const reviewTagSuggestions = useMemo(() => {
@@ -641,14 +685,29 @@ export function BulkReviewStep({
       ? "Generate confirms the reviewed source once its save settles"
       : "");
   const generateError = generateErrors[selectedItem.itemId];
+  const revalidating = revalidatingIds.has(selectedItem.itemId);
+  const revalidateError = revalidateErrors[selectedItem.itemId];
+  // Revalidate sends the current contentRevision; an unsent/in-flight
+  // candidate save would land after it and self-invalidate, so wait for it.
+  const candidateKey = bufferKey(selectedItem.itemId, "candidate");
+  const revalidatePendingSave =
+    dirtyKeys.has(candidateKey) || savingKeys.has(candidateKey);
+  const revalidateDisabledReason =
+    variation?.status !== "needs-validation"
+      ? ""
+      : !isEditable
+        ? "Item is not editable"
+        : isActionWorking
+          ? "Draft save is still settling"
+          : revalidatePendingSave
+            ? "Candidate changes are still saving"
+            : "";
   const failedItemIds = new Set(
     Object.keys(saveFailures).map((key) => key.split("::")[0]),
   );
   const activeItems = items.filter((item) => item.status !== "deleted");
   const itemValidation = activeItems.map((item) => {
     const reasons: string[] = [];
-    // Continue gating keeps checking the source draft; variant PASS gating
-    // arrives with the review-gating slice.
     const draft = getDraft(item, "source");
     const requiredFieldGaps = getRequiredFieldGaps(draft);
     if (item.status === "queued" || item.status === "extracting") {
@@ -666,6 +725,13 @@ export function BulkReviewStep({
     }
     if (!draft.correctAnswer || draft.correctAnswer.trim() === "") {
       reasons.push(`Item ${item.order + 1}: Correct answer is required`);
+    }
+    if (batch.ingestionMode !== "original" && item.status !== "submitted") {
+      // Only current-PASS candidates gate Continue; submitted items are done.
+      const variantReason = variantPassGateReason(item);
+      if (variantReason) {
+        reasons.push(`Item ${item.order + 1}: ${variantReason}`);
+      }
     }
     return { itemId: item.itemId, reasons, requiredFieldGaps };
   });
@@ -837,6 +903,14 @@ export function BulkReviewStep({
                   Generate failed: {generateError}
                 </span>
               )}
+              {revalidateError && (
+                <span
+                  data-testid="bulk-review-revalidate-error"
+                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
+                >
+                  Revalidate failed: {revalidateError}
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", gap: "8px" }}>
               {isEditable && batch.ingestionMode !== "original" && (
@@ -850,6 +924,17 @@ export function BulkReviewStep({
                   {variation?.status === "failed"
                     ? "Generate Again"
                     : "Generate variant"}
+                </button>
+              )}
+              {variation?.status === "needs-validation" && (
+                <button
+                  type="button"
+                  data-testid="bulk-review-revalidate"
+                  onClick={() => handleRevalidate(selectedItem)}
+                  disabled={revalidateDisabledReason !== "" || revalidating}
+                  title={revalidateDisabledReason || undefined}
+                >
+                  {revalidating ? "Revalidating..." : "Revalidate"}
                 </button>
               )}
               {selectedItem.status === "failed" && (
@@ -932,6 +1017,20 @@ export function BulkReviewStep({
               >
                 Edit source
               </button>
+            </div>
+          )}
+
+          {activeTarget === "source" && variation?.original && (
+            <div
+              data-testid="bulk-review-source-invalidation-warning"
+              style={{
+                color: "var(--color-warning, #b45309)",
+                fontSize: "0.9em",
+                marginBottom: "12px",
+              }}
+            >
+              Saving source changes invalidates the current variant and
+              requires a new generation.
             </div>
           )}
 
