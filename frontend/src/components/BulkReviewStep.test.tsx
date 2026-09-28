@@ -1855,6 +1855,11 @@ describe("BulkReviewStep variant generate", () => {
               },
               { kind: "provider", evidence: "helper failed: timeout" },
               { kind: "invalid-response", evidence: "unparseable completion" },
+              {
+                kind: "vlm-invalid-response",
+                evidence: "generator openai/x failed: Variant VLM response failed schema validation",
+              },
+              { kind: "vlm-timeout", evidence: "generator timed out" },
             ],
             reports: [],
           },
@@ -1868,6 +1873,8 @@ describe("BulkReviewStep variant generate", () => {
     expect(kinds).toEqual([
       "Content failure",
       "Content failure",
+      "Model execution failure",
+      "Model execution failure",
       "Model execution failure",
       "Model execution failure",
     ]);

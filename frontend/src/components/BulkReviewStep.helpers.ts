@@ -202,13 +202,15 @@ export function evidenceChecks(report: EvidenceReport): EvidenceCheck[] {
 
 // Backend failure kinds: "content" (generated-content mismatch) and
 // "invalid-candidate" (checkpointed candidate failed schema validation) are
-// content/schema failures; "provider" and "invalid-response" come from the
+// content/schema failures; "provider"/"invalid-response" and every "vlm-*"
+// code persisted by the worker (vlm-invalid-response, vlm-timeout,
+// vlm-network-error, vlm-provider-error, vlm-provider-rejected) come from the
 // model side. Unknown kinds are shown verbatim, never misclassified.
 export function failureKindLabel(kind: string | undefined): string {
   if (kind === "content" || kind === "invalid-candidate") {
     return "Content failure";
   }
-  if (kind === "provider" || kind === "invalid-response") {
+  if (kind === "provider" || kind === "invalid-response" || kind?.startsWith("vlm-")) {
     return "Model execution failure";
   }
   return kind ? `${kind} failure` : "Failure";
