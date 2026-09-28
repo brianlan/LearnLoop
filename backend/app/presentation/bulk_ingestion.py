@@ -7,7 +7,7 @@ from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import base64
 
@@ -32,11 +32,16 @@ from app.infrastructure.ingestion.repository import (
     commit_image_boxes,
     create_batch as create_batch_repo,
     delete_batch_image,
+    edit_variation_candidate,
     get_active_batch_for_user,
     get_batch,
     is_batch_expired,
     mark_item_deleted,
+    renew_submit_reservation,
+    request_variation_generation,
+    request_variation_revalidation,
     reset_item_for_retry,
+    reserve_items_for_original_submit,
     save_image_boxes_and_subject,
     save_image_detection_failure,
     save_image_detection_success,
@@ -44,9 +49,24 @@ from app.infrastructure.ingestion.repository import (
     submit_items_and_complete_batch,
     undo_item_deletion,
     update_item_draft,
+    update_item_draft_variant,
 )
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.vlm.base_client import BaseVLMError
+from app.infrastructure.vlm.variant_client import (
+    VariantVLMError,
+    build_variant_generator_vlm_client,
+    build_variant_helper_vlm_client,
+    build_variant_validator_vlm_client,
+)
+from app.problem_variation import (
+    GenerationInProgressError,
+    IngestionMode,
+    InvalidVariationStateError,
+    RevisionMismatchError,
+    VariationNotFoundError,
+    is_variant_mode,
+)
 from app.presentation.deps import (
     CurrentUserDependency,
     DatabaseDependency,
@@ -84,6 +104,38 @@ def _find_image_or_404(batch: Document, image_id: str) -> dict[str, Any]:
 class SaveBoxesRequest(BaseModel):
     subject: str | None = None
     boxes: list[dict[str, Any]]
+
+
+def _raise_variation_conflict(exc: Exception) -> ApiError:
+    if isinstance(exc, VariationNotFoundError):
+        return ApiError(404, "NOT_FOUND", str(exc))
+    if isinstance(exc, RevisionMismatchError):
+        return ApiError(409, "REVISION_MISMATCH", str(exc))
+    if isinstance(exc, GenerationInProgressError):
+        return ApiError(409, "VARIATION_BUSY", str(exc))
+    return ApiError(409, "INVALID_VARIATION_STATE", str(exc))
+
+
+def _require_variant_mode(batch: Document) -> None:
+    if not is_variant_mode(batch.get("ingestionMode") or "original"):
+        raise ApiError(
+            409,
+            "INGESTION_MODE_MISMATCH",
+            "Batch is not in a variant ingestion mode",
+        )
+
+
+def _build_variant_clients(settings: Settings):
+    """Build the four role clients; an unconfigured profile is an explicit 409."""
+    try:
+        return (
+            build_variant_generator_vlm_client(settings),
+            build_variant_validator_vlm_client(settings),
+            build_variant_validator_vlm_client(settings, second=True),
+            build_variant_helper_vlm_client(settings),
+        )
+    except VariantVLMError as exc:
+        raise ApiError(409, exc.code, str(exc)) from exc
 
 
 async def _load_owned_batch(
@@ -171,13 +223,19 @@ async def _expand_upload(
     raise ApiError(400, "INVALID_IMAGE", "Uploaded file must be an image or PDF")
 
 
+class CreateBatchRequest(BaseModel):
+    ingestionMode: IngestionMode = IngestionMode.ORIGINAL
+
+
 @router.post("", response_model=BatchResponse, status_code=201)
 async def create_batch(
     database: DatabaseDependency,
     user: CurrentUserDependency,
     settings: SettingsDependency,
+    request: CreateBatchRequest | None = None,
 ) -> BatchResponse:
-    batch = await create_batch_repo(database, user["_id"], settings)
+    mode = request.ingestionMode if request is not None else IngestionMode.ORIGINAL
+    batch = await create_batch_repo(database, user["_id"], settings, ingestion_mode=mode)
     return BatchResponse(**serialize_batch(batch))
 
 
@@ -498,6 +556,7 @@ class UpdateItemDraftRequest(BaseModel):
     correctAnswer: str | None = None
     tags: list[str] | None = None
     subject: ProblemSubject | None = None
+    expectedRevision: int | None = None
 
 
 @router.get("/{batch_id}", response_model=BatchResponse)
@@ -518,22 +577,47 @@ async def update_item_draft_endpoint(
     database: DatabaseDependency,
     user: CurrentUserDependency,
 ) -> BatchResponse:
-    await _load_owned_batch(database, batch_id, user["_id"])
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
 
-    draft_update = request.model_dump(exclude_unset=True)
+    draft_update = request.model_dump(exclude_unset=True, exclude={"expectedRevision"})
     if "tags" in draft_update:
         draft_update["tags"] = normalize_tags(draft_update["tags"])
 
-    updated = await update_item_draft(
-        database,
-        batch_id,
-        user["_id"],
-        item_id,
-        draft_update=draft_update,
-        now=datetime.now(UTC),
-    )
-    if updated is None:
-        raise ApiError(404, "NOT_FOUND", "Item not found")
+    try:
+        if is_variant_mode(batch.get("ingestionMode") or "original"):
+            if request.expectedRevision is None:
+                raise ApiError(
+                    400,
+                    "REVISION_REQUIRED",
+                    "expectedRevision is required for edits in a variant batch",
+                )
+            await update_item_draft_variant(
+                database,
+                batch_id,
+                user["_id"],
+                item_id,
+                draft_update=draft_update,
+                expected_revision=request.expectedRevision,
+                now=datetime.now(UTC),
+            )
+        else:
+            updated = await update_item_draft(
+                database,
+                batch_id,
+                user["_id"],
+                item_id,
+                draft_update=draft_update,
+                now=datetime.now(UTC),
+            )
+            if updated is None:
+                raise ApiError(404, "NOT_FOUND", "Item not found")
+    except (
+        VariationNotFoundError,
+        RevisionMismatchError,
+        GenerationInProgressError,
+        InvalidVariationStateError,
+    ) as exc:
+        raise _raise_variation_conflict(exc) from exc
 
     updated_batch = await get_batch(database, batch_id, user["_id"])
     if updated_batch is None:
@@ -591,6 +675,185 @@ async def undo_delete_item_endpoint(
     return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
 
 
+class VariationOriginalPayload(BaseModel):
+    """The currently reviewed source draft, confirmed by Generate."""
+
+    text: str = Field(min_length=1)
+    problemType: str = Field(min_length=1)
+    correctAnswer: str = Field(min_length=1)
+    graphDsl: str | None = None
+    subject: str | None = None
+
+
+class VariationGenerateRequest(BaseModel):
+    expectedRevision: int
+    original: VariationOriginalPayload
+
+
+class VariationCandidateUpdateRequest(BaseModel):
+    expectedRevision: int
+    text: str | None = None
+    problemType: str | None = None
+    graphDsl: str | None = None
+    correctAnswer: str | None = None
+    tags: list[str] | None = None
+
+
+class VariationRevalidateRequest(BaseModel):
+    expectedRevision: int
+
+
+@router.post(
+    "/{batch_id}/items/{item_id}/variation/generate",
+    response_model=BatchResponse,
+    status_code=202,
+)
+async def generate_variation(
+    batch_id: str,
+    item_id: str,
+    request: VariationGenerateRequest,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+    settings: SettingsDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    _require_variant_mode(batch)
+    item = _find_item_or_404(batch, item_id)
+
+    # Profiles are checked before queueing so unconfigured deployments never
+    # create work that can never run.
+    _build_variant_clients(settings)
+
+    draft = dict(item.get("draft") or {})
+    original = {
+        "text": request.original.text,
+        "problemType": request.original.problemType,
+        "graphDsl": request.original.graphDsl,
+        "correctAnswer": request.original.correctAnswer,
+        "subject": request.original.subject or draft.get("subject"),
+    }
+
+    try:
+        await request_variation_generation(
+            database,
+            batch_id,
+            user["_id"],
+            item_id,
+            original=original,
+            expected_revision=request.expectedRevision,
+            now=datetime.now(UTC),
+        )
+    except (
+        VariationNotFoundError,
+        RevisionMismatchError,
+        GenerationInProgressError,
+        InvalidVariationStateError,
+    ) as exc:
+        raise _raise_variation_conflict(exc) from exc
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+@router.patch(
+    "/{batch_id}/items/{item_id}/variation/candidate",
+    response_model=BatchResponse,
+)
+async def edit_variation_candidate_endpoint(
+    batch_id: str,
+    item_id: str,
+    request: VariationCandidateUpdateRequest,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    _require_variant_mode(batch)
+
+    candidate_update = request.model_dump(exclude_unset=True, exclude={"tags", "expectedRevision"})
+    if not candidate_update and request.tags is None:
+        raise ApiError(400, "INVALID_REQUEST", "No candidate changes provided")
+    tags = normalize_tags(request.tags) if request.tags is not None else None
+
+    try:
+        await edit_variation_candidate(
+            database,
+            batch_id,
+            user["_id"],
+            item_id,
+            candidate_update=candidate_update,
+            tags=tags,
+            expected_revision=request.expectedRevision,
+            now=datetime.now(UTC),
+        )
+    except (
+        VariationNotFoundError,
+        RevisionMismatchError,
+        GenerationInProgressError,
+        InvalidVariationStateError,
+    ) as exc:
+        raise _raise_variation_conflict(exc) from exc
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+@router.post(
+    "/{batch_id}/items/{item_id}/variation/revalidate",
+    response_model=BatchResponse,
+    status_code=202,
+)
+async def revalidate_variation(
+    batch_id: str,
+    item_id: str,
+    request: VariationRevalidateRequest,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+    settings: SettingsDependency,
+) -> BatchResponse:
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    _require_variant_mode(batch)
+    _build_variant_clients(settings)
+
+    try:
+        await request_variation_revalidation(
+            database,
+            batch_id,
+            user["_id"],
+            item_id,
+            expected_revision=request.expectedRevision,
+            now=datetime.now(UTC),
+        )
+    except (
+        VariationNotFoundError,
+        RevisionMismatchError,
+        GenerationInProgressError,
+        InvalidVariationStateError,
+    ) as exc:
+        raise _raise_variation_conflict(exc) from exc
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
+def _submit_item_failure(item_id: str, code: str, message: str) -> dict[str, Any]:
+    return {
+        "itemId": item_id,
+        "status": ItemState.SUBMIT_FAILED.value,
+        "submit": {
+            "submittedProblemId": None,
+            "success": False,
+            "failureCode": code,
+            "failureMessage": message,
+        },
+    }
+
+
 @router.post("/{batch_id}/submit", response_model=SubmitSummaryResponse)
 async def submit_batch(
     batch_id: str,
@@ -625,12 +888,55 @@ async def submit_batch(
         )
 
     now = datetime.now(UTC)
-    item_results: list[dict[str, Any]] = []
-    for item in batch.get("items", []):
-        if item.get("status") != ItemState.READY.value:
-            continue
+    candidate_item_ids = [
+        item["itemId"]
+        for item in batch.get("items", [])
+        if item.get("status") == ItemState.READY.value
+        # Variant items never enter the original-draft submit path: pending
+        # or invalid variants must not save the confirmed source by accident
+        # (the dedicated variant save integration lands with #614).
+        and not (
+            (item.get("variation") or {}).get("original")
+            or (item.get("variation") or {}).get("status") not in (None, "not-requested")
+        )
+    ]
+    # Atomically reserve the still-eligible items before creating problems.
+    # Generate refuses reserved items, so a variant can never be confirmed
+    # into the submit window, and the completion only records results for
+    # items this token reserved.
+    reservation_token, reserved_ids = await reserve_items_for_original_submit(
+        database, batch_id, user["_id"], candidate_item_ids, now=now,
+    )
+    reserved_items = [
+        item for item in batch.get("items", []) if item["itemId"] in set(reserved_ids)
+    ]
 
+    item_results: list[dict[str, Any]] = []
+    for item in reserved_items:
+        # Prove the reservation is still owned immediately before the
+        # side effect; a lost reservation fails the item closed instead of
+        # creating an original problem for a source Generate may already own.
+        owned = await renew_submit_reservation(
+            database, batch_id, user["_id"], item["itemId"],
+            token=reservation_token, now=datetime.now(UTC),
+        )
+        if not owned:
+            item_results.append(_submit_item_failure(
+                item["itemId"],
+                "RESERVATION_LOST",
+                "Original-submit reservation was lost before problem creation",
+            ))
+            continue
         try:
+            # The guard re-proves ownership atomically right before the
+            # problem insert: if the reservation was lost while creation
+            # ran (stall, item deletion, batch expiry), nothing is written.
+            async def ownership_guard() -> bool:
+                return await renew_submit_reservation(
+                    database, batch_id, user["_id"], item["itemId"],
+                    token=reservation_token, now=datetime.now(UTC),
+                )
+
             problem = await create_problem_from_draft(
                 database,
                 user["_id"],
@@ -638,38 +944,45 @@ async def submit_batch(
                 source_image=item.get("crop"),
                 origin=item.get("origin"),
                 now=now,
-            )
-            item_results.append(
-                {
-                    "itemId": item["itemId"],
-                    "status": ItemState.SUBMITTED.value,
-                    "submit": {
-                        "submittedProblemId": str(problem["_id"]),
-                        "success": True,
-                        "failureCode": None,
-                        "failureMessage": None,
-                    },
-                }
+                ownership_guard=ownership_guard,
             )
         except ApiError as exc:
-            item_results.append(
-                {
-                    "itemId": item["itemId"],
-                    "status": ItemState.SUBMIT_FAILED.value,
-                    "submit": {
-                        "submittedProblemId": None,
-                        "success": False,
-                        "failureCode": exc.code,
-                        "failureMessage": exc.message,
-                    },
-                }
-            )
+            item_results.append(_submit_item_failure(
+                item["itemId"], exc.code, exc.message,
+            ))
+            continue
+        # Ownership proof again after the side effect: a loss between the
+        # insert and the recording still fails closed, so a stale original
+        # save is never recorded as a submission.
+        if not await renew_submit_reservation(
+            database, batch_id, user["_id"], item["itemId"],
+            token=reservation_token, now=datetime.now(UTC),
+        ):
+            item_results.append(_submit_item_failure(
+                item["itemId"],
+                "RESERVATION_LOST",
+                "Original-submit reservation was lost during problem creation",
+            ))
+            continue
+        item_results.append(
+            {
+                "itemId": item["itemId"],
+                "status": ItemState.SUBMITTED.value,
+                "submit": {
+                    "submittedProblemId": str(problem["_id"]),
+                    "success": True,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+            }
+        )
 
     updated_batch = await submit_items_and_complete_batch(
         database,
         batch_id,
         user["_id"],
         item_results=item_results,
+        reservation_token=reservation_token,
         now=now,
     )
     if updated_batch is None:

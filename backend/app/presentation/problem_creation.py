@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,6 +24,7 @@ async def create_problem_from_draft(
     source_image: Mapping[str, Any] | None,
     origin: Mapping[str, Any] | None,
     now: datetime | None = None,
+    ownership_guard: Callable[[], Awaitable[bool]] | None = None,
 ) -> dict[str, Any]:
     """Create a problem from a draft, enqueue a solution task, and register tags.
 
@@ -32,6 +33,11 @@ async def create_problem_from_draft(
 
     On failure after inserting the problem document, the problem is deleted so
     that partial failures do not leave visible problems.
+
+    When ``ownership_guard`` is given it is awaited after the idempotency
+    lookup and before any write on either path; returning ``False`` aborts
+    with ``RESERVATION_LOST`` so a lost submit reservation can never leave a
+    problem — or its solution-task/tag side effects — behind.
     """
     current = now or datetime.now(UTC)
     draft_dict = dict(draft or {})
@@ -65,6 +71,12 @@ async def create_problem_from_draft(
     if existing_query:
         existing = await database["problems"].find_one(existing_query)
         if existing is not None:
+            if ownership_guard is not None and not await ownership_guard():
+                raise ApiError(
+                    409,
+                    "RESERVATION_LOST",
+                    "Original-submit reservation was lost; source not submitted",
+                )
             await enqueue_solution_generation_task_for_problem(
                 database, existing, now=current
             )
@@ -98,6 +110,13 @@ async def create_problem_from_draft(
         "createdAt": current,
         "updatedAt": current,
     }
+
+    if ownership_guard is not None and not await ownership_guard():
+        raise ApiError(
+            409,
+            "RESERVATION_LOST",
+            "Original-submit reservation was lost; source not submitted",
+        )
 
     try:
         await database["problems"].insert_one(problem)
