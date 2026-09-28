@@ -91,10 +91,11 @@ export async function updateItemDraft(
   batchId: string,
   itemId: string,
   draft: Partial<BulkDraft>,
+  expectedRevision?: number,
 ): Promise<BatchResponse> {
   return api.patch<BatchResponse>(
     `/ingestion-batches/${batchId}/items/${itemId}`,
-    draft,
+    expectedRevision === undefined ? draft : { ...draft, expectedRevision },
   );
 }
 

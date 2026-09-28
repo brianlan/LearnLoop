@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { BulkReviewStep } from "./BulkReviewStep";
-import type { BulkBatch, BulkItem } from "@/types/bulkIngestion";
+import type {
+  BulkBatch,
+  BulkItem,
+  BulkItemVariation,
+} from "@/types/bulkIngestion";
 
 function makeItem(itemId: string, overrides: Partial<BulkItem> = {}): BulkItem {
   return {
@@ -556,6 +560,7 @@ describe("BulkReviewStep", () => {
         graphDsl: "y = x",
         tags: ["math", "geometry"],
       }),
+      expect.objectContaining({ target: "source", expectedRevision: 0 }),
     );
   });
 
@@ -586,6 +591,7 @@ describe("BulkReviewStep", () => {
     expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
       "item-1",
       expect.objectContaining({ correctAnswer: "420" }),
+      expect.objectContaining({ target: "source", expectedRevision: 0 }),
     );
   });
 
@@ -632,6 +638,7 @@ describe("BulkReviewStep", () => {
     expect(handlers.onUpdateDraft).toHaveBeenLastCalledWith(
       "item-1",
       expect.objectContaining({ correctAnswer: "second" }),
+      expect.objectContaining({ target: "source", expectedRevision: 0 }),
     );
   });
 
@@ -956,6 +963,7 @@ describe("BulkReviewStep", () => {
       expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
         "item-2",
         expect.objectContaining({ tags: ["math", "calculus"] }),
+        expect.objectContaining({ target: "source" }),
       );
     });
   });
@@ -1051,6 +1059,7 @@ describe("BulkReviewStep", () => {
     expect(handlers.onUpdateDraft).not.toHaveBeenCalledWith(
       "item-2",
       expect.objectContaining({ tags: expect.arrayContaining(["physics"]) }),
+      expect.objectContaining({ target: "source" }),
     );
   });
 
@@ -1100,5 +1109,285 @@ describe("BulkReviewStep", () => {
     fireEvent.click(screen.getByTestId("bulk-review-next"));
     expect(screen.getByTestId("bulk-review-recent-tag-gamma")).toBeInTheDocument();
     expect(screen.getByTestId("bulk-review-recent-tag-delta")).toBeInTheDocument();
+  });
+});
+
+function makeVariation(overrides: Partial<BulkItemVariation> = {}): BulkItemVariation {
+  return {
+    status: "ready",
+    generationCount: 1,
+    original: {
+      text: "What is 2+2?",
+      problemType: "short-answer",
+      graphDsl: "",
+      correctAnswer: "4",
+      subject: "math",
+    },
+    candidate: {
+      text: "What is 3+3?",
+      problemType: "short-answer",
+      graphDsl: "",
+      correctAnswer: "6",
+      tags: ["math"],
+    },
+    validation: { verdict: "PASS" },
+    validatedRevision: 1,
+    queuedAt: null,
+    ...overrides,
+  };
+}
+
+describe("BulkReviewStep source/candidate autosave identity", () => {
+  const handlers = {
+    onRefresh: vi.fn(),
+    onUpdateDraft: vi.fn(),
+    onRetry: vi.fn(),
+    onDelete: vi.fn(),
+    onUndoDelete: vi.fn(),
+    onContinue: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Object.values(handlers).forEach((fn) => fn.mockReset());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps source and candidate edits in separate buffers and save targets", async () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              contentRevision: 1,
+              variation: makeVariation(),
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    // The candidate is the editing target by default; source values untouched.
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("What is 3+3?");
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("6");
+    expect(screen.getByTestId("bulk-review-subject")).toBeDisabled();
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ correctAnswer: "66" }),
+        expect.objectContaining({
+          target: "candidate",
+          expectedRevision: 1,
+        }),
+      );
+    });
+
+    // Switching to the source shows the source draft, not the candidate buffer.
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("What is 2+2?");
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("4");
+    expect(screen.getByTestId("bulk-review-subject")).not.toBeDisabled();
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "44" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ correctAnswer: "44" }),
+        expect.objectContaining({ target: "source", expectedRevision: 1 }),
+      );
+    });
+
+    // The candidate buffer kept its own edits.
+    fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("What is 3+3?");
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("66");
+  });
+
+  it("replaces the candidate buffer on regeneration and ignores the old write", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    const { rerender } = render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              contentRevision: 1,
+              variation: makeVariation(),
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "Edited candidate" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    // A new generation replaces the buffer, dropping the dead candidate's edits.
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              contentRevision: 2,
+              variation: makeVariation({
+                generationCount: 2,
+                candidate: {
+                  text: "What is 5+5?",
+                  problemType: "short-answer",
+                  graphDsl: "",
+                  correctAnswer: "10",
+                  tags: ["math"],
+                },
+              }),
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("What is 5+5?");
+
+    // The old in-flight write cannot clobber the regenerated candidate.
+    await act(async () => {
+      resolveSave(undefined);
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("What is 5+5?");
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
+  });
+
+  it("ignores a stale snapshot older than the buffer and applies a newer one", async () => {
+    handlers.onUpdateDraft.mockResolvedValue(undefined);
+
+    const { rerender } = render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "Saved text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+              contentRevision: 1,
+              updatedAt: "2026-07-03T00:00:02Z",
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "Local newer" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    // A stale save/poll response must not roll the buffer back.
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "Old server text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+              contentRevision: 0,
+              updatedAt: "2026-07-03T00:00:01Z",
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("Local newer");
+
+    // A genuinely newer snapshot still updates the clean buffer.
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", {
+              order: 0,
+              draft: {
+                text: "Newer server text",
+                problemType: "short-answer",
+                graphDsl: "",
+                correctAnswer: "4",
+                tags: [],
+                subject: "math",
+              },
+              contentRevision: 2,
+              updatedAt: "2026-07-03T00:00:03Z",
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-text")).toHaveValue(
+        "Newer server text",
+      );
+    });
   });
 });

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   deleteBatchItem: vi.fn<() => Promise<BatchResponse>>(),
   undoDeleteBatchItem: vi.fn<() => Promise<BatchResponse>>(),
   updateItemDraft: vi.fn<() => Promise<BatchResponse>>(),
+  editVariationCandidate: vi.fn<() => Promise<BatchResponse>>(),
 }));
 
 vi.mock("@/api/bulkIngestion", () => ({
@@ -35,6 +36,7 @@ vi.mock("@/api/bulkIngestion", () => ({
   deleteBatchItem: mocks.deleteBatchItem,
   undoDeleteBatchItem: mocks.undoDeleteBatchItem,
   updateItemDraft: mocks.updateItemDraft,
+  editVariationCandidate: mocks.editVariationCandidate,
 }));
 
 function makeImage(overrides: Partial<BulkImage> = {}): BulkImage {
@@ -96,11 +98,11 @@ function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
 
 const reviewBatchResponse: BatchResponse = { batch: makeBatch() };
 
-async function renderAtReviewStep() {
+async function renderAtReviewStep(response: BatchResponse = reviewBatchResponse) {
   mocks.getActiveBatch.mockRejectedValue(
     new Error("No active batch found"),
   );
-  mocks.getBatch.mockResolvedValue(reviewBatchResponse);
+  mocks.getBatch.mockResolvedValue(response);
 
   render(<BulkIngestionWizard initialBatchId="batch-1" />);
 
@@ -157,7 +159,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
     });
   });
 
-  it("swallows a rejected updateItemDraft and surfaces a wizard-level error instead of a review retry", async () => {
+  it("keeps the review step mounted with a visible per-item error when a draft save rejects", async () => {
     mocks.updateItemDraft.mockRejectedValue(new Error("network error"));
 
     await renderAtReviewStep();
@@ -173,25 +175,29 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
 
     expect(mocks.updateItemDraft).toHaveBeenCalledTimes(1);
 
+    // The rejection is reported per item while the editor stays mounted with
+    // the dirty input intact; the wizard does not replace the review UI.
     await waitFor(() => {
-      expect(screen.getByTestId("bulk-wizard-error")).toHaveTextContent("network error");
+      expect(screen.getByTestId("bulk-review-save-status")).toHaveTextContent(
+        "Save failed, retrying...",
+      );
     });
+    expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("99");
+    expect(screen.queryByTestId("bulk-wizard-error")).not.toBeInTheDocument();
+    expect(continueButton).toBeDisabled();
 
-    // A wizard-level error replaces the entire review UI. The review step never sees the
-    // rejection, so there is no item-level save-failed indicator, no retry, and no Continue.
-    expect(screen.queryByTestId("bulk-wizard-review-step")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("bulk-review-continue")).not.toBeInTheDocument();
-    expect(screen.queryByText(/save failed/i)).not.toBeInTheDocument();
-
+    // The same target is retried after the backoff delay without losing input.
     await act(async () => {
-      vi.advanceTimersByTime(10000);
+      vi.advanceTimersByTime(1500);
     });
 
-    expect(mocks.updateItemDraft).toHaveBeenCalledTimes(1);
+    expect(mocks.updateItemDraft).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("99");
+    expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
   });
 
-  it("keeps the wizard-level error view after a later successful save", async () => {
+  it("clears the per-item save failure after a successful retry and stops retrying", async () => {
     mocks.updateItemDraft
       .mockRejectedValueOnce(new Error("network error"))
       .mockResolvedValueOnce({
@@ -201,6 +207,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       });
 
     await renderAtReviewStep();
+    const continueButton = getContinueButton();
 
     const answerInput = screen.getByTestId("bulk-review-answer");
     fireEvent.change(answerInput, { target: { value: "7" } });
@@ -210,14 +217,95 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("bulk-wizard-error")).toHaveTextContent("network error");
+      expect(screen.getByTestId("bulk-review-save-status")).toBeInTheDocument();
     });
 
-    // The wizard does not clear its error banner after a subsequent successful save,
-    // so the review UI remains replaced even though the underlying API call succeeded.
-    await waitFor(() => {
-      expect(screen.getByTestId("bulk-wizard-error")).toHaveTextContent("network error");
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
     });
-    expect(screen.queryByTestId("bulk-wizard-review-step")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("bulk-review-save-status"),
+      ).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("7");
+    await waitFor(() => {
+      expect(continueButton).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(mocks.updateItemDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes candidate edits to the candidate endpoint and source edits to the draft endpoint", async () => {
+    const itemWithCandidate = makeItem({
+      contentRevision: 3,
+      variation: {
+        status: "ready",
+        generationCount: 1,
+        original: {
+          text: "What is 2+2?",
+          problemType: "short-answer",
+          graphDsl: "",
+          correctAnswer: "4",
+          subject: "math",
+        },
+        candidate: {
+          text: "What is 3+3?",
+          problemType: "short-answer",
+          graphDsl: "",
+          correctAnswer: "6",
+          tags: ["math"],
+        },
+        validation: { verdict: "PASS" },
+        validatedRevision: 3,
+        queuedAt: null,
+      },
+    });
+    const batchWithCandidate = makeBatch({ items: [itemWithCandidate] });
+    mocks.editVariationCandidate.mockResolvedValue({
+      batch: batchWithCandidate,
+    });
+    mocks.updateItemDraft.mockResolvedValue({ batch: batchWithCandidate });
+
+    await renderAtReviewStep({ batch: batchWithCandidate });
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "66" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(mocks.editVariationCandidate).toHaveBeenCalledWith(
+        "batch-1",
+        "item-1",
+        expect.objectContaining({ expectedRevision: 3, correctAnswer: "66" }),
+      );
+    });
+    expect(mocks.updateItemDraft).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "44" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(mocks.updateItemDraft).toHaveBeenCalledWith(
+        "batch-1",
+        "item-1",
+        expect.objectContaining({ correctAnswer: "44" }),
+        3,
+      );
+    });
   });
 });
