@@ -974,9 +974,11 @@ test.describe("Variant ingestion E2E", () => {
     const itemId = (await getItemIds(request, session, batchId))[0];
     await generateVariant(page, request, session, batchId, itemId);
 
-    // Semantic edit on the candidate invalidates the approval. The value only
-    // needs to differ from the generated answer (`6` for `What is 3 + 3?`).
+    // Semantic edit on the candidate invalidates the approval. The edit stays
+    // mathematically consistent — `What is 4 + 3?` solves to `7`, matching the
+    // edited answer — so revalidation can honestly approve the new candidate.
     await page.getByTestId("bulk-review-edit-candidate").click();
+    await page.getByTestId("bulk-review-text").fill("What is 4 + 3?");
     await page.getByTestId("bulk-review-answer").fill("7");
     await page.waitForResponse(
       (r) =>
@@ -1002,6 +1004,11 @@ test.describe("Variant ingestion E2E", () => {
       `variant for ${itemId} re-approves after revalidation`,
     );
     await expect(page.getByTestId("bulk-review-continue")).toBeEnabled();
+
+    const revalidated = (await getVariation(request, session, batchId, itemId))
+      ?.candidate;
+    expect(revalidated?.text).toBe("What is 4 + 3?");
+    expect(revalidated?.correctAnswer).toBe("7");
 
     const fakeState = await getFakeVariantState(request);
     // Revalidation re-ran both validators and the helper but never the
