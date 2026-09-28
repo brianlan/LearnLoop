@@ -137,7 +137,8 @@ def build_original_snapshot(draft: Mapping[str, Any]) -> dict[str, Any]:
 def _semantic_values(content: Mapping[str, Any] | None) -> dict[str, Any]:
     if not content:
         return {field: None for field in SEMANTIC_FIELDS}
-    return {field: content.get(field) for field in SEMANTIC_FIELDS}
+    # ponytail: "" and None both mean "no graph" — compare meaning, not representation.
+    return {field: content.get(field) or None for field in SEMANTIC_FIELDS}
 
 
 def has_semantic_change(

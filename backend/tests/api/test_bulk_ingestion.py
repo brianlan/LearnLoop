@@ -2496,6 +2496,61 @@ async def test_variant_candidate_tags_only_does_not_invalidate(
 
 
 @pytest.mark.asyncio
+async def test_variant_candidate_empty_graphdsl_edit_does_not_invalidate(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    # The wizard sends "" for an unset graphDsl; the stored candidate has None.
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "tags": ["algebra"], "graphDsl": ""},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["validatedRevision"] == 1
+    assert item["contentRevision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_candidate_clearing_real_graphdsl_still_invalidates(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    set_graph = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "graphDsl": "create('board', {});"},
+    )
+    assert set_graph.status_code == 200
+    assert _variation_of(set_graph.json(), item_id)["variation"]["status"] == "needs-validation"
+
+    clear_graph = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 2, "graphDsl": None},
+    )
+    assert clear_graph.status_code == 200
+    item = _variation_of(clear_graph.json(), item_id)
+    assert item["variation"]["status"] == "needs-validation"
+    assert item["contentRevision"] == 3
+
+
+@pytest.mark.asyncio
 async def test_variant_candidate_type_mismatch_preserved_for_evidence(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,
@@ -2606,6 +2661,32 @@ async def test_variant_source_tags_only_edit_keeps_ready(
     item = _variation_of(response.json(), item_id)
     assert item["variation"]["status"] == "ready"
     assert item["variation"]["validatedRevision"] == 1
+    assert item["contentRevision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_source_empty_graphdsl_edit_keeps_ready(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    # "" for an unset graphDsl must not count as a semantic source edit.
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"expectedRevision": 1, "tags": ["arithmetic"], "graphDsl": ""},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["validatedRevision"] == 1
+    assert item["variation"]["candidate"] is not None
     assert item["contentRevision"] == 1
 
 
