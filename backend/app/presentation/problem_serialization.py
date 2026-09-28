@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from app.domain.models import Problem, ProblemType
 from app.presentation.errors import ApiError
-from app.presentation.helpers import build_problem_image_url
+from app.presentation.helpers import (
+    build_problem_image_url,
+    build_problem_variation_image_url,
+)
 from app.presentation.schemas import CorrectAnswerPayload, UTCDatetime
 
 
@@ -25,6 +28,41 @@ class OriginPayload(BaseModel):
     rawExtractedText: str | None = None
     rawExtractedProblemType: str | None = None
     rawExtractedGraphDsl: str | None = None
+
+
+class ModelIdentityPayload(BaseModel):
+    provider: str
+    model: str
+
+
+class VariationContentPayload(BaseModel):
+    text: str
+    problemType: str
+    subject: str
+    graphDsl: str | None = None
+    correctAnswer: CorrectAnswerPayload
+
+
+class OriginalProvenancePayload(VariationContentPayload):
+    auditImageUrl: str | None = None
+
+
+class ValidationProvenancePayload(BaseModel):
+    verdict: str
+    helperModel: ModelIdentityPayload | None = None
+    # Reports were serialized by the validation domain (alias-shaped dicts
+    # with model identities, checks, evidence and answer comparisons); they
+    # are presented verbatim and never contain provider secrets.
+    reports: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProblemVariationPayload(BaseModel):
+    mode: str
+    original: OriginalProvenancePayload
+    acceptedVariant: VariationContentPayload
+    generator: ModelIdentityPayload
+    generationCount: int
+    validation: ValidationProvenancePayload
 
 
 class ProblemSummaryPayload(BaseModel):
@@ -47,6 +85,9 @@ class ProblemSummaryPayload(BaseModel):
 class ProblemDetailPayload(ProblemSummaryPayload):
     correctAnswer: CorrectAnswerPayload
     origin: OriginPayload
+    # Absent and null variation are both normal ordinary Problems; only
+    # admitted variant problems carry provenance here.
+    variation: ProblemVariationPayload | None = None
 
 
 class ProblemResponse(BaseModel):
@@ -152,6 +193,7 @@ def problem_document_to_model(problem: Mapping[str, Any]) -> Problem:
                 "correctAnswer": problem["correctAnswer"],
                 "tags": list(problem.get("tags", [])),
                 "sourceImage": problem.get("sourceImage"),
+                "variation": problem.get("variation"),
                 "origin": origin,
                 "tracking": problem.get("tracking", {}),
                 "isDeleted": problem.get("isDeleted", False),
@@ -195,10 +237,71 @@ def _serialize_problem_summary(problem: dict[str, Any]) -> ProblemSummaryPayload
     )
 
 
+def _serialize_variation_content(
+    content: Mapping[str, Any],
+) -> VariationContentPayload:
+    return VariationContentPayload(
+        text=str(content.get("text", "")),
+        problemType=str(content.get("problemType", "")),
+        subject=str(content.get("subject", "math")),
+        graphDsl=content.get("graphDsl"),
+        correctAnswer=CorrectAnswerPayload(**dict(content.get("correctAnswer") or {})),
+    )
+
+
+def _serialize_problem_variation(
+    problem_id: str,
+    variation: Mapping[str, Any] | None,
+) -> ProblemVariationPayload | None:
+    """Serialize the immutable admission provenance for problem details.
+
+    Absent and null variation are both ordinary Problems and serialize as
+    ``None``. Only URL references to the audit image are exposed — storage
+    credentials and object keys never leave the server.
+    """
+    if not variation:
+        return None
+    original = dict(variation.get("original") or {})
+    generator = dict(variation.get("generator") or {})
+    validation = dict(variation.get("validation") or {})
+    helper_model = validation.get("helperModel") or None
+    return ProblemVariationPayload(
+        mode=str(variation.get("mode", "")),
+        original=OriginalProvenancePayload(
+            **_serialize_variation_content(original).model_dump(),
+            auditImageUrl=build_problem_variation_image_url(problem_id)
+            if original.get("auditImage")
+            else None,
+        ),
+        acceptedVariant=_serialize_variation_content(
+            dict(variation.get("acceptedVariant") or {})
+        ),
+        generator=ModelIdentityPayload(
+            provider=str(generator.get("provider", "")),
+            model=str(generator.get("model", "")),
+        ),
+        generationCount=int(variation.get("generationCount", 0)),
+        validation=ValidationProvenancePayload(
+            verdict=str(validation.get("verdict", "")),
+            helperModel=ModelIdentityPayload(
+                provider=str(helper_model.get("provider", "")),
+                model=str(helper_model.get("model", "")),
+            )
+            if helper_model
+            else None,
+            reports=list(validation.get("reports") or []),
+        ),
+    )
+
+
 def _serialize_problem_detail(problem: dict[str, Any]) -> ProblemDetailPayload:
     summary = _serialize_problem_summary(problem)
+    problem_id = str(problem["_id"])
     return ProblemDetailPayload(
         **summary.model_dump(),
         correctAnswer=_serialize_correct_answer(problem),
         origin=_serialize_origin(problem),
+        variation=_serialize_problem_variation(
+            problem_id, problem.get("variation")
+        ),
     )

@@ -454,3 +454,55 @@ async def test_send_message_history_contains_only_role_and_text():
         {"role": "student", "text": "先看第一步"},
         {"role": "coach", "text": "先看已知条件"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_variant_problem_coaching_input_excludes_audit_image():
+    """Audit-context isolation: coaching never sees the audit image.
+
+    An admitted variant problem has sourceImage=None; its original-problem
+    audit copy lives only under variation.original.auditImage and must not
+    leak into the coaching model input.
+    """
+
+    class NoReadStorage(FakeStorage):
+        def __init__(self):
+            super().__init__()
+            self.get_calls = []
+
+        def get_object(self, bucket, object_key):
+            self.get_calls.append((bucket, object_key))
+            raise AssertionError("coaching must not read the audit image")
+
+    db = FakeDatabase()
+    client = FakeCoachingVLMClient()
+    storage = NoReadStorage()
+    service = CoachingService(db, vlm_client=client, storage=storage)
+
+    prob_id = ObjectId()
+    user_id = ObjectId()
+    problem = _problem(prob_id, user_id, text="What is 3+5?")
+    problem["sourceImage"] = None
+    problem["variation"] = {
+        "mode": "data-only",
+        "original": {
+            "text": "What is 2+2?",
+            "auditImage": {"bucket": "b", "objectKey": "audit/k"},
+        },
+        "acceptedVariant": {"text": "What is 3+5?"},
+    }
+    db["problems"].seed(problem)
+    db["canonical_solutions"].seed({
+        "problem_id": str(prob_id),
+        "steps_markdown": "steps",
+        "final_answer": "ans",
+        "level_classification": "primary",
+        "problem_context_hash": compute_problem_context_hash(problem),
+    })
+
+    await service.send_message(str(prob_id), str(user_id), "help me")
+
+    assert storage.get_calls == []
+    req = client.calls[0]
+    assert req.problem_text == "What is 3+5?"
+    assert req.image_base64 is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import io
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.storage.mongo import get_mongo_adapter
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
 from app.infrastructure.vlm.client import DetectionResult, ExtractionResult, ProblemBox
 from app.main import create_app
@@ -24,6 +26,19 @@ from app.presentation.deps import (
     get_s3_storage,
 )
 from tests.api.conftest import FakeDatabase
+
+
+class FakeSession:
+    async def with_transaction(self, callback: Any) -> Any:
+        return await callback(self)
+
+
+class FakeMongoAdapter:
+    """Runs transaction callbacks directly against the FakeDatabase."""
+
+    @contextlib.asynccontextmanager
+    async def start_session(self):  # noqa: ANN201
+        yield FakeSession()
 
 
 class FakeStorage:
@@ -280,6 +295,7 @@ async def bulk_app() -> AsyncIterator[FastAPI]:
     application.state.fake_english_ingestion_vlm = english_vlm
 
     application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_mongo_adapter] = lambda: FakeMongoAdapter()
     application.dependency_overrides[get_app_settings] = lambda: settings
     application.dependency_overrides[get_s3_storage] = lambda: storage
     application.dependency_overrides[create_helper_vlm_client] = lambda: helper_vlm
@@ -2718,18 +2734,28 @@ async def test_variant_submit_skips_variant_items_and_keeps_batch_active(
     assert submit_response.status_code == 200
     summary = submit_response.json()["submitSummary"]
     submitted_ids = [r["itemId"] for r in summary["items"]]
-    assert submitted_ids == ["plain-item"]
+    # Variant submit admits the current PASS candidate transactionally; the
+    # never-requested plain item is not actionable in variant mode and is
+    # never pushed through the original-draft path.
+    assert submitted_ids == [variant_item_id]
+    assert summary["items"][0]["status"] == "submitted"
     assert summary["status"] == "active"
 
     detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
     items = {i["itemId"]: i for i in detail.json()["batch"]["items"]}
-    assert items["plain-item"]["status"] == "submitted"
+    plain_item = items["plain-item"]
+    assert plain_item["status"] == "ready"
+    assert plain_item["submit"].get("submittedProblemId") is None
     variant_item = items[variant_item_id]
-    # The variant item was never pushed through the original-draft path.
-    assert variant_item["status"] == "ready"
-    assert variant_item["submit"]["submittedProblemId"] is None
+    assert variant_item["status"] == "submitted"
+    assert variant_item["submit"]["submittedProblemId"] == summary["items"][0]["submittedProblemId"]
     assert variant_item["variation"]["status"] == "ready"
     assert variant_item["variation"]["candidate"]["text"] == VARIANT_CANDIDATE["text"]
+    database = bulk_app.state.fake_database
+    assert await database["problems"].count_documents({}) == 1
+    problem = await database["problems"].find_one({})
+    assert problem["text"] == VARIANT_CANDIDATE["text"]
+    assert problem["sourceImage"] is None
 
 
 @pytest.mark.asyncio
@@ -3038,11 +3064,12 @@ async def test_delete_serializes_with_live_submit_reservation(
     Once the in-creation ownership guard succeeds the reservation is live,
     so a competing delete is refused before the insert: the problem, its
     solution task and its tags commit coherently and no orphan problem can
-    exist after a reservation loss.
+    exist after a reservation loss. Original-mode batch: this race lives on
+    the original-draft submit path (#614 moved variant batches to the
+    transactional variant admission).
     """
-    _enable_variant_profiles(bulk_app)
     batch_id, _, item_id = await _create_variant_batch(
-        authenticated_bulk_client, bulk_app, helper_vlm
+        authenticated_bulk_client, bulk_app, helper_vlm, mode="original"
     )
     patch_response = await authenticated_bulk_client.patch(
         f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
@@ -3100,65 +3127,72 @@ async def test_delete_serializes_with_live_submit_reservation(
 
 
 @pytest.mark.asyncio
-async def test_generate_blocked_while_submit_creates_problem(
+async def test_generate_wins_during_variant_submit_and_admission_fails_closed(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,
     helper_vlm: FakeHelperVLMClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Generate winning between selection and admission invalidates the save.
+
+    The pre-#614 race (Generate vs the original submit) is gone: variant
+    batches admit the validated candidate, and a new generation request
+    landing inside the submit window bumps the item revision, so the
+    transactional re-read fails the admission closed instead of saving the
+    source or a stale candidate.
+    """
     _enable_variant_profiles(bulk_app)
     batch_id, _, item_id = await _create_variant_batch(
         authenticated_bulk_client, bulk_app, helper_vlm
     )
-    # The extracted draft lacks the user-supplied answer; submit requires it.
-    # (Variant-mode edit: revision-aware, and the semantic edit bumps the
-    # item's contentRevision.)
-    patch_response = await authenticated_bulk_client.patch(
-        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
-        json={"correctAnswer": "4", "expectedRevision": 0},
-    )
-    assert patch_response.status_code == 200
-    item_revision = _variation_of(patch_response.json(), item_id)["contentRevision"]
     database = bulk_app.state.fake_database
     user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    revision = _variation_of(detail.json(), item_id)["contentRevision"]
 
     from app.presentation import bulk_ingestion as bulk_ingestion_module
-    from app.problem_variation import InvalidVariationStateError
 
-    real_create = bulk_ingestion_module.create_problem_from_draft
-    blocked_errors: list[InvalidVariationStateError] = []
+    admission_started = asyncio.Event()
+    release_admission = asyncio.Event()
 
-    async def probing_create(*args: Any, **kwargs: Any) -> Any:
-        # Deterministic submit-pause point: while submit holds the item's
-        # reservation inside the problem-creation window, Generate must lose.
-        try:
-            await request_variation_generation(
-                database, ObjectId(batch_id), user_id, item_id,
-                original=dict(VARIANT_ORIGINAL), expected_revision=item_revision,
-                now=datetime.now(UTC),
-            )
-        except InvalidVariationStateError as exc:
-            blocked_errors.append(exc)
-        return await real_create(*args, **kwargs)
+    real_admit = bulk_ingestion_module.admit_variant_item
 
-    monkeypatch.setattr(
-        bulk_ingestion_module, "create_problem_from_draft", probing_create
+    async def pausing_admit(*args: Any, **kwargs: Any) -> Any:
+        admission_started.set()
+        await asyncio.wait_for(release_admission.wait(), timeout=5)
+        return await real_admit(*args, **kwargs)
+
+    monkeypatch.setattr(bulk_ingestion_module, "admit_variant_item", pausing_admit)
+
+    submit_task = asyncio.create_task(
+        authenticated_bulk_client.post(f"/api/v1/ingestion-batches/{batch_id}/submit")
     )
+    await asyncio.wait_for(admission_started.wait(), timeout=5)
 
-    response = await authenticated_bulk_client.post(
-        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    # Generate wins the window: a new generation bumps the revision and
+    # clears the validated candidate.
+    await request_variation_generation(
+        database, ObjectId(batch_id), user_id, item_id,
+        original=dict(VARIANT_ORIGINAL), expected_revision=revision,
+        now=datetime.now(UTC),
     )
+    release_admission.set()
+
+    response = await asyncio.wait_for(submit_task, timeout=5)
     assert response.status_code == 200
     summary = response.json()["submitSummary"]
-    assert [r["itemId"] for r in summary["items"]] == [item_id]
-    assert summary["items"][0]["status"] == "submitted"
+    assert summary["items"][0]["status"] == "submit-failed"
+    assert summary["items"][0]["failureCode"] == "VARIANT_INVALIDATED"
+    assert summary["status"] == "active"
 
-    # Generate was refused exactly once: the reservation covered the window.
-    assert len(blocked_errors) == 1
+    assert await database["problems"].count_documents({}) == 0
+    assert await database["solution_generation_tasks"].count_documents({}) == 0
     detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
     item = _variation_of(detail.json(), item_id)
-    assert item["status"] == "submitted"
-    assert item["variation"]["status"] == "not-requested"
+    assert item["status"] == "ready"
+    assert item["variation"]["status"] == "queued"
+    assert item["submit"]["submittedProblemId"] is None
 
 
 @pytest.mark.asyncio
@@ -3168,9 +3202,10 @@ async def test_submit_fails_closed_when_reservation_lost_before_creation(
     helper_vlm: FakeHelperVLMClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _enable_variant_profiles(bulk_app)
+    # Original-mode batch: the reservation race lives on the original-draft
+    # submit path (#614 moved variant batches to transactional admission).
     batch_id, _, item_id = await _create_variant_batch(
-        authenticated_bulk_client, bulk_app, helper_vlm
+        authenticated_bulk_client, bulk_app, helper_vlm, mode="original"
     )
     patch_response = await authenticated_bulk_client.patch(
         f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
@@ -3208,79 +3243,6 @@ async def test_submit_fails_closed_when_reservation_lost_before_creation(
     item = _variation_of(detail.json(), item_id)
     assert item["status"] == "submit-failed"
     assert item["submit"]["submittedProblemId"] is None
-
-
-@pytest.mark.asyncio
-async def test_generate_wins_mid_creation_without_stale_submission(
-    authenticated_bulk_client: AsyncClient,
-    bulk_app: FastAPI,
-    helper_vlm: FakeHelperVLMClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _enable_variant_profiles(bulk_app)
-    batch_id, _, item_id = await _create_variant_batch(
-        authenticated_bulk_client, bulk_app, helper_vlm
-    )
-    patch_response = await authenticated_bulk_client.patch(
-        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
-        json={"correctAnswer": "4", "expectedRevision": 0},
-    )
-    assert patch_response.status_code == 200
-    item_revision = _variation_of(patch_response.json(), item_id)["contentRevision"]
-    database = bulk_app.state.fake_database
-    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
-
-    from app.presentation import bulk_ingestion as bulk_ingestion_module
-
-    creation_started = asyncio.Event()
-    release_creation = asyncio.Event()
-    renewal_open = {"ok": True}
-    renewal_calls = {"n": 0}
-
-    async def fake_renew(*args: Any, **kwargs: Any) -> bool:
-        renewal_calls["n"] += 1
-        if renewal_calls["n"] == 1:
-            return True  # pre-creation ownership proof
-        # The second call is the guard inside real problem creation, right
-        # before the irreversible insert: pause it until Generate has won.
-        creation_started.set()
-        await release_creation.wait()
-        return renewal_open["ok"]
-
-    monkeypatch.setattr(bulk_ingestion_module, "renew_submit_reservation", fake_renew)
-
-    submit_task = asyncio.create_task(
-        authenticated_bulk_client.post(f"/api/v1/ingestion-batches/{batch_id}/submit")
-    )
-    await asyncio.wait_for(creation_started.wait(), timeout=5)
-
-    # Ownership is lost while creation is paused: Generate confirms the
-    # variant (the reservation expired, renewals never extended it).
-    renewal_open["ok"] = False
-    await request_variation_generation(
-        database, ObjectId(batch_id), user_id, item_id,
-        original=dict(VARIANT_ORIGINAL), expected_revision=item_revision,
-        now=datetime.now(UTC) + timedelta(minutes=11),
-    )
-    release_creation.set()
-
-    # The in-creation ownership guard aborts before any write: the response
-    # and the database never claim the source was submitted, and no problem
-    # or solution-task side effect is left behind.
-    response = await asyncio.wait_for(submit_task, timeout=5)
-    assert response.status_code == 200
-    summary = response.json()["submitSummary"]
-    assert summary["items"][0]["status"] == "submit-failed"
-    assert summary["items"][0]["failureCode"] == "RESERVATION_LOST"
-
-    assert await database["problems"].count_documents({}) == 0
-    assert await database["solution_generation_tasks"].count_documents({}) == 0
-    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
-    item = _variation_of(detail.json(), item_id)
-    assert item["status"] == "ready"
-    assert item["submit"]["submittedProblemId"] is None
-    assert item["variation"]["status"] == "queued"
-    assert item["variation"]["original"] == VARIANT_ORIGINAL
 
 
 @pytest.mark.asyncio
@@ -3339,3 +3301,213 @@ async def test_null_candidate_edit_revalidation_fails_with_evidence(
     failure = variation["validation"]["failures"][0]
     assert failure["kind"] == "invalid-candidate"
     assert "text" in failure["evidence"]
+
+
+
+# ---------------------------------------------------------------------------
+# Transactional variant admission (issue #614)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_variant_submit_admits_ready_candidate(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "completed"
+    assert summary["items"][0]["itemId"] == item_id
+    assert summary["items"][0]["status"] == "submitted"
+    problem_id = summary["items"][0]["submittedProblemId"]
+    assert problem_id
+
+    problem = await database["problems"].find_one({"_id": ObjectId(problem_id)})
+    assert problem is not None
+    # Main content comes from the accepted variant; the source is audit-only.
+    assert problem["text"] == VARIANT_CANDIDATE["text"]
+    assert problem["correctAnswer"]["display"] == VARIANT_CANDIDATE["correctAnswer"]
+    assert problem["sourceImage"] is None
+    variation = problem["variation"]
+    assert variation["mode"] == "data-only"
+    assert variation["acceptedVariant"]["text"] == VARIANT_CANDIDATE["text"]
+    assert variation["original"]["text"] == VARIANT_ORIGINAL["text"]
+    assert variation["original"]["auditImage"]["objectKey"] == (
+        f"users/{user_id}/problems/audit/{batch_id}/{item_id}.png"
+    )
+    assert variation["validation"]["verdict"] == "pass"
+
+    # One transactionally consistent solution task; the batch completed.
+    assert await database["solution_generation_tasks"].count_documents(
+        {"problem_id": problem_id}
+    ) == 1
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "submitted"
+    assert item["submit"]["submittedProblemId"] == problem_id
+
+    storage: FakeStorage = bulk_app.state.fake_storage
+    audit_keys = [key for (_, key) in storage.objects if "/problems/audit/" in key]
+    assert audit_keys == [variation["original"]["auditImage"]["objectKey"]]
+
+
+@pytest.mark.asyncio
+async def test_variant_submit_invalidated_between_selection_and_admission(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    revision = _variation_of(detail.json(), item_id)["contentRevision"]
+
+    from app.presentation import bulk_ingestion as bulk_ingestion_module
+
+    admission_started = asyncio.Event()
+    release_admission = asyncio.Event()
+
+    real_admit = bulk_ingestion_module.admit_variant_item
+
+    async def pausing_admit(*args: Any, **kwargs: Any) -> Any:
+        # Deterministic pause between selection and the transactional
+        # re-read: a semantic edit lands here and must invalidate the
+        # selected candidate.
+        admission_started.set()
+        await asyncio.wait_for(release_admission.wait(), timeout=5)
+        return await real_admit(*args, **kwargs)
+
+    monkeypatch.setattr(bulk_ingestion_module, "admit_variant_item", pausing_admit)
+
+    submit_task = asyncio.create_task(
+        authenticated_bulk_client.post(f"/api/v1/ingestion-batches/{batch_id}/submit")
+    )
+    await asyncio.wait_for(admission_started.wait(), timeout=5)
+
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": "9", "expectedRevision": revision},
+    )
+    assert patch_response.status_code == 200
+    release_admission.set()
+
+    response = await asyncio.wait_for(submit_task, timeout=5)
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "active"
+    assert summary["items"][0]["status"] == "submit-failed"
+    assert summary["items"][0]["failureCode"] == "VARIANT_INVALIDATED"
+
+    # The source and the stale candidate were never saved.
+    assert await database["problems"].count_documents({}) == 0
+    assert await database["solution_generation_tasks"].count_documents({}) == 0
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "ready"
+    assert item["submit"]["submittedProblemId"] is None
+
+
+@pytest.mark.asyncio
+async def test_variant_submit_retry_reuses_audit_copy_and_saves_once(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    from app.presentation import bulk_ingestion as bulk_ingestion_module
+    from app.presentation.errors import ApiError
+
+    calls = {"n": 0}
+
+    real_admit = bulk_ingestion_module.admit_variant_item
+
+    async def flaky_admit(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ApiError(503, "VARIANT_ADMISSION_FAILED", "Transient admission failure")
+        return await real_admit(*args, **kwargs)
+
+    monkeypatch.setattr(bulk_ingestion_module, "admit_variant_item", flaky_admit)
+
+    first = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert first.status_code == 200
+    assert first.json()["submitSummary"]["items"][0]["status"] == "submit-failed"
+
+    second = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert second.status_code == 200
+    summary = second.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    problem_id = summary["items"][0]["submittedProblemId"]
+
+    # Exactly one Problem and one audit object; the retry overwrote the same
+    # deterministic key instead of creating another copy.
+    assert await database["problems"].count_documents({}) == 1
+    storage: FakeStorage = bulk_app.state.fake_storage
+    audit_puts = [key for (_, key, _, _) in storage.put_calls if "/problems/audit/" in key]
+    assert len(audit_puts) == 2
+    assert len(set(audit_puts)) == 1
+    assert await database["solution_generation_tasks"].count_documents(
+        {"problem_id": problem_id}
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_submit_skips_items_without_current_pass(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    # Invalidate the candidate (simulated failed revalidation state).
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {"$set": {"items.$.variation.status": "failed"}},
+    )
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"] == []
+    assert summary["status"] == "active"
+    assert await database["problems"].count_documents({}) == 0
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "ready"

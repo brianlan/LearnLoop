@@ -62,6 +62,27 @@ def build_crop_image(
     }
 
 
+def build_audit_image_key(
+    user_id: Any,
+    batch_id: Any,
+    item_id: str,
+    content_type: str | None,
+) -> str:
+    """Deterministic permanent audit-image key for one item's admitted variant.
+
+    Keyed by batch/item identity (never a fresh uuid) so a failed-submit retry
+    overwrites the same object instead of accumulating copies, and so cleanup
+    can recompute the key of an abandoned pending copy without extra
+    bookkeeping.
+    """
+    extension = "png"
+    if content_type and content_type.startswith("image/"):
+        candidate = content_type.split("/", 1)[1].split(";", 1)[0].strip().lower()
+        if candidate:
+            extension = candidate
+    return f"users/{user_id}/problems/audit/{batch_id}/{item_id}.{extension}"
+
+
 def build_image_document(
     *,
     image_id: str,

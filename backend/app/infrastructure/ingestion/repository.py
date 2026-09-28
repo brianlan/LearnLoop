@@ -1167,6 +1167,106 @@ async def submit_items_and_complete_batch(
     raise RuntimeError("submit_items_and_complete_batch lost too many concurrent races")
 
 
+async def record_variant_item_submission(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    problem_id: ObjectId,
+    now: datetime,
+    session: Any = None,
+) -> bool:
+    """Mark one variant item submitted inside the caller's transaction.
+
+    Must run in the same Mongo transaction (same ``session``) that inserted
+    the admitted Problem, so the problem and the item record commit or roll
+    back together. The write requires the item to still be ``READY``; a
+    concurrent admission or invalidation makes it match nothing and the
+    transaction's snapshot-consistent re-read has already handled that case.
+    """
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "status": BatchState.ACTIVE.value,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "status": ItemState.READY.value,
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.status": ItemState.SUBMITTED.value,
+                "items.$.submit": {
+                    "submittedProblemId": str(problem_id),
+                    "success": True,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+                "items.$.variation.submitReservation": None,
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+        session=session,
+    )
+    return result.matched_count == 1
+
+
+async def complete_variant_batch_if_all_submitted(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    *,
+    now: datetime,
+) -> bool:
+    """Mark a variant-mode batch completed when every non-deleted item is submitted.
+
+    Variant submit outcomes are written per item (each in its own
+    transaction), so completion is a separate guarded read-compute-write:
+    only the exact version read is updated, and a failed/never-requested
+    item keeps the batch active for retry.
+    """
+    collection = _collection(database)
+    for _ in range(_MAX_OCC_ATTEMPTS):
+        batch = await _load_batch_for_update(database, batch_id, user_id)
+        if batch.get("status") == BatchState.COMPLETED.value:
+            # Terminal state: a concurrent submit already completed the batch
+            # after this caller's item was committed. Idempotent success.
+            return True
+        all_submitted = True
+        has_submitted = False
+        for item in batch.get("items", []):
+            status = item.get("status")
+            if status == ItemState.DELETED.value:
+                continue
+            if status == ItemState.SUBMITTED.value:
+                has_submitted = True
+            else:
+                all_submitted = False
+        if not (all_submitted and has_submitted):
+            return False
+        result = await collection.update_one(
+            {
+                "_id": _object_id(batch_id),
+                "userId": user_id,
+                "status": BatchState.ACTIVE.value,
+                **_revision_guard(batch),
+            },
+            {
+                "$set": {"status": BatchState.COMPLETED.value, "updatedAt": now},
+                "$inc": {"revision": 1},
+            },
+        )
+        if result.matched_count == 1:
+            return True
+    raise RuntimeError("complete_variant_batch_if_all_submitted lost too many races")
+
+
 # ---------------------------------------------------------------------------
 # Variant workflow writers (issue #613). All interactive writes classify a
 # rejected predicate against a fresh read; all background writes return bool
