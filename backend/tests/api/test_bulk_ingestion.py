@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 from collections.abc import AsyncIterator
@@ -2109,6 +2110,7 @@ from app.infrastructure.ingestion.repository import (  # noqa: E402
     claim_item,
     claim_variation_work,
     create_batch,
+    renew_submit_reservation,
     request_variation_generation,
     request_variation_revalidation,
     reserve_items_for_original_submit,
@@ -2889,6 +2891,35 @@ async def test_generate_rejects_submit_reserved_item_until_expiry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_renewed_submit_reservation_blocks_generate_past_window() -> None:
+    database = FakeDatabase()
+    batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a"])
+    now = datetime.now(UTC)
+    token, _ = await reserve_items_for_original_submit(
+        database, batch_id, "user-1", item_ids, now=now,
+    )
+
+    from app.problem_variation import InvalidVariationStateError
+
+    # Problem creation stalled; the live submit renewed its reservation past
+    # the original 10-minute window (the keep-alive heartbeat's job).
+    later = now + timedelta(minutes=11)
+    assert await renew_submit_reservation(
+        database, batch_id, "user-1", "a", token=token, now=later,
+    ) is True
+    with pytest.raises(InvalidVariationStateError, match="reserved for submission"):
+        await request_variation_generation(
+            database, batch_id, "user-1", "a",
+            original=dict(VARIANT_ORIGINAL), expected_revision=0, now=later,
+        )
+
+    # A different token can never renew someone else's reservation.
+    assert await renew_submit_reservation(
+        database, batch_id, "user-1", "a", token="not-the-owner", now=later,
+    ) is False
+
+
+@pytest.mark.asyncio
 async def test_submit_completion_requires_matching_reservation_token() -> None:
     database = FakeDatabase()
     batch_id, item_ids = await _seed_submit_ready_batch(database, item_ids=["a"])
@@ -3041,6 +3072,125 @@ async def test_generate_blocked_while_submit_creates_problem(
     item = _variation_of(detail.json(), item_id)
     assert item["status"] == "submitted"
     assert item["variation"]["status"] == "not-requested"
+
+
+@pytest.mark.asyncio
+async def test_submit_fails_closed_when_reservation_lost_before_creation(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": "4", "expectedRevision": 0},
+    )
+    assert patch_response.status_code == 200
+    database = bulk_app.state.fake_database
+
+    from app.presentation import bulk_ingestion as bulk_ingestion_module
+
+    created: list[Any] = []
+
+    async def must_not_create(*args: Any, **kwargs: Any) -> Any:
+        created.append(args)
+        return {"_id": ObjectId()}
+
+    async def lost_renewal(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(bulk_ingestion_module, "create_problem_from_draft", must_not_create)
+    monkeypatch.setattr(bulk_ingestion_module, "renew_submit_reservation", lost_renewal)
+
+    # The pre-creation ownership proof fails: no original problem is created
+    # and the item fails closed instead of being recorded as submitted.
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submit-failed"
+    assert summary["items"][0]["failureCode"] == "RESERVATION_LOST"
+    assert created == []
+
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "submit-failed"
+    assert item["submit"]["submittedProblemId"] is None
+
+
+@pytest.mark.asyncio
+async def test_generate_wins_mid_creation_without_stale_submission(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"correctAnswer": "4", "expectedRevision": 0},
+    )
+    assert patch_response.status_code == 200
+    item_revision = _variation_of(patch_response.json(), item_id)["contentRevision"]
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+
+    from app.presentation import bulk_ingestion as bulk_ingestion_module
+
+    creation_started = asyncio.Event()
+    release_creation = asyncio.Event()
+
+    async def paused_create(*args: Any, **kwargs: Any) -> Any:
+        creation_started.set()
+        await release_creation.wait()
+        return {"_id": ObjectId()}
+
+    renewal_open = {"ok": True}
+
+    async def stateful_renewal(*args: Any, **kwargs: Any) -> bool:
+        return renewal_open["ok"]
+
+    monkeypatch.setattr(bulk_ingestion_module, "create_problem_from_draft", paused_create)
+    monkeypatch.setattr(bulk_ingestion_module, "renew_submit_reservation", stateful_renewal)
+
+    submit_task = asyncio.create_task(
+        authenticated_bulk_client.post(f"/api/v1/ingestion-batches/{batch_id}/submit")
+    )
+    await asyncio.wait_for(creation_started.wait(), timeout=5)
+
+    # Ownership is lost mid-creation (as if the reservation had been taken
+    # over after expiring): Generate confirms the variant while the stalled
+    # submit still holds its in-flight problem creation.
+    renewal_open["ok"] = False
+    await request_variation_generation(
+        database, ObjectId(batch_id), user_id, item_id,
+        original=dict(VARIANT_ORIGINAL), expected_revision=item_revision,
+        now=datetime.now(UTC) + timedelta(minutes=11),
+    )
+    release_creation.set()
+
+    # The post-creation ownership proof fails closed: the response and the
+    # database never claim the source was submitted.
+    response = await asyncio.wait_for(submit_task, timeout=5)
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submit-failed"
+    assert summary["items"][0]["failureCode"] == "RESERVATION_LOST"
+
+    detail = await authenticated_bulk_client.get(f"/api/v1/ingestion-batches/{batch_id}")
+    item = _variation_of(detail.json(), item_id)
+    assert item["status"] == "ready"
+    assert item["submit"]["submittedProblemId"] is None
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["original"] == VARIANT_ORIGINAL
 
 
 @pytest.mark.asyncio

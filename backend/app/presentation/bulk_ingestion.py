@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Annotated, Any, NamedTuple
 
@@ -37,6 +39,7 @@ from app.infrastructure.ingestion.repository import (
     get_batch,
     is_batch_expired,
     mark_item_deleted,
+    renew_submit_reservation,
     request_variation_generation,
     request_variation_revalidation,
     reset_item_for_retry,
@@ -50,6 +53,7 @@ from app.infrastructure.ingestion.repository import (
     update_item_draft,
     update_item_draft_variant,
 )
+from app.infrastructure.ingestion.repository import _SUBMIT_RESERVATION_TIMEOUT
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.vlm.base_client import BaseVLMError
 from app.infrastructure.vlm.variant_client import (
@@ -840,6 +844,65 @@ async def revalidate_variation(
     return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
 
 
+def _submit_item_failure(item_id: str, code: str, message: str) -> dict[str, Any]:
+    return {
+        "itemId": item_id,
+        "status": ItemState.SUBMIT_FAILED.value,
+        "submit": {
+            "submittedProblemId": None,
+            "success": False,
+            "failureCode": code,
+            "failureMessage": message,
+        },
+    }
+
+
+async def _create_problem_with_live_reservation(
+    database: DatabaseDependency,
+    batch_id: str,
+    user_id: Any,
+    item: dict[str, Any],
+    *,
+    reservation_token: str,
+    now: datetime,
+) -> Document | None:
+    """Create the original problem while a heartbeat keeps its reservation alive.
+
+    Problem creation can outlive the fixed reservation window, so renewals
+    every third of the window keep Generate locked out for the whole
+    side-effecting operation (same shape as the worker's lease heartbeat).
+    Loss detection is the caller's job: the ownership proof after creation
+    fails the item closed.
+    """
+    async def heartbeat() -> None:
+        # Renew a third of the window before expiry; the 1s floor keeps tiny
+        # test windows from spinning.
+        interval = max(_SUBMIT_RESERVATION_TIMEOUT.total_seconds() / 3, 1.0)
+        while True:
+            await asyncio.sleep(interval)
+            renewed = await renew_submit_reservation(
+                database, batch_id, user_id, item["itemId"],
+                token=reservation_token, now=datetime.now(UTC),
+            )
+            if not renewed:
+                return
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        return await create_problem_from_draft(
+            database,
+            user_id,
+            draft=item.get("draft"),
+            source_image=item.get("crop"),
+            origin=item.get("origin"),
+            now=now,
+        )
+    finally:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+
+
 @router.post("/{batch_id}/submit", response_model=SubmitSummaryResponse)
 async def submit_batch(
     batch_id: str,
@@ -899,40 +962,55 @@ async def submit_batch(
 
     item_results: list[dict[str, Any]] = []
     for item in reserved_items:
+        # Prove the reservation is still owned immediately before the
+        # side effect; a lost reservation fails the item closed instead of
+        # creating an original problem for a source Generate may already own.
+        owned = await renew_submit_reservation(
+            database, batch_id, user["_id"], item["itemId"],
+            token=reservation_token, now=datetime.now(UTC),
+        )
+        if not owned:
+            item_results.append(_submit_item_failure(
+                item["itemId"],
+                "RESERVATION_LOST",
+                "Original-submit reservation was lost before problem creation",
+            ))
+            continue
         try:
-            problem = await create_problem_from_draft(
-                database,
-                user["_id"],
-                draft=item.get("draft"),
-                source_image=item.get("crop"),
-                origin=item.get("origin"),
-                now=now,
-            )
-            item_results.append(
-                {
-                    "itemId": item["itemId"],
-                    "status": ItemState.SUBMITTED.value,
-                    "submit": {
-                        "submittedProblemId": str(problem["_id"]),
-                        "success": True,
-                        "failureCode": None,
-                        "failureMessage": None,
-                    },
-                }
+            problem = await _create_problem_with_live_reservation(
+                database, batch_id, user["_id"], item,
+                reservation_token=reservation_token, now=now,
             )
         except ApiError as exc:
-            item_results.append(
-                {
-                    "itemId": item["itemId"],
-                    "status": ItemState.SUBMIT_FAILED.value,
-                    "submit": {
-                        "submittedProblemId": None,
-                        "success": False,
-                        "failureCode": exc.code,
-                        "failureMessage": exc.message,
-                    },
-                }
-            )
+            item_results.append(_submit_item_failure(
+                item["itemId"], exc.code, exc.message,
+            ))
+            continue
+        # Ownership proof again after the side effect: a renewal loss the
+        # heartbeat missed (creation beat its next tick) still fails closed,
+        # so a stale original save is never recorded as a submission.
+        if not await renew_submit_reservation(
+            database, batch_id, user["_id"], item["itemId"],
+            token=reservation_token, now=datetime.now(UTC),
+        ):
+            item_results.append(_submit_item_failure(
+                item["itemId"],
+                "RESERVATION_LOST",
+                "Original-submit reservation was lost during problem creation",
+            ))
+            continue
+        item_results.append(
+            {
+                "itemId": item["itemId"],
+                "status": ItemState.SUBMITTED.value,
+                "submit": {
+                    "submittedProblemId": str(problem["_id"]),
+                    "success": True,
+                    "failureCode": None,
+                    "failureMessage": None,
+                },
+            }
+        )
 
     updated_batch = await submit_items_and_complete_batch(
         database,

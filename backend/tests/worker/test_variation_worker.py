@@ -407,6 +407,47 @@ async def test_lease_renewal_requires_ownership() -> None:
     ) is False
 
 
+async def test_expired_lease_rejects_renewal_checkpoint_and_result() -> None:
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+    )
+    token = claimed["variation"]["claimToken"]
+    # The lease expired without any reclaim: the old owner is no longer the
+    # owner even though its token is still the current one.
+    expired = NOW + timedelta(seconds=301)
+
+    assert await renew_variation_lease(
+        database, batch["_id"], "user-1", item_id,
+        token=token, lease_timeout_seconds=300, now=expired,
+    ) is False
+    assert await save_variation_candidate_checkpoint(
+        database, batch["_id"], "user-1", item_id,
+        token=token, claimed_revision=1,
+        candidate=GENERATED_CANDIDATE, now=expired,
+    ) is False
+    assert await save_variation_result(
+        database, batch["_id"], "user-1", item_id,
+        token=token, claimed_revision=1, verdict="pass",
+        validation={"verdict": "pass", "failures": [], "reports": []},
+        now=expired,
+    ) is False
+
+    # None of the fenced writes changed the claimed lifecycle state.
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.GENERATING.value
+    assert variation["claimToken"] == token
+    assert variation["candidate"] is None
+    assert variation["leaseUntil"] == NOW + timedelta(seconds=300)
+
+
 async def test_expired_batch_rejects_claims_and_results() -> None:
     database = FakeDatabase()
     batch, items = await seed_variant_batch(database)
@@ -596,8 +637,11 @@ async def test_heartbeat_maintains_lease_across_slow_provider(
         database, batch["_id"], "user-1", item_id,
         original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
     )
+    # Wall-clock claim: the heartbeat and reclaim below use the real clock,
+    # so the lease must start at execution time, not module-import time.
     claimed = await claim_variation_work(
-        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=1, now=NOW
+        database, batch["_id"], "user-1", item_id,
+        lease_timeout_seconds=2, now=datetime.now(UTC),
     )
     assert claimed is not None
 
@@ -611,12 +655,13 @@ async def test_heartbeat_maintains_lease_across_slow_provider(
     task = asyncio.create_task(
         process_variation(
             claimed, batch, database, SlowGenerator(2.5), [], None,
-            make_settings(variation_lease_timeout_seconds=1), now=NOW,
+            make_settings(variation_lease_timeout_seconds=2), now=NOW,
         )
     )
-    # Cross the original lease boundary (1s) while the provider call runs:
-    # the heartbeat renewed at ~1s, so a reclaiming worker is refused.
-    await asyncio.sleep(1.5)
+    # Cross the original lease boundary (2s) while the provider call runs:
+    # the heartbeat renewed at ~1s (strictly inside the lease), so a
+    # reclaiming worker is refused.
+    await asyncio.sleep(2.2)
     assert await claim_variation_work(
         database, batch["_id"], "user-1", item_id,
         lease_timeout_seconds=1, now=datetime.now(UTC),

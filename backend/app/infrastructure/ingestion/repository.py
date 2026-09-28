@@ -954,9 +954,9 @@ async def undo_item_deletion(
 
 
 # How long an original-submit reservation blocks Generate. ponytail: fixed
-# window; expiry reclaim keeps a crashed submit request from blocking
-# Generate forever, at the cost of a possible duplicate save if problem
-# creation stalls past it.
+# window; a live submit renews it around problem creation (see
+# ``renew_submit_reservation``), so expiry only reclaims reservations from
+# crashed/dead submit requests.
 _SUBMIT_RESERVATION_TIMEOUT = timedelta(minutes=10)
 
 
@@ -1012,6 +1012,51 @@ async def reserve_items_for_original_submit(
         if result.matched_count == 1:
             reserved.append(item_id)
     return token, reserved
+
+
+async def renew_submit_reservation(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    token: str,
+    now: datetime,
+) -> bool:
+    """Extend one item's submit reservation while its side effect runs.
+
+    Problem creation can outlive the fixed reservation window, so the submit
+    proves ownership and extends the deadline immediately before and after
+    creating the original problem (plus a keep-alive heartbeat during it).
+    Losing the renewal — batch expired/cancelled, item deleted, or the
+    reservation taken over — fails the submit closed.
+    """
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            "status": BatchState.ACTIVE.value,
+            "expiresAt": {"$gt": now},
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "status": {"$ne": ItemState.DELETED.value},
+                    "variation.submitReservation.token": token,
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.variation.submitReservation.expiresAt": (
+                    now + _SUBMIT_RESERVATION_TIMEOUT
+                ),
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    return result.matched_count == 1
 
 
 async def submit_items_and_complete_batch(
@@ -1489,7 +1534,12 @@ async def renew_variation_lease(
     lease_timeout_seconds: int,
     now: datetime,
 ) -> bool:
-    """Extend the lease of an in-flight claim the caller still owns."""
+    """Extend the lease of an in-flight claim the caller still owns.
+
+    Ownership requires a live lease: once the deadline passes the claim is
+    stale even if no other worker has reclaimed it yet, so renewal is
+    refused and the caller must discard its in-flight work.
+    """
     result = await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
@@ -1500,6 +1550,7 @@ async def renew_variation_lease(
                 "$elemMatch": {
                     "itemId": item_id,
                     "variation.claimToken": token,
+                    "variation.leaseUntil": {"$gt": now},
                     "variation.status": {
                         "$in": [
                             VariationStatus.GENERATING.value,
@@ -1549,6 +1600,7 @@ async def save_variation_candidate_checkpoint(
                 "$elemMatch": {
                     "itemId": item_id,
                     "variation.claimToken": token,
+                    "variation.leaseUntil": {"$gt": now},
                     "variation.status": VariationStatus.GENERATING.value,
                     "contentRevision": claimed_revision,
                     **_ITEM_ACTIONABLE_PREDICATE,
@@ -1583,8 +1635,8 @@ async def save_variation_result(
     """Land a validation verdict only for the current claim.
 
     A stale token, a superseded revision (semantic edit invalidated the
-    attempt), an expired batch, or a deleted/submitted item all reject the
-    write, so no old result can become ready.
+    attempt), an expired batch, an expired lease, or a deleted/submitted
+    item all reject the write, so no old result can become ready.
     """
     if verdict not in ("pass", "fail"):
         raise ValueError(f"Invalid variation verdict: {verdict}")
@@ -1611,6 +1663,7 @@ async def save_variation_result(
                 "$elemMatch": {
                     "itemId": item_id,
                     "variation.claimToken": token,
+                    "variation.leaseUntil": {"$gt": now},
                     "variation.status": {
                         "$in": [
                             VariationStatus.GENERATING.value,

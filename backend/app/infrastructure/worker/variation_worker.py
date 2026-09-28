@@ -189,7 +189,6 @@ async def process_variation(
     now: datetime | None = None,
 ) -> None:
     """Run (or resume) one claimed variation attempt to a fenced verdict."""
-    current = now or _utc_now()
     batch_id = batch["_id"]
     user_id = batch["userId"]
     item_id = item["itemId"]
