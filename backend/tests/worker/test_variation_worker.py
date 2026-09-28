@@ -44,7 +44,7 @@ from app.infrastructure.vlm.base_client import BaseVLMError
 from app.problem_variation import IngestionMode, VariationStatus
 from tests.test_utils.db_fakes import FakeDatabase
 
-NOW = datetime.now(UTC)  # process_variation fences against real wall-clock expiry
+NOW = datetime.now(UTC)  # repo-direct tests only; process_variation writes with real now, so leases it consumes must anchor to datetime.now(UTC)
 
 SOURCE_SNAPSHOT = {
     "text": "A train travels 180 km in 3 hours. What is its speed in km/h?",
@@ -194,7 +194,7 @@ async def test_generation_checkpoint_then_validation_pass(monkeypatch: pytest.Mo
         original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
     )
     claimed = await claim_variation_work(
-        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
     )
     assert claimed is not None
     token = claimed["variation"]["claimToken"]
@@ -240,7 +240,7 @@ async def test_generation_provider_failure_lands_failed_with_evidence() -> None:
         original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
     )
     claimed = await claim_variation_work(
-        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
     )
 
     generator = FakeGenerator()
@@ -272,7 +272,7 @@ async def test_resume_with_persisted_candidate_skips_generation(monkeypatch: pyt
         original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
     )
     claimed = await claim_variation_work(
-        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
     )
     token = claimed["variation"]["claimToken"]
     # Simulate the crash-after-checkpoint recovery path: candidate persisted,
@@ -550,7 +550,7 @@ async def test_validation_provider_failure_completes_without_raise(
         original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
     )
     claimed = await claim_variation_work(
-        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
     )
     generator = FakeGenerator()
     generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
@@ -584,7 +584,7 @@ async def test_malformed_persisted_candidate_fails_with_evidence() -> None:
         original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
     )
     claimed = await claim_variation_work(
-        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=NOW
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
     )
     token = claimed["variation"]["claimToken"]
     # A candidate edited (or persisted) into a schema-invalid shape.
