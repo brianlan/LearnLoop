@@ -99,7 +99,7 @@ class CoachingVLMResult(BaseModel):
 
 
 class _SolutionProviderPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", coerce_numbers_to_str=True)
 
     steps_markdown: str
     final_answer: str
@@ -323,7 +323,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
             raise SolutionCoachingVLMError(
-                "Solution VLM response failed schema validation",
+                f"Solution VLM response failed schema validation: {exc}",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_provider_response,
@@ -450,7 +450,7 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
             raise SolutionCoachingVLMError(
-                "Coaching VLM response failed schema validation",
+                f"Coaching VLM response failed schema validation: {exc}",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_provider_response,

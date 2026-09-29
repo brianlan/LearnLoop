@@ -71,7 +71,9 @@ def _profile_unconfigured(value: str | None) -> bool:
 
 
 class _ProviderPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    # ponytail: coerce_numbers_to_str lets models emit numeric JSON answers
+    # (8100) where the schema requires strings; bool is never coerced.
+    model_config = ConfigDict(extra="allow", coerce_numbers_to_str=True)
 
 
 class _VariantCandidateProviderPayload(_ProviderPayload):
@@ -165,7 +167,7 @@ class _TextOnlyVLMClient(BaseVLMClient):
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
             raise VariantVLMError(
-                "Variant VLM response failed schema validation",
+                f"Variant VLM response failed schema validation: {exc}",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_provider_response,

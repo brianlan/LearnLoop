@@ -236,3 +236,18 @@ async def test_base_vlm_default_provider_quals_model_once() -> None:
 async def test_base_vlm_aclose_is_callable() -> None:
     client = _build_client()
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_base_vlm_chat_completion_validation_error_names_field() -> None:
+    # A wrong-typed field stays invalid, so the detail is testable (issue #642).
+    client = _build_client()
+
+    with pytest.raises(BaseVLMError) as exc_info:
+        client._parse_chat_completion_response({"choices": "not-a-list"})
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    message = str(exc_info.value)
+    assert "VLM provider response failed chat completion validation" in message
+    assert "choices" in message

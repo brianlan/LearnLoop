@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from litellm.exceptions import APIConnectionError
 
-from app.domain.ingestion.variation import ModelIdentity, ProblemContent
+from app.domain.ingestion.variation import ModelIdentity, ProblemContent, assess_variant
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.base_client import FAILURE_CODE_INVALID_RESPONSE
 from app.infrastructure.vlm.variant_client import (
@@ -728,3 +728,111 @@ def test_profile_unconfigured_judges_url_hostname_not_full_value() -> None:
     # Non-URL values (model/api key) fall back to the raw suffix check.
     assert not _profile_unconfigured("gpt-real-model")
     assert _profile_unconfigured("placeholder.invalid")
+
+
+# ---------------------------------------------------------------------------
+# Numeric JSON answers: models intermittently emit numbers where the schema
+# requires strings (issue #642). pydantic's coerce_numbers_to_str accepts them;
+# bool must still fail.
+# ---------------------------------------------------------------------------
+
+
+def _validator_payload(
+    *,
+    original_solved: Any = "60",
+    variant_solved: Any = "60",
+) -> str:
+    checks = {**PASSING_CATEGORIES, "graphConsistency": "not-applicable"}
+    return json.dumps(
+        {
+            "originalSolvedAnswer": original_solved,
+            "variantSolvedAnswer": variant_solved,
+            "originalSolutionSummary": "distance over time",
+            "variantSolutionSummary": "distance over time",
+            "checks": {
+                name: {"category": category, "evidence": "clear"}
+                for name, category in checks.items()
+            },
+        }
+    )
+
+
+async def _candidate() -> VariantCandidate:
+    return await _generator_client(_Recorder([_generator_json()])).generate_candidate(
+        mode="data-only", source=SOURCE
+    )
+
+
+@pytest.mark.asyncio
+async def test_validator_numeric_solved_answers_are_coerced_to_strings() -> None:
+    recorder = _Recorder([_validator_payload(original_solved=8100, variant_solved=8104.0)])
+    client = _validator_client(recorder)
+
+    report = await client.produce_report(
+        mode="data-only", source=SOURCE, candidate=await _candidate()
+    )
+
+    assert report.original_solved_answer == "8100"
+    # Float formatting is pinned: str(8104.0) keeps the trailing ".0".
+    assert report.variant_solved_answer == "8104.0"
+
+
+@pytest.mark.asyncio
+async def test_validator_boolean_solved_answer_still_fails_schema_validation() -> None:
+    recorder = _Recorder([_validator_payload(original_solved=True)])
+    client = _validator_client(recorder)
+
+    with pytest.raises(VariantVLMError) as exc_info:
+        await client.produce_report(
+            mode="data-only", source=SOURCE, candidate=await _candidate()
+        )
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert "originalSolvedAnswer" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_validator_null_solved_answers_stay_none_and_could_not_solve_flow_holds() -> None:
+    recorder = _Recorder([_validator_payload(original_solved=None, variant_solved=None)])
+    client = _validator_client(recorder)
+
+    report = await client.produce_report(
+        mode="data-only", source=SOURCE, candidate=await _candidate()
+    )
+
+    assert report.original_solved_answer is None
+    assert report.variant_solved_answer is None
+    assessment = assess_variant(
+        mode="data-only", source=SOURCE, candidate=await _candidate(), reports=[report]
+    )
+    assert assessment.verdict == "fail"
+    assert any(
+        "could not solve" in failure.evidence for failure in assessment.failures
+    )
+
+
+@pytest.mark.asyncio
+async def test_generator_numeric_correct_answer_is_coerced_to_string() -> None:
+    recorder = _Recorder([_generator_json(correct_answer=60)])  # type: ignore[arg-type]
+    client = _generator_client(recorder)
+
+    candidate = await client.generate_candidate(mode="data-only", source=SOURCE)
+
+    assert candidate.correct_answer == "60"
+
+
+@pytest.mark.asyncio
+async def test_validator_schema_validation_error_names_offending_field() -> None:
+    # A list stays invalid after coercion, so the message is testable.
+    recorder = _Recorder([_validator_payload(original_solved=["60"])])
+    client = _validator_client(recorder)
+
+    with pytest.raises(VariantVLMError) as exc_info:
+        await client.produce_report(
+            mode="data-only", source=SOURCE, candidate=await _candidate()
+        )
+
+    message = str(exc_info.value)
+    assert "Variant VLM response failed schema validation" in message
+    assert "originalSolvedAnswer" in message
