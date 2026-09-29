@@ -1143,6 +1143,85 @@ async def test_vlm_responses_mode_invalid_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vlm_responses_request_injects_json_keyword_when_input_lacks_it() -> None:
+    """json_object responses require 'json' in the input messages (issue #638)."""
+
+    async def responses_fn(**kwargs):
+        captured.update(kwargs)
+        return _mock_responses_response("{}")
+
+    captured: dict[str, Any] = {}
+    client = _build_client(responses_fn=responses_fn, api_mode="responses")
+
+    await client._send_responses_request(
+        {
+            "instructions": "You validate variants.",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Compare the two solutions."}],
+                }
+            ],
+            "text": {"format": {"type": "json_object"}},
+        }
+    )
+
+    text = captured["input"][0]["content"][0]["text"]
+    assert "json" in text.lower()
+    assert text.startswith("Compare the two solutions.")
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_request_leaves_json_conforming_input_unchanged() -> None:
+    """Prompts that already mention JSON must not get a second instruction."""
+
+    async def responses_fn(**kwargs):
+        captured.update(kwargs)
+        return _mock_responses_response("{}")
+
+    captured: dict[str, Any] = {}
+    client = _build_client(responses_fn=responses_fn, api_mode="responses")
+    user_text = "Return only JSON. Compare the two solutions."
+
+    await client._send_responses_request(
+        {
+            "instructions": "You validate variants.",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": user_text}],
+                }
+            ],
+            "text": {"format": {"type": "json_object"}},
+        }
+    )
+
+    assert captured["input"][0]["content"][0]["text"] == user_text
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_request_passes_unrecognized_input_shape_through() -> None:
+    """Input shapes the guard does not recognize are sent unmodified."""
+
+    async def responses_fn(**kwargs):
+        captured.update(kwargs)
+        return _mock_responses_response("{}")
+
+    captured: dict[str, Any] = {}
+    client = _build_client(responses_fn=responses_fn, api_mode="responses")
+
+    await client._send_responses_request(
+        {
+            "instructions": "You validate variants.",
+            "input": [{"type": "input_text", "text": "Compare the two solutions."}],
+            "text": {"format": {"type": "json_object"}},
+        }
+    )
+
+    assert captured["input"] == [{"type": "input_text", "text": "Compare the two solutions."}]
+
+
+@pytest.mark.asyncio
 async def test_vlm_chat_mode_unchanged_behavior() -> None:
     """Chat mode should retain existing behavior (default)."""
     async def completion_fn(**kwargs):

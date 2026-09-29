@@ -111,6 +111,7 @@ class BaseVLMClient:
         return self._completion_to_dict(response)
 
     async def _send_responses_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_responses_input_mentions_json(payload)
         try:
             response = await self._responses_fn(
                 model=self._effective_model,
@@ -157,6 +158,33 @@ class BaseVLMClient:
             ) from exc
 
         return self._responses_to_dict(response)
+
+    @staticmethod
+    def _ensure_responses_input_mentions_json(payload: dict[str, Any]) -> None:
+        """Responses API json_object requires 'json' in the input messages.
+
+        # ponytail: only guards the input shapes this codebase builds (a plain
+        # string, or [{role, content: [input_text, ...]}] messages); unfamiliar
+        # shapes pass through and the provider's 400 remains the loud fallback.
+        """
+        input_value = payload.get("input")
+        if isinstance(input_value, str):
+            if "json" not in input_value.lower():
+                payload["input"] = f"{input_value}\nReturn your answer as JSON."
+            return
+        if not isinstance(input_value, list):
+            return
+        text_parts = [
+            part
+            for message in input_value
+            if isinstance(message, dict) and isinstance(message.get("content"), list)
+            for part in message["content"]
+            if isinstance(part, dict)
+            and part.get("type") == "input_text"
+            and isinstance(part.get("text"), str)
+        ]
+        if text_parts and not any("json" in part["text"].lower() for part in text_parts):
+            text_parts[-1]["text"] += "\nReturn your answer as JSON."
 
     @staticmethod
     def _responses_to_dict(response: Any) -> dict[str, Any]:
