@@ -87,26 +87,7 @@ class BaseVLMClient:
                 retryable=True,
             ) from exc
         except (LiteLLMAPIError, openai.APIError) as exc:
-            status_code = getattr(exc, "status_code", None)
-            if status_code is not None and 500 <= status_code:
-                raise self._make_error(
-                    f"VLM provider returned server error {status_code}",
-                    code=FAILURE_CODE_PROVIDER,
-                    retryable=True,
-                    status_code=status_code,
-                ) from exc
-            if status_code is not None and 400 <= status_code:
-                raise self._make_error(
-                    f"VLM provider rejected request with status {status_code}",
-                    code=FAILURE_CODE_PROVIDER_REJECTED,
-                    retryable=False,
-                    status_code=status_code,
-                ) from exc
-            raise self._make_error(
-                "VLM provider error",
-                code=FAILURE_CODE_PROVIDER,
-                retryable=True,
-            ) from exc
+            raise self._translate_provider_error(exc) from exc
 
         return self._completion_to_dict(response)
 
@@ -136,28 +117,37 @@ class BaseVLMClient:
                 retryable=True,
             ) from exc
         except (LiteLLMAPIError, openai.APIError) as exc:
-            status_code = getattr(exc, "status_code", None)
-            if status_code is not None and 500 <= status_code:
-                raise self._make_error(
-                    f"VLM provider returned server error {status_code}",
-                    code=FAILURE_CODE_PROVIDER,
-                    retryable=True,
-                    status_code=status_code,
-                ) from exc
-            if status_code is not None and 400 <= status_code:
-                raise self._make_error(
-                    f"VLM provider rejected request with status {status_code}",
-                    code=FAILURE_CODE_PROVIDER_REJECTED,
-                    retryable=False,
-                    status_code=status_code,
-                ) from exc
-            raise self._make_error(
-                "VLM provider error",
-                code=FAILURE_CODE_PROVIDER,
-                retryable=True,
-            ) from exc
+            raise self._translate_provider_error(exc) from exc
 
         return self._responses_to_dict(response)
+
+    def _translate_provider_error(self, exc: Exception) -> BaseException:
+        """Translate a provider API error into a BaseVLMError.
+
+        # ponytail: detail comes from the exception's own message (litellm and
+        the openai SDK both carry one) so provider-specific types never leak in.
+        """
+        status_code = getattr(exc, "status_code", None)
+        detail = getattr(exc, "message", None) or str(exc)
+        if status_code is not None and 500 <= status_code:
+            return self._make_error(
+                f"VLM provider returned server error {status_code}: {detail}",
+                code=FAILURE_CODE_PROVIDER,
+                retryable=True,
+                status_code=status_code,
+            )
+        if status_code is not None and 400 <= status_code:
+            return self._make_error(
+                f"VLM provider rejected request with status {status_code}: {detail}",
+                code=FAILURE_CODE_PROVIDER_REJECTED,
+                retryable=False,
+                status_code=status_code,
+            )
+        return self._make_error(
+            "VLM provider error",
+            code=FAILURE_CODE_PROVIDER,
+            retryable=True,
+        )
 
     @staticmethod
     def _ensure_responses_input_mentions_json(payload: dict[str, Any]) -> None:

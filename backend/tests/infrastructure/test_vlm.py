@@ -482,6 +482,61 @@ async def test_vlm_non_retryable_client_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vlm_chat_provider_rejection_surfaces_provider_detail() -> None:
+    async def completion_fn(**kwargs):
+        raise BadRequestError(
+            message="does not have a valid subscription",
+            model="demo",
+            llm_provider="openai",
+        )
+
+    client = _build_client(completion_fn)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert "does not have a valid subscription" in str(exc_info.value)
+    assert exc_info.value.code == FAILURE_CODE_PROVIDER_REJECTED
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_responses_provider_rejection_surfaces_provider_detail() -> None:
+    async def responses_fn(**kwargs):
+        raise BadRequestError(
+            message="does not have a valid subscription",
+            model="demo",
+            llm_provider="openai",
+        )
+
+    client = _build_client(responses_fn=responses_fn, api_mode="responses")
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert "does not have a valid subscription" in str(exc_info.value)
+    assert exc_info.value.code == FAILURE_CODE_PROVIDER_REJECTED
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_chat_provider_server_error_surfaces_provider_detail() -> None:
+    async def completion_fn(**kwargs):
+        raise InternalServerError(
+            message="upstream model overloaded", model="demo", llm_provider="openai"
+        )
+
+    client = _build_client(completion_fn)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert "upstream model overloaded" in str(exc_info.value)
+    assert exc_info.value.code == FAILURE_CODE_PROVIDER
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
 async def test_vlm_invalid_response_shape_is_rejected() -> None:
     async def completion_fn(**kwargs):
         return _mock_response("not json")
