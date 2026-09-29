@@ -551,6 +551,56 @@ async def test_vlm_invalid_response_shape_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vlm_extraction_numeric_correct_answer_is_coerced_to_string() -> None:
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Solve x + 1 = 2",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "correctAnswer": 42,
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(completion_fn)
+
+    result = await client.extract(image_url="s3://bucket/key")
+
+    assert result.correct_answer == "42"
+
+
+@pytest.mark.asyncio
+async def test_vlm_schema_validation_error_names_offending_field() -> None:
+    # A list stays invalid after coercion, so the detail is testable (issue #642).
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": "Solve x + 1 = 2",
+                    "problemType": "short-answer",
+                    "graphDsl": None,
+                    "correctAnswer": ["42"],
+                    "providerMetadata": {"provider": "demo"},
+                }
+            )
+        )
+
+    client = _build_client(completion_fn)
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_url="s3://bucket/key")
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    message = str(exc_info.value)
+    assert "VLM provider response failed schema validation" in message
+    assert "correctAnswer" in message
+
+
+@pytest.mark.asyncio
 async def test_vlm_parser_rejects_empty_content() -> None:
     async def completion_fn(**kwargs):
         return _mock_response("")

@@ -223,6 +223,88 @@ async def test_solution_vlm_client_rejects_malformed_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_solution_vlm_client_numeric_final_answer_is_coerced_to_string() -> None:
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "steps_markdown": "步骤",
+                    "final_answer": 0.5,
+                    "level_classification": "primary",
+                }
+            )
+        )
+
+    client = _build_solution_client(completion_fn)
+    result = await client.generate_solution(
+        SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+    )
+
+    assert result.final_answer == "0.5"
+
+
+@pytest.mark.asyncio
+async def test_solution_vlm_schema_validation_error_names_offending_field() -> None:
+    # A list stays invalid after coercion, so the detail is testable (issue #642).
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "steps_markdown": "步骤",
+                    "final_answer": ["0.5"],
+                    "level_classification": "primary",
+                }
+            )
+        )
+
+    client = _build_solution_client(completion_fn)
+
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
+        await client.generate_solution(
+            SolutionVLMRequest(problem_text="题目", correct_answer="42", image_url="https://example.com/problem.png")
+        )
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    message = str(exc_info.value)
+    assert "Solution VLM response failed schema validation" in message
+    assert "final_answer" in message
+
+
+@pytest.mark.asyncio
+async def test_coaching_vlm_schema_validation_error_names_offending_field() -> None:
+    async def completion_fn(**kwargs):
+        return _mock_response(
+            json.dumps(
+                {
+                    "text": ["hi"],
+                    "whiteboard_dsl": None,
+                }
+            )
+        )
+
+    client = _build_coaching_client(completion_fn)
+
+    with pytest.raises(SolutionCoachingVLMError) as exc_info:
+        await client.send_message(
+            CoachingVLMRequest(
+                problem_text="text",
+                correct_answer="ans",
+                canonical_steps_markdown="steps",
+                canonical_final_answer="ans",
+                level_classification="basic",
+                new_message="hello",
+            )
+        )
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    message = str(exc_info.value)
+    assert "Coaching VLM response failed schema validation" in message
+    assert "text" in message
+
+
+@pytest.mark.asyncio
 async def test_solution_vlm_parser_rejects_empty_choices() -> None:
     async def completion_fn(**kwargs):
         return SimpleNamespace(choices=[])

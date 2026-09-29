@@ -278,7 +278,7 @@ class BaseVLMClient:
             completion = _ChatCompletionResponse.model_validate(raw_body)
         except ValidationError as exc:
             raise self._make_error(
-                "VLM provider response failed chat completion validation",
+                f"VLM provider response failed chat completion validation: {exc}",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_body,

@@ -104,7 +104,7 @@ class _ProviderMetadataModel(BaseModel):
 
 
 class _ExtractionProviderPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", coerce_numbers_to_str=True)
 
     text: str
     problem_type: ProblemType = Field(alias="problemType")
@@ -472,7 +472,7 @@ class VLMClient(BaseVLMClient):
             return model_class.model_validate(raw_provider_response)
         except ValidationError as exc:
             raise VLMError(
-                "VLM provider response failed schema validation",
+                f"VLM provider response failed schema validation: {exc}",
                 code=FAILURE_CODE_INVALID_RESPONSE,
                 retryable=False,
                 raw_provider_response=raw_provider_response,
