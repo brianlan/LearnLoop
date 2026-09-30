@@ -2153,7 +2153,7 @@ VARIANT_CANDIDATE = {
 }
 
 
-def _enable_variant_profiles(bulk_app: FastAPI) -> None:
+def _enable_variant_profiles(bulk_app: FastAPI, *, include_second: bool = True) -> None:
     base = bulk_app.dependency_overrides[get_app_settings]()
     configured = base.model_copy(
         update={
@@ -2163,9 +2163,17 @@ def _enable_variant_profiles(bulk_app: FastAPI) -> None:
             "variant_validator_vlm_endpoint": "https://variant-validator.test/api",
             "variant_validator_vlm_model": "val-model",
             "variant_validator_vlm_api_key": "sk-val",
-            "variant_validator2_vlm_endpoint": "https://variant-validator2.test/api",
-            "variant_validator2_vlm_model": "val2-model",
-            "variant_validator2_vlm_api_key": "sk-val2",
+            # Optional second validator: the unconfigured profile keeps the
+            # library defaults, which the builder reads as fully unset.
+            **(
+                {
+                    "variant_validator2_vlm_endpoint": "https://variant-validator2.test/api",
+                    "variant_validator2_vlm_model": "val2-model",
+                    "variant_validator2_vlm_api_key": "sk-val2",
+                }
+                if include_second
+                else {}
+            ),
             "helper_vlm_endpoint": "https://helper.test/api",
             "helper_vlm_model": "helper-model",
             "helper_vlm_api_key": "sk-helper",
@@ -2328,36 +2336,13 @@ async def test_variant_generate_requires_configured_profiles(
     assert item["variation"]["generationCount"] == 0
 
 
-def _enable_variant_profiles_single_validator(bulk_app: FastAPI) -> None:
-    """Single-validator deployment: validator2 keeps its .invalid defaults.
-
-    A copy rather than a mutation of ``_enable_variant_profiles`` so the
-    all-four-configured path used by the other variant API tests stays intact.
-    """
-    base = bulk_app.dependency_overrides[get_app_settings]()
-    configured = base.model_copy(
-        update={
-            "variant_generator_vlm_endpoint": "https://variant-generator.test/api",
-            "variant_generator_vlm_model": "gen-model",
-            "variant_generator_vlm_api_key": "sk-gen",
-            "variant_validator_vlm_endpoint": "https://variant-validator.test/api",
-            "variant_validator_vlm_model": "val-model",
-            "variant_validator_vlm_api_key": "sk-val",
-            "helper_vlm_endpoint": "https://helper.test/api",
-            "helper_vlm_model": "helper-model",
-            "helper_vlm_api_key": "sk-helper",
-        }
-    )
-    bulk_app.dependency_overrides[get_app_settings] = lambda: configured
-
-
 @pytest.mark.asyncio
 async def test_variant_generate_accepted_with_second_validator_unconfigured(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,
     helper_vlm: FakeHelperVLMClient,
 ) -> None:
-    _enable_variant_profiles_single_validator(bulk_app)
+    _enable_variant_profiles(bulk_app, include_second=False)
     batch_id, _, item_id = await _create_variant_batch(
         authenticated_bulk_client, bulk_app, helper_vlm
     )
@@ -2376,7 +2361,7 @@ async def test_variant_revalidate_accepted_with_second_validator_unconfigured(
     bulk_app: FastAPI,
     helper_vlm: FakeHelperVLMClient,
 ) -> None:
-    _enable_variant_profiles_single_validator(bulk_app)
+    _enable_variant_profiles(bulk_app, include_second=False)
     batch_id, _, item_id = await _create_variant_batch(
         authenticated_bulk_client, bulk_app, helper_vlm
     )
@@ -2405,7 +2390,7 @@ async def test_variant_generate_partial_second_validator_rejected(
     helper_vlm: FakeHelperVLMClient,
 ) -> None:
     """A half-configured validator2 is a config error, not single-validator mode."""
-    _enable_variant_profiles_single_validator(bulk_app)
+    _enable_variant_profiles(bulk_app, include_second=False)
     base = bulk_app.dependency_overrides[get_app_settings]()
     bulk_app.dependency_overrides[get_app_settings] = lambda: base.model_copy(
         update={"variant_validator2_vlm_model": "val2-model"}
