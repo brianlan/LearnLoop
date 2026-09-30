@@ -2328,6 +2328,99 @@ async def test_variant_generate_requires_configured_profiles(
     assert item["variation"]["generationCount"] == 0
 
 
+def _enable_variant_profiles_single_validator(bulk_app: FastAPI) -> None:
+    """Single-validator deployment: validator2 keeps its .invalid defaults.
+
+    A copy rather than a mutation of ``_enable_variant_profiles`` so the
+    all-four-configured path used by the other variant API tests stays intact.
+    """
+    base = bulk_app.dependency_overrides[get_app_settings]()
+    configured = base.model_copy(
+        update={
+            "variant_generator_vlm_endpoint": "https://variant-generator.test/api",
+            "variant_generator_vlm_model": "gen-model",
+            "variant_generator_vlm_api_key": "sk-gen",
+            "variant_validator_vlm_endpoint": "https://variant-validator.test/api",
+            "variant_validator_vlm_model": "val-model",
+            "variant_validator_vlm_api_key": "sk-val",
+            "helper_vlm_endpoint": "https://helper.test/api",
+            "helper_vlm_model": "helper-model",
+            "helper_vlm_api_key": "sk-helper",
+        }
+    )
+    bulk_app.dependency_overrides[get_app_settings] = lambda: configured
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_accepted_with_second_validator_unconfigured(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles_single_validator(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 202
+    variation = _variation_of(response.json(), item_id)["variation"]
+    assert variation["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_variant_revalidate_accepted_with_second_validator_unconfigured(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles_single_validator(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (
+        await bulk_app.state.fake_database["users"].find_one({"username": "student1"})
+    )["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 5+5?"},
+    )
+    assert edit.status_code == 200
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 202
+    assert _variation_of(response.json(), item_id)["variation"]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_partial_second_validator_rejected(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A half-configured validator2 is a config error, not single-validator mode."""
+    _enable_variant_profiles_single_validator(bulk_app)
+    base = bulk_app.dependency_overrides[get_app_settings]()
+    bulk_app.dependency_overrides[get_app_settings] = lambda: base.model_copy(
+        update={"variant_validator2_vlm_model": "val2-model"}
+    )
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "vlm-profile-invalid"
+
+
 @pytest.mark.asyncio
 async def test_variant_generate_confirms_source_and_queues(
     authenticated_bulk_client: AsyncClient,
