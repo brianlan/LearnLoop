@@ -2153,7 +2153,7 @@ VARIANT_CANDIDATE = {
 }
 
 
-def _enable_variant_profiles(bulk_app: FastAPI) -> None:
+def _enable_variant_profiles(bulk_app: FastAPI, *, include_second: bool = True) -> None:
     base = bulk_app.dependency_overrides[get_app_settings]()
     configured = base.model_copy(
         update={
@@ -2163,9 +2163,17 @@ def _enable_variant_profiles(bulk_app: FastAPI) -> None:
             "variant_validator_vlm_endpoint": "https://variant-validator.test/api",
             "variant_validator_vlm_model": "val-model",
             "variant_validator_vlm_api_key": "sk-val",
-            "variant_validator2_vlm_endpoint": "https://variant-validator2.test/api",
-            "variant_validator2_vlm_model": "val2-model",
-            "variant_validator2_vlm_api_key": "sk-val2",
+            # Optional second validator: the unconfigured profile keeps the
+            # library defaults, which the builder reads as fully unset.
+            **(
+                {
+                    "variant_validator2_vlm_endpoint": "https://variant-validator2.test/api",
+                    "variant_validator2_vlm_model": "val2-model",
+                    "variant_validator2_vlm_api_key": "sk-val2",
+                }
+                if include_second
+                else {}
+            ),
             "helper_vlm_endpoint": "https://helper.test/api",
             "helper_vlm_model": "helper-model",
             "helper_vlm_api_key": "sk-helper",
@@ -2326,6 +2334,76 @@ async def test_variant_generate_requires_configured_profiles(
     item = _variation_of(detail.json(), item_id)
     assert item["variation"]["status"] == "not-requested"
     assert item["variation"]["generationCount"] == 0
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_accepted_with_second_validator_unconfigured(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app, include_second=False)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 202
+    variation = _variation_of(response.json(), item_id)["variation"]
+    assert variation["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_variant_revalidate_accepted_with_second_validator_unconfigured(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    _enable_variant_profiles(bulk_app, include_second=False)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (
+        await bulk_app.state.fake_database["users"].find_one({"username": "student1"})
+    )["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 5+5?"},
+    )
+    assert edit.status_code == 200
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 202
+    assert _variation_of(response.json(), item_id)["variation"]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_partial_second_validator_rejected(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A half-configured validator2 is a config error, not single-validator mode."""
+    _enable_variant_profiles(bulk_app, include_second=False)
+    base = bulk_app.dependency_overrides[get_app_settings]()
+    bulk_app.dependency_overrides[get_app_settings] = lambda: base.model_copy(
+        update={"variant_validator2_vlm_model": "val2-model"}
+    )
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 0, "original": VARIANT_ORIGINAL},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "vlm-profile-invalid"
 
 
 @pytest.mark.asyncio

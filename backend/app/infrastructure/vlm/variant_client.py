@@ -328,8 +328,24 @@ def build_variant_validator_vlm_client(
     second: bool = False,
     completion_fn: Callable[..., Any] | None = None,
     responses_fn: Callable[..., Any] | None = None,
-) -> VariantValidatorVLMClient:
+) -> VariantValidatorVLMClient | None:
+    """Build a validator client; the second validator is optional.
+
+    ``second=True`` returns ``None`` when the whole ``validator2`` profile is
+    unconfigured (single-validator mode). A partially configured profile is a
+    configuration error, not an intentional omission, and still raises so a
+    typo can never silently drop the independent second check.
+    """
     if second:
+        if all(
+            _profile_unconfigured(value)
+            for value in (
+                settings.variant_validator2_vlm_endpoint,
+                settings.variant_validator2_vlm_model,
+                settings.variant_validator2_vlm_api_key,
+            )
+        ):
+            return None
         _require_profile_settings(
             "variant_validator2_vlm_*",
             endpoint=settings.variant_validator2_vlm_endpoint,

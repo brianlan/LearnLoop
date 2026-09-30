@@ -220,8 +220,6 @@ GATE_CASES: list[tuple[str, str, ProblemContent, VariantCandidate, str]] = [
     ),
 ]
 
-_PLACEHOLDER = "replace-me"
-
 
 def _profile_missing() -> list[str]:
     settings = get_settings()
@@ -247,12 +245,10 @@ async def _run() -> int:
     settings = get_settings()
     generator = build_variant_generator_vlm_client(settings)
     validator1 = build_variant_validator_vlm_client(settings)
-    second_model = (settings.variant_validator2_vlm_model or "").strip()
-    validators = (
-        [validator1, build_variant_validator_vlm_client(settings, second=True)]
-        if second_model and second_model != _PLACEHOLDER
-        else [validator1]
-    )
+    # Optional second validator: None when fully unconfigured (single-validator
+    # mode); a partially configured profile raises vlm-profile-invalid above.
+    validator2 = build_variant_validator_vlm_client(settings, second=True)
+    validators = [v for v in (validator1, validator2) if v is not None]
     helper = build_variant_helper_vlm_client(settings)
 
     discrepancies = 0

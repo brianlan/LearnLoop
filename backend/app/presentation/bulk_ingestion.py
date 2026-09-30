@@ -134,7 +134,13 @@ def _require_variant_mode(batch: Document) -> None:
 
 
 def _build_variant_clients(settings: Settings):
-    """Build the four role clients; an unconfigured profile is an explicit 409."""
+    """Build the four role clients; an unconfigured mandatory profile is an
+    explicit 409.
+
+    The second validator is optional: a fully unconfigured
+    ``variant_validator2_vlm_*`` profile builds nothing (single-validator mode)
+    instead of blocking the enqueue.
+    """
     try:
         return (
             build_variant_generator_vlm_client(settings),

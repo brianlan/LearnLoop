@@ -93,13 +93,23 @@ async def _run_variation_worker_with_logging(database, settings, stop_event):
     try:
         generator = build_variant_generator_vlm_client(settings)
         validator = build_variant_validator_vlm_client(settings)
+        # Optional profile: fully unconfigured validator2 runs single-validator.
         validator2 = build_variant_validator_vlm_client(settings, second=True)
         helper = build_variant_helper_vlm_client(settings)
+        validators = [v for v in (validator, validator2) if v is not None]
+        if len(validators) == 1:
+            identity = validators[0].identity
+            logger.info(
+                "Variation worker running with one validator: %s/%s "
+                "(variant_validator2_vlm_* unconfigured)",
+                identity["provider"],
+                identity["model"],
+            )
         await run_variation_worker(
             database,
             settings,
             generator,
-            [validator, validator2],
+            validators,
             helper,
             stop_event,
         )

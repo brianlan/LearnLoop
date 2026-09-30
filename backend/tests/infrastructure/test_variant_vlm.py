@@ -582,10 +582,6 @@ async def test_reports_preserved_when_helper_fails() -> None:
     [
         (lambda s: build_variant_generator_vlm_client(s), "variant_generator_vlm_*"),
         (lambda s: build_variant_validator_vlm_client(s), "variant_validator_vlm_*"),
-        (
-            lambda s: build_variant_validator_vlm_client(s, second=True),
-            "variant_validator2_vlm_*",
-        ),
         (lambda s: build_variant_helper_vlm_client(s), "helper_vlm_*"),
     ],
 )
@@ -597,6 +593,41 @@ def test_missing_profile_configuration_fails_at_construction(
         builder(Settings())
     assert exc_info.value.code == FAILURE_CODE_PROFILE_INVALID
     assert expected_profile in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_second_validator_unconfigured_builds_none() -> None:
+    """A fully unconfigured validator2 profile means single-validator mode."""
+    assert build_variant_validator_vlm_client(Settings(), second=True) is None
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"variant_validator2_vlm_endpoint": "https://validator2.test/api"},
+        {"variant_validator2_vlm_model": "val2-model"},
+        {"variant_validator2_vlm_api_key": "sk-val2"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_second_validator_partial_configuration_still_fails(update: dict) -> None:
+    """Partial validator2 configuration is a config error, never single-validator."""
+    settings = Settings(**update)
+    with pytest.raises(VariantVLMError) as exc_info:
+        build_variant_validator_vlm_client(settings, second=True)
+    assert exc_info.value.code == FAILURE_CODE_PROFILE_INVALID
+    assert "variant_validator2_vlm_*" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_second_validator_configured_builds_client() -> None:
+    settings = Settings(
+        variant_validator2_vlm_endpoint="https://validator2.test/api",
+        variant_validator2_vlm_model="val2-model",
+        variant_validator2_vlm_api_key="sk-val2",
+    )
+    client = build_variant_validator_vlm_client(settings, second=True)
+    assert isinstance(client, VariantValidatorVLMClient)
 
 
 # ---------------------------------------------------------------------------
