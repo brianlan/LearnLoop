@@ -37,6 +37,13 @@ from app.infrastructure.vlm.prompts import (
     ENGLISH_EXTRACTION_SYSTEM_PROMPT,
     MATH_EXTRACTION_SYSTEM_PROMPT,
 )
+from app.infrastructure.vlm.problem_format_rules import (
+    GRAPH_DSL_AUTHORING_RULES,
+    PROBLEM_TEXT_FORMAT_RULES,
+)
+from app.infrastructure.vlm.variant_prompts import (
+    VARIANT_GENERATOR_SYSTEM_PROMPT,
+)
 from app.domain.state import recover_stale_preview
 
 
@@ -826,6 +833,31 @@ def test_math_extraction_prompt_spaces_cjk_punctuation_next_to_inline_latex() ->
     assert "Chinese-style punctuation" in MATH_EXTRACTION_SYSTEM_PROMPT
     assert "已知 $x+1=2$ ，求 $x$ 的值。" in MATH_EXTRACTION_SYSTEM_PROMPT
     assert "已知$x+1=2$，求$x$的值。" in MATH_EXTRACTION_SYSTEM_PROMPT
+
+
+def test_problem_format_rules_shared_by_extraction_and_generator_prompts() -> None:
+    """Single source of truth: both prompts interpolate the same constants (issue #649)."""
+    assert PROBLEM_TEXT_FORMAT_RULES in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert PROBLEM_TEXT_FORMAT_RULES in VARIANT_GENERATOR_SYSTEM_PROMPT
+    assert GRAPH_DSL_AUTHORING_RULES in MATH_EXTRACTION_SYSTEM_PROMPT
+    assert GRAPH_DSL_AUTHORING_RULES in VARIANT_GENERATOR_SYSTEM_PROMPT
+
+
+def test_problem_format_rules_are_image_neutral() -> None:
+    """Shared rules apply to both extraction and generation, so they must not
+    talk about images."""
+    assert "image" not in PROBLEM_TEXT_FORMAT_RULES
+    assert "image" not in GRAPH_DSL_AUTHORING_RULES
+
+
+def test_format_rules_exclude_extraction_only_cleanup_contract() -> None:
+    """The shared rules and the generator prompt must not carry the extraction
+    cleanup contract ("Do not solve the problem"), which contradicts the
+    generator's correctAnswer duty. The extraction prompt keeps it."""
+    assert "Do not solve the problem" not in VARIANT_GENERATOR_SYSTEM_PROMPT
+    assert "Do not solve the problem" not in PROBLEM_TEXT_FORMAT_RULES
+    assert "Do not solve the problem" not in GRAPH_DSL_AUTHORING_RULES
+    assert "Do not solve the problem" in MATH_EXTRACTION_SYSTEM_PROMPT
 
 
 def test_english_extraction_prompt_instructs_options_on_own_line() -> None:
