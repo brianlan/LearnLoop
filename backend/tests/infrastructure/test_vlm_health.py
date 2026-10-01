@@ -186,6 +186,24 @@ async def test_non_retryable_failure_fails_immediately() -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_retryable_after_retryable_records_real_attempts() -> None:
+    settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
+    harness = _ProbeHarness(behaviors=["retryable", "fatal"])
+
+    snap = await health.run_probe(
+        settings=settings,
+        client_factory=harness.factory,
+        sleep=harness._sleep,
+    )
+
+    entry = snap["profiles"]["helper_vlm"]
+    assert entry["status"] == "unavailable"
+    # The fatal error happened on attempt 2, after one retryable retry.
+    assert entry["attempts"] == 2
+    assert harness.sleeps == [2]
+
+
+@pytest.mark.asyncio
 async def test_exhausted_retries_report_unavailable_with_truncated_reason() -> None:
     settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
     harness = _ProbeHarness(behaviors=["long", "long", "long"])

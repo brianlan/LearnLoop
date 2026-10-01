@@ -293,6 +293,15 @@ describe("SettingsPage", () => {
     expect(await screen.findAllByText("checking…")).toHaveLength(11);
   });
 
+  it("renders a placeholder instead of Invalid Date during the initial in-flight run (#654)", async () => {
+    healthResponse = { running: true, started_at: null, finished_at: null, profiles: {} };
+    renderWithProviders();
+
+    expect((await screen.findAllByText("Checking…")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/invalid date/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/last checked/i)).not.toBeInTheDocument();
+  });
+
   it("polls health every 5s while a run is in flight (#654)", async () => {
     vi.useFakeTimers();
     healthResponse = { running: true, started_at: "t0", finished_at: null, profiles: {} };

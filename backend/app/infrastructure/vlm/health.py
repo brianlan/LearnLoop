@@ -75,6 +75,9 @@ async def _probe_with_retries(
             await _probe_once(client)
             return attempt
         except BaseVLMError as exc:
+            # Stamp the actual attempt so a non-retryable failure after
+            # earlier retries reports the real attempt count.
+            exc.attempt = attempt  # type: ignore[attr-defined]
             if not exc.retryable:
                 raise
             last_error = exc
@@ -127,7 +130,7 @@ async def run_probe(
                 entry["status"] = VLM_HEALTH_UNAVAILABLE
                 entry["reason"] = str(exc)[:_REASON_MAX_CHARS]
                 entry["code"] = exc.code
-                entry["attempts"] = attempts if exc.retryable else 1
+                entry["attempts"] = getattr(exc, "attempt", 1)
             finally:
                 await client.aclose()
         profiles[prefix] = entry

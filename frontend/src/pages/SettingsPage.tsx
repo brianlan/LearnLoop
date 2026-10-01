@@ -546,8 +546,13 @@ export function SettingsPage() {
             }}
           >
             <span style={{ color: "var(--color-text)" }}>
-              Last checked:{" "}
-              {new Date(health.finished_at ?? health.started_at ?? "").toLocaleString()}
+              {health.finished_at ?? health.started_at
+                ? `Last checked: ${new Date(
+                    health.finished_at ?? health.started_at!
+                  ).toLocaleString()}`
+                : health.running
+                  ? "Checking…"
+                  : "Not checked yet"}
             </span>
             <button
               onClick={rerunHealth}
