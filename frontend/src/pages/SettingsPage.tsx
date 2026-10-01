@@ -99,6 +99,21 @@ interface VlmProfileSettings {
   status: string;
 }
 
+interface VlmHealthEntry {
+  status: string;
+  checked_at?: string | null;
+  reason?: string;
+  code?: string;
+  attempts?: number;
+}
+
+interface VlmHealthResponse {
+  running: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  profiles: Record<string, VlmHealthEntry>;
+}
+
 function VlmStatusBadge({ status }: { status: string }) {
   if (status === "configured") {
     return (
@@ -132,13 +147,62 @@ function VlmStatusBadge({ status }: { status: string }) {
   );
 }
 
+function VlmHealthBadge({ entry }: { entry?: VlmHealthEntry }) {
+  if (!entry) {
+    // Row only renders while a run is in flight and this profile has no
+    // entry yet.
+    return (
+      <span style={{ color: "var(--color-text-muted)", fontWeight: 600 }}>
+        checking…
+      </span>
+    );
+  }
+  if (entry.status === "ok") {
+    return (
+      <span style={{ color: "var(--color-success, #16a34a)", fontWeight: 600 }}>
+        OK
+      </span>
+    );
+  }
+  if (entry.status === "unavailable") {
+    return (
+      <div>
+        <span style={{ color: "var(--color-error, #dc2626)", fontWeight: 600 }}>
+          UNAVAILABLE
+        </span>
+        {entry.reason && (
+          <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+            {entry.reason}
+          </div>
+        )}
+      </div>
+    );
+  }
+  // unconfigured / misconfigured: reported without probing.
+  return (
+    <div>
+      <span style={{ color: "var(--color-text-muted)", fontWeight: 600 }}>
+        {entry.status.toUpperCase()}
+      </span>
+      <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+        not probed: profile is not fully configured
+      </div>
+    </div>
+  );
+}
+
 function VlmSection({
   title,
   vlm,
+  health,
+  healthRunning,
 }: {
   title: string;
   vlm: VlmProfileSettings;
+  health?: VlmHealthEntry;
+  healthRunning: boolean;
 }) {
+  const showHealth = health !== undefined || healthRunning;
   return (
     <SettingSection title={title}>
       <SettingRow label="Endpoint" value={vlm.endpoint} />
@@ -156,6 +220,21 @@ function VlmSection({
         <span style={{ fontWeight: 500, color: "var(--color-text)" }}>Status</span>
         <VlmStatusBadge status={vlm.status} />
       </div>
+      {showHealth && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            padding: "0.5rem 0",
+            borderBottom: "1px solid var(--color-border)",
+          }}
+        >
+          <span style={{ fontWeight: 500, color: "var(--color-text)" }}>
+            Health
+          </span>
+          <VlmHealthBadge entry={health} />
+        </div>
+      )}
     </SettingSection>
   );
 }
@@ -337,6 +416,22 @@ export function SettingsPage() {
     queryFn: async () => api.get<SettingsResponse>("/settings"),
   });
 
+  const healthQuery = useQuery({
+    queryKey: ["vlm-health"],
+    queryFn: async () => api.get<VlmHealthResponse>("/settings/vlm-health"),
+    refetchInterval: (query) => (query.state.data?.running ? 5000 : false),
+  });
+  const health = healthQuery.data;
+
+  const rerunHealth = async () => {
+    try {
+      await api.post("/settings/vlm-health/run", {});
+    } catch {
+      // 409 while a run is already in flight — the 5s poll picks it up.
+    }
+    await healthQuery.refetch();
+  };
+
   const pageCanvasStyle: React.CSSProperties = {
     minHeight: "calc(100vh - 60px)",
     backgroundColor: "var(--color-surface-muted)",
@@ -440,19 +535,50 @@ export function SettingsPage() {
         <SettingRow label="Preview Window (seconds)" value={data.preview_extracting_window_seconds} />
       </SettingSection>
 
-      <VlmSection title="Helper VLM" vlm={data.helper_vlm} />
-      <VlmSection title="Math Ingestion VLM" vlm={data.math_ingestion_vlm} />
-      <VlmSection title="English Ingestion VLM" vlm={data.english_ingestion_vlm} />
-      <VlmSection title="Grading VLM" vlm={data.grading_vlm} />
-      <VlmSection title="Math Solution VLM" vlm={data.math_solution_vlm} />
-      <VlmSection title="English Solution VLM" vlm={data.english_solution_vlm} />
-      <VlmSection title="Math Coaching VLM" vlm={data.math_coaching_vlm} />
-      <VlmSection title="English Coaching VLM" vlm={data.english_coaching_vlm} />
-      <VlmSection title="Variant Generator VLM" vlm={data.variant_generator_vlm} />
-      <VlmSection title="Variant Validator VLM" vlm={data.variant_validator_vlm} />
+      {health && (
+        <SettingSection title="VLM Health">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "0.5rem 0",
+            }}
+          >
+            <span style={{ color: "var(--color-text)" }}>
+              Last checked:{" "}
+              {new Date(health.finished_at ?? health.started_at ?? "").toLocaleString()}
+            </span>
+            <button
+              onClick={rerunHealth}
+              disabled={health.running}
+              data-testid="vlm-health-rerun"
+            >
+              {health.running ? "Checking…" : "Re-run"}
+            </button>
+          </div>
+          <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+            Text-only ping; vision-only endpoints may show unavailable while real
+            image traffic works.
+          </div>
+        </SettingSection>
+      )}
+
+      <VlmSection title="Helper VLM" vlm={data.helper_vlm} health={health?.profiles.helper_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="Math Ingestion VLM" vlm={data.math_ingestion_vlm} health={health?.profiles.math_ingestion_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="English Ingestion VLM" vlm={data.english_ingestion_vlm} health={health?.profiles.english_ingestion_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="Grading VLM" vlm={data.grading_vlm} health={health?.profiles.grading_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="Math Solution VLM" vlm={data.math_solution_vlm} health={health?.profiles.math_solution_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="English Solution VLM" vlm={data.english_solution_vlm} health={health?.profiles.english_solution_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="Math Coaching VLM" vlm={data.math_coaching_vlm} health={health?.profiles.math_coaching_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="English Coaching VLM" vlm={data.english_coaching_vlm} health={health?.profiles.english_coaching_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="Variant Generator VLM" vlm={data.variant_generator_vlm} health={health?.profiles.variant_generator_vlm} healthRunning={Boolean(health?.running)} />
+      <VlmSection title="Variant Validator VLM" vlm={data.variant_validator_vlm} health={health?.profiles.variant_validator_vlm} healthRunning={Boolean(health?.running)} />
       <VlmSection
         title="Variant Validator2 VLM (optional)"
         vlm={data.variant_validator2_vlm}
+        health={health?.profiles.variant_validator2_vlm}
+        healthRunning={Boolean(health?.running)}
       />
 
       <SettingSection title="Session">

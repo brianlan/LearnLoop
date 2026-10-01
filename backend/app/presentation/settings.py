@@ -1,7 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
-from app.infrastructure.config.profile_status import profile_status
+from app.infrastructure.config.profile_status import (
+    VLM_PROFILE_PREFIXES,
+    profile_status,
+)
 from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.vlm import health as vlm_health
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -31,7 +36,7 @@ def _vlm_profile(settings: Settings, prefix: str) -> dict:
 @router.get("")
 async def get_settings_info() -> dict:
     settings = get_settings()
-    return {
+    payload = {
         "app": {
             "env": settings.app_env,
             "host": settings.app_host,
@@ -47,18 +52,18 @@ async def get_settings_info() -> dict:
             "region": settings.s3_region,
             "force_path_style": settings.s3_force_path_style,
         },
-        "helper_vlm": _vlm_profile(settings, "helper_vlm"),
-        "math_ingestion_vlm": _vlm_profile(settings, "math_ingestion_vlm"),
-        "english_ingestion_vlm": _vlm_profile(settings, "english_ingestion_vlm"),
+        "helper_vlm": None,
+        "math_ingestion_vlm": None,
+        "english_ingestion_vlm": None,
         "preview_extracting_window_seconds": settings.preview_extracting_window_seconds,
-        "grading_vlm": _vlm_profile(settings, "grading_vlm"),
-        "math_solution_vlm": _vlm_profile(settings, "math_solution_vlm"),
-        "english_solution_vlm": _vlm_profile(settings, "english_solution_vlm"),
-        "math_coaching_vlm": _vlm_profile(settings, "math_coaching_vlm"),
-        "english_coaching_vlm": _vlm_profile(settings, "english_coaching_vlm"),
-        "variant_generator_vlm": _vlm_profile(settings, "variant_generator_vlm"),
-        "variant_validator_vlm": _vlm_profile(settings, "variant_validator_vlm"),
-        "variant_validator2_vlm": _vlm_profile(settings, "variant_validator2_vlm"),
+        "grading_vlm": None,
+        "math_solution_vlm": None,
+        "english_solution_vlm": None,
+        "math_coaching_vlm": None,
+        "english_coaching_vlm": None,
+        "variant_generator_vlm": None,
+        "variant_validator_vlm": None,
+        "variant_validator2_vlm": None,
         "session": {
             "cookie_name": settings.session_cookie_name,
             "secure": settings.session_secure,
@@ -72,3 +77,25 @@ async def get_settings_info() -> dict:
             "min_problem_age_days": settings.problem_selection_min_age_days,
         },
     }
+    # VLM profiles come from the shared prefix tuple so a 12th profile cannot
+    # drift between the payload and the health probe (#654).
+    for prefix in VLM_PROFILE_PREFIXES:
+        payload[prefix] = _vlm_profile(settings, prefix)
+    return payload
+
+
+@router.get("/vlm-health")
+async def get_vlm_health() -> dict:
+    """Current in-memory VLM availability snapshot (#654)."""
+    return vlm_health.snapshot()
+
+
+@router.post("/vlm-health/run")
+async def run_vlm_health() -> JSONResponse:
+    """Spawn one health run; 409 while another run is still in flight."""
+    if not vlm_health.begin_run():
+        raise HTTPException(
+            status_code=409, detail="VLM health run already in progress"
+        )
+    vlm_health.spawn(get_settings())
+    return JSONResponse(status_code=202, content=vlm_health.snapshot())

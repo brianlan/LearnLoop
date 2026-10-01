@@ -20,6 +20,7 @@ from app.infrastructure.worker.extraction_worker import run_extraction_worker
 from app.infrastructure.worker.solution_worker import run_solution_worker
 from app.infrastructure.worker.exam_grading_worker import run_exam_grading_worker
 from app.infrastructure.worker.variation_worker import run_variation_worker
+from app.infrastructure.vlm import health as vlm_health
 from app.infrastructure.vlm.variant_client import (
     VariantVLMError,
     build_variant_generator_vlm_client,
@@ -155,6 +156,14 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(
                 _run_variation_worker_with_logging(database, settings, stop_event)
             )
+        )
+
+    # Post-launch VLM availability probe (#654): non-blocking by design; it
+    # joins the same tracked task list so shutdown cancels it like the
+    # workers (no "Task was destroyed but it is pending").
+    if vlm_health.begin_run():
+        worker_tasks.append(
+            asyncio.create_task(vlm_health.run_stored_probe(settings))
         )
     
     yield

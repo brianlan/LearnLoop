@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,11 +9,31 @@ import { SettingsPage } from "./SettingsPage";
 vi.mock("../api/client", () => ({
   api: {
     get: vi.fn(),
+    post: vi.fn(),
     changeTeacherPassword: vi.fn(),
   },
 }));
 
 import { api } from "../api/client";
+
+// Mutable per-test health snapshot served at /settings/vlm-health (#654).
+let healthResponse: Record<string, unknown> = {
+  running: false,
+  started_at: "2026-10-01T09:00:00Z",
+  finished_at: "2026-10-01T09:00:05Z",
+  profiles: {
+    helper_vlm: { status: "ok", checked_at: "2026-10-01T09:00:01Z" },
+    grading_vlm: {
+      status: "unavailable",
+      reason: "connection refused",
+      code: "vlm-network-error",
+      attempts: 3,
+      checked_at: "2026-10-01T09:00:03Z",
+    },
+    variant_validator_vlm: { status: "misconfigured", checked_at: "2026-10-01T09:00:04Z" },
+    variant_validator2_vlm: { status: "unconfigured", checked_at: "2026-10-01T09:00:05Z" },
+  },
+};
 
 function renderWithProviders() {
   const queryClient = new QueryClient({
@@ -128,8 +148,33 @@ const mockSettings = {
 describe("SettingsPage", () => {
   beforeEach(() => {
     vi.mocked(api.get).mockReset();
+    vi.mocked(api.post).mockReset();
     vi.mocked(api.changeTeacherPassword).mockReset();
-    vi.mocked(api.get).mockResolvedValue(mockSettings);
+    healthResponse = {
+      running: false,
+      started_at: "2026-10-01T09:00:00Z",
+      finished_at: "2026-10-01T09:00:05Z",
+      profiles: {
+        helper_vlm: { status: "ok", checked_at: "2026-10-01T09:00:01Z" },
+        grading_vlm: {
+          status: "unavailable",
+          reason: "connection refused",
+          code: "vlm-network-error",
+          attempts: 3,
+          checked_at: "2026-10-01T09:00:03Z",
+        },
+        variant_validator_vlm: { status: "misconfigured", checked_at: "2026-10-01T09:00:04Z" },
+        variant_validator2_vlm: { status: "unconfigured", checked_at: "2026-10-01T09:00:05Z" },
+      },
+    };
+    vi.mocked(api.get).mockImplementation(((url: string) =>
+      Promise.resolve(
+        url === "/settings/vlm-health" ? healthResponse : mockSettings,
+      )) as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders settings heading", async () => {
@@ -215,6 +260,51 @@ describe("SettingsPage", () => {
     expect(
       screen.getByText(/unconfigured.*optional/i),
     ).toBeInTheDocument();
+  });
+
+  it("renders a health badge per probed profile plus the vision-only note (#654)", async () => {
+    renderWithProviders();
+    expect(await screen.findByText("OK")).toBeInTheDocument();
+    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.getByText(/connection refused/)).toBeInTheDocument();
+    expect(screen.getByText("MISCONFIGURED")).toBeInTheDocument();
+    expect(screen.getByText("UNCONFIGURED")).toBeInTheDocument();
+    expect(
+      screen.getByText(/vision-only/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/last checked/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Re-run" })).toBeEnabled();
+  });
+
+  it("triggers a health re-run on click (#654)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders();
+
+    await user.click(await screen.findByRole("button", { name: "Re-run" }));
+
+    expect(vi.mocked(api.post)).toHaveBeenCalledWith("/settings/vlm-health/run", {});
+  });
+
+  it("disables re-run and shows checking rows while a run is in flight (#654)", async () => {
+    healthResponse = { running: true, started_at: "t0", finished_at: null, profiles: {} };
+    renderWithProviders();
+
+    expect(await screen.findByRole("button", { name: "Checking…" })).toBeDisabled();
+    expect(await screen.findAllByText("checking…")).toHaveLength(11);
+  });
+
+  it("polls health every 5s while a run is in flight (#654)", async () => {
+    vi.useFakeTimers();
+    healthResponse = { running: true, started_at: "t0", finished_at: null, profiles: {} };
+    renderWithProviders();
+    await vi.advanceTimersByTimeAsync(0);
+    const healthCalls = () =>
+      vi.mocked(api.get).mock.calls.filter((call) => call[0] === "/settings/vlm-health").length;
+    expect(healthCalls()).toBeGreaterThanOrEqual(1);
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(healthCalls()).toBeGreaterThanOrEqual(2);
   });
 
   it("does not reference stale VLM keys", async () => {
