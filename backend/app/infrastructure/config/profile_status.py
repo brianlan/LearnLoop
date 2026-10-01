@@ -18,6 +18,22 @@ PROFILE_STATUS_CONFIGURED = "configured"
 PROFILE_STATUS_UNCONFIGURED = "unconfigured"
 PROFILE_STATUS_MISCONFIGURED = "misconfigured"
 
+# Every VLM profile prefix, in settings-payload order; single source shared by
+# the settings payload and the health probe so a 12th profile cannot drift.
+VLM_PROFILE_PREFIXES = (
+    "helper_vlm",
+    "math_ingestion_vlm",
+    "english_ingestion_vlm",
+    "grading_vlm",
+    "math_solution_vlm",
+    "english_solution_vlm",
+    "math_coaching_vlm",
+    "english_coaching_vlm",
+    "variant_generator_vlm",
+    "variant_validator_vlm",
+    "variant_validator2_vlm",
+)
+
 
 def profile_field_unconfigured(value: str | None) -> bool:
     cleaned = (value or "").strip()

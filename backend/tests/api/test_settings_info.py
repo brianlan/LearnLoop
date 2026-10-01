@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -7,7 +8,9 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.infrastructure.config.profile_status import VLM_PROFILE_PREFIXES
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.vlm import health as vlm_health
 from app.main import create_app
 from app.presentation import settings as settings_presentation
 
@@ -140,3 +143,74 @@ async def test_settings_payload_leaks_no_api_key(client: AsyncClient) -> None:
                 _walk(item)
 
     _walk(payload)
+
+
+# --- VLM health endpoints (issue #654) -------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_vlm_health_state():
+    vlm_health._running = False
+    vlm_health._snapshot = None
+    yield
+    vlm_health._running = False
+    vlm_health._snapshot = None
+
+
+@pytest.mark.asyncio
+async def test_vlm_health_snapshot_idle(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/settings/vlm-health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "running": False,
+        "started_at": None,
+        "finished_at": None,
+        "profiles": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_vlm_health_run_conflict_returns_409(client: AsyncClient) -> None:
+    assert vlm_health.begin_run() is True
+
+    response = await client.post("/api/v1/settings/vlm-health/run")
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_vlm_health_run_spawns_and_stores_snapshot_without_api_keys(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canned = {
+        "started_at": "started",
+        "finished_at": "finished",
+        "profiles": {
+            "helper_vlm": {"status": "ok", "attempts": 1, "checked_at": "finished"}
+        },
+    }
+
+    async def fake_run_probe(*, settings, **_):
+        return canned
+
+    monkeypatch.setattr(vlm_health, "run_probe", fake_run_probe)
+
+    response = await client.post("/api/v1/settings/vlm-health/run")
+
+    assert response.status_code == 202
+    assert response.json()["running"] is True
+    # Let the spawned background run finish on the test loop.
+    await asyncio.sleep(0)
+
+    final_response = await client.get("/api/v1/settings/vlm-health")
+    assert final_response.status_code == 200
+    final = final_response.json()
+    assert final["running"] is False
+    assert final["started_at"] == "started"
+    assert final["profiles"]["helper_vlm"]["status"] == "ok"
+
+    serialized = json.dumps(final)
+    for canary in CANARY_KEYS.values():
+        assert canary not in serialized
+    assert list(VLM_PROFILE_PREFIXES) == ALL_VLM_PROFILES
