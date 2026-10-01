@@ -37,49 +37,89 @@ const mockSettings = {
     endpoint: "https://helper.example.com",
     model: "helper-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 30,
+    status: "configured",
   },
   math_ingestion_vlm: {
     endpoint: "https://math-ingestion.example.com",
     model: "math-ingestion-model",
     provider: "ollama",
+    api_mode: "chat",
     timeout_seconds: 120,
+    status: "configured",
   },
   english_ingestion_vlm: {
     endpoint: "https://english-ingestion.example.com",
     model: "english-ingestion-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 120,
+    status: "configured",
   },
   grading_vlm: {
     endpoint: "https://grading.example.com",
     model: "grading-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 60,
+    status: "configured",
   },
   math_solution_vlm: {
     endpoint: "https://math-solution.example.com",
     model: "math-solution-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 90,
+    status: "configured",
   },
   english_solution_vlm: {
     endpoint: "https://english-solution.example.com",
     model: "english-solution-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 90,
+    status: "configured",
   },
   math_coaching_vlm: {
     endpoint: "https://math-coaching.example.com",
     model: "math-coaching-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 45,
+    status: "configured",
   },
   english_coaching_vlm: {
     endpoint: "https://english-coaching.example.com",
     model: "english-coaching-model",
     provider: "openai",
+    api_mode: "chat",
     timeout_seconds: 45,
+    status: "configured",
+  },
+  variant_generator_vlm: {
+    endpoint: "https://variant-generator.example.com",
+    model: "variant-generator-model",
+    provider: "openai",
+    api_mode: "responses",
+    timeout_seconds: 120,
+    status: "configured",
+  },
+  variant_validator_vlm: {
+    endpoint: "https://variant-validator.example.com",
+    model: "validator-1",
+    provider: "openai",
+    api_mode: "chat",
+    timeout_seconds: 120,
+    status: "misconfigured",
+  },
+  variant_validator2_vlm: {
+    endpoint: "https://example-variant-validator2-vlm-provider.invalid/api",
+    model: "replace-me",
+    provider: "openai",
+    api_mode: "chat",
+    timeout_seconds: 120,
+    status: "unconfigured",
   },
   session: { cookie_name: "ll_session", secure: false, samesite: "lax" },
   problem_selection: { cooldown_days: 7, last_wrong_weight: 1.0, failure_rate_weight: 1.0, recency_weight: 1.0, min_problem_age_days: 3 },
@@ -131,6 +171,12 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("English Solution VLM")).toBeInTheDocument();
     expect(await screen.findByText("Math Coaching VLM")).toBeInTheDocument();
     expect(await screen.findByText("English Coaching VLM")).toBeInTheDocument();
+    // Variant profiles (#652); validator2 is optional and labeled as such.
+    expect(await screen.findByText("Variant Generator VLM")).toBeInTheDocument();
+    expect(await screen.findByText("Variant Validator VLM")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Variant Validator2 VLM (optional)"),
+    ).toBeInTheDocument();
     expect(await screen.findByText("helper-model")).toBeInTheDocument();
     expect(await screen.findByText("math-ingestion-model")).toBeInTheDocument();
     expect(await screen.findByText("english-ingestion-model")).toBeInTheDocument();
@@ -139,12 +185,36 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("english-solution-model")).toBeInTheDocument();
     expect(await screen.findByText("math-coaching-model")).toBeInTheDocument();
     expect(await screen.findByText("english-coaching-model")).toBeInTheDocument();
+    expect(await screen.findByText("variant-generator-model")).toBeInTheDocument();
+    expect(await screen.findByText("validator-1")).toBeInTheDocument();
+    expect(await screen.findByText("replace-me")).toBeInTheDocument();
   });
 
   it("renders VLM provider values", async () => {
     renderWithProviders();
-    expect(await screen.findAllByText("Provider")).toHaveLength(8);
+    expect(await screen.findAllByText("Provider")).toHaveLength(11);
     expect(await screen.findByText("ollama")).toBeInTheDocument();
+  });
+
+  it("renders VLM api mode values", async () => {
+    renderWithProviders();
+    expect(await screen.findAllByText("API mode")).toHaveLength(11);
+    expect(await screen.findByText("responses")).toBeInTheDocument();
+  });
+
+  it("renders a status badge per VLM profile with hints for problem states", async () => {
+    renderWithProviders();
+    // 8 existing + variant generator are configured; validator is
+    // misconfigured; optional validator2 is unconfigured.
+    expect(await screen.findAllByText("configured")).toHaveLength(9);
+    expect(screen.getByText("misconfigured")).toBeInTheDocument();
+    expect(
+      screen.getByText(/misconfigured: check env var names/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("unconfigured")).toBeInTheDocument();
+    expect(
+      screen.getByText(/unconfigured.*optional/i),
+    ).toBeInTheDocument();
   });
 
   it("does not reference stale VLM keys", async () => {
