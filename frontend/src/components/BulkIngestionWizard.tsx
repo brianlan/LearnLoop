@@ -12,6 +12,7 @@ import {
   getBatch,
   retryItem,
   revalidateVariation,
+  attestVariation,
   saveImageBoxes,
   startBatchExtraction,
   submitBatch,
@@ -450,6 +451,27 @@ export function BulkIngestionWizard({
     [batch, handleExpiredBatch, setBatchAndStep],
   );
 
+  const handleAttestVariation = useCallback(
+    async (itemId: string, expectedRevision: number) => {
+      if (!batch) return;
+      try {
+        const response = await attestVariation(
+          batch.id,
+          itemId,
+          expectedRevision,
+        );
+        setBatchAndStep(response.batch);
+      } catch (err) {
+        if (isBatchExpiredError(err)) {
+          await handleExpiredBatch();
+        }
+        // Reject to the caller so the review step reports the failure per item.
+        throw err;
+      }
+    },
+    [batch, handleExpiredBatch, setBatchAndStep],
+  );
+
   const handleRetryItem = useCallback(
     async (itemId: string) => {
       if (!batch) return;
@@ -718,6 +740,7 @@ export function BulkIngestionWizard({
             onUpdateDraft={handleUpdateItemDraft}
             onGenerate={handleGenerateVariation}
             onRevalidate={handleRevalidateVariation}
+            onAttest={handleAttestVariation}
             onRetry={handleRetryItem}
             onDelete={handleDeleteItem}
             onUndoDelete={handleUndoDeleteItem}

@@ -2288,6 +2288,32 @@ def _variation_of(batch_body: dict[str, Any], item_id: str) -> dict[str, Any]:
     return item
 
 
+async def _drive_to_needs_validation(
+    bulk_app: FastAPI,
+    user_id: Any,
+    batch_id: str,
+    item_id: str,
+) -> None:
+    """Drive a ready candidate into needs-validation with a stale PASS.
+
+    One semantic candidate edit lands at contentRevision 2, keeping the
+    stored pass report visible but stale (the #648 edit contract).
+    """
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    from app.infrastructure.ingestion.repository import edit_variation_candidate
+
+    await edit_variation_candidate(
+        bulk_app.state.fake_database,
+        ObjectId(batch_id),
+        user_id,
+        item_id,
+        candidate_update={"text": "What is 4+4?"},
+        tags=None,
+        expected_revision=1,
+        now=datetime.now(UTC),
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_batch_defaults_to_original_mode(
     authenticated_bulk_client: AsyncClient,
@@ -2542,8 +2568,11 @@ async def test_variant_candidate_semantic_edit_enters_needs_validation(
     assert variation["status"] == "needs-validation"
     assert variation["candidate"]["text"] == "What is 4+4?"
     assert variation["candidate"]["correctAnswer"] == "8"
-    assert variation["validation"] is None
+    # #648: the stored report stays visible (labeled stale) after a semantic
+    # edit; only the approval pointer and attestation are cleared.
+    assert variation["validation"]["verdict"] == "pass"
     assert variation["validatedRevision"] is None
+    assert variation["attestation"] is None
     assert variation["generationCount"] == 1
     assert item["contentRevision"] == 2
 
@@ -2687,6 +2716,308 @@ async def test_variant_revalidate_queues_validator_only_run(
         json={"expectedRevision": 2},
     )
     assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_variant_candidate_whitespace_edit_does_not_invalidate(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A whitespace-only candidate edit is formatting, not semantic (#648)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 3+5?\u3000"},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["validatedRevision"] == 1
+    assert item["variation"]["validation"]["verdict"] == "pass"
+    assert item["variation"]["candidate"]["text"] == "What is 3+5?\u3000"
+    assert item["contentRevision"] == 1
+    assert item["variation"]["attestation"] is None
+
+
+@pytest.mark.asyncio
+async def test_variant_source_whitespace_edit_does_not_invalidate(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A whitespace-only source edit must not nuke the variation (#648)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"expectedRevision": 1, "text": "What is 2+2?  "},
+    )
+    assert response.status_code == 200
+    item = _variation_of(response.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["validatedRevision"] == 1
+    assert item["variation"]["candidate"] is not None
+    assert item["contentRevision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_variant_attest_restores_ready_and_admits_submit(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Keep-validation attestation restores READY and admits submit honestly."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 4+4?"},
+    )
+    assert edit.status_code == 200
+    variation = _variation_of(edit.json(), item_id)["variation"]
+    assert variation["status"] == "needs-validation"
+    # The stored report is kept visible but stale; approval and attestation
+    # are cleared.
+    assert variation["validation"]["verdict"] == "pass"
+    assert variation["validatedRevision"] is None
+    assert variation["attestation"] is None
+    assert _variation_of(edit.json(), item_id)["contentRevision"] == 2
+
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert attest.status_code == 200
+    item = _variation_of(attest.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["attestation"]["revision"] == 2
+    assert item["variation"]["attestation"]["at"]
+    # The two gate branches stay mutually exclusive.
+    assert item["variation"]["validatedRevision"] is None
+    assert item["contentRevision"] == 2
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    problem_id = summary["items"][0]["submittedProblemId"]
+
+    problem = await database["problems"].find_one({"_id": ObjectId(problem_id)})
+    # An attested PASS is never frozen as if validator-covered.
+    assert problem["variation"]["validation"]["attestedByUser"] is True
+
+
+@pytest.mark.asyncio
+async def test_variant_attest_rejections(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Attest preconditions: stale FAIL, wrong revision, READY, legacy None."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    # Attest is only legal from needs-validation.
+    from_ready = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 1},
+    )
+    assert from_ready.status_code == 409
+    assert from_ready.json()["error"]["code"] == "INVALID_VARIATION_STATE"
+
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 4+4?"},
+    )
+    assert edit.status_code == 200
+
+    # A stale revision never attests.
+    stale = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 99},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "REVISION_MISMATCH"
+
+    item_filter = {"_id": ObjectId(batch_id), "items.itemId": item_id}
+    # A stale FAIL verdict cannot be attested into READY.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        item_filter,
+        {"$set": {"items.$.variation.validation.verdict": "fail"}},
+    )
+    fail_verdict = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert fail_verdict.status_code == 409
+    assert fail_verdict.json()["error"]["code"] == "INVALID_VARIATION_STATE"
+
+    # Legacy items with no stored report cannot attest.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        item_filter,
+        {"$set": {"items.$.variation.validation": None}},
+    )
+    no_report = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert no_report.status_code == 409
+    assert no_report.json()["error"]["code"] == "INVALID_VARIATION_STATE"
+
+    detail = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    item = _variation_of(detail.json(), item_id)
+    assert item["variation"]["status"] == "needs-validation"
+
+
+@pytest.mark.asyncio
+async def test_variant_attestation_cleared_by_later_semantic_edit(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A stale attestation can never ride along into the next edit (#648)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 4+4?"},
+    )
+    assert edit.status_code == 200
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert attest.status_code == 200
+
+    second_edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 2, "text": "What is 5+5?"},
+    )
+    assert second_edit.status_code == 200
+    item = _variation_of(second_edit.json(), item_id)
+    assert item["variation"]["status"] == "needs-validation"
+    assert item["variation"]["attestation"] is None
+    assert item["variation"]["validatedRevision"] is None
+    assert item["contentRevision"] == 3
+
+
+@pytest.mark.asyncio
+async def test_variant_source_semantic_edit_clears_attestation(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A source semantic edit nukes the variation and its attestation."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_needs_validation(bulk_app, user_id, batch_id, item_id)
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert attest.status_code == 200
+
+    source_edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"expectedRevision": 2, "text": "A changed problem statement?"},
+    )
+    assert source_edit.status_code == 200
+    item = _variation_of(source_edit.json(), item_id)
+    assert item["variation"]["status"] == "not-requested"
+    assert item["variation"]["attestation"] is None
+
+
+@pytest.mark.asyncio
+async def test_variant_generate_clears_attestation(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Generate Again discards the attested candidate and its attestation."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_needs_validation(bulk_app, user_id, batch_id, item_id)
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert attest.status_code == 200
+
+    generate = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/generate",
+        json={"expectedRevision": 2, "original": VARIANT_ORIGINAL},
+    )
+    assert generate.status_code == 202
+    item = _variation_of(generate.json(), item_id)
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["attestation"] is None
+
+
+@pytest.mark.asyncio
+async def test_variant_revalidate_clears_attestation(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Revalidate clears any attestation (defensive: legacy documents may
+    still carry one into needs-validation)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_needs_validation(bulk_app, user_id, batch_id, item_id)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {"$set": {"items.$.variation.attestation": {"revision": 2, "at": "legacy"}}},
+    )
+
+    revalidate = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": 2},
+    )
+    assert revalidate.status_code == 202
+    item = _variation_of(revalidate.json(), item_id)
+    assert item["variation"]["status"] == "queued"
+    assert item["variation"]["attestation"] is None
 
 
 @pytest.mark.asyncio

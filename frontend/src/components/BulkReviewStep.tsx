@@ -70,6 +70,15 @@ function VariationFailureEvidence({
       }}
     >
       <div style={{ fontWeight: 600 }}>Generation evidence (read-only)</div>
+      {variation.status === "ready" && variation.attestation && (
+        <div
+          data-testid="bulk-review-attestation"
+          style={{ color: "var(--color-warning, #b45309)" }}
+        >
+          User-attested at revision {variation.attestation.revision} — kept by
+          the teacher, not covered by a validator run.
+        </div>
+      )}
       <div data-testid="bulk-review-evidence-types">
         Source type: {variation.original?.problemType ?? "unknown"} · Candidate
         type: {variation.candidate?.problemType ?? "unknown"}
@@ -142,6 +151,10 @@ export interface BulkReviewStepProps {
     itemId: string,
     expectedRevision: number,
   ) => void | Promise<void>;
+  onAttest: (
+    itemId: string,
+    expectedRevision: number,
+  ) => void | Promise<void>;
   onRetry: (itemId: string) => void | Promise<void>;
   onDelete: (itemId: string) => void | Promise<void>;
   onUndoDelete: (itemId: string) => void | Promise<void>;
@@ -156,6 +169,7 @@ export function BulkReviewStep({
   onUpdateDraft,
   onGenerate,
   onRevalidate,
+  onAttest,
   onRetry,
   onDelete,
   onUndoDelete,
@@ -216,6 +230,11 @@ export function BulkReviewStep({
   const [revalidateErrors, setRevalidateErrors] = useState<
     Record<string, string>
   >({});
+  // Keep-validation attestation (#648): explicit teacher acceptance of a
+  // stale PASS instead of paying for revalidation. Same fencing as
+  // revalidate: wait for pending candidate saves to settle.
+  const [attestingIds, setAttestingIds] = useState<Set<string>>(new Set());
+  const [attestErrors, setAttestErrors] = useState<Record<string, string>>({});
 
   const selectedItem = useMemo(
     () => items.find((item) => item.itemId === selectedItemId) || items[0],
@@ -318,6 +337,35 @@ export function BulkReviewStep({
         });
     },
     [onRevalidate, revalidatingIds],
+  );
+
+  const handleAttest = useCallback(
+    (item: BulkItem) => {
+      const { itemId } = item;
+      if (attestingIds.has(itemId)) return;
+      setAttestErrors((prev) => {
+        if (prev[itemId] === undefined) return prev;
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setAttestingIds((prev) => new Set(prev).add(itemId));
+      Promise.resolve(onAttest(itemId, item.contentRevision))
+        .catch((err: unknown) => {
+          setAttestErrors((prev) => ({
+            ...prev,
+            [itemId]: err instanceof Error ? err.message : "Attest failed",
+          }));
+        })
+        .finally(() => {
+          setAttestingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(itemId);
+            return next;
+          });
+        });
+    },
+    [onAttest, attestingIds],
   );
 
   const reviewTagSuggestions = useMemo(() => {
@@ -687,21 +735,28 @@ export function BulkReviewStep({
   const generateError = generateErrors[selectedItem.itemId];
   const revalidating = revalidatingIds.has(selectedItem.itemId);
   const revalidateError = revalidateErrors[selectedItem.itemId];
-  // Revalidate sends the current contentRevision; an unsent/in-flight
-  // candidate save would land after it and self-invalidate, so wait for it.
+  const attesting = attestingIds.has(selectedItem.itemId);
+  const attestError = attestErrors[selectedItem.itemId];
+  // Revalidate/attest send the current contentRevision; an unsent/in-flight
+  // candidate save would land after either and self-invalidate, so wait
+  // for it. Both actions share the identical gating.
   const candidateKey = bufferKey(selectedItem.itemId, "candidate");
   const revalidatePendingSave =
     dirtyKeys.has(candidateKey) || savingKeys.has(candidateKey);
-  const revalidateDisabledReason =
-    variation?.status !== "needs-validation"
-      ? ""
-      : !isEditable
-        ? "Item is not editable"
-        : isActionWorking
-          ? "Draft save is still settling"
-          : revalidatePendingSave
-            ? "Candidate changes are still saving"
-            : "";
+  const variationNeedsValidation = variation?.status === "needs-validation";
+  const revalidateDisabledReason = !variationNeedsValidation
+    ? ""
+    : !isEditable
+      ? "Item is not editable"
+      : isActionWorking
+        ? "Draft save is still settling"
+        : revalidatePendingSave
+          ? "Candidate changes are still saving"
+          : "";
+  // The stale PASS report is the attest precondition, mirroring the backend
+  // attest predicate (needs-validation + stored verdict pass).
+  const stalePassReport =
+    variationNeedsValidation && variation?.validation?.verdict === "pass";
   const failedItemIds = new Set(
     Object.keys(saveFailures).map((key) => key.split("::")[0]),
   );
@@ -915,6 +970,14 @@ export function BulkReviewStep({
                   Revalidate failed: {revalidateError}
                 </span>
               )}
+              {attestError && (
+                <span
+                  data-testid="bulk-review-attest-error"
+                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
+                >
+                  Attest failed: {attestError}
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", gap: "8px" }}>
               {isEditable && batch.ingestionMode !== "original" && (
@@ -939,6 +1002,20 @@ export function BulkReviewStep({
                   title={revalidateDisabledReason || undefined}
                 >
                   {revalidating ? "Revalidating..." : "Revalidate"}
+                </button>
+              )}
+              {stalePassReport && (
+                <button
+                  type="button"
+                  data-testid="bulk-review-attest"
+                  onClick={() => handleAttest(selectedItem)}
+                  disabled={revalidateDisabledReason !== "" || attesting}
+                  title={
+                    revalidateDisabledReason ||
+                    "Keep the existing validation without revalidating"
+                  }
+                >
+                  {attesting ? "Keeping..." : "Keep validation"}
                 </button>
               )}
               {selectedItem.status === "failed" && (
@@ -1038,7 +1115,22 @@ export function BulkReviewStep({
             </div>
           )}
 
-          {variation?.status === "failed" && (
+          {stalePassReport && (
+            <div
+              data-testid="bulk-review-stale-validation"
+              style={{
+                color: "var(--color-warning, #b45309)",
+                fontSize: "0.9em",
+                marginBottom: "12px",
+              }}
+            >
+              Validation covers a previous version of this candidate.
+              Revalidate, or keep it if you accept the current version as-is.
+            </div>
+          )}
+          {(variation?.status === "failed" ||
+            stalePassReport ||
+            (variation?.status === "ready" && variation?.attestation)) && (
             <VariationFailureEvidence variation={variation} />
           )}
 

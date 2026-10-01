@@ -156,6 +156,7 @@ def build_item_document(
             "candidate": None,
             "validation": None,
             "validatedRevision": None,
+            "attestation": None,
             "claimToken": None,
             "leaseUntil": None,
             "queuedAt": None,

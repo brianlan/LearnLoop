@@ -86,6 +86,8 @@ VARIATION_TRANSITIONS: dict[VariationStatus, list[VariationStatus]] = {
     ],
     VariationStatus.NEEDS_VALIDATION: [
         VariationStatus.QUEUED,
+        # "Keep validation" attestation is the only direct approval exit.
+        VariationStatus.READY,
         VariationStatus.NOT_REQUESTED,
     ],
 }
@@ -137,8 +139,19 @@ def build_original_snapshot(draft: Mapping[str, Any]) -> dict[str, Any]:
 def _semantic_values(content: Mapping[str, Any] | None) -> dict[str, Any]:
     if not content:
         return {field: None for field in SEMANTIC_FIELDS}
-    # ponytail: "" and None both mean "no graph" — compare meaning, not representation.
-    return {field: content.get(field) or None for field in SEMANTIC_FIELDS}
+    values: dict[str, Any] = {}
+    for field in SEMANTIC_FIELDS:
+        value = content.get(field)
+        if isinstance(value, str):
+            # Whitespace-only differences are formatting, not semantic
+            # change (#648): strip all whitespace runs before comparing.
+            # "" and whitespace-only both collapse to None (#634 rule).
+            value = "".join(value.split()) or None
+        else:
+            # ponytail: "" and None both mean "no graph" — compare meaning, not representation.
+            value = value or None
+        values[field] = value
+    return values
 
 
 def has_semantic_change(
@@ -195,5 +208,6 @@ def serialize_variation_for_response(variation: Mapping[str, Any] | None) -> dic
         "candidate": variation.get("candidate"),
         "validation": variation.get("validation"),
         "validatedRevision": variation.get("validatedRevision"),
+        "attestation": variation.get("attestation"),
         "queuedAt": variation.get("queuedAt"),
     }

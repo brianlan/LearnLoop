@@ -10,6 +10,7 @@ import {
   getActiveBatch,
   getBatch,
   revalidateVariation,
+  attestVariation,
   retryItem,
   saveImageBoxes,
   startBatchExtraction,
@@ -523,6 +524,30 @@ describe("bulk ingestion API client", () => {
 
       expect(mockFetch).toHaveBeenCalledWith(
         "/api/v1/ingestion-batches/batch-1/items/item-1/variation/revalidate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ expectedRevision: 7 }),
+        },
+      );
+      expect(result).toEqual(response);
+    });
+  });
+
+  describe("attestVariation", () => {
+    it("posts expectedRevision to the attest endpoint", async () => {
+      const response = makeBatchResponse("batch-1");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(response),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await attestVariation("batch-1", "item-1", 7);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/ingestion-batches/batch-1/items/item-1/variation/attest",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -74,6 +74,7 @@ describe("BulkReviewStep", () => {
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
     onRevalidate: vi.fn(),
+    onAttest: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1134,6 +1135,7 @@ function makeVariation(overrides: Partial<BulkItemVariation> = {}): BulkItemVari
     },
     validation: { verdict: "pass" },
     validatedRevision: 1,
+    attestation: null,
     queuedAt: null,
     ...overrides,
   };
@@ -1145,6 +1147,7 @@ describe("BulkReviewStep source/candidate autosave identity", () => {
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
     onRevalidate: vi.fn(),
+    onAttest: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1451,6 +1454,7 @@ describe("BulkReviewStep variant generate", () => {
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
     onRevalidate: vi.fn(),
+    onAttest: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -1961,6 +1965,7 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
     onUpdateDraft: vi.fn(),
     onGenerate: vi.fn(),
     onRevalidate: vi.fn(),
+    onAttest: vi.fn(),
     onRetry: vi.fn(),
     onDelete: vi.fn(),
     onUndoDelete: vi.fn(),
@@ -2216,5 +2221,132 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
     expect(
       screen.queryByTestId("bulk-review-source-invalidation-warning"),
     ).not.toBeInTheDocument();
+  });
+
+  it("admits an attested candidate through the pass gate and continues", () => {
+    // Attested READY: validatedRevision is None but the attestation covers
+    // the current revision — same admission right as a validator-covered PASS.
+    const attested = passedItem(
+      {},
+      {
+        validatedRevision: null,
+        attestation: { revision: 2, at: "2026-10-01T00:00:00Z" },
+      },
+    );
+    expect(variantPassGateReason(attested)).toBeNull();
+
+    render(variantReviewUi(attested));
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    expect(screen.getByTestId("bulk-review-attestation")).toHaveTextContent(
+      /user-attested at revision 2/i,
+    );
+  });
+
+  it("blocks a ready candidate whose attestation covers an older revision", () => {
+    const staleAttestation = passedItem(
+      { contentRevision: 3 },
+      {
+        validatedRevision: null,
+        attestation: { revision: 2, at: "2026-10-01T00:00:00Z" },
+      },
+    );
+    expect(variantPassGateReason(staleAttestation)).toBe(
+      "Variant needs revalidation",
+    );
+  });
+
+  it("shows the stale banner and both exits after a semantic candidate edit", async () => {
+    const { rerender } = render(variantReviewUi(passedItem()));
+    expect(
+      screen.queryByTestId("bulk-review-stale-validation"),
+    ).not.toBeInTheDocument();
+
+    // Semantic edit landed: needs-validation, stale PASS report kept visible.
+    rerender(
+      variantReviewUi(
+        passedItem(
+          { contentRevision: 3 },
+          {
+            status: "needs-validation",
+            validatedRevision: null,
+            attestation: null,
+          },
+        ),
+      ),
+    );
+
+    expect(screen.getByTestId("bulk-review-stale-validation")).toHaveTextContent(
+      "previous version",
+    );
+    expect(screen.getByTestId("bulk-review-attest")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("bulk-review-attest"));
+    await waitFor(() => {
+      expect(handlers.onAttest).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onAttest).toHaveBeenCalledWith("item-1", 3);
+    // Attest is never a validator call.
+    expect(handlers.onRevalidate).not.toHaveBeenCalled();
+
+    // Attestation landed: READY again with the attestation banner.
+    rerender(
+      variantReviewUi(
+        passedItem(
+          { contentRevision: 3 },
+          {
+            validatedRevision: null,
+            attestation: { revision: 3, at: "2026-10-01T00:00:00Z" },
+          },
+        ),
+      ),
+    );
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    expect(screen.queryByTestId("bulk-review-attest")).not.toBeInTheDocument();
+  });
+
+  it("offers only Revalidate when no stored pass report exists", () => {
+    render(
+      variantReviewUi(
+        passedItem(
+          { contentRevision: 3 },
+          {
+            status: "needs-validation",
+            validation: null,
+            validatedRevision: null,
+            attestation: null,
+          },
+        ),
+      ),
+    );
+
+    expect(
+      screen.queryByTestId("bulk-review-stale-validation"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("bulk-review-attest")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-revalidate")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed attestation and keeps the action available", async () => {
+    handlers.onAttest.mockRejectedValue(new Error("attest conflict"));
+    render(
+      variantReviewUi(
+        passedItem(
+          { contentRevision: 3 },
+          {
+            status: "needs-validation",
+            validatedRevision: null,
+            attestation: null,
+          },
+        ),
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-attest"));
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-attest-error")).toHaveTextContent(
+        "attest conflict",
+      );
+    });
+    expect(screen.getByTestId("bulk-review-attest")).toBeEnabled();
   });
 });
