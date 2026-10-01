@@ -1,8 +1,31 @@
 from fastapi import APIRouter
 
-from app.infrastructure.config.settings import get_settings
+from app.infrastructure.config.profile_status import profile_status
+from app.infrastructure.config.settings import Settings, get_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+def _vlm_profile(settings: Settings, prefix: str) -> dict:
+    """Uniform VLM profile payload: connection fields + config health.
+
+    `status` is computed from endpoint/model/api_key via the shared rule; the
+    api_key value itself is never exposed.
+    """
+    endpoint = getattr(settings, f"{prefix}_endpoint")
+    model = getattr(settings, f"{prefix}_model")
+    provider = getattr(settings, f"{prefix}_provider")
+    api_mode = getattr(settings, f"{prefix}_api_mode")
+    timeout_seconds = getattr(settings, f"{prefix}_timeout_seconds")
+    api_key = getattr(settings, f"{prefix}_api_key")
+    return {
+        "endpoint": endpoint,
+        "model": model,
+        "provider": provider,
+        "api_mode": api_mode,
+        "timeout_seconds": timeout_seconds,
+        "status": profile_status(endpoint=endpoint, model=model, api_key=api_key),
+    }
 
 
 @router.get("")
@@ -24,55 +47,18 @@ async def get_settings_info() -> dict:
             "region": settings.s3_region,
             "force_path_style": settings.s3_force_path_style,
         },
-        "helper_vlm": {
-            "endpoint": settings.helper_vlm_endpoint,
-            "model": settings.helper_vlm_model,
-            "provider": settings.helper_vlm_provider,
-            "timeout_seconds": settings.helper_vlm_timeout_seconds,
-        },
-        "math_ingestion_vlm": {
-            "endpoint": settings.math_ingestion_vlm_endpoint,
-            "model": settings.math_ingestion_vlm_model,
-            "provider": settings.math_ingestion_vlm_provider,
-            "timeout_seconds": settings.math_ingestion_vlm_timeout_seconds,
-        },
-        "english_ingestion_vlm": {
-            "endpoint": settings.english_ingestion_vlm_endpoint,
-            "model": settings.english_ingestion_vlm_model,
-            "provider": settings.english_ingestion_vlm_provider,
-            "timeout_seconds": settings.english_ingestion_vlm_timeout_seconds,
-        },
+        "helper_vlm": _vlm_profile(settings, "helper_vlm"),
+        "math_ingestion_vlm": _vlm_profile(settings, "math_ingestion_vlm"),
+        "english_ingestion_vlm": _vlm_profile(settings, "english_ingestion_vlm"),
         "preview_extracting_window_seconds": settings.preview_extracting_window_seconds,
-        "grading_vlm": {
-            "endpoint": settings.grading_vlm_endpoint,
-            "model": settings.grading_vlm_model,
-            "provider": settings.grading_vlm_provider,
-            "timeout_seconds": settings.grading_vlm_timeout_seconds,
-        },
-        "math_solution_vlm": {
-            "endpoint": settings.math_solution_vlm_endpoint,
-            "model": settings.math_solution_vlm_model,
-            "provider": settings.math_solution_vlm_provider,
-            "timeout_seconds": settings.math_solution_vlm_timeout_seconds,
-        },
-        "english_solution_vlm": {
-            "endpoint": settings.english_solution_vlm_endpoint,
-            "model": settings.english_solution_vlm_model,
-            "provider": settings.english_solution_vlm_provider,
-            "timeout_seconds": settings.english_solution_vlm_timeout_seconds,
-        },
-        "math_coaching_vlm": {
-            "endpoint": settings.math_coaching_vlm_endpoint,
-            "model": settings.math_coaching_vlm_model,
-            "provider": settings.math_coaching_vlm_provider,
-            "timeout_seconds": settings.math_coaching_vlm_timeout_seconds,
-        },
-        "english_coaching_vlm": {
-            "endpoint": settings.english_coaching_vlm_endpoint,
-            "model": settings.english_coaching_vlm_model,
-            "provider": settings.english_coaching_vlm_provider,
-            "timeout_seconds": settings.english_coaching_vlm_timeout_seconds,
-        },
+        "grading_vlm": _vlm_profile(settings, "grading_vlm"),
+        "math_solution_vlm": _vlm_profile(settings, "math_solution_vlm"),
+        "english_solution_vlm": _vlm_profile(settings, "english_solution_vlm"),
+        "math_coaching_vlm": _vlm_profile(settings, "math_coaching_vlm"),
+        "english_coaching_vlm": _vlm_profile(settings, "english_coaching_vlm"),
+        "variant_generator_vlm": _vlm_profile(settings, "variant_generator_vlm"),
+        "variant_validator_vlm": _vlm_profile(settings, "variant_validator_vlm"),
+        "variant_validator2_vlm": _vlm_profile(settings, "variant_validator2_vlm"),
         "session": {
             "cookie_name": settings.session_cookie_name,
             "secure": settings.session_secure,

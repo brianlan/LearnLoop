@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 
 import pytest
@@ -11,50 +12,84 @@ from app.main import create_app
 from app.presentation import settings as settings_presentation
 
 
+# Distinctive per-profile api_key values: the canary test proves none of them
+# leaks into the serialized settings payload (nor any api_key-named key).
+CANARY_KEYS = {
+    "helper_vlm": "canary-helper-vlm-key",
+    "math_ingestion_vlm": "canary-math-ingestion-vlm-key",
+    "english_ingestion_vlm": "canary-english-ingestion-vlm-key",
+    "grading_vlm": "canary-grading-vlm-key",
+    "math_solution_vlm": "canary-math-solution-vlm-key",
+    "english_solution_vlm": "canary-english-solution-vlm-key",
+    "math_coaching_vlm": "canary-math-coaching-vlm-key",
+    "english_coaching_vlm": "canary-english-coaching-vlm-key",
+    "variant_generator_vlm": "canary-variant-generator-vlm-key",
+    "variant_validator_vlm": "canary-variant-validator-vlm-key",
+    # validator2 stays fully unconfigured (placeholder defaults): its status
+    # must compute "unconfigured", which is normal for the optional profile.
+}
+
+
+def _build_settings() -> Settings:
+    kwargs: dict = {}
+    for prefix, canary in CANARY_KEYS.items():
+        kwargs[f"{prefix}_endpoint"] = f"https://{prefix}.example/api"
+        kwargs[f"{prefix}_model"] = f"{prefix}-model"
+        kwargs[f"{prefix}_provider"] = "openai"
+        kwargs[f"{prefix}_api_key"] = canary
+        kwargs[f"{prefix}_api_mode"] = "chat"
+        kwargs[f"{prefix}_timeout_seconds"] = 10
+    return Settings(
+        **kwargs,
+        preview_extracting_window_seconds=18,
+    )
+
+
 @pytest_asyncio.fixture
 async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
     monkeypatch.setattr(
         settings_presentation,
         "get_settings",
-        lambda: Settings(
-            helper_vlm_endpoint="https://helper.example/api",
-            helper_vlm_model="helper-model",
-            helper_vlm_provider="ollama",
-            helper_vlm_timeout_seconds=12,
-            math_ingestion_vlm_endpoint="https://math-ingestion.example/api",
-            math_ingestion_vlm_model="math-ingestion-model",
-            math_ingestion_vlm_provider="openai",
-            math_ingestion_vlm_timeout_seconds=22,
-            english_ingestion_vlm_endpoint="https://english-ingestion.example/api",
-            english_ingestion_vlm_model="english-ingestion-model",
-            english_ingestion_vlm_provider="openai",
-            english_ingestion_vlm_timeout_seconds=32,
-            grading_vlm_endpoint="https://grading.example/api",
-            grading_vlm_model="grading-model",
-            grading_vlm_provider="openai",
-            grading_vlm_timeout_seconds=34,
-            math_solution_vlm_endpoint="https://math-solution.example/api",
-            math_solution_vlm_model="math-solution-model",
-            math_solution_vlm_provider="openai",
-            math_solution_vlm_timeout_seconds=56,
-            english_solution_vlm_endpoint="https://english-solution.example/api",
-            english_solution_vlm_model="english-solution-model",
-            english_solution_vlm_provider="openai",
-            english_solution_vlm_timeout_seconds=57,
-            math_coaching_vlm_endpoint="https://math-coaching.example/api",
-            math_coaching_vlm_model="math-coaching-model",
-            math_coaching_vlm_provider="openai",
-            math_coaching_vlm_timeout_seconds=78,
-            english_coaching_vlm_endpoint="https://english-coaching.example/api",
-            english_coaching_vlm_model="english-coaching-model",
-            english_coaching_vlm_provider="openai",
-            english_coaching_vlm_timeout_seconds=79,
-            preview_extracting_window_seconds=18,
-        ),
+        _build_settings,
     )
     transport = ASGITransport(app=create_app())
     async with AsyncClient(transport=transport, base_url="http://testserver") as async_client:
         yield async_client
+
+
+ALL_VLM_PROFILES = [
+    "helper_vlm",
+    "math_ingestion_vlm",
+    "english_ingestion_vlm",
+    "grading_vlm",
+    "math_solution_vlm",
+    "english_solution_vlm",
+    "math_coaching_vlm",
+    "english_coaching_vlm",
+    "variant_generator_vlm",
+    "variant_validator_vlm",
+    "variant_validator2_vlm",
+]
+
+
+def _expected_profile(prefix: str, *, status: str) -> dict:
+    if prefix == "variant_validator2_vlm":
+        return {
+            "endpoint": "https://example-variant-validator2-vlm-provider.invalid/api",
+            "model": "replace-me",
+            "provider": "openai",
+            "api_mode": "chat",
+            "timeout_seconds": 120.0,
+            "status": status,
+        }
+    return {
+        "endpoint": f"https://{prefix}.example/api",
+        "model": f"{prefix}-model",
+        "provider": "openai",
+        "api_mode": "chat",
+        "timeout_seconds": 10,
+        "status": status,
+    }
 
 
 @pytest.mark.asyncio
@@ -63,56 +98,18 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["helper_vlm"] == {
-        "endpoint": "https://helper.example/api",
-        "model": "helper-model",
-        "provider": "ollama",
-        "timeout_seconds": 12,
-    }
-    assert payload["math_ingestion_vlm"] == {
-        "endpoint": "https://math-ingestion.example/api",
-        "model": "math-ingestion-model",
-        "provider": "openai",
-        "timeout_seconds": 22,
-    }
-    assert payload["english_ingestion_vlm"] == {
-        "endpoint": "https://english-ingestion.example/api",
-        "model": "english-ingestion-model",
-        "provider": "openai",
-        "timeout_seconds": 32,
-    }
-    assert payload["preview_extracting_window_seconds"] == 18
-    assert payload["grading_vlm"] == {
-        "endpoint": "https://grading.example/api",
-        "model": "grading-model",
-        "provider": "openai",
-        "timeout_seconds": 34,
-    }
-    assert payload["math_solution_vlm"] == {
-        "endpoint": "https://math-solution.example/api",
-        "model": "math-solution-model",
-        "provider": "openai",
-        "timeout_seconds": 56,
-    }
-    assert payload["english_solution_vlm"] == {
-        "endpoint": "https://english-solution.example/api",
-        "model": "english-solution-model",
-        "provider": "openai",
-        "timeout_seconds": 57,
-    }
-    assert payload["math_coaching_vlm"] == {
-        "endpoint": "https://math-coaching.example/api",
-        "model": "math-coaching-model",
-        "provider": "openai",
-        "timeout_seconds": 78,
-    }
-    assert payload["english_coaching_vlm"] == {
-        "endpoint": "https://english-coaching.example/api",
-        "model": "english-coaching-model",
-        "provider": "openai",
-        "timeout_seconds": 79,
-    }
+    for prefix in ALL_VLM_PROFILES:
+        if prefix == "variant_validator2_vlm":
+            continue
+        assert payload[prefix] == _expected_profile(prefix, status="configured"), prefix
+    # The optional validator2 profile is left at its placeholder defaults:
+    # fully unconfigured is its normal state (#644 semantics).
+    assert payload["variant_validator2_vlm"] == _expected_profile(
+        "variant_validator2_vlm", status="unconfigured"
+    )
+    assert len(ALL_VLM_PROFILES) == 11
     assert "vlm" not in payload
+    assert payload["preview_extracting_window_seconds"] == 18
     assert payload["problem_selection"] == {
         "cooldown_days": 7,
         "last_wrong_weight": 1.0,
@@ -121,3 +118,25 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
         "min_problem_age_days": 3,
     }
     assert "practice" not in payload
+
+
+@pytest.mark.asyncio
+async def test_settings_payload_leaks_no_api_key(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    serialized = json.dumps(payload)
+    for canary in CANARY_KEYS.values():
+        assert canary not in serialized
+
+    def _walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                assert "api_key" not in key.lower(), key
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(payload)

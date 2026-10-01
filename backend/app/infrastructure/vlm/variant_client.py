@@ -11,9 +11,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any, Callable, Literal
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+# Shared "what counts as unconfigured" rule (moved verbatim to
+# app.infrastructure.config.profile_status, issue #652); aliasing the public
+# predicate here keeps the historical `variant_client._profile_unconfigured`
+# path working.
+from app.infrastructure.config.profile_status import (
+    profile_field_unconfigured as _profile_unconfigured,
+)
 
 from app.domain.ingestion.variation import (
     AnswerComparison,
@@ -51,23 +58,6 @@ class VariantVLMError(BaseVLMError):
 # Non-transport failure code: the profile itself is misconfigured. Never
 # retryable and never a substitute for a provider call.
 FAILURE_CODE_PROFILE_INVALID = "vlm-profile-invalid"
-
-# Placeholder used by the settings defaults and .env.example for unconfigured
-# profiles; endpoints on the reserved .invalid TLD are equally non-configured.
-_PROFILE_PLACEHOLDER = "replace-me"
-
-
-def _profile_unconfigured(value: str | None) -> bool:
-    cleaned = (value or "").strip()
-    if not cleaned or cleaned == _PROFILE_PLACEHOLDER:
-        return True
-    # Endpoint defaults live on the reserved .invalid TLD but carry URL paths
-    # (e.g. https://example-…-provider.invalid/api), so judge the hostname
-    # label; non-URL values (model/api key) fall back to the raw suffix.
-    host = urlparse(cleaned).hostname or ""
-    if host:
-        return host.lower().endswith(".invalid")
-    return cleaned.lower().endswith(".invalid")
 
 
 class _ProviderPayload(BaseModel):

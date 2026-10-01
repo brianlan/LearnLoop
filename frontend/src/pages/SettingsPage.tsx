@@ -21,54 +21,17 @@ interface SettingsResponse {
     force_path_style: boolean;
   };
   preview_extracting_window_seconds: number;
-  helper_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  math_ingestion_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  english_ingestion_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  grading_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  math_solution_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  english_solution_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  math_coaching_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
-  english_coaching_vlm: {
-    endpoint: string;
-    model: string;
-    provider: string;
-    timeout_seconds: number;
-  };
+  helper_vlm: VlmProfileSettings;
+  math_ingestion_vlm: VlmProfileSettings;
+  english_ingestion_vlm: VlmProfileSettings;
+  grading_vlm: VlmProfileSettings;
+  math_solution_vlm: VlmProfileSettings;
+  english_solution_vlm: VlmProfileSettings;
+  math_coaching_vlm: VlmProfileSettings;
+  english_coaching_vlm: VlmProfileSettings;
+  variant_generator_vlm: VlmProfileSettings;
+  variant_validator_vlm: VlmProfileSettings;
+  variant_validator2_vlm: VlmProfileSettings;
   session: {
     cookie_name: string;
     secure: boolean;
@@ -127,19 +90,72 @@ function SettingSection({
   );
 }
 
+interface VlmProfileSettings {
+  endpoint: string;
+  model: string;
+  provider: string;
+  api_mode: string;
+  timeout_seconds: number;
+  status: string;
+}
+
+function VlmStatusBadge({ status }: { status: string }) {
+  if (status === "configured") {
+    return (
+      <span style={{ color: "var(--color-success, #16a34a)", fontWeight: 600 }}>
+        configured
+      </span>
+    );
+  }
+  if (status === "misconfigured") {
+    return (
+      <div>
+        <span style={{ color: "var(--color-error, #dc2626)", fontWeight: 600 }}>
+          misconfigured
+        </span>
+        <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+          misconfigured: check env var names — the affected feature is disabled
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <span style={{ color: "var(--color-text-muted)", fontWeight: 600 }}>
+        unconfigured
+      </span>
+      <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+        unconfigured (optional is normal): the feature falls back to defaults
+        or is disabled
+      </div>
+    </div>
+  );
+}
+
 function VlmSection({
   title,
   vlm,
 }: {
   title: string;
-  vlm: { endpoint: string; model: string; provider: string; timeout_seconds: number };
+  vlm: VlmProfileSettings;
 }) {
   return (
     <SettingSection title={title}>
       <SettingRow label="Endpoint" value={vlm.endpoint} />
       <SettingRow label="Model" value={vlm.model} />
       <SettingRow label="Provider" value={vlm.provider} />
+      <SettingRow label="API mode" value={vlm.api_mode} />
       <SettingRow label="Timeout (seconds)" value={vlm.timeout_seconds} />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          padding: "0.5rem 0",
+        }}
+      >
+        <span style={{ fontWeight: 500, color: "var(--color-text)" }}>Status</span>
+        <VlmStatusBadge status={vlm.status} />
+      </div>
     </SettingSection>
   );
 }
@@ -432,6 +448,12 @@ export function SettingsPage() {
       <VlmSection title="English Solution VLM" vlm={data.english_solution_vlm} />
       <VlmSection title="Math Coaching VLM" vlm={data.math_coaching_vlm} />
       <VlmSection title="English Coaching VLM" vlm={data.english_coaching_vlm} />
+      <VlmSection title="Variant Generator VLM" vlm={data.variant_generator_vlm} />
+      <VlmSection title="Variant Validator VLM" vlm={data.variant_validator_vlm} />
+      <VlmSection
+        title="Variant Validator2 VLM (optional)"
+        vlm={data.variant_validator2_vlm}
+      />
 
       <SettingSection title="Session">
         <SettingRow label="Cookie Name" value={data.session.cookie_name} />
