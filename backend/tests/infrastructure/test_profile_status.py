@@ -101,14 +101,14 @@ class TestProfileStatus:
             == PROFILE_STATUS_MISCONFIGURED
         )
 
-    def test_status_delegates_to_field_predicate(
+    def test_status_delegates_to_public_field_predicate(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # No duplicated rule: flipping the shared predicate must flip the
-        # three-state computation.
+        # No duplicated rule: flipping the public shared predicate must flip
+        # the three-state computation.
         monkeypatch.setattr(
             profile_status_module,
-            "_profile_unconfigured",
+            "profile_field_unconfigured",
             lambda value: True,
         )
         assert (

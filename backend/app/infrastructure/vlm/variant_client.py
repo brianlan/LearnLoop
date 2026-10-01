@@ -15,9 +15,12 @@ from typing import Any, Callable, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Shared "what counts as unconfigured" rule (moved verbatim to
-# app.infrastructure.config.profile_status, issue #652); importing it here
-# keeps the historical `variant_client._profile_unconfigured` path working.
-from app.infrastructure.config.profile_status import _profile_unconfigured
+# app.infrastructure.config.profile_status, issue #652); aliasing the public
+# predicate here keeps the historical `variant_client._profile_unconfigured`
+# path working.
+from app.infrastructure.config.profile_status import (
+    profile_field_unconfigured as _profile_unconfigured,
+)
 
 from app.domain.ingestion.variation import (
     AnswerComparison,

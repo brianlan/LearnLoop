@@ -1,10 +1,11 @@
 """Shared "is this VLM profile configured" rule.
 
-The predicate below moved verbatim from
+The predicate below (``profile_field_unconfigured``) moved verbatim from
 ``app.infrastructure.vlm.variant_client`` (issue #652) so the settings payload
 and the variant clients judge placeholder values with one copy of the rule.
-``variant_client`` re-imports the predicate, which keeps the pinned import
-path (``variant_client._profile_unconfigured``) working.
+``variant_client`` imports it aliased as ``_profile_unconfigured``, which
+keeps the pinned import path (``variant_client._profile_unconfigured``)
+working.
 """
 
 from urllib.parse import urlparse
@@ -18,7 +19,7 @@ PROFILE_STATUS_UNCONFIGURED = "unconfigured"
 PROFILE_STATUS_MISCONFIGURED = "misconfigured"
 
 
-def _profile_unconfigured(value: str | None) -> bool:
+def profile_field_unconfigured(value: str | None) -> bool:
     cleaned = (value or "").strip()
     if not cleaned or cleaned == _PROFILE_PLACEHOLDER:
         return True
@@ -31,23 +32,18 @@ def _profile_unconfigured(value: str | None) -> bool:
     return cleaned.lower().endswith(".invalid")
 
 
-def profile_field_unconfigured(value: str | None) -> bool:
-    """Public alias of the shared per-field predicate (single copy of the rule)."""
-    return _profile_unconfigured(value)
-
-
 def profile_status(
     *, endpoint: str | None, model: str | None, api_key: str | None
 ) -> str:
     """Three-state configuration health of a VLM profile.
 
-    Delegates every field judgment to ``_profile_unconfigured`` — no duplicated
-    rule. All three fields valid -> configured; all three unconfigured ->
-    unconfigured (normal for optional profiles); anything partial is an error
-    state -> misconfigured.
+    Delegates every field judgment to ``profile_field_unconfigured`` — no
+    duplicated rule. All three fields valid -> configured; all three
+    unconfigured -> unconfigured (normal for optional profiles); anything
+    partial is an error state -> misconfigured.
     """
     fields = (endpoint, model, api_key)
-    unconfigured = [_profile_unconfigured(value) for value in fields]
+    unconfigured = [profile_field_unconfigured(value) for value in fields]
     if all(unconfigured):
         return PROFILE_STATUS_UNCONFIGURED
     if any(unconfigured):

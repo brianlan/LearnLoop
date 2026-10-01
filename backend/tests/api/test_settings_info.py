@@ -12,25 +12,6 @@ from app.main import create_app
 from app.presentation import settings as settings_presentation
 
 
-def _vlm(
-    host: str,
-    *,
-    model: str,
-    provider: str = "openai",
-    api_key: str,
-    api_mode: str = "chat",
-    timeout_seconds: int,
-) -> dict:
-    return {
-        "endpoint": f"https://{host}/api",
-        "model": model,
-        "provider": provider,
-        "api_key": api_key,
-        "api_mode": api_mode,
-        "timeout_seconds": timeout_seconds,
-    }
-
-
 # Distinctive per-profile api_key values: the canary test proves none of them
 # leaks into the serialized settings payload (nor any api_key-named key).
 CANARY_KEYS = {
