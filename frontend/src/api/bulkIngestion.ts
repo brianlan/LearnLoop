@@ -169,3 +169,16 @@ export async function revalidateVariation(
     { expectedRevision },
   );
 }
+
+// Keep-validation attestation (#648): restore READY from needs-validation
+// by explicitly accepting the stale PASS report instead of revalidating.
+export async function attestVariation(
+  batchId: string,
+  itemId: string,
+  expectedRevision: number,
+): Promise<BatchResponse> {
+  return api.post<BatchResponse>(
+    `/ingestion-batches/${batchId}/items/${itemId}/variation/attest`,
+    { expectedRevision },
+  );
+}

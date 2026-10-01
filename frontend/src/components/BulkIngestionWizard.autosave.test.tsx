@@ -267,6 +267,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         },
         validation: { verdict: "pass" },
         validatedRevision: 3,
+        attestation: null,
         queuedAt: null,
       },
     });
@@ -367,6 +368,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         },
         validation: null,
         validatedRevision: null,
+        attestation: null,
         queuedAt: null,
       },
     });

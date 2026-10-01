@@ -41,6 +41,7 @@ from app.infrastructure.ingestion.repository import (
     renew_submit_reservation,
     request_variation_generation,
     request_variation_revalidation,
+    attest_variation_validation,
     reset_item_for_retry,
     reserve_items_for_original_submit,
     save_image_boxes_and_subject,
@@ -717,6 +718,10 @@ class VariationRevalidateRequest(BaseModel):
     expectedRevision: int
 
 
+class VariationAttestRequest(BaseModel):
+    expectedRevision: int
+
+
 @router.post(
     "/{batch_id}/items/{item_id}/variation/generate",
     response_model=BatchResponse,
@@ -855,6 +860,51 @@ async def revalidate_variation(
     return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
 
 
+@router.post(
+    "/{batch_id}/items/{item_id}/variation/attest",
+    response_model=BatchResponse,
+)
+async def attest_variation(
+    batch_id: str,
+    item_id: str,
+    request: VariationAttestRequest,
+    database: DatabaseDependency,
+    user: CurrentUserDependency,
+) -> BatchResponse:
+    """Keep-validation attestation: restore READY from needs-validation.
+
+    The teacher explicitly accepts responsibility for the current candidate
+    based on the stale PASS report; the attestation is recorded and the
+    admitted problem's provenance will carry ``attestedByUser`` (#648).
+    Unlike revalidate this completes synchronously (200) and never touches
+    the validators, so no VLM profile check applies.
+    """
+    batch = await _load_owned_batch(database, batch_id, user["_id"])
+    _require_variant_mode(batch)
+
+    try:
+        await attest_variation_validation(
+            database,
+            batch_id,
+            user["_id"],
+            item_id,
+            expected_revision=request.expectedRevision,
+            now=datetime.now(UTC),
+        )
+    except (
+        VariationNotFoundError,
+        RevisionMismatchError,
+        GenerationInProgressError,
+        InvalidVariationStateError,
+    ) as exc:
+        raise _raise_variation_conflict(exc) from exc
+
+    updated_batch = await get_batch(database, batch_id, user["_id"])
+    if updated_batch is None:
+        raise ApiError(404, "NOT_FOUND", "Batch not found")
+    return BatchResponse(**serialize_batch(updated_batch, include_deleted=True))
+
+
 async def _submit_variant_batch(
     database: DatabaseDependency,
     adapter: AdapterDependency,
@@ -887,7 +937,11 @@ async def _submit_variant_batch(
             continue
         if not variation.get("candidate"):
             continue
-        if variation.get("validatedRevision") != item.get("contentRevision"):
+        attestation = variation.get("attestation") or {}
+        if (
+            variation.get("validatedRevision") != item.get("contentRevision")
+            and attestation.get("revision") != item.get("contentRevision")
+        ):
             continue
 
         item_id = item["itemId"]

@@ -39,6 +39,8 @@ def test_happy_path_lifecycle_transitions_are_legal() -> None:
     transition_variation_status(s.VALIDATING, s.READY)
     transition_variation_status(s.READY, s.NEEDS_VALIDATION)
     transition_variation_status(s.NEEDS_VALIDATION, s.QUEUED)
+    # "Keep validation" attestation is the only needs-validation -> READY edge.
+    transition_variation_status(s.NEEDS_VALIDATION, s.READY)
     transition_variation_status(s.QUEUED, s.VALIDATING)
     transition_variation_status(s.VALIDATING, s.FAILED)
     transition_variation_status(s.FAILED, s.QUEUED)
@@ -57,7 +59,6 @@ def test_happy_path_lifecycle_transitions_are_legal() -> None:
         (VariationStatus.VALIDATING, VariationStatus.GENERATING),
         (VariationStatus.READY, VariationStatus.GENERATING),
         (VariationStatus.FAILED, VariationStatus.READY),
-        (VariationStatus.NEEDS_VALIDATION, VariationStatus.READY),
         (VariationStatus.READY, VariationStatus.VALIDATING),
     ],
 )
@@ -93,6 +94,32 @@ def test_semantic_change_treats_empty_graphdsl_as_none() -> None:
     assert has_semantic_change(before, {**before, "graphDsl": "create('board', {});"}) is True
     assert has_semantic_change(
         {**before, "graphDsl": "create('board', {});"}, before
+    ) is True
+
+
+def test_semantic_change_ignores_whitespace_only_differences() -> None:
+    """Whitespace-only edits are formatting, not semantic change (#648)."""
+    before = {"text": "What is 2+2?", "problemType": "short-answer",
+              "graphDsl": None, "correctAnswer": "4", "subject": "math"}
+    # Internal whitespace, tabs, newlines and full-width spaces are all
+    # formatting.
+    assert has_semantic_change(
+        before, {**before, "text": "What  is\t2+2?\n"}
+    ) is False
+    assert has_semantic_change(
+        before, {**before, "text": "What\u3000is 2+2?"}
+    ) is False
+    assert has_semantic_change(
+        before, {**before, "correctAnswer": " 4 "}
+    ) is False
+    # A whitespace-only value is equivalent to no value at all.
+    assert has_semantic_change(before, {**before, "graphDsl": "  "}) is False
+    # A real character difference is still semantic in both directions.
+    assert has_semantic_change(
+        before, {**before, "text": "What is 2+3?"}
+    ) is True
+    assert has_semantic_change(
+        {**before, "text": "What is 2+3?"}, before
     ) is True
 
 
@@ -141,6 +168,7 @@ def test_variation_response_serialization_hides_fencing_state() -> None:
         "candidate": None,
         "validation": None,
         "validatedRevision": None,
+        "attestation": None,
         "claimToken": "secret-token",
         "leaseUntil": "2026-01-01T00:00:00Z",
         "queuedAt": "2026-01-01T00:00:00Z",
@@ -152,6 +180,23 @@ def test_variation_response_serialization_hides_fencing_state() -> None:
     assert "claimToken" not in view
     assert "leaseUntil" not in view
     assert serialize_variation_for_response(None) is None
+
+
+def test_variation_response_serialization_exposes_attestation() -> None:
+    """The user-attestation record is client-visible evidence (#648)."""
+    attestation = {"revision": 3, "at": "2026-01-01T00:00:00Z"}
+    variation = {
+        "status": "ready",
+        "generationCount": 1,
+        "original": {"text": "a"},
+        "candidate": None,
+        "validation": None,
+        "validatedRevision": None,
+        "attestation": attestation,
+    }
+    view = serialize_variation_for_response(variation)
+    assert view is not None
+    assert view["attestation"] == attestation
 
 
 def test_problem_domain_model_types_variation_with_legacy_default() -> None:

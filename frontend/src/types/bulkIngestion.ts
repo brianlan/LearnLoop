@@ -175,6 +175,13 @@ export interface BulkVariationValidation {
   [key: string]: unknown;
 }
 
+// Explicit user attestation that keeps a stale PASS (#648): recorded when a
+// teacher restores READY from needs-validation instead of revalidating.
+export interface BulkVariationAttestation {
+  revision: number;
+  at: string;
+}
+
 // Client-facing per-item variation view: status, progress and evidence only;
 // the backend never exposes claimToken/leaseUntil fencing state.
 export interface BulkItemVariation {
@@ -184,6 +191,7 @@ export interface BulkItemVariation {
   candidate: BulkVariationCandidate | null;
   validation: BulkVariationValidation | null;
   validatedRevision: number | null;
+  attestation: BulkVariationAttestation | null;
   queuedAt: string | null;
 }
 

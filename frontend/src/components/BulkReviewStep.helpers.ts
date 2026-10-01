@@ -152,10 +152,10 @@ export function hasActiveVariantWork(item: BulkItem): boolean {
 }
 
 // Current PASS, mirroring the backend variant-submit admission check
-// (variation ready + verdict pass + validatedRevision matching the current
-// contentRevision): only this state may enter final review or submission.
-// Returns null when the item is passed, otherwise a short reason why
-// Continue/submit is blocked.
+// (variation ready + verdict pass + [validatedRevision OR attestation]
+// matching the current contentRevision): only this state may enter final
+// review or submission. Returns null when the item is passed, otherwise a
+// short reason why Continue/submit is blocked.
 export function variantPassGateReason(item: BulkItem): string | null {
   const variation = item.variation;
   if (!variation || !variation.original) return "Variant not generated";
@@ -164,7 +164,10 @@ export function variantPassGateReason(item: BulkItem): string | null {
       if (variation.validation?.verdict !== "pass") {
         return "Variant validation failed";
       }
-      if (variation.validatedRevision !== item.contentRevision) {
+      if (
+        variation.validatedRevision !== item.contentRevision &&
+        variation.attestation?.revision !== item.contentRevision
+      ) {
         return "Variant needs revalidation";
       }
       return null;

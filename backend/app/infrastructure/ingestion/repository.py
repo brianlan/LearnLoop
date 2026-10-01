@@ -1325,6 +1325,7 @@ async def request_variation_generation(
                 "items.$.variation.candidate": None,
                 "items.$.variation.validation": None,
                 "items.$.variation.validatedRevision": None,
+                "items.$.variation.attestation": None,
                 "items.$.variation.status": VariationStatus.QUEUED.value,
                 "items.$.variation.queuedAt": now,
                 "items.$.variation.claimToken": None,
@@ -1403,6 +1404,7 @@ async def update_item_draft_variant(
                     "items.$.variation.candidate": None,
                     "items.$.variation.validation": None,
                     "items.$.variation.validatedRevision": None,
+                    "items.$.variation.attestation": None,
                     "items.$.variation.claimToken": None,
                     "items.$.variation.leaseUntil": None,
                 }
@@ -1471,8 +1473,10 @@ async def edit_variation_candidate(
             update["$set"].update(
                 {
                     "items.$.variation.status": VariationStatus.NEEDS_VALIDATION.value,
-                    "items.$.variation.validation": None,
+                    # #648: the stored report stays visible (labeled stale);
+                    # only the approval pointer and attestation are cleared.
                     "items.$.variation.validatedRevision": None,
+                    "items.$.variation.attestation": None,
                 }
             )
             update["$inc"]["items.$.contentRevision"] = 1
@@ -1542,9 +1546,63 @@ async def request_variation_revalidation(
                 "items.$.variation.status": VariationStatus.QUEUED.value,
                 "items.$.variation.validation": None,
                 "items.$.variation.validatedRevision": None,
+                # Defensive: legacy documents may carry an attestation into
+                # needs-validation; a queued validator run supersedes it.
+                "items.$.variation.attestation": None,
                 "items.$.variation.queuedAt": now,
                 "items.$.variation.claimToken": None,
                 "items.$.variation.leaseUntil": None,
+                "items.$.updatedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"revision": 1},
+        },
+    )
+    if result.matched_count == 0:
+        batch = await _load_batch_for_update(database, batch_id, user_id)
+        _classify_variation_conflict(_find_item(batch, item_id), expected_revision)
+
+
+async def attest_variation_validation(
+    database: Any,
+    batch_id: str | ObjectId,
+    user_id: Any,
+    item_id: str,
+    *,
+    expected_revision: int,
+    now: datetime,
+) -> None:
+    """Restore READY from needs-validation by explicit user attestation (#648).
+
+    One atomic write with the preconditions inside the update predicate: the
+    item must be needs-validation at the expected revision with a stored PASS
+    report. ``validatedRevision`` stays None so the two admission branches
+    (validator-covered vs user-attested) remain mutually exclusive, and the
+    stored report is never mutated.
+    """
+    await _load_batch_for_update(database, batch_id, user_id)
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(batch_id),
+            "userId": user_id,
+            **_VARIANT_MODE_PREDICATE,
+            "items": {
+                "$elemMatch": {
+                    "itemId": item_id,
+                    "contentRevision": expected_revision,
+                    "variation.status": VariationStatus.NEEDS_VALIDATION.value,
+                    "variation.validation.verdict": "pass",
+                    **_ITEM_ACTIONABLE_PREDICATE,
+                }
+            },
+        },
+        {
+            "$set": {
+                "items.$.variation.status": VariationStatus.READY.value,
+                "items.$.variation.attestation": {
+                    "revision": expected_revision,
+                    "at": now,
+                },
                 "items.$.updatedAt": now,
                 "updatedAt": now,
             },

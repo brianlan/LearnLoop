@@ -48,11 +48,17 @@ class OriginalProvenance(FrozenContentSnapshot):
 
 
 class ValidationProvenance(BaseModel):
-    """Successful validation evidence frozen at admission time."""
+    """Successful validation evidence frozen at admission time.
+
+    ``attestedByUser`` marks a PASS admitted via explicit user attestation
+    instead of a validator run covering the current revision (#648); a stale
+    validator report is never frozen as if validator-covered.
+    """
 
     verdict: Literal["pass"]
     helperModel: ModelIdentity | None = None
     reports: list[dict[str, Any]] = Field(default_factory=list)
+    attestedByUser: bool = False
 
 
 class ProblemVariation(BaseModel):

@@ -539,6 +539,7 @@ describe("BulkSubmitStep variant submit gating", () => {
       },
       validation: { verdict: "pass" },
       validatedRevision: 2,
+      attestation: null,
       queuedAt: null,
       ...overrides,
     };

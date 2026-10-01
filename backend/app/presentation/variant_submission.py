@@ -162,6 +162,11 @@ def _build_variation_problem_document(
                 provider=first_model["provider"], model=first_model["model"]
             )
     generator = candidate.get("generator") or {}
+    # #648: an attested admission covers the current revision via the user
+    # attestation, not a validator run — frozen honestly into provenance.
+    attested_by_user = (variation.get("attestation") or {}).get(
+        "revision"
+    ) == item.get("contentRevision")
     provenance = ProblemVariation(
         mode=batch.get("ingestionMode") or "data-only",
         original=OriginalProvenance(**original_content, auditImage=audit_image),
@@ -172,7 +177,10 @@ def _build_variation_problem_document(
         ),
         generationCount=int(variation.get("generationCount") or 0),
         validation=ValidationProvenance(
-            verdict="pass", helperModel=helper_model, reports=list(reports)
+            verdict="pass",
+            helperModel=helper_model,
+            reports=list(reports),
+            attestedByUser=attested_by_user,
         ),
     )
 
@@ -237,6 +245,7 @@ def _check_admission_guards(
     variation = item.get("variation") or {}
     candidate = variation.get("candidate") or {}
     validation = variation.get("validation") or {}
+    attestation = variation.get("attestation") or {}
     if not variation.get("original"):
         raise _admission_guard_failure("Item has no confirmed source")
     if variation.get("status") != VariationStatus.READY.value:
@@ -245,7 +254,10 @@ def _check_admission_guards(
         raise _admission_guard_failure("Variant validation did not pass")
     if not candidate:
         raise _admission_guard_failure("Variant candidate is missing")
-    if variation.get("validatedRevision") != item.get("contentRevision"):
+    if (
+        variation.get("validatedRevision") != item.get("contentRevision")
+        and attestation.get("revision") != item.get("contentRevision")
+    ):
         raise _admission_guard_failure("Validated variant is not the current version")
     return None, item
 
