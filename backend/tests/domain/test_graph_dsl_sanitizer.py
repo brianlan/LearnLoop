@@ -170,6 +170,24 @@ class TestIsAllowedGraphDsl:
     def test_rejects_invalid_bounding_box(self) -> None:
         assert _is_allowed_graph_dsl("board.setBoundingBox([0, 0])") is False
 
+    def test_allows_bounding_box_with_boolean_keep_aspect_ratio(self) -> None:
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], true)") is True
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], false)") is True
+
+    def test_rejects_three_argument_bounding_box(self) -> None:
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], true, 'keep')") is False
+
+    def test_rejects_non_boolean_second_argument(self) -> None:
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], 'keep')") is False
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], 1)") is False
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], keep)") is False
+
+    def test_rejects_capitalized_true_in_bounding_box(self) -> None:
+        assert _is_allowed_graph_dsl("board.setBoundingBox([-1, 7, 11, -1], True)") is False
+
+    def test_rejects_non_bracketed_bounding_box(self) -> None:
+        assert _is_allowed_graph_dsl("board.setBoundingBox(-1, 7, 11, -1)") is False
+
     def test_allows_single_quoted_option_key(self) -> None:
         dsl = "var p = board.create('point', [0, 0], {'name': 'P'});"
         assert _is_allowed_graph_dsl(dsl) is True
@@ -210,6 +228,14 @@ class TestSanitizeWhiteboardDsl:
     def test_returns_sanitized_dsl_for_allowed_input(self) -> None:
         raw = "var p = board.create('point', [0, 0]);"
         assert sanitize_whiteboard_dsl(raw) == raw
+
+    def test_returns_two_argument_bounding_box_dsl_unchanged(self) -> None:
+        statements = ["board.setBoundingBox([-1, 7, 11, -1], true)"]
+        statements += [f"var P{i} = board.create('point', [{i}, {i + 1}])" for i in range(8)]
+        statements += [f"board.create('segment', [P{i}, P{(i + 1) % 8}])" for i in range(8)]
+        assert len(statements) == 17
+        dsl = ";".join(statements)
+        assert sanitize_whiteboard_dsl(dsl) == dsl
 
     def test_strips_initboard_without_semicolon(self) -> None:
         raw = "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]}) var p = board.create('point', [0, 0]);"

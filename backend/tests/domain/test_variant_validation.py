@@ -221,6 +221,14 @@ def test_unsafe_graph_dsl_rejected() -> None:
     assert any("graphDsl failed the safety check" in f.evidence for f in failures)
 
 
+def test_two_argument_bounding_box_dsl_passes_safety_check() -> None:
+    dsl = "board.setBoundingBox([-1, 7, 11, -1], true);"
+    source = SOURCE.model_copy(update={"graph_dsl": dsl})
+    candidate = CANDIDATE.model_copy(update={"graph_dsl": dsl})
+    failures = check_candidate("data-only", source, candidate)
+    assert not any("graphDsl failed the safety check" in f.evidence for f in failures)
+
+
 def test_graph_not_applicable_invalid_when_graph_present() -> None:
     source_with_graph = SOURCE.model_copy(update={"graph_dsl": "create('board', {});"})
     candidate_with_graph = CANDIDATE.model_copy(update={"graph_dsl": "create('board', {});"})
