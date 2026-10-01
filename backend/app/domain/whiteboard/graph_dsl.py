@@ -203,12 +203,21 @@ def _is_allowed_graph_dsl(dsl: str) -> bool:
         bbox_match = re.fullmatch(r"board\.setBoundingBox\((.*)\)", statement)
         if bbox_match:
             value = bbox_match.group(1).strip()
-            parts = (
-                _split_top_level(value[1:-1], ",")
-                if value.startswith("[") and value.endswith("]")
-                else None
-            )
-            if parts is None or len(parts) != 4 or not all(re.fullmatch(r"-?\d+(?:\.\d+)?", part.strip()) for part in parts):
+            parts = _split_top_level(value, ",")
+            if (
+                parts is None
+                or len(parts) not in (1, 2)
+                or not (parts[0].startswith("[") and parts[0].endswith("]"))
+            ):
+                return False
+            numbers = _split_top_level(parts[0][1:-1], ",")
+            if (
+                numbers is None
+                or len(numbers) != 4
+                or not all(re.fullmatch(r"-?\d+(?:\.\d+)?", part.strip()) for part in numbers)
+            ):
+                return False
+            if len(parts) == 2 and parts[1] not in {"true", "false"}:
                 return False
             continue
 
