@@ -282,12 +282,51 @@ async def test_admit_creates_problem_item_record_and_solution_task() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admission_records_canonical_mode_for_legacy_batch() -> None:
-    """A legacy data-and-wording batch admits under the canonical
-    transfer-variant provenance; history is not bulk-renamed elsewhere (#656)."""
+async def test_admission_preserves_legacy_mode_for_old_contract_candidate() -> None:
+    """An already-generated legacy candidate whose report predates the
+    surfaceDivergence gate is admitted with its historical data-and-wording
+    provenance — never relabeled as if it passed the new contract (#656)."""
     database = FakeDatabase()
     batch_id = await _seed_ready_variant_item(
         database, ingestion_mode=IngestionMode.DATA_AND_WORDING
+    )
+
+    outcome = await _admit(database, batch_id)
+
+    problem = await database["problems"].find_one({"_id": ObjectId(outcome["problemId"])})
+    assert problem is not None
+    assert problem["variation"]["mode"] == "data-and-wording"
+
+
+@pytest.mark.asyncio
+async def test_admission_records_canonical_mode_when_legacy_candidate_revalidated() -> None:
+    """A legacy batch candidate whose persisted report carries the new
+    surfaceDivergence gate was generated/validated under the transfer
+    contract, so its admitted provenance records transfer-variant (#656)."""
+    report = {
+        **PASSING_REPORT,
+        "checks": {
+            **PASSING_REPORT["checks"],
+            "surfaceDivergence": {"category": "substantial", "evidence": "rebuilt"},
+        },
+    }
+    database = FakeDatabase()
+    batch_id = await _seed_ready_variant_item(
+        database, ingestion_mode=IngestionMode.DATA_AND_WORDING
+    )
+    # Simulate the item being regenerated under the new contract: its
+    # persisted passing report now carries the surfaceDivergence gate.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": "item-1"},
+        {
+            "$set": {
+                "items.$.variation.validation": {
+                    "verdict": "pass",
+                    "failures": [],
+                    "reports": [report],
+                }
+            }
+        },
     )
 
     outcome = await _admit(database, batch_id)
