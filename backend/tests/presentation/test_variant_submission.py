@@ -122,12 +122,13 @@ async def _seed_ready_variant_item(
     item_id: str = "item-1",
     validated_revision: int | None = None,
     variation_overrides: dict[str, Any] | None = None,
+    ingestion_mode: IngestionMode = IngestionMode.DATA_ONLY,
 ) -> ObjectId:
-    """Active data-only batch with one extraction-ready, validated item."""
+    """Active variant batch with one extraction-ready, validated item."""
     settings = Settings(s3_bucket=S3_BUCKET)
     batch = await create_batch(
         database, "user-1", settings,
-        ingestion_mode=IngestionMode.DATA_ONLY, now=NOW,
+        ingestion_mode=ingestion_mode, now=NOW,
     )
     item = {
         "itemId": item_id,
@@ -278,6 +279,22 @@ async def test_admit_creates_problem_item_record_and_solution_task() -> None:
     audit_key = variation["original"]["auditImage"]["objectKey"]
     assert storage.objects[(S3_BUCKET, audit_key)] == b"crop-bytes"
     assert (S3_BUCKET, CROP["objectKey"]) in set(storage.objects)
+
+
+@pytest.mark.asyncio
+async def test_admission_records_canonical_mode_for_legacy_batch() -> None:
+    """A legacy data-and-wording batch admits under the canonical
+    transfer-variant provenance; history is not bulk-renamed elsewhere (#656)."""
+    database = FakeDatabase()
+    batch_id = await _seed_ready_variant_item(
+        database, ingestion_mode=IngestionMode.DATA_AND_WORDING
+    )
+
+    outcome = await _admit(database, batch_id)
+
+    problem = await database["problems"].find_one({"_id": ObjectId(outcome["problemId"])})
+    assert problem is not None
+    assert problem["variation"]["mode"] == "transfer-variant"
 
 
 @pytest.mark.asyncio

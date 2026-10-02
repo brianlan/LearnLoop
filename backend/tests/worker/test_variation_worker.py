@@ -201,6 +201,49 @@ async def test_claim_next_variation_work_claims_queued_item() -> None:
     assert await claim_next_variation_work(database, make_settings(), now=NOW) is None
 
 
+@pytest.mark.asyncio
+async def test_legacy_batch_claimed_and_generation_uses_canonical_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy data-and-wording batches stay claimable and continue under the
+    canonical transfer-variant contract (#656)."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch["_id"]}, {"$set": {"ingestionMode": "data-and-wording"}}
+    )
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+
+    claimed_pair = await claim_next_variation_work(database, make_settings(), now=NOW)
+    assert claimed_pair is not None
+    claimed_item, claimed_batch = claimed_pair[1], claimed_pair[0]
+    assert claimed_batch["ingestionMode"] == "data-and-wording"
+
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+    validation_calls: list[dict[str, Any]] = []
+
+    async def fake_generate_and_validate(**kwargs: Any) -> VariantGenerationResult:
+        validation_calls.append(kwargs)
+        return passing_result(GENERATED_CANDIDATE)
+
+    monkeypatch.setattr(variation_worker_module, "generate_and_validate", fake_generate_and_validate)
+
+    await process_variation(
+        claimed_item, claimed_batch, database, generator, [], None, make_settings(), now=NOW
+    )
+
+    # Generation and validation both receive the canonical mode.
+    assert generator.calls[0]["mode"] == "transfer-variant"
+    assert validation_calls[0]["mode"] == "transfer-variant"
+    item = await _load_item(database, batch["_id"], item_id)
+    assert item["variation"]["status"] == VariationStatus.READY.value
+
+
 async def test_generation_checkpoint_then_validation_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     database = FakeDatabase()
     batch, items = await seed_variant_batch(database)

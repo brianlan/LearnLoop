@@ -40,6 +40,7 @@ Preservation = Literal["preserved", "changed"]
 ComplexityShift = Literal["comparable", "materially-easier", "materially-harder"]
 RepresentationShift = Literal["none-or-nonmaterial", "material"]
 ModeCompliance = Literal["compliant", "noncompliant"]
+SurfaceDivergence = Literal["substantial", "insufficient"]
 GraphConsistency = Literal["consistent", "inconsistent", "not-applicable"]
 DataChange = Literal["changed", "unchanged"]
 WellPosed = Literal["yes", "no"]
@@ -59,6 +60,23 @@ PASSING_CHECK_VALUES: dict[str, frozenset[str]] = {
     "graphConsistency": frozenset({"consistent", "not-applicable"}),
     "dataChange": frozenset({"changed"}),
 }
+
+# transfer-variant additionally requires substantial surface divergence: a
+# cosmetic reskin fails even when every deep mathematical check passes
+# (issue #656). data-only keeps its strict wording-preservation contract and
+# never requires surface divergence. Legacy "data-and-wording" continuation
+# is judged under the same transfer-variant gate.
+TRANSFER_VARIANT_PASSING_CHECKS: dict[str, frozenset[str]] = {
+    **PASSING_CHECK_VALUES,
+    "surfaceDivergence": frozenset({"substantial"}),
+}
+
+
+def passing_check_values(mode: VariantMode) -> dict[str, frozenset[str]]:
+    """Required validator categories and their passing values for a mode."""
+    if mode in ("transfer-variant", "data-and-wording"):
+        return TRANSFER_VARIANT_PASSING_CHECKS
+    return PASSING_CHECK_VALUES
 
 
 class Check(BaseModel):
@@ -189,10 +207,10 @@ def check_candidate(mode: VariantMode, source: ProblemContent, candidate: Varian
 
 
 def _category_disagreements(
-    first: ValidatorReport, second: ValidatorReport
+    first: ValidatorReport, second: ValidatorReport, *, mode: VariantMode
 ) -> list[AssessmentFailure]:
     failures: list[AssessmentFailure] = []
-    for name in PASSING_CHECK_VALUES:
+    for name in passing_check_values(mode):
         one = first.checks.get(name)
         two = second.checks.get(name)
         if one is None or two is None:
@@ -213,11 +231,12 @@ def _category_disagreements(
 def _assess_report(
     report: ValidatorReport,
     *,
+    mode: VariantMode,
     source: ProblemContent,
     candidate: VariantCandidate,
 ) -> list[AssessmentFailure]:
     failures: list[AssessmentFailure] = []
-    for name, passing in PASSING_CHECK_VALUES.items():
+    for name, passing in passing_check_values(mode).items():
         check = report.checks.get(name)
         if check is None:
             failures.append(_content_failure(f"{name}: missing report category"))
@@ -287,9 +306,11 @@ def assess_variant(
         )
     else:
         if len(reports) == 2:
-            failures.extend(_category_disagreements(reports[0], reports[1]))
+            failures.extend(_category_disagreements(reports[0], reports[1], mode=mode))
         for report in reports:
-            failures.extend(_assess_report(report, source=source, candidate=candidate))
+            failures.extend(
+                _assess_report(report, mode=mode, source=source, candidate=candidate)
+            )
     return VariantAssessment(
         verdict="pass" if not failures else "fail",
         failures=failures,

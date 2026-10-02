@@ -99,13 +99,17 @@ describe("BulkUploadStep", () => {
     const dataOnly = screen.getByTestId(
       "bulk-wizard-mode-data-only",
     ) as HTMLInputElement;
-    const dataAndWording = screen.getByTestId(
-      "bulk-wizard-mode-data-and-wording",
+    const transferVariant = screen.getByTestId(
+      "bulk-wizard-mode-transfer-variant",
     ) as HTMLInputElement;
 
     expect(original.checked).toBe(true);
     expect(dataOnly.checked).toBe(false);
-    expect(dataAndWording.checked).toBe(false);
+    expect(transferVariant.checked).toBe(false);
+    // The legacy value is never offered as a selectable new mode (#656).
+    expect(
+      screen.queryByTestId("bulk-wizard-mode-data-and-wording"),
+    ).not.toBeInTheDocument();
   });
 
   it("fires onModeChange when another mode is selected", () => {
@@ -167,8 +171,25 @@ describe("BulkUploadStep", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText(
-        /Variant \(data-and-wording\) — Generate a new practice problem with different data/i,
+        /Transfer Variant — Generate a genuinely different-looking problem/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("renders a safe legacy label for a persisted data-and-wording batch", () => {
+    render(
+      <BulkUploadStep
+        batch={makeBatch({ ingestionMode: "data-and-wording" })}
+        isLoading={false}
+        mode="original"
+        onModeChange={() => {}}
+        onCreateBatch={() => {}}
+        onUpload={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("bulk-wizard-mode-locked")).toHaveTextContent(
+      "Ingestion mode: Variant (legacy) (locked for this batch)",
+    );
   });
 });

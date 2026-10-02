@@ -2,7 +2,13 @@ export type BatchState = "active" | "completed" | "expired" | "deleted";
 
 // Batch-level ingestion mode, immutable after creation; mirrors the backend
 // IngestionMode enum. Missing on legacy batches means original.
-export type IngestionMode = "original" | "data-only" | "data-and-wording";
+// "data-and-wording" is a legacy persisted value: readable/continuable, but
+// never offered for new batches (#656).
+export type IngestionMode =
+  | "original"
+  | "data-only"
+  | "transfer-variant"
+  | "data-and-wording";
 
 // Per-item variant lifecycle: not-requested → queued → generating →
 // validating → ready | failed; ready → needs-validation; failed → queued

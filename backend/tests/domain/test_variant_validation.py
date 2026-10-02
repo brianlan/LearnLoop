@@ -12,6 +12,7 @@ from app.domain.ingestion.variation import (
     Check,
     ModelIdentity,
     ProblemContent,
+    VariantMode,
     ValidatorReport,
     assess_variant,
     check_candidate,
@@ -51,6 +52,13 @@ PASSING_CATEGORIES: dict[str, str] = {
     "dataChange": "changed",
 }
 
+# transfer-variant additionally requires substantial surface divergence
+# (issue #656).
+DEEP_PASSING_CATEGORIES: dict[str, str] = {
+    **PASSING_CATEGORIES,
+    "surfaceDivergence": "substantial",
+}
+
 
 def _report(
     *,
@@ -78,8 +86,10 @@ def _report(
     )
 
 
-def _assess(reports: list[ValidatorReport], **kwargs: Any) -> Any:
-    return assess_variant(mode="data-only", source=SOURCE, candidate=CANDIDATE, reports=reports)
+def _assess(
+    reports: list[ValidatorReport], mode: VariantMode = "data-only"
+) -> Any:
+    return assess_variant(mode=mode, source=SOURCE, candidate=CANDIDATE, reports=reports)
 
 
 def test_single_complete_passing_report_passes() -> None:
@@ -294,6 +304,97 @@ def test_two_validators_graph_category_value_disagreement_blocks_pass() -> None:
     assert assessment.verdict == "fail"
     assert any(
         "validators disagree on graphConsistency: 'consistent' vs 'not-applicable'"
+        in f.evidence
+        for f in assessment.failures
+    )
+
+
+# ---------------------------------------------------------------------------
+# Surface divergence gate (issue #656): deep similarity + surface diversity
+# for transfer-variant; data-only never requires surface divergence.
+# ---------------------------------------------------------------------------
+
+
+def test_transfer_variant_with_substantial_surface_divergence_passes() -> None:
+    assessment = _assess(
+        [_report(categories=DEEP_PASSING_CATEGORIES)], mode="transfer-variant"
+    )
+    assert assessment.verdict == "pass"
+    assert assessment.failures == []
+
+
+def test_cosmetic_reskin_fails_even_when_deep_checks_pass() -> None:
+    report = _report(
+        categories={**PASSING_CATEGORIES, "surfaceDivergence": "insufficient"}
+    )
+    assessment = _assess([report], mode="transfer-variant")
+    assert assessment.verdict == "fail"
+    assert any(
+        "surfaceDivergence: insufficient" in f.evidence for f in assessment.failures
+    )
+
+
+def test_transfer_variant_missing_surface_divergence_fails_closed() -> None:
+    assessment = _assess([_report()], mode="transfer-variant")
+    assert assessment.verdict == "fail"
+    assert any(
+        "surfaceDivergence: missing report category" in f.evidence
+        for f in assessment.failures
+    )
+
+
+def test_transfer_variant_invalid_surface_divergence_category_fails_closed() -> None:
+    report = _report(categories={**PASSING_CATEGORIES, "surfaceDivergence": "extreme"})
+    assessment = _assess([report], mode="transfer-variant")
+    assert assessment.verdict == "fail"
+    assert any("surfaceDivergence: extreme" in f.evidence for f in assessment.failures)
+
+
+def test_deep_structure_changed_fails_even_with_substantial_surface_divergence() -> None:
+    categories = {**DEEP_PASSING_CATEGORIES, "solutionStructure": "changed"}
+    assessment = _assess([_report(categories=categories)], mode="transfer-variant")
+    assert assessment.verdict == "fail"
+    assert any(
+        "solutionStructure: changed" in f.evidence for f in assessment.failures
+    )
+
+
+def test_legacy_data_and_wording_continues_under_transfer_gate() -> None:
+    """Legacy batches named data-and-wording are judged by the same
+    transfer-variant contract (#656)."""
+    assert _assess(
+        [_report(categories=DEEP_PASSING_CATEGORIES)], mode="data-and-wording"
+    ).verdict == "pass"
+    reskin = _report(
+        categories={**PASSING_CATEGORIES, "surfaceDivergence": "insufficient"}
+    )
+    assessment = _assess([reskin], mode="data-and-wording")
+    assert assessment.verdict == "fail"
+    assert any(
+        "surfaceDivergence: insufficient" in f.evidence for f in assessment.failures
+    )
+
+
+def test_data_only_does_not_require_surface_divergence() -> None:
+    """data-only keeps its wording contract: surface divergence is absent or
+    insufficient without invalidating the assessment."""
+    assert _assess([_report()]).verdict == "pass"
+    report = _report(
+        categories={**PASSING_CATEGORIES, "surfaceDivergence": "insufficient"}
+    )
+    assert _assess([report]).verdict == "pass"
+
+
+def test_two_validators_disagree_on_surface_divergence_blocks_pass() -> None:
+    substantial = _report(categories=DEEP_PASSING_CATEGORIES)
+    insufficient = _report(
+        categories={**PASSING_CATEGORIES, "surfaceDivergence": "insufficient"},
+        identity=ModelIdentity(provider="openai", model="val-2"),
+    )
+    assessment = _assess([substantial, insufficient], mode="transfer-variant")
+    assert assessment.verdict == "fail"
+    assert any(
+        "validators disagree on surfaceDivergence: 'substantial' vs 'insufficient'"
         in f.evidence
         for f in assessment.failures
     )

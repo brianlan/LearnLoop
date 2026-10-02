@@ -1474,7 +1474,7 @@ describe("BulkReviewStep variant generate", () => {
     return render(
       <BulkReviewStep
         batch={makeBatch({
-          ingestionMode: "data-and-wording",
+          ingestionMode: "transfer-variant",
           items,
           ...overrides,
         })}
@@ -1592,7 +1592,7 @@ describe("BulkReviewStep variant generate", () => {
     rerender(
       <BulkReviewStep
         batch={makeBatch({
-          ingestionMode: "data-and-wording",
+          ingestionMode: "transfer-variant",
           items: [
             makeItem("item-a", {
               order: 0,
@@ -1996,7 +1996,7 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
   function variantReviewUi(item: BulkItem) {
     return (
       <BulkReviewStep
-        batch={makeBatch({ ingestionMode: "data-and-wording", items: [item] })}
+        batch={makeBatch({ ingestionMode: "transfer-variant", items: [item] })}
         isLoading={false}
         {...handlers}
       />
@@ -2088,7 +2088,7 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
     render(
       <BulkReviewStep
         batch={makeBatch({
-          ingestionMode: "data-and-wording",
+          ingestionMode: "transfer-variant",
           items: [submitted, remaining],
         })}
         isLoading={false}

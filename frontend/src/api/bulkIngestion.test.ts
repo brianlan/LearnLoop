@@ -75,13 +75,13 @@ describe("bulk ingestion API client", () => {
       });
       vi.stubGlobal("fetch", mockFetch);
 
-      await createBatch("data-and-wording");
+      await createBatch("transfer-variant");
 
       expect(mockFetch).toHaveBeenCalledWith("/api/v1/ingestion-batches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ ingestionMode: "data-and-wording" }),
+        body: JSON.stringify({ ingestionMode: "transfer-variant" }),
       });
     });
   });

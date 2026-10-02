@@ -234,7 +234,9 @@ type ProblemContentSnapshot = {
 };
 
 type ProblemVariation = {
-  mode: "data-only" | "data-and-wording";
+  // transfer-variant is canonical (#656); "data-and-wording" survives only
+  // as a legacy read-only value for historical provenance.
+  mode: "data-only" | "transfer-variant" | "data-and-wording";
   original: ProblemContentSnapshot & { auditImage: SourceImage };
   acceptedVariant: ProblemContentSnapshot;
   generator: ModelIdentity;

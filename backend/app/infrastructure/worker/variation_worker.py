@@ -35,8 +35,9 @@ from app.infrastructure.vlm.variant_client import (
     generate_and_validate,
 )
 from app.problem_variation import (
-    IngestionMode,
+    VARIANT_INGESTION_MODES,
     VariationStatus,
+    canonical_variation_mode,
     problem_content_from_snapshot,
     serialize_generation_result,
 )
@@ -144,10 +145,9 @@ async def claim_next_variation_work(
             "status": BatchState.ACTIVE.value,
             "expiresAt": {"$gt": current},
             "ingestionMode": {
-                "$in": [
-                    IngestionMode.DATA_ONLY.value,
-                    IngestionMode.DATA_AND_WORDING.value,
-                ]
+                # Legacy "data-and-wording" batches stay claimable so their
+                # queued/failed items continue under the renamed contract (#656).
+                "$in": [mode.value for mode in VARIANT_INGESTION_MODES]
             },
             "items.variation.status": {
                 "$in": [
@@ -195,7 +195,9 @@ async def process_variation(
     variation = item.get("variation") or {}
     token = variation.get("claimToken")
     claimed_revision = item.get("contentRevision")
-    mode = batch.get("ingestionMode")
+    # Legacy batches keep their stored mode; generation/validation/provenance
+    # continue under the canonical contract (#656).
+    mode = canonical_variation_mode(batch.get("ingestionMode")).value
 
     if not token or not isinstance(claimed_revision, int):
         logger.info("Discarding variation work for %s: missing claim fencing", item_id)

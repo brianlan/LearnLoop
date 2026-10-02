@@ -40,7 +40,7 @@ from app.infrastructure.ingestion.repository import (
 )
 from app.presentation.errors import ApiError
 from app.presentation.tag_registration import _register_tags
-from app.problem_variation import VariationStatus
+from app.problem_variation import canonical_variation_mode, VariationStatus
 from app.solution_generation import enqueue_solution_generation_task_for_problem
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,9 @@ def _build_variation_problem_document(
         "revision"
     ) == item.get("contentRevision")
     provenance = ProblemVariation(
-        mode=batch.get("ingestionMode") or "data-only",
+        # New admitted provenance always records the canonical mode; a legacy
+        # batch's candidate was validated under the transfer contract (#656).
+        mode=canonical_variation_mode(batch.get("ingestionMode") or "data-only").value,
         original=OriginalProvenance(**original_content, auditImage=audit_image),
         acceptedVariant=FrozenContentSnapshot(**accepted_variant),
         generator=ModelIdentity(

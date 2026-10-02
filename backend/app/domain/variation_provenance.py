@@ -19,7 +19,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-VariantMode = Literal["data-only", "data-and-wording"]
+# ``transfer-variant`` is the canonical mode for new admissions (#656).
+# ``data-and-wording`` is a legacy read-only value kept so historical
+# provenance stays valid; new writes never emit it.
+VariantMode = Literal["data-only", "transfer-variant", "data-and-wording"]
 
 
 class ModelIdentity(BaseModel):

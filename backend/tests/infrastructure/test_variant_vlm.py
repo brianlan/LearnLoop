@@ -32,6 +32,8 @@ from app.infrastructure.vlm.variant_prompts import (
     VARIANT_VALIDATOR_SYSTEM_PROMPT,
     build_variant_generator_user_prompt,
     build_variant_helper_user_prompt,
+    build_variant_validator_user_prompt,
+    variant_mode_rule,
 )
 from tests.domain.test_variant_validation import CANDIDATE, PASSING_CATEGORIES, SOURCE
 
@@ -64,8 +66,15 @@ def _validator_json(
     original_solved: str | None = "60",
     variant_solved: str | None = "60",
     graph_consistency: str = "not-applicable",
+    surface_divergence: str = "insufficient",
 ) -> str:  # noqa: ARG001 - kept for symmetry
-    checks = {**PASSING_CATEGORIES, "graphConsistency": graph_consistency}
+    checks = {
+        **PASSING_CATEGORIES,
+        "graphConsistency": graph_consistency,
+        # Validators always report surface divergence (issue #656): data-only
+        # flows must ignore it, data-and-wording flows require "substantial".
+        "surfaceDivergence": surface_divergence,
+    }
     return json.dumps(
         {
             "originalSolvedAnswer": original_solved,
@@ -483,6 +492,88 @@ async def test_full_flow_two_validators_with_disagreement_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Surface divergence contract (issue #656).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_validator_surface_divergence_round_trips() -> None:
+    recorder = _Recorder([_validator_json(surface_divergence="substantial")])
+    client = _validator_client(recorder)
+
+    report = await client.produce_report(
+        mode="transfer-variant", source=SOURCE, candidate=await _candidate()
+    )
+
+    assert report.checks["surfaceDivergence"].category == "substantial"
+
+
+@pytest.mark.asyncio
+async def test_full_flow_transfer_variant_passes_with_substantial_divergence() -> None:
+    result = await generate_and_validate(
+        mode="transfer-variant",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([_generator_json()])),
+        validators=[
+            _validator_client(_Recorder([_validator_json(surface_divergence="substantial")]))
+        ],
+        helper=_helper_client(_Recorder([_helper_json()])),
+    )
+    assert result.assessment.verdict == "pass"
+    assert result.assessment.failures == []
+
+
+@pytest.mark.asyncio
+async def test_full_flow_transfer_variant_reskin_fails_even_with_deep_checks() -> None:
+    result = await generate_and_validate(
+        mode="transfer-variant",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([_generator_json()])),
+        validators=[_validator_client(_Recorder([_validator_json()]))],
+        helper=_helper_client(_Recorder([_helper_json()])),
+    )
+    assert result.assessment.verdict == "fail"
+    assert any(
+        "surfaceDivergence: insufficient" in f.evidence for f in result.assessment.failures
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_flow_legacy_mode_continues_under_transfer_gate() -> None:
+    """Legacy batches named data-and-wording get the same gate at the VLM
+    boundary: an insufficient reskin fails exactly as transfer-variant (#656)."""
+    result = await generate_and_validate(
+        mode="data-and-wording",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([_generator_json()])),
+        validators=[_validator_client(_Recorder([_validator_json()]))],
+        helper=_helper_client(_Recorder([_helper_json()])),
+    )
+    assert result.assessment.verdict == "fail"
+    assert any(
+        "surfaceDivergence: insufficient" in f.evidence for f in result.assessment.failures
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_flow_transfer_variant_missing_check_fails_closed() -> None:
+    payload = json.loads(_validator_json())
+    del payload["checks"]["surfaceDivergence"]
+    result = await generate_and_validate(
+        mode="transfer-variant",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([_generator_json()])),
+        validators=[_validator_client(_Recorder([json.dumps(payload)]))],
+        helper=_helper_client(_Recorder([_helper_json()])),
+    )
+    assert result.assessment.verdict == "fail"
+    assert any(
+        "surfaceDivergence: missing report category" in f.evidence
+        for f in result.assessment.failures
+    )
+
+
+# ---------------------------------------------------------------------------
 # Responses-transport validator/helper capture, result contract, config.
 # ---------------------------------------------------------------------------
 
@@ -640,8 +731,20 @@ async def test_second_validator_configured_builds_client() -> None:
     [
         # Mode rules: data-only preserves wording/names/objects.
         ("data-only generator rule", "keep the wording, names, objects and what is asked"),
-        # Mode rules: data-and-wording preserves structure/reasoning/quantity roles.
-        ("data-and-wording generator rule", "preserve the mathematical structure, reasoning direction and the roles of quantities"),
+        # Mode rules: transfer-variant preserves structure/reasoning/quantity roles.
+        ("transfer-variant generator rule", "transfer-variant: create a genuinely new problem"),
+        ("transfer-variant rule structure", "Preserve the mathematical structure, reasoning direction and the roles of quantities"),
+        # Deep variants (issue #656): abstract-then-synthesize, not a reskin.
+        ("deep-variant genuinely-new", "genuinely new problem, not a paraphrase or cosmetic reskin"),
+        ("deep-variant blueprint synthesis", "construct a new problem from that blueprint"),
+        ("deep-variant difficulty preservation", "approximately the same difficulty and numeric complexity"),
+        ("deep-variant cosmetic prohibitions", "Number-only substitution, name or object substitution, synonym replacement"),
+        ("deep-variant no blueprint exposure", "Do not expose the internal analysis or blueprint"),
+        ("generator abstract-then-synthesize", "abstract-then-synthesize"),
+        ("generator never expose analysis", "Never expose internal analysis, reasoning, or the inferred blueprint"),
+        ("validator surface divergence schema", '"surfaceDivergence": {"category": "substantial"|"insufficient"'),
+        ("validator surface divergence rule", 'surfaceDivergence is "substantial" when'),
+        ("validator cosmetic mode noncompliance", "a cosmetic rewrite is noncompliant even when the deep mathematical checks pass"),
         # Skill changes: representationShift is material only for a genuinely
         # different skill (new formula, diagram reasoning, other representation).
         ("skill-change guardrail", 'representationShift is "material" only when the solution needs a genuinely different skill'),
@@ -686,7 +789,7 @@ def test_prompt_contract_fragments_present(prompt: str, fragment: str) -> None:
                 source_correct_answer="answer",
             ),
             build_variant_generator_user_prompt(
-                mode="data-and-wording",
+                mode="transfer-variant",
                 source_text="source text",
                 source_problem_type="short-answer",
                 source_subject="mathematics",
@@ -711,14 +814,52 @@ def test_generator_user_prompt_carries_mode_and_subject() -> None:
     assert SOURCE.subject in data_only
 
     data_and_wording = build_variant_generator_user_prompt(
-        mode="data-and-wording",
+        mode="transfer-variant",
         source_text=SOURCE.text,
         source_problem_type=SOURCE.problem_type,
         source_subject=SOURCE.subject,
         source_graph_dsl=None,
         source_correct_answer=SOURCE.correct_answer,
     )
-    assert "preserve the mathematical structure" in data_and_wording
+    assert "Preserve the mathematical structure" in data_and_wording
+
+
+def test_generator_and_validator_share_one_canonical_mode_rule() -> None:
+    """Generator and validator task data carry the exact same concrete rule
+    text, so modeCompliance is judged against the contract the generator
+    received (issue #656)."""
+    for mode in ("data-only", "transfer-variant"):
+        generator_prompt = build_variant_generator_user_prompt(
+            mode=mode,
+            source_text="source text",
+            source_problem_type="short-answer",
+            source_subject="mathematics",
+            source_graph_dsl=None,
+            source_correct_answer="answer",
+        )
+        validator_prompt = build_variant_validator_user_prompt(
+            mode=mode,
+            source_text="source text",
+            source_problem_type="short-answer",
+            source_graph_dsl=None,
+            candidate_text="candidate text",
+            candidate_problem_type="short-answer",
+            candidate_graph_dsl=None,
+        )
+        rule = variant_mode_rule(mode)
+        assert '"modeRules"' in generator_prompt
+        assert '"modeRules"' in validator_prompt
+        assert rule in generator_prompt
+        assert rule in validator_prompt
+
+
+def test_legacy_mode_aliases_to_canonical_rule() -> None:
+    """Legacy data-and-wording continuation normalizes to the canonical
+    transfer-variant rule, not a second contract (#656)."""
+    assert (
+        variant_mode_rule("data-and-wording")
+        == variant_mode_rule("transfer-variant")
+    )
 
 
 def test_helper_user_prompt_carries_multi_part_and_answer_form_payload() -> None:

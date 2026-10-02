@@ -38,8 +38,14 @@ Ingest mode
 
 ○ Original
 ○ Change data only
-○ Change data + wording
+○ Transfer Variant
 ```
+
+> Naming note (#656): the third mode's canonical name is **`transfer-variant`**
+> (UI: **Transfer Variant**). It generates a genuinely new problem from the
+> source's abstract mathematical blueprint rather than merely changing data
+> and wording. The historical value `data-and-wording` survives only as a
+> legacy read-only provenance value; it is not offered for new batches.
 
 A single ingestion session uses one mode consistently.
 
