@@ -2314,6 +2314,56 @@ async def _drive_to_needs_validation(
     )
 
 
+async def _drive_to_failed_check_only(
+    bulk_app: FastAPI,
+    user_id: Any,
+    batch_id: str,
+    item_id: str,
+) -> None:
+    """Drive a queued item to failed with a check-kind-only FAIL (#658).
+
+    Mirrors the motivating production case: the validator solved both
+    answers correctly but judged the variant too close to the template.
+    """
+    database = bulk_app.state.fake_database
+    now = datetime.now(UTC)
+    batch_object_id = ObjectId(batch_id)
+    await request_variation_generation(
+        database, batch_object_id, user_id, item_id,
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=now,
+    )
+    claimed = await claim_variation_work(
+        database, batch_object_id, user_id, item_id,
+        lease_timeout_seconds=300, now=now,
+    )
+    assert claimed is not None
+    token = claimed["variation"]["claimToken"]
+    assert await save_variation_candidate_checkpoint(
+        database, batch_object_id, user_id, item_id,
+        token=token, claimed_revision=1,
+        candidate=dict(VARIANT_CANDIDATE), now=now,
+    )
+    assert await save_variation_result(
+        database, batch_object_id, user_id, item_id,
+        token=token, claimed_revision=1, verdict="fail",
+        validation={
+            "verdict": "fail",
+            "failures": [
+                {
+                    "kind": "check",
+                    "evidence": "modeCompliance: noncompliant - rewrite is not substantially new",
+                },
+                {
+                    "kind": "check",
+                    "evidence": "surfaceDivergence: insufficient - near-template drill",
+                },
+            ],
+            "reports": [],
+        },
+        now=now,
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_batch_defaults_to_original_mode(
     authenticated_bulk_client: AsyncClient,
@@ -2918,6 +2968,164 @@ async def test_variant_attest_rejections(
     )
     item = _variation_of(detail.json(), item_id)
     assert item["variation"]["status"] == "needs-validation"
+
+
+@pytest.mark.asyncio
+async def test_variant_fail_attest_check_only_from_failed_admits_submit(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A check-kind-only FAIL may be attested from failed (#658): READY,
+    submit gates accept it, and provenance freezes the REAL fail verdict."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_failed_check_only(bulk_app, user_id, batch_id, item_id)
+
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 1},
+    )
+    assert attest.status_code == 200
+    item = _variation_of(attest.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["attestation"]["revision"] == 1
+    # The admission branches stay mutually exclusive.
+    assert item["variation"]["validatedRevision"] is None
+    assert item["contentRevision"] == 1
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    problem_id = summary["items"][0]["submittedProblemId"]
+
+    problem = await database["problems"].find_one({"_id": ObjectId(problem_id)})
+    # Provenance honesty: the waved FAIL is frozen as a user-attested fail,
+    # never as a validator pass.
+    assert problem["variation"]["validation"]["verdict"] == "fail"
+    assert problem["variation"]["validation"]["attestedByUser"] is True
+
+
+@pytest.mark.asyncio
+async def test_variant_fail_attest_from_needs_validation_and_re_attest(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Check-only FAIL attest works from needs-validation too, and after a
+    fail-attest → semantic edit the stale check-only FAIL re-attests
+    without a forced revalidate (symmetric with stale-PASS, #658)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_ready_candidate(bulk_app, user_id, batch_id, item_id)
+
+    # Semantic candidate edit → needs-validation at revision 2, stale PASS.
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "text": "What is 4+4?"},
+    )
+    assert edit.status_code == 200
+    item_filter = {"_id": ObjectId(batch_id), "items.itemId": item_id}
+    # Overwrite the stale evidence with a check-only FAIL (the motivating
+    # case: the teacher already declined revalidation once).
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        item_filter,
+        {
+            "$set": {
+                "items.$.variation.validation.verdict": "fail",
+                "items.$.variation.validation.failures": [
+                    {
+                        "kind": "check",
+                        "evidence": "modeCompliance: noncompliant - near-template drill",
+                    }
+                ],
+            }
+        },
+    )
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert attest.status_code == 200
+    assert _variation_of(attest.json(), item_id)["variation"]["status"] == "ready"
+
+    # Fail-attest → semantic edit → stale check-only FAIL re-attests.
+    edit2 = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 2, "text": "What is 5+5?"},
+    )
+    assert edit2.status_code == 200
+    edited = _variation_of(edit2.json(), item_id)["variation"]
+    assert edited["status"] == "needs-validation"
+    assert edited["attestation"] is None
+    assert edited["validation"]["verdict"] == "fail"
+    re_attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 3},
+    )
+    assert re_attest.status_code == 200
+    assert _variation_of(re_attest.json(), item_id)["variation"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failures",
+    [
+        # Answer-kind: correctness is machine-owned, never overridable.
+        [{"kind": "answer", "evidence": "helper comparison for variant answer: different - 8 vs 9"}],
+        # Content-kind: verified fact with an edit-or-regenerate remedy.
+        [{"kind": "content", "evidence": "candidate text is empty"}],
+        # Worker raw kind: non-attestable by construction.
+        [{"kind": "vlm-timeout", "evidence": "validator failed: timeout"}],
+        # Mixed: one non-check failure poisons the whole set.
+        [
+            {"kind": "check", "evidence": "modeCompliance: noncompliant - x"},
+            {"kind": "content", "evidence": "candidate correctAnswer is empty"},
+        ],
+    ],
+)
+async def test_variant_fail_attest_rejects_non_check_failures(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    failures: list[dict[str, str]],
+) -> None:
+    """Any non-check failure entry blocks the fail-attest with 409 (#658)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_failed_check_only(bulk_app, user_id, batch_id, item_id)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {"$set": {"items.$.variation.validation.failures": failures}},
+    )
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 1},
+    )
+    assert attest.status_code == 409
+    assert attest.json()["error"]["code"] == "INVALID_VARIATION_STATE"
+    # The item stays failed; nothing was overridden.
+    stored = await database[INGESTION_BATCHES_COLLECTION].find_one(
+        {"_id": ObjectId(batch_id)}
+    )
+    stored_item = next(i for i in stored["items"] if i["itemId"] == item_id)
+    assert stored_item["variation"]["status"] == "failed"
+    assert stored_item["variation"]["attestation"] is None
 
 
 @pytest.mark.asyncio

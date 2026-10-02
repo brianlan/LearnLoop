@@ -63,6 +63,9 @@ def test_happy_path_lifecycle_transitions_are_legal() -> None:
     transition_variation_status(s.QUEUED, s.VALIDATING)
     transition_variation_status(s.VALIDATING, s.FAILED)
     transition_variation_status(s.FAILED, s.QUEUED)
+    # Fail-attest (#658): a check-kind-only FAIL may be attested into READY;
+    # this is the only failed -> READY edge.
+    transition_variation_status(s.FAILED, s.READY)
     # Generate Again from ready discards the candidate and regenerates.
     transition_variation_status(s.READY, s.QUEUED)
 
@@ -77,7 +80,6 @@ def test_happy_path_lifecycle_transitions_are_legal() -> None:
         (VariationStatus.GENERATING, VariationStatus.READY),
         (VariationStatus.VALIDATING, VariationStatus.GENERATING),
         (VariationStatus.READY, VariationStatus.GENERATING),
-        (VariationStatus.FAILED, VariationStatus.READY),
         (VariationStatus.READY, VariationStatus.VALIDATING),
     ],
 )

@@ -28,6 +28,7 @@ from app.infrastructure.vlm.variant_client import (
     build_variant_validator_vlm_client,
 )
 from app.solution_generation import backfill_solution_generation_tasks
+from app.problem_variation import backfill_variation_failure_kinds
 from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
 from app.presentation.errors import ApiError, api_error_handler, validation_error_handler
@@ -132,6 +133,8 @@ async def lifespan(app: FastAPI):
     database = get_database()
     await ensure_database_setup(database)
     await backfill_solution_generation_tasks(database)
+    # One-time legacy failure-kind retag so pre-#658 FAIL items can attest.
+    await backfill_variation_failure_kinds(database)
     
     settings = get_settings()
     storage = S3StorageAdapter(settings=settings)

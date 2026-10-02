@@ -121,7 +121,8 @@ def test_each_failing_category_blocks_pass_with_evidence(
     assessment = _assess([_report(categories=categories)])
     assert assessment.verdict == "fail"
     assert any(
-        failure.kind == "content" and failure.evidence.startswith(category)
+        # Category failures are validator judgment: check-kind (#658).
+        failure.kind == "check" and failure.evidence.startswith(category)
         for failure in assessment.failures
     )
 
@@ -452,3 +453,127 @@ def test_graph_parity_with_matching_graphs_passes_gate() -> None:
         mode="data-only", source=source, candidate=candidate, reports=[report]
     )
     assert assessment.verdict == "pass"
+
+
+# ---------------------------------------------------------------------------
+# Failure-kind split and attestation eligibility (issue #658).
+# Machines own correctness (answer/content kinds are never overridable);
+# humans own judgment (check-kind failures may be attested away).
+# ---------------------------------------------------------------------------
+
+
+def _kinds(assessment: Any) -> set[str]:
+    return {f.kind for f in assessment.failures}
+
+
+def test_check_category_failure_is_check_kind() -> None:
+    """Validator judgment failures (e.g. 'too close to the template') are
+    check-kind: the motivating transfer-variant case (#658)."""
+    report = _report(
+        categories={**DEEP_PASSING_CATEGORIES, "modeCompliance": "noncompliant"}
+    )
+    assessment = _assess([report], mode="transfer-variant")
+    assert assessment.verdict == "fail"
+    assert _kinds(assessment) == {"check"}
+
+
+def test_category_disagreement_is_check_kind() -> None:
+    second = _report(
+        categories={**PASSING_CATEGORIES, "difficultyShift": "materially-harder"},
+        identity=ModelIdentity(provider="openai", model="val-2"),
+    )
+    assert _kinds(_assess([_report(), second])) == {"check"}
+
+
+def test_graph_consistency_structural_invalidity_is_check_kind() -> None:
+    """Graph presence is content-verified earlier; the residual structural
+    invalidity is validator judgment contradicting a verified fact."""
+    source = SOURCE.model_copy(update={"graph_dsl": SAFE_GRAPH})
+    candidate = CANDIDATE.model_copy(update={"graph_dsl": SAFE_GRAPH})
+    report = _report(
+        categories={**PASSING_CATEGORIES, "graphConsistency": "not-applicable"}
+    )
+    assessment = assess_variant(
+        mode="data-only", source=source, candidate=candidate, reports=[report]
+    )
+    assert _kinds(assessment) == {"check"}
+
+
+def test_incomplete_evidence_is_content_kind() -> None:
+    """Missing categories, missing reports and wrong report counts are
+    defects of the evidence, not judgment: never overridable."""
+    missing_category = _assess(
+        [_report(categories={k: v for k, v in PASSING_CATEGORIES.items() if k != "dataChange"})]
+    )
+    assert "content" in _kinds(missing_category)
+    no_report = _assess([])
+    assert _kinds(no_report) == {"content"}
+    wrong_count = _assess([_report(), _report(), _report()])
+    assert "content" in _kinds(wrong_count)
+
+
+def test_transfer_variant_missing_surface_divergence_is_content_kind() -> None:
+    assessment = _assess([_report()], mode="transfer-variant")
+    assert "content" in _kinds(assessment)
+
+
+def test_could_not_solve_is_answer_kind() -> None:
+    assessment = _assess([_report(original_solved=None)])
+    assert _kinds(assessment) == {"answer"}
+
+
+def test_helper_comparison_failure_is_answer_kind() -> None:
+    assessment = _assess([_report(variant_cmp="different")])
+    assert _kinds(assessment) == {"answer"}
+
+
+def test_candidate_deterministic_failures_are_content_kind() -> None:
+    empty_text = CANDIDATE.model_copy(update={"text": "  "})
+    failures = check_candidate("data-only", SOURCE, empty_text)
+    assert {f.kind for f in failures} == {"content"}
+    unchanged = CANDIDATE.model_copy(update={"text": SOURCE.text})
+    failures = check_candidate("data-only", SOURCE, unchanged)
+    assert {f.kind for f in failures} == {"content"}
+
+
+def test_is_attestable_truth_table() -> None:
+    from app.domain.ingestion.variation import is_attestable
+
+    # Stale-PASS path (#648): attestable from needs-validation.
+    assert is_attestable({"verdict": "pass"}) is True
+    # Check-only FAIL: the #658 judgment path.
+    check_only = {"verdict": "fail", "failures": [{"kind": "check", "evidence": "a"}]}
+    assert is_attestable(check_only) is True
+    multi_check = {
+        "verdict": "fail",
+        "failures": [
+            {"kind": "check", "evidence": "a"},
+            {"kind": "check", "evidence": "b"},
+        ],
+    }
+    assert is_attestable(multi_check) is True
+    # Any non-check failure makes the set non-attestable.
+    assert is_attestable(
+        {"verdict": "fail", "failures": [{"kind": "answer", "evidence": "a"}]}
+    ) is False
+    assert is_attestable(
+        {
+            "verdict": "fail",
+            "failures": [
+                {"kind": "check", "evidence": "a"},
+                {"kind": "content", "evidence": "b"},
+            ],
+        }
+    ) is False
+    # Empty failures, missing verdict, missing validation: never attestable.
+    assert is_attestable({"verdict": "fail", "failures": []}) is False
+    assert is_attestable({"verdict": "fail"}) is False
+    assert is_attestable({}) is False
+    assert is_attestable(None) is False
+    # Kind-less legacy entries and worker raw kinds are excluded by design.
+    assert is_attestable(
+        {"verdict": "fail", "failures": [{"evidence": "legacy entry"}]}
+    ) is False
+    assert is_attestable(
+        {"verdict": "fail", "failures": [{"kind": "vlm-timeout", "evidence": "a"}]}
+    ) is False

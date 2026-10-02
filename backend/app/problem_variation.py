@@ -16,7 +16,10 @@ from typing import Any, Mapping
 from app.domain.state import InvalidStateTransitionError
 from app.domain.ingestion.variation import (
     ProblemContent,
+    ValidatorReport,
+    VariantCandidate,
     VariantGenerationResult,
+    assess_variant,
 )
 
 
@@ -111,6 +114,9 @@ VARIATION_TRANSITIONS: dict[VariationStatus, list[VariationStatus]] = {
     ],
     VariationStatus.FAILED: [
         VariationStatus.QUEUED,
+        # Fail-attest (#658): a check-kind-only FAIL may be attested into
+        # READY; the attest fence enforces the eligibility predicate.
+        VariationStatus.READY,
         # A source semantic edit discards the failed attempt.
         VariationStatus.NOT_REQUESTED,
     ],
@@ -241,3 +247,74 @@ def serialize_variation_for_response(variation: Mapping[str, Any] | None) -> dic
         "attestation": variation.get("attestation"),
         "queuedAt": variation.get("queuedAt"),
     }
+
+
+INGESTION_BATCHES_COLLECTION = "ingestion_batches"
+
+
+async def backfill_variation_failure_kinds(database: Any) -> int:
+    """One-time startup retag of legacy failure kinds (#658).
+
+    Items validated before the #658 kind split stored every assessment
+    failure as ``content``. Recompute the pure assessment over the stored
+    original/candidate/reports under the canonical mode (as the worker
+    does) and retag a stored failure's kind ONLY when its full evidence
+    string exactly matches a recomputed failure — prefix matches are not
+    enough. Entries the recompute cannot reproduce keep their kind;
+    reports and the failure set are never mutated. Idempotent: a retag
+    happens only where the stored kind actually differs.
+    """
+    collection = database[INGESTION_BATCHES_COLLECTION]
+    retagged = 0
+    cursor = collection.find(
+        {
+            "ingestionMode": {
+                "$in": [mode.value for mode in VARIANT_INGESTION_MODES]
+            }
+        }
+    )
+    async for batch in cursor:
+        for item in batch.get("items") or []:
+            variation = item.get("variation") or {}
+            validation = variation.get("validation") or {}
+            failures = validation.get("failures") or []
+            if (
+                validation.get("verdict") != "fail"
+                or not failures
+                or not variation.get("original")
+                or not variation.get("candidate")
+            ):
+                continue
+            # Per-item fail-closed: one malformed legacy record must not
+            # abort application startup. Keep its stored kinds and continue
+            # with the rest of the scan; DB reads/writes stay outside this
+            # guard so operational errors still surface.
+            try:
+                recomputed = assess_variant(
+                    mode=canonical_variation_mode(batch.get("ingestionMode")).value,
+                    source=problem_content_from_snapshot(variation["original"]),
+                    candidate=VariantCandidate.model_validate(variation["candidate"]),
+                    reports=[
+                        ValidatorReport.model_validate(report)
+                        for report in validation.get("reports") or []
+                    ],
+                )
+            except Exception:
+                continue
+            recomputed_kinds = {
+                failure.evidence: failure.kind for failure in recomputed.failures
+            }
+            new_failures = list(failures)
+            changed = False
+            for index, failure in enumerate(new_failures):
+                kind = recomputed_kinds.get(failure.get("evidence"))
+                if kind is not None and kind != failure.get("kind"):
+                    new_failures[index] = {**failure, "kind": kind}
+                    changed = True
+                    retagged += 1
+            if changed:
+                await collection.update_one(
+                    {"_id": batch["_id"], "items.itemId": item.get("itemId")},
+                    {"$set": {"items.$.variation.validation.failures": new_failures}},
+                )
+    return retagged

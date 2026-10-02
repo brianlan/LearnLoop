@@ -473,7 +473,9 @@ async def generate_and_validate(
         if report.original_solved_answer is None or report.variant_solved_answer is None:
             extra_failures.append(
                 AssessmentFailure(
-                    kind="content",
+                    # Mirrors the domain kind split (#658): an unsolved
+                    # problem is an answer-correctness failure.
+                    kind="answer",
                     evidence=(
                         f"validator {validator.identity['model']} could not solve one of the "
                         "problems; helper comparison skipped"

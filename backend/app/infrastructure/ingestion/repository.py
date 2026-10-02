@@ -1572,27 +1572,62 @@ async def attest_variation_validation(
     expected_revision: int,
     now: datetime,
 ) -> None:
-    """Restore READY from needs-validation by explicit user attestation (#648).
+    """Restore READY by explicit user attestation (#648, #658).
 
-    One atomic write with the preconditions inside the update predicate: the
-    item must be needs-validation at the expected revision with a stored PASS
-    report. ``validatedRevision`` stays None so the two admission branches
-    (validator-covered vs user-attested) remain mutually exclusive, and the
-    stored report is never mutated.
+    One atomic write with the preconditions inside the update predicate —
+    two eligibility branches under a top-level ``$or``, both pinned on the
+    item id, current revision and an actionable item: (a) needs-validation
+    with a stored PASS report (#648 stale-PASS); (b) needs-validation or
+    failed with a FAIL whose failures are all check-kind — validator
+    judgment the teacher may override; any non-check (or kind-less legacy)
+    failure entry fails the branch (#658). ``validatedRevision`` stays None
+    so the two admission branches (validator-covered vs user-attested)
+    remain mutually exclusive. The stored report is never mutated; the one
+    exception is the startup kind-only legacy backfill, which retags
+    failure kinds without touching evidence or report content.
     """
     await _load_batch_for_update(database, batch_id, user_id)
+    attest_item = {
+        "itemId": item_id,
+        "contentRevision": expected_revision,
+        **_ITEM_ACTIONABLE_PREDICATE,
+    }
     result = await _collection(database).update_one(
         {
             "_id": _object_id(batch_id),
             "userId": user_id,
             **_VARIANT_MODE_PREDICATE,
+            # One element predicate whose ``$or`` covers both eligibility
+            # branches. The positional ``items.$`` update requires a single
+            # top-level array condition: real MongoDB rejects a positional
+            # update when the ``$or`` sits at document level (surfaced by
+            # the #658 production-shaped manual verification on mongo 4.4).
             "items": {
                 "$elemMatch": {
-                    "itemId": item_id,
-                    "contentRevision": expected_revision,
-                    "variation.status": VariationStatus.NEEDS_VALIDATION.value,
-                    "variation.validation.verdict": "pass",
-                    **_ITEM_ACTIONABLE_PREDICATE,
+                    **attest_item,
+                    "$or": [
+                        {
+                            "variation.status": (
+                                VariationStatus.NEEDS_VALIDATION.value
+                            ),
+                            "variation.validation.verdict": "pass",
+                        },
+                        {
+                            "variation.status": {
+                                "$in": [
+                                    VariationStatus.NEEDS_VALIDATION.value,
+                                    VariationStatus.FAILED.value,
+                                ]
+                            },
+                            "variation.validation.verdict": "fail",
+                            "variation.validation.failures.0": {"$exists": True},
+                            "variation.validation.failures": {
+                                "$not": {
+                                    "$elemMatch": {"kind": {"$ne": "check"}}
+                                }
+                            },
+                        },
+                    ],
                 }
             },
         },

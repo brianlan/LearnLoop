@@ -175,8 +175,10 @@ def _build_variation_problem_document(
                 provider=first_model["provider"], model=first_model["model"]
             )
     generator = candidate.get("generator") or {}
-    # #648: an attested admission covers the current revision via the user
-    # attestation, not a validator run — frozen honestly into provenance.
+    # #648/#658: an attested admission covers the current revision via the
+    # user attestation, not a validator run — frozen honestly into
+    # provenance, including the REAL verdict (fail for a check-only
+    # fail-attest).
     attested_by_user = (variation.get("attestation") or {}).get(
         "revision"
     ) == item.get("contentRevision")
@@ -200,7 +202,10 @@ def _build_variation_problem_document(
         ),
         generationCount=int(variation.get("generationCount") or 0),
         validation=ValidationProvenance(
-            verdict="pass",
+            # Freeze the real verdict (#658): a fail-attested admission
+            # records "fail" + attestedByUser instead of a false "pass".
+            # The gate below already guarantees pass/fail here.
+            verdict=validation.get("verdict"),
             helperModel=helper_model,
             reports=list(reports),
             attestedByUser=attested_by_user,
@@ -273,7 +278,12 @@ def _check_admission_guards(
         raise _admission_guard_failure("Item has no confirmed source")
     if variation.get("status") != VariationStatus.READY.value:
         raise _admission_guard_failure("Variant is not validated")
-    if validation.get("verdict") != "pass":
+    # #658: an attested item is admitted even on a FAIL verdict — the
+    # attest fence already guaranteed the failure set was check-kind-only,
+    # and the attestation must cover the current revision.
+    if validation.get("verdict") != "pass" and attestation.get("revision") != item.get(
+        "contentRevision"
+    ):
         raise _admission_guard_failure("Variant validation did not pass")
     if not candidate:
         raise _admission_guard_failure("Variant candidate is missing")
