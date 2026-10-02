@@ -1288,6 +1288,7 @@ async def test_fixture_skips_when_sentinel_name_absent(
 
 from app.problem_variation import IngestionMode  # noqa: E402
 from app.infrastructure.ingestion.repository import (  # noqa: E402
+    attest_variation_validation,
     claim_variation_work,
     request_variation_generation,
     save_variation_candidate_checkpoint,
@@ -1658,3 +1659,66 @@ async def test_submit_reservation_skips_variant_flagged_items(
         real_database, batch_id, user_id, item_ids, now=NOW,
     )
     assert reserved == [plain_item]
+
+
+@pytest.mark.real_mongo
+async def test_fail_attest_update_matches_on_real_mongo(
+    real_database: Any, user_id: ObjectId, settings: Settings
+) -> None:
+    """Regression (#658 manual verification): the two-branch attest update
+    must match on a real MongoDB server.
+
+    The eligibility ``$or`` must live inside the ``$elemMatch`` element
+    predicate: a document-level ``$or`` over two ``$elemMatch`` branches
+    breaks the positional ``items.$`` write on real MongoDB (mongo 4.4
+    WriteError code 2, "positional operator did not find the match")."""
+    batch_id, item_ids = await _variant_batch_with_items(real_database, user_id, settings)
+    variant_item, other_item = item_ids
+
+    # Failed variant whose failures are all check-kind: attestable.
+    await _set_item_fields(
+        real_database, batch_id, user_id, variant_item,
+        contentRevision=1,
+        variation={
+            "status": "failed",
+            "generationCount": 1,
+            "original": dict(VARIANT_ORIGINAL),
+            "candidate": dict(VARIANT_CANDIDATE),
+            "validation": {
+                "verdict": "fail",
+                "failures": [
+                    {"kind": "check", "evidence": "modeCompliance: noncompliant - x"},
+                    {"kind": "check", "evidence": "surfaceDivergence: insufficient - y"},
+                ],
+                "reports": [],
+            },
+            "validatedRevision": None,
+            "attestation": None,
+            "claimToken": None,
+            "leaseUntil": None,
+            "queuedAt": None,
+        },
+    )
+
+    await attest_variation_validation(
+        real_database, batch_id, user_id, variant_item,
+        expected_revision=1, now=NOW,
+    )
+
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == variant_item)
+    assert item["variation"]["status"] == "ready"
+    attestation = item["variation"]["attestation"]
+    assert attestation["revision"] == 1
+    # pymongo returns tz-naive datetimes; only the instant matters.
+    assert attestation["at"] == NOW.replace(tzinfo=None)
+
+    # The other item satisfies neither branch: the write must not match and
+    # the conflict is classified against a fresh read instead.
+    from app.problem_variation import InvalidVariationStateError
+
+    with pytest.raises(InvalidVariationStateError):
+        await attest_variation_validation(
+            real_database, batch_id, user_id, other_item,
+            expected_revision=0, now=NOW,
+        )

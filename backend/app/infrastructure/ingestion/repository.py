@@ -1597,22 +1597,22 @@ async def attest_variation_validation(
             "_id": _object_id(batch_id),
             "userId": user_id,
             **_VARIANT_MODE_PREDICATE,
-            "$or": [
-                {
-                    "items": {
-                        "$elemMatch": {
-                            **attest_item,
+            # One element predicate whose ``$or`` covers both eligibility
+            # branches. The positional ``items.$`` update requires a single
+            # top-level array condition: real MongoDB rejects a positional
+            # update when the ``$or`` sits at document level (surfaced by
+            # the #658 production-shaped manual verification on mongo 4.4).
+            "items": {
+                "$elemMatch": {
+                    **attest_item,
+                    "$or": [
+                        {
                             "variation.status": (
                                 VariationStatus.NEEDS_VALIDATION.value
                             ),
                             "variation.validation.verdict": "pass",
-                        }
-                    }
-                },
-                {
-                    "items": {
-                        "$elemMatch": {
-                            **attest_item,
+                        },
+                        {
                             "variation.status": {
                                 "$in": [
                                     VariationStatus.NEEDS_VALIDATION.value,
@@ -1626,10 +1626,10 @@ async def attest_variation_validation(
                                     "$elemMatch": {"kind": {"$ne": "check"}}
                                 }
                             },
-                        }
-                    }
-                },
-            ],
+                        },
+                    ],
+                }
+            },
         },
         {
             "$set": {
