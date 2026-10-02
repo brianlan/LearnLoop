@@ -53,12 +53,15 @@ class OriginalProvenance(FrozenContentSnapshot):
 class ValidationProvenance(BaseModel):
     """Successful validation evidence frozen at admission time.
 
-    ``attestedByUser`` marks a PASS admitted via explicit user attestation
-    instead of a validator run covering the current revision (#648); a stale
-    validator report is never frozen as if validator-covered.
+    ``attestedByUser`` marks an admission admitted via explicit user
+    attestation instead of a validator run covering the current revision
+    (#648 stale-PASS, #658 check-kind FAIL); a stale validator report is
+    never frozen as if validator-covered. ``verdict`` records the REAL
+    verdict of the frozen evidence — a fail-attested admission freezes
+    ``"fail"`` so the audit trail stays honest.
     """
 
-    verdict: Literal["pass"]
+    verdict: Literal["pass", "fail"]
     helperModel: ModelIdentity | None = None
     reports: list[dict[str, Any]] = Field(default_factory=list)
     attestedByUser: bool = False

@@ -10,6 +10,7 @@ import { GraphSandbox } from "./GraphSandbox";
 import { LatexText } from "./LatexText";
 import {
   bufferKey,
+  canAttestVariant,
   evidenceChecks,
   evidenceView,
   failureKindLabel,
@@ -77,6 +78,8 @@ function VariationFailureEvidence({
         >
           User-attested at revision {variation.attestation.revision} — kept by
           the teacher, not covered by a validator run.
+          {failures.length > 0 &&
+            " Waved checks are listed below; the teacher accepted them as-is."}
         </div>
       )}
       <div data-testid="bulk-review-evidence-types">
@@ -757,6 +760,10 @@ export function BulkReviewStep({
   // attest predicate (needs-validation + stored verdict pass).
   const stalePassReport =
     variationNeedsValidation && variation?.validation?.verdict === "pass";
+  // #658: a FAIL whose failures are all check-kind may be overridden by
+  // teacher attestation, from needs-validation or failed.
+  const failOverrideEligible =
+    canAttestVariant(selectedItem) && variation?.validation?.verdict === "fail";
   const failedItemIds = new Set(
     Object.keys(saveFailures).map((key) => key.split("::")[0]),
   );
@@ -1132,6 +1139,27 @@ export function BulkReviewStep({
             stalePassReport ||
             (variation?.status === "ready" && variation?.attestation)) && (
             <VariationFailureEvidence variation={variation} />
+          )}
+
+          {/* #658: fail-override attestation sits below the evidence panel
+              so the failing checks the teacher is waving stay visible. */}
+          {failOverrideEligible && variation && (
+            <div style={{ marginBottom: "12px" }}>
+              <button
+                type="button"
+                data-testid="bulk-review-attest-fail"
+                onClick={() => handleAttest(selectedItem)}
+                disabled={revalidateDisabledReason !== "" || attesting}
+                title={
+                  revalidateDisabledReason ||
+                  "Accept the failed judgment checks and approve this variant"
+                }
+              >
+                {attesting
+                  ? "Approving..."
+                  : "Override failed checks — approve anyway"}
+              </button>
+            </div>
           )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>

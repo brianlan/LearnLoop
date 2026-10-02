@@ -454,7 +454,29 @@ async def test_full_flow_helper_uncertain_fails_closed() -> None:
     )
     assessment = result.assessment
     assert assessment.verdict == "fail"
-    assert any(f.kind == "content" for f in assessment.failures)
+    # Helper comparison failures are answer-correctness failures (#658).
+    assert any(f.kind == "answer" for f in assessment.failures)
+
+
+@pytest.mark.asyncio
+async def test_full_flow_validator_could_not_solve_is_answer_kind() -> None:
+    """The unsolved-problem failure raised beside the helper comparison
+    carries the answer kind, matching the domain mapping (#658)."""
+    result = await generate_and_validate(
+        mode="data-only",
+        source=SOURCE,
+        generator=_generator_client(_Recorder([_generator_json()])),
+        validators=[
+            _validator_client(_Recorder([_validator_json(original_solved=None)]))
+        ],
+        helper=_helper_client(_Recorder([_helper_json()])),
+    )
+    assessment = result.assessment
+    assert assessment.verdict == "fail"
+    assert any(
+        f.kind == "answer" and "could not solve" in f.evidence
+        for f in assessment.failures
+    )
 
 
 @pytest.mark.asyncio

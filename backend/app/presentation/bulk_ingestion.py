@@ -880,13 +880,18 @@ async def attest_variation(
     database: DatabaseDependency,
     user: CurrentUserDependency,
 ) -> BatchResponse:
-    """Keep-validation attestation: restore READY from needs-validation.
+    """Attestation: restore READY by explicit teacher acceptance.
 
-    The teacher explicitly accepts responsibility for the current candidate
-    based on the stale PASS report; the attestation is recorded and the
-    admitted problem's provenance will carry ``attestedByUser`` (#648).
-    Unlike revalidate this completes synchronously (200) and never touches
-    the validators, so no VLM profile check applies.
+    Two eligibility branches (#648, #658): a stale PASS report on
+    needs-validation ("Keep validation"), or a FAIL whose failures are all
+    check-kind — validator judgment the teacher may override from
+    needs-validation or failed ("Override failed checks"). Answer- and
+    content-kind failures are never overridable (409). The teacher
+    explicitly accepts responsibility for the current candidate; the
+    attestation is recorded and the admitted problem's provenance carries
+    ``attestedByUser`` plus the real frozen verdict. Unlike revalidate this
+    completes synchronously (200) and never touches the validators, so no
+    VLM profile check applies.
     """
     batch = await _load_owned_batch(database, batch_id, user["_id"])
     _require_variant_mode(batch)
@@ -942,11 +947,16 @@ async def _submit_variant_batch(
         if variation.get("status") != VariationStatus.READY.value:
             continue
         validation = variation.get("validation") or {}
-        if validation.get("verdict") != "pass":
+        attestation = variation.get("attestation") or {}
+        # #658: an attested item is admitted even on a FAIL verdict — the
+        # attest fence guaranteed a check-kind-only failure set and the
+        # attestation covers the current revision.
+        if validation.get("verdict") != "pass" and attestation.get(
+            "revision"
+        ) != item.get("contentRevision"):
             continue
         if not variation.get("candidate"):
             continue
-        attestation = variation.get("attestation") or {}
         if (
             variation.get("validatedRevision") != item.get("contentRevision")
             and attestation.get("revision") != item.get("contentRevision")

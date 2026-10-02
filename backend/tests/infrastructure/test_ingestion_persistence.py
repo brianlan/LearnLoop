@@ -40,6 +40,7 @@ from app.infrastructure.ingestion.repository import (
     update_item_draft,
 )
 from app.infrastructure.storage.s3 import StorageObjectNotFoundError
+from app.problem_variation import backfill_variation_failure_kinds
 from tests.conftest import FakeDatabase, FakeStorage
 
 
@@ -971,3 +972,144 @@ async def test_commit_image_boxes_raises_image_not_found(
 
     with pytest.raises(ValueError, match="Image not found"):
         await commit_image_boxes(database, batch["_id"], user_id, "nonexistent", now=NOW)
+
+
+# ---------------------------------------------------------------------------
+# Legacy failure-kind backfill (#658).
+# ---------------------------------------------------------------------------
+
+
+def _legacy_variant_batch(mode: str) -> dict[str, Any]:
+    """A failed variant item whose failures are all legacy content-tagged."""
+    return {
+        "_id": ObjectId(),
+        "ingestionMode": mode,
+        "items": [
+            {
+                "itemId": "item-1",
+                "variation": {
+                    "status": "failed",
+                    "original": {
+                        "text": "What is 2+2?",
+                        "problemType": "short-answer",
+                        "subject": "math",
+                        "graphDsl": None,
+                        "correctAnswer": "4",
+                    },
+                    "candidate": {
+                        "text": "What is 3+5?",
+                        "problemType": "short-answer",
+                        "subject": "math",
+                        "graphDsl": None,
+                        "correctAnswer": "8",
+                        "generator": {"provider": "fake", "model": "gen-model"},
+                    },
+                    "validation": {
+                        "verdict": "fail",
+                        "failures": [
+                            {
+                                "kind": "content",
+                                "evidence": "modeCompliance: noncompliant - near template",
+                            },
+                            {
+                                "kind": "content",
+                                "evidence": "surfaceDivergence: insufficient - too similar",
+                            },
+                            {
+                                "kind": "content",
+                                "evidence": "not reproducible by the recompute",
+                            },
+                        ],
+                        "reports": [
+                            {
+                                "validatorModel": {
+                                    "provider": "fake",
+                                    "model": "val-model",
+                                },
+                                "originalSolvedAnswer": "4",
+                                "variantSolvedAnswer": "8",
+                                "originalSolutionSummary": "sum",
+                                "variantSolutionSummary": "sum",
+                                "checks": {
+                                    "originalWellPosed": {"category": "yes", "evidence": "ok"},
+                                    "variantWellPosed": {"category": "yes", "evidence": "ok"},
+                                    "coreKnowledge": {"category": "preserved", "evidence": "ok"},
+                                    "solutionStructure": {"category": "preserved", "evidence": "ok"},
+                                    "quantityRoles": {"category": "preserved", "evidence": "ok"},
+                                    "difficultyShift": {"category": "comparable", "evidence": "ok"},
+                                    "numericComplexityShift": {"category": "comparable", "evidence": "ok"},
+                                    "representationShift": {"category": "none-or-nonmaterial", "evidence": "ok"},
+                                    "modeCompliance": {"category": "noncompliant", "evidence": "near template"},
+                                    "graphConsistency": {"category": "not-applicable", "evidence": "ok"},
+                                    "dataChange": {"category": "changed", "evidence": "ok"},
+                                    "surfaceDivergence": {"category": "insufficient", "evidence": "too similar"},
+                                },
+                                "answerComparisonOriginal": {"result": "equivalent", "evidence": "both 4"},
+                                "answerComparisonVariant": {"result": "equivalent", "evidence": "both 8"},
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_backfill_variation_failure_kinds_retags_legacy_content_entries() -> None:
+    """Exact-evidence retag under the canonical mode (#658): judgment
+    failures become check-kind; unreproducible entries keep their kind."""
+    database = FakeDatabase()
+    batch = _legacy_variant_batch("data-and-wording")
+    database[INGESTION_BATCHES_COLLECTION].seed(batch)
+
+    retagged = await backfill_variation_failure_kinds(database)
+
+    assert retagged == 2
+    stored = await database[INGESTION_BATCHES_COLLECTION].find_one(
+        {"_id": batch["_id"]}
+    )
+    failures = stored["items"][0]["variation"]["validation"]["failures"]
+    assert [failure["kind"] for failure in failures] == [
+        "check",
+        "check",
+        "content",
+    ]
+    # Evidence strings and reports are untouched.
+    assert [failure["evidence"] for failure in failures] == [
+        "modeCompliance: noncompliant - near template",
+        "surfaceDivergence: insufficient - too similar",
+        "not reproducible by the recompute",
+    ]
+    assert (
+        stored["items"][0]["variation"]["validation"]["reports"][0]["checks"][
+            "modeCompliance"
+        ]["category"]
+        == "noncompliant"
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_variation_failure_kinds_is_idempotent() -> None:
+    database = FakeDatabase()
+    batch = _legacy_variant_batch("transfer-variant")
+    database[INGESTION_BATCHES_COLLECTION].seed(batch)
+
+    assert await backfill_variation_failure_kinds(database) == 2
+    assert await backfill_variation_failure_kinds(database) == 0
+
+
+@pytest.mark.asyncio
+async def test_backfill_variation_failure_kinds_ignores_non_variant_and_pass() -> None:
+    database = FakeDatabase()
+    batch = _legacy_variant_batch("transfer-variant")
+    batch["ingestionMode"] = "original"
+    pass_batch = _legacy_variant_batch("transfer-variant")
+    pass_batch["items"][0]["variation"]["validation"] = {
+        "verdict": "pass",
+        "failures": [],
+        "reports": [],
+    }
+    database[INGESTION_BATCHES_COLLECTION].seed(batch, pass_batch)
+
+    assert await backfill_variation_failure_kinds(database) == 0

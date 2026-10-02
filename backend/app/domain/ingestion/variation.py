@@ -7,7 +7,7 @@ as the future worker.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,7 @@ __all__ = [
     "OriginalProvenance",
     "ValidationProvenance",
     "ProblemVariation",
+    "is_attestable",
 ]
 
 Preservation = Literal["preserved", "changed"]
@@ -128,7 +129,12 @@ class VariantCandidate(BaseModel):
 
 
 class AssessmentFailure(BaseModel):
-    kind: Literal["content", "provider", "invalid-response"]
+    # Failure-kind split (#658): machines own correctness, humans own
+    # judgment. ``content``/``answer`` are verified facts or correctness
+    # failures and are never overridable; ``check`` are validator judgment
+    # failures and may be attested away by the teacher. ``provider`` and
+    # ``invalid-response`` are model-execution failures.
+    kind: Literal["content", "check", "answer", "provider", "invalid-response"]
     evidence: str
 
 
@@ -153,6 +159,14 @@ class VariantGenerationResult(BaseModel):
 
 def _content_failure(evidence: str) -> AssessmentFailure:
     return AssessmentFailure(kind="content", evidence=evidence)
+
+
+def _check_failure(evidence: str) -> AssessmentFailure:
+    return AssessmentFailure(kind="check", evidence=evidence)
+
+
+def _answer_failure(evidence: str) -> AssessmentFailure:
+    return AssessmentFailure(kind="answer", evidence=evidence)
 
 
 def check_candidate(mode: VariantMode, source: ProblemContent, candidate: VariantCandidate) -> list[AssessmentFailure]:
@@ -220,7 +234,7 @@ def _category_disagreements(
         # or "materially-easier" vs "materially-harder", are disagreements).
         if one.category != two.category:
             failures.append(
-                _content_failure(
+                _check_failure(
                     f"validators disagree on {name}: "
                     f"'{one.category}' vs '{two.category}'"
                 )
@@ -243,7 +257,7 @@ def _assess_report(
             continue
         if check.category not in passing:
             failures.append(
-                _content_failure(f"{name}: {check.category} - {check.evidence}")
+                _check_failure(f"{name}: {check.category} - {check.evidence}")
             )
     graph_check = report.checks.get("graphConsistency")
     if graph_check is not None:
@@ -251,21 +265,25 @@ def _assess_report(
         candidate_has_graph = bool((candidate.graph_dsl or "").strip())
         if graph_check.category == "not-applicable":
             if source_has_graph or candidate_has_graph:
+                # Graph presence was already content-verified by
+                # check_candidate; the residual failure is validator
+                # judgment contradicting a verified fact, so it stays
+                # check-kind (#658).
                 failures.append(
-                    _content_failure(
+                    _check_failure(
                         "graphConsistency: not-applicable is invalid because a graph is present"
                     )
                 )
         elif not source_has_graph and not candidate_has_graph:
             failures.append(
-                _content_failure(
+                _check_failure(
                     f"graphConsistency: {graph_check.category} is invalid because "
                     "neither problem has a graph; only not-applicable applies"
                 )
             )
     if report.original_solved_answer is None or report.variant_solved_answer is None:
         failures.append(
-            _content_failure(
+            _answer_failure(
                 "validator could not solve one of the problems; no helper comparison is possible"
             )
         )
@@ -275,7 +293,7 @@ def _assess_report(
     ):
         if comparison.result != "equivalent":
             failures.append(
-                _content_failure(
+                _answer_failure(
                     f"helper comparison for {side} answer: {comparison.result} - "
                     f"{comparison.evidence}"
                 )
@@ -293,8 +311,11 @@ def assess_variant(
     """Deterministic PASS/FAIL aggregation over completed validator reports.
 
     Provider/invalid-response failures must be supplied as pre-built failures by
-    the caller; here every failure is content-derived. Fails closed: missing
-    reports, missing categories, uncertain comparisons or a wrong report count
+    the caller; every failure here is derived from the stored evidence with a
+    fixed kind (#658): candidate/content defects and incomplete evidence are
+    ``content``, validator judgment failures are ``check``, and answer
+    correctness failures are ``answer``. Fails closed: missing reports,
+    missing categories, uncertain comparisons or a wrong report count
     block PASS.
     """
     failures = check_candidate(mode, source, candidate)
@@ -314,4 +335,26 @@ def assess_variant(
     return VariantAssessment(
         verdict="pass" if not failures else "fail",
         failures=failures,
+    )
+
+
+def is_attestable(validation: Mapping[str, Any] | None) -> bool:
+    """Whether a stored validation record may be attested into READY (#658).
+
+    True for the #648 stale-PASS path and for a FAIL whose failures are all
+    check-kind (validator judgment). Answer/content/provider kinds are
+    correctness or verified facts and are never overridable; kind-less
+    legacy entries and worker raw kinds fail closed. Status gating
+    (needs-validation/failed) happens at the attest fence, not here.
+    """
+    if not validation:
+        return False
+    verdict = validation.get("verdict")
+    if verdict == "pass":
+        return True
+    if verdict != "fail":
+        return False
+    failures = validation.get("failures") or []
+    return bool(failures) and all(
+        failure.get("kind") == "check" for failure in failures
     )

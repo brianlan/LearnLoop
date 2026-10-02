@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { BulkReviewStep } from "./BulkReviewStep";
-import { variantPassGateReason } from "./BulkReviewStep.helpers";
+import { canAttestVariant, variantPassGateReason } from "./BulkReviewStep.helpers";
 import type {
   BulkBatch,
   BulkItem,
@@ -2348,5 +2348,188 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
       );
     });
     expect(screen.getByTestId("bulk-review-attest")).toBeEnabled();
+  });
+});
+
+describe("BulkReviewStep check-kind fail attestation (#658)", () => {
+  const handlers = {
+    onRefresh: vi.fn(),
+    onUpdateDraft: vi.fn(),
+    onGenerate: vi.fn(),
+    onRevalidate: vi.fn(),
+    onAttest: vi.fn(),
+    onRetry: vi.fn(),
+    onDelete: vi.fn(),
+    onUndoDelete: vi.fn(),
+    onContinue: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Object.values(handlers).forEach((fn) => fn.mockReset());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const CHECK_FAILURES = [
+    { kind: "check", evidence: "modeCompliance: noncompliant - near template" },
+    { kind: "check", evidence: "surfaceDivergence: insufficient - too similar" },
+  ];
+
+  function failedItem(failures: unknown[]): BulkItem {
+    return makeItem("item-1", {
+      contentRevision: 1,
+      variation: makeVariation({
+        status: "failed",
+        validatedRevision: null,
+        validation: { verdict: "fail", failures },
+      }),
+    });
+  }
+
+  function variantReviewUi(item: BulkItem) {
+    return (
+      <BulkReviewStep
+        batch={makeBatch({ ingestionMode: "transfer-variant", items: [item] })}
+        isLoading={false}
+        {...handlers}
+      />
+    );
+  }
+
+  it("canAttestVariant mirrors the backend is_attestable predicate", () => {
+    // Check-only FAIL: attestable from failed and needs-validation.
+    expect(canAttestVariant(failedItem(CHECK_FAILURES))).toBe(true);
+    expect(
+      canAttestVariant(
+        makeItem("item-1", {
+          variation: makeVariation({
+            status: "needs-validation",
+            validatedRevision: null,
+            validation: { verdict: "fail", failures: CHECK_FAILURES },
+          }),
+        }),
+      ),
+    ).toBe(true);
+    // Stale-PASS path (#648): needs-validation only.
+    expect(
+      canAttestVariant(
+        makeItem("item-1", {
+          variation: makeVariation({
+            status: "needs-validation",
+            validatedRevision: null,
+            validation: { verdict: "pass" },
+          }),
+        }),
+      ),
+    ).toBe(true);
+    // Non-check kinds, empty failures and kind-less legacy entries fail closed.
+    expect(
+      canAttestVariant(
+        failedItem([{ kind: "answer", evidence: "helper comparison: different" }]),
+      ),
+    ).toBe(false);
+    expect(
+      canAttestVariant(
+        failedItem([{ kind: "content", evidence: "candidate text is empty" }]),
+      ),
+    ).toBe(false);
+    expect(canAttestVariant(failedItem([]))).toBe(false);
+    expect(
+      canAttestVariant(failedItem([{ evidence: "legacy entry without kind" }])),
+    ).toBe(false);
+    expect(
+      canAttestVariant(failedItem([{ kind: "vlm-timeout", evidence: "timeout" }])),
+    ).toBe(false);
+    // Ready items are past attestation; busy items too.
+    expect(canAttestVariant(makeItem("item-1", { variation: makeVariation() }))).toBe(
+      false,
+    );
+    expect(
+      canAttestVariant(
+        makeItem("item-1", {
+          variation: makeVariation({
+            status: "queued",
+            validatedRevision: null,
+            validation: { verdict: "fail", failures: CHECK_FAILURES },
+          }),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("offers the override below the evidence panel and attests on click", async () => {
+    render(variantReviewUi(failedItem(CHECK_FAILURES)));
+
+    const override = screen.getByTestId("bulk-review-attest-fail");
+    expect(override).toHaveTextContent(
+      "Override failed checks — approve anyway",
+    );
+    // The failing checks stay visible above the action.
+    const evidence = screen.getByTestId("bulk-review-evidence");
+    expect(evidence).toHaveTextContent("modeCompliance");
+    expect(override.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(0);
+
+    fireEvent.click(override);
+    await waitFor(() => {
+      expect(handlers.onAttest).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onAttest).toHaveBeenCalledWith("item-1", 1);
+  });
+
+  it("offers no override for answer/content-kind failures", () => {
+    render(
+      variantReviewUi(
+        failedItem([
+          { kind: "answer", evidence: "helper comparison: different - 8 vs 9" },
+        ]),
+      ),
+    );
+
+    expect(
+      screen.queryByTestId("bulk-review-attest-fail"),
+    ).not.toBeInTheDocument();
+    // Generate Again remains the only exit.
+    expect(screen.getByTestId("bulk-review-generate")).toHaveTextContent(
+      "Generate Again",
+    );
+  });
+
+  it("admits an attested fail verdict through the pass gate", () => {
+    const attestedFail = makeItem("item-1", {
+      contentRevision: 2,
+      variation: makeVariation({
+        validatedRevision: null,
+        attestation: { revision: 2, at: "2026-10-01T00:00:00Z" },
+        validation: { verdict: "fail", failures: CHECK_FAILURES },
+      }),
+    });
+    expect(variantPassGateReason(attestedFail)).toBeNull();
+
+    render(variantReviewUi(attestedFail));
+    expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
+    const banner = screen.getByTestId("bulk-review-attestation");
+    expect(banner).toHaveTextContent(/waved checks/i);
+  });
+
+  it("blocks a fail verdict whose attestation covers an older revision", () => {
+    const stale = makeItem("item-1", {
+      contentRevision: 3,
+      variation: makeVariation({
+        validatedRevision: null,
+        attestation: { revision: 2, at: "2026-10-01T00:00:00Z" },
+        validation: { verdict: "fail", failures: CHECK_FAILURES },
+      }),
+    });
+    // The stale override no longer applies, so the verdict gate rejects.
+    expect(variantPassGateReason(stale)).toBe("Variant validation failed");
+  });
+
+  it("labels check and answer failure kinds distinctly", () => {
+    render(variantReviewUi(failedItem(CHECK_FAILURES)));
+    const kinds = screen.getAllByTestId("bulk-review-evidence-failure-kind");
+    expect(kinds[0]).toHaveTextContent("Validator judgment failure");
   });
 });

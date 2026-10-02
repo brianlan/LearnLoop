@@ -457,6 +457,13 @@ def get_nested_values(document: Any, parts: list[str]) -> list[Any]:
     next_parts = parts[1:]
 
     if isinstance(document, list):
+        # Numeric segments index into the array ("failures.0"); other
+        # segments fan out across the elements ("items.itemId").
+        if current_part.isdigit():
+            index = int(current_part)
+            if index < len(document):
+                return get_nested_values(document[index], next_parts)
+            return [None]
         results = []
         for item in document:
             results.extend(get_nested_values(item, parts))
@@ -467,6 +474,90 @@ def get_nested_values(document: Any, parts: list[str]) -> list[Any]:
         return get_nested_values(val, next_parts)
 
     return [None]
+
+
+def _operators_match(candidates: list[Any], value: dict[str, Any]) -> bool:
+    """Evaluate a Mongo operator expression against resolved candidates."""
+    if "$elemMatch" in value:
+        for candidate in candidates:
+            if isinstance(candidate, list) and any(
+                matches_query(item, value["$elemMatch"]) for item in candidate
+            ):
+                return True
+        return False
+
+    for op, op_val in value.items():
+        if op == "$options":
+            continue
+        if op == "$not":
+            if _operators_match(candidates, op_val):
+                return False
+            continue
+        if op == "$exists":
+            has_non_none = any(c is not None for c in candidates)
+            if op_val and not has_non_none:
+                return False
+            if not op_val and has_non_none:
+                return False
+        elif op == "$in":
+            matched = False
+            for c in candidates:
+                if isinstance(c, list):
+                    if any(item in op_val for item in c):
+                        matched = True
+                        break
+                else:
+                    if c in op_val:
+                        matched = True
+                        break
+            if not matched:
+                return False
+        elif op == "$nin":
+            for c in candidates:
+                if isinstance(c, list):
+                    if any(item in op_val for item in c):
+                        return False
+                elif c in op_val:
+                    return False
+        elif op == "$ne":
+            for c in candidates:
+                if isinstance(c, list):
+                    if op_val in c:
+                        return False
+                else:
+                    if c == op_val:
+                        return False
+        elif op == "$regex":
+            pattern = op_val
+            options = value.get("$options", "")
+            flags = re.IGNORECASE if "i" in options else 0
+            matched = False
+            for c in candidates:
+                if isinstance(c, list):
+                    if any(re.search(pattern, str(item), flags) for item in c):
+                        matched = True
+                        break
+                else:
+                    if re.search(pattern, str(c or ""), flags):
+                        matched = True
+                        break
+            if not matched:
+                return False
+        elif op == "$gt":
+            if not any(c is not None and c > op_val for c in candidates):
+                return False
+        elif op == "$gte":
+            if not any(c is not None and c >= op_val for c in candidates):
+                return False
+        elif op == "$lt":
+            if not any(c is not None and c < op_val for c in candidates):
+                return False
+        elif op == "$lte":
+            if not any(c is not None and c <= op_val for c in candidates):
+                return False
+        else:
+            return False
+    return True
 
 
 def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
@@ -480,85 +571,9 @@ def matches_query(document: dict[str, Any], query: dict[str, Any]) -> bool:
         candidates = get_nested_values(document, parts)
 
         if isinstance(value, dict) and any(k.startswith("$") for k in value.keys()):
-            if "$elemMatch" in value:
-                matched = False
-                for candidate in candidates:
-                    if isinstance(candidate, list) and any(
-                        matches_query(item, value["$elemMatch"]) for item in candidate
-                    ):
-                        matched = True
-                        break
-                if not matched:
-                    return False
-                continue
-
-            for op, op_val in value.items():
-                if op == "$options":
-                    continue
-                if op == "$exists":
-                    has_non_none = any(c is not None for c in candidates)
-                    if op_val and not has_non_none:
-                        return False
-                    if not op_val and has_non_none:
-                        return False
-                elif op == "$in":
-                    matched = False
-                    for c in candidates:
-                        if isinstance(c, list):
-                            if any(item in op_val for item in c):
-                                matched = True
-                                break
-                        else:
-                            if c in op_val:
-                                matched = True
-                                break
-                    if not matched:
-                        return False
-                elif op == "$nin":
-                    for c in candidates:
-                        if isinstance(c, list):
-                            if any(item in op_val for item in c):
-                                return False
-                        elif c in op_val:
-                            return False
-                elif op == "$ne":
-                    for c in candidates:
-                        if isinstance(c, list):
-                            if op_val in c:
-                                return False
-                        else:
-                            if c == op_val:
-                                return False
-                elif op == "$regex":
-                    pattern = op_val
-                    options = value.get("$options", "")
-                    flags = re.IGNORECASE if "i" in options else 0
-                    matched = False
-                    for c in candidates:
-                        if isinstance(c, list):
-                            if any(re.search(pattern, str(item), flags) for item in c):
-                                matched = True
-                                break
-                        else:
-                            if re.search(pattern, str(c or ""), flags):
-                                matched = True
-                                break
-                    if not matched:
-                        return False
-                elif op == "$gt":
-                    if not any(c is not None and c > op_val for c in candidates):
-                        return False
-                elif op == "$gte":
-                    if not any(c is not None and c >= op_val for c in candidates):
-                        return False
-                elif op == "$lt":
-                    if not any(c is not None and c < op_val for c in candidates):
-                        return False
-                elif op == "$lte":
-                    if not any(c is not None and c <= op_val for c in candidates):
-                        return False
-                else:
-                    return False
+            if not _operators_match(candidates, value):
+                return False
+            continue
         else:
             matched = False
             for c in candidates:
