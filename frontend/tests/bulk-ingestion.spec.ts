@@ -529,7 +529,7 @@ test.describe("Variant ingestion E2E", () => {
     page: any,
     request: APIRequestContext,
     session: AuthSession,
-    mode: "data-only" | "data-and-wording",
+    mode: "data-only" | "transfer-variant",
     images: string[],
   ): Promise<string> {
     await page.goto("/ingest");
@@ -745,7 +745,7 @@ test.describe("Variant ingestion E2E", () => {
     expect(fakeState.variantCounts.helper).toBe(4);
   });
 
-  test("data-and-wording variant carries a graph and grades in practice", async ({
+  test("transfer-variant carries a graph and grades in practice", async ({
     page,
     request,
   }) => {
@@ -758,7 +758,7 @@ test.describe("Variant ingestion E2E", () => {
       page,
       request,
       session,
-      "data-and-wording",
+      "transfer-variant",
       ["problem-a.png"],
     );
     const itemId = (await getItemIds(request, session, batchId))[0];

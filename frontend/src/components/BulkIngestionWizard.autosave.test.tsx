@@ -325,7 +325,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
   it("routes Generate to the generate endpoint with the reviewed source and expectedRevision", async () => {
     const variantItem = makeItem({ contentRevision: 5 });
     const variantBatch = makeBatch({
-      ingestionMode: "data-and-wording",
+      ingestionMode: "transfer-variant",
       items: [variantItem],
     });
     mocks.generateVariation.mockResolvedValue({ batch: variantBatch });
@@ -373,7 +373,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       },
     });
     const variantBatch = makeBatch({
-      ingestionMode: "data-and-wording",
+      ingestionMode: "transfer-variant",
       items: [itemNeedingValidation],
     });
     mocks.revalidateVariation.mockResolvedValue({ batch: variantBatch });

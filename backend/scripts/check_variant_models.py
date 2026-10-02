@@ -73,7 +73,7 @@ GENERATION_CASES: list[tuple[str, str, ProblemContent, str]] = [
     ),
     (
         "percentage-marker-generation",
-        "data-and-wording",
+        "transfer-variant",
         ProblemContent(
             text="A price rises from 40 to 50. By what percent did it rise?",
             problemType="short-answer",
@@ -123,7 +123,7 @@ GATE_CASES: list[tuple[str, str, ProblemContent, VariantCandidate, str]] = [
     ),
     (
         "percentage-marker-missing",
-        "data-and-wording",
+        "transfer-variant",
         ProblemContent(
             text="A price rises from 40 to 50. By what percent did it rise?",
             problemType="short-answer",
@@ -155,7 +155,7 @@ GATE_CASES: list[tuple[str, str, ProblemContent, VariantCandidate, str]] = [
     ),
     (
         "numeric-blowup-harder",
-        "data-and-wording",
+        "transfer-variant",
         ProblemContent(
             text="Compute 12 + 13.",
             problemType="short-answer",
@@ -171,7 +171,7 @@ GATE_CASES: list[tuple[str, str, ProblemContent, VariantCandidate, str]] = [
     ),
     (
         "changed-reasoning-direction",
-        "data-and-wording",
+        "transfer-variant",
         ProblemContent(
             text="A train travels 120 km in 2 hours. What is its speed in km/h?",
             problemType="short-answer",
@@ -215,6 +215,64 @@ GATE_CASES: list[tuple[str, str, ProblemContent, VariantCandidate, str]] = [
             text="The rectangle below has width 8 and height 5. What is its area?",
             graph_dsl="create('board', {boundingbox: [-1, 5, 9, -1]});",
             correct_answer="40",
+        ),
+        "fail",
+    ),
+    # ---
+    # Issue #656 deep-variant boundary cases: cosmetic reskin rejected,
+    # surface-divergent isomorphic accepted, strategy-changing rejected.
+    # ---
+    (
+        "deep-variant-cosmetic-reskin",
+        "transfer-variant",
+        ProblemContent(
+            text="A product costs 240 yuan and is sold at 80% of the original price. "
+            "What is the sale price in yuan?",
+            problemType="short-answer",
+            subject="mathematics",
+            graphDsl=None,
+            correctAnswer="192",
+        ),
+        _gate_candidate(
+            text="A shirt costs 350 yuan and is sold at 70% of the original price. "
+            "What is the sale price in yuan?",
+            correct_answer="245",
+        ),
+        "fail",
+    ),
+    (
+        "deep-variant-surface-divergent-isomorphic",
+        "transfer-variant",
+        ProblemContent(
+            text="A product costs 240 yuan and is sold at 80% of the original price. "
+            "What is the sale price in yuan?",
+            problemType="short-answer",
+            subject="mathematics",
+            graphDsl=None,
+            correctAnswer="192",
+        ),
+        _gate_candidate(
+            text="45 students planned to attend an activity, but the actual attendance "
+            "was 80% of the planned number. How many students actually attended?",
+            correct_answer="36",
+        ),
+        "pass",
+    ),
+    (
+        "deep-variant-strategy-change",
+        "transfer-variant",
+        ProblemContent(
+            text="A product costs 240 yuan and is sold at 80% of the original price. "
+            "What is the sale price in yuan?",
+            problemType="short-answer",
+            subject="mathematics",
+            graphDsl=None,
+            correctAnswer="192",
+        ),
+        _gate_candidate(
+            text="The actual attendance at an activity was 36 students, which was 80% "
+            "of the planned number. How many students were planned to attend?",
+            correct_answer="45",
         ),
         "fail",
     ),

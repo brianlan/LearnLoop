@@ -556,7 +556,7 @@ describe("BulkSubmitStep variant submit gating", () => {
   function renderSubmit(items: BulkItem[]) {
     return render(
       <BulkSubmitStep
-        batch={makeBatch({ ingestionMode: "data-and-wording", items })}
+        batch={makeBatch({ ingestionMode: "transfer-variant", items })}
         isLoading={false}
         {...handlers}
       />,

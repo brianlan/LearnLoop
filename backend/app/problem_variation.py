@@ -21,14 +21,44 @@ from app.domain.ingestion.variation import (
 
 
 class IngestionMode(str, Enum):
-    """Batch-level ingestion mode, immutable after creation."""
+    """Batch-level ingestion mode, immutable after creation.
+
+    ``DATA_AND_WORDING`` is a legacy persisted value (#656): historical
+    batches keep it and remain readable/continuable, but new batch creation
+    must use ``TRANSFER_VARIANT`` and never emits the legacy name.
+    """
 
     ORIGINAL = "original"
     DATA_ONLY = "data-only"
+    TRANSFER_VARIANT = "transfer-variant"
     DATA_AND_WORDING = "data-and-wording"
 
 
-VARIANT_INGESTION_MODES = (IngestionMode.DATA_ONLY, IngestionMode.DATA_AND_WORDING)
+# Modes a new batch may be created with.
+CREATABLE_INGESTION_MODES = (
+    IngestionMode.ORIGINAL,
+    IngestionMode.DATA_ONLY,
+    IngestionMode.TRANSFER_VARIANT,
+)
+
+# All variant modes including the legacy value, for reading/continuation.
+VARIANT_INGESTION_MODES = (
+    IngestionMode.DATA_ONLY,
+    IngestionMode.TRANSFER_VARIANT,
+    IngestionMode.DATA_AND_WORDING,
+)
+
+# Legacy batches continue generation under the canonical transfer-variant
+# contract; normalization happens once at the generation/admission boundary.
+LEGACY_VARIANT_MODE_ALIASES = {
+    IngestionMode.DATA_AND_WORDING: IngestionMode.TRANSFER_VARIANT,
+}
+
+
+def canonical_variation_mode(mode: str | IngestionMode | None) -> IngestionMode:
+    """Map a stored batch mode to its canonical write/generation value."""
+    resolved = IngestionMode(mode) if mode is not None else IngestionMode.ORIGINAL
+    return LEGACY_VARIANT_MODE_ALIASES.get(resolved, resolved)
 
 
 def is_variant_mode(mode: str | IngestionMode | None) -> bool:

@@ -194,6 +194,9 @@ function validatorReport(task) {
     numericComplexityShift: ["comparable", "Fake evidence: comparable numbers."],
     representationShift: ["none-or-nonmaterial", "Fake evidence: same representation."],
     modeCompliance: ["compliant", "Fake evidence: mode rules obeyed."],
+    // transfer-variant requires substantial surface divergence; data-only
+    // flows ignore this check (#656).
+    surfaceDivergence: ["substantial", "Fake evidence: surface formulation is meaningfully reconstructed."],
     graphConsistency: [graphCategory, "Fake evidence: graph matches its problem."],
     dataChange: ["changed", "Fake evidence: mathematical data changed."],
   };

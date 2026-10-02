@@ -18,16 +18,24 @@ export const INGESTION_MODE_OPTIONS: {
       "Generate a new practice problem with different numbers while keeping the wording, roles, and what is asked.",
   },
   {
-    value: "data-and-wording",
-    label: "Variant (data-and-wording)",
+    value: "transfer-variant",
+    label: "Transfer Variant",
     description:
-      "Generate a new practice problem with different data and surface context while keeping the same math structure.",
+      "Generate a genuinely different-looking problem that tests the same core concept and uses essentially the same solution strategy.",
   },
 ];
 
+// Legacy persisted batches keep their historical mode value; the safe label
+// avoids implying they were validated against the Transfer Variant standard (#656).
+const LEGACY_INGESTION_MODE_LABELS: Partial<Record<IngestionMode, string>> = {
+  "data-and-wording": "Variant (legacy)",
+};
+
 export function ingestionModeLabel(mode: IngestionMode): string {
   return (
-    INGESTION_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode
+    INGESTION_MODE_OPTIONS.find((option) => option.value === mode)?.label ??
+    LEGACY_INGESTION_MODE_LABELS[mode] ??
+    mode
   );
 }
 

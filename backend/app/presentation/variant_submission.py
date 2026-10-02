@@ -27,6 +27,7 @@ from bson import ObjectId
 from app.domain import ProblemSubject, ProblemType, normalize_answer
 from app.domain.ingestion import BatchState, ItemState
 from app.domain.ingestion.variation import (
+    TRANSFER_VARIANT_PASSING_CHECKS,
     FrozenContentSnapshot,
     ModelIdentity,
     OriginalProvenance,
@@ -40,7 +41,7 @@ from app.infrastructure.ingestion.repository import (
 )
 from app.presentation.errors import ApiError
 from app.presentation.tag_registration import _register_tags
-from app.problem_variation import VariationStatus
+from app.problem_variation import canonical_variation_mode, VariationStatus
 from app.solution_generation import enqueue_solution_generation_task_for_problem
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,18 @@ def _admission_guard_failure(message: str) -> ApiError:
     return ApiError(409, "VARIANT_INVALIDATED", message)
 
 
+def _validated_under_transfer_contract(validation: dict[str, Any]) -> bool:
+    """Whether persisted reports prove the candidate passed the new
+    transfer contract. Every new-contract validation reports
+    surfaceDivergence; pre-#656 data-and-wording reports lack it."""
+    passing_categories = TRANSFER_VARIANT_PASSING_CHECKS["surfaceDivergence"]
+    return any(
+        (report.get("checks") or {}).get("surfaceDivergence", {}).get("category")
+        in passing_categories
+        for report in validation.get("reports") or []
+    )
+
+
 def _build_variation_problem_document(
     batch: dict[str, Any],
     item: dict[str, Any],
@@ -167,8 +180,18 @@ def _build_variation_problem_document(
     attested_by_user = (variation.get("attestation") or {}).get(
         "revision"
     ) == item.get("contentRevision")
+    batch_mode = batch.get("ingestionMode") or "data-only"
+    provenance_mode = canonical_variation_mode(batch_mode).value
+    if (
+        batch_mode == "data-and-wording"
+        and not _validated_under_transfer_contract(validation)
+    ):
+        # #656: an old legacy candidate's report predates the
+        # surfaceDivergence gate, so it never proved the transfer contract;
+        # preserve the historical label instead of relabeling retroactively.
+        provenance_mode = batch_mode
     provenance = ProblemVariation(
-        mode=batch.get("ingestionMode") or "data-only",
+        mode=provenance_mode,
         original=OriginalProvenance(**original_content, auditImage=audit_image),
         acceptedVariant=FrozenContentSnapshot(**accepted_variant),
         generator=ModelIdentity(

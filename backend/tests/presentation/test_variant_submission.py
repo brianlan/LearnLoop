@@ -122,12 +122,13 @@ async def _seed_ready_variant_item(
     item_id: str = "item-1",
     validated_revision: int | None = None,
     variation_overrides: dict[str, Any] | None = None,
+    ingestion_mode: IngestionMode = IngestionMode.DATA_ONLY,
 ) -> ObjectId:
-    """Active data-only batch with one extraction-ready, validated item."""
+    """Active variant batch with one extraction-ready, validated item."""
     settings = Settings(s3_bucket=S3_BUCKET)
     batch = await create_batch(
         database, "user-1", settings,
-        ingestion_mode=IngestionMode.DATA_ONLY, now=NOW,
+        ingestion_mode=ingestion_mode, now=NOW,
     )
     item = {
         "itemId": item_id,
@@ -278,6 +279,61 @@ async def test_admit_creates_problem_item_record_and_solution_task() -> None:
     audit_key = variation["original"]["auditImage"]["objectKey"]
     assert storage.objects[(S3_BUCKET, audit_key)] == b"crop-bytes"
     assert (S3_BUCKET, CROP["objectKey"]) in set(storage.objects)
+
+
+@pytest.mark.asyncio
+async def test_admission_preserves_legacy_mode_for_old_contract_candidate() -> None:
+    """An already-generated legacy candidate whose report predates the
+    surfaceDivergence gate is admitted with its historical data-and-wording
+    provenance — never relabeled as if it passed the new contract (#656)."""
+    database = FakeDatabase()
+    batch_id = await _seed_ready_variant_item(
+        database, ingestion_mode=IngestionMode.DATA_AND_WORDING
+    )
+
+    outcome = await _admit(database, batch_id)
+
+    problem = await database["problems"].find_one({"_id": ObjectId(outcome["problemId"])})
+    assert problem is not None
+    assert problem["variation"]["mode"] == "data-and-wording"
+
+
+@pytest.mark.asyncio
+async def test_admission_records_canonical_mode_when_legacy_candidate_revalidated() -> None:
+    """A legacy batch candidate whose persisted report carries the new
+    surfaceDivergence gate was generated/validated under the transfer
+    contract, so its admitted provenance records transfer-variant (#656)."""
+    report = {
+        **PASSING_REPORT,
+        "checks": {
+            **PASSING_REPORT["checks"],
+            "surfaceDivergence": {"category": "substantial", "evidence": "rebuilt"},
+        },
+    }
+    database = FakeDatabase()
+    batch_id = await _seed_ready_variant_item(
+        database, ingestion_mode=IngestionMode.DATA_AND_WORDING
+    )
+    # Simulate the item being regenerated under the new contract: its
+    # persisted passing report now carries the surfaceDivergence gate.
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": "item-1"},
+        {
+            "$set": {
+                "items.$.variation.validation": {
+                    "verdict": "pass",
+                    "failures": [],
+                    "reports": [report],
+                }
+            }
+        },
+    )
+
+    outcome = await _admit(database, batch_id)
+
+    problem = await database["problems"].find_one({"_id": ObjectId(outcome["problemId"])})
+    assert problem is not None
+    assert problem["variation"]["mode"] == "transfer-variant"
 
 
 @pytest.mark.asyncio

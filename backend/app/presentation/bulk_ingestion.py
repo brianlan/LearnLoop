@@ -62,6 +62,7 @@ from app.infrastructure.vlm.variant_client import (
     build_variant_validator_vlm_client,
 )
 from app.problem_variation import (
+    CREATABLE_INGESTION_MODES,
     GenerationInProgressError,
     IngestionMode,
     InvalidVariationStateError,
@@ -250,6 +251,14 @@ async def create_batch(
     request: CreateBatchRequest | None = None,
 ) -> BatchResponse:
     mode = request.ingestionMode if request is not None else IngestionMode.ORIGINAL
+    # Legacy "data-and-wording" is read/continuation-only (#656): new batches
+    # must use the canonical transfer-variant mode.
+    if mode not in CREATABLE_INGESTION_MODES:
+        raise ApiError(
+            422,
+            "INVALID_INGESTION_MODE",
+            "ingestionMode must be one of: original, data-only, transfer-variant",
+        )
     batch = await create_batch_repo(database, user["_id"], settings, ingestion_mode=mode)
     return BatchResponse(**serialize_batch(batch))
 

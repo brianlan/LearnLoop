@@ -264,7 +264,7 @@ describe("BulkIngestionWizard", () => {
 
   it("shows the stored mode as locked when resuming a batch", async () => {
     mocks.getActiveBatch.mockResolvedValue({
-      batch: makeBatch({ ingestionMode: "data-and-wording", images: [] }),
+      batch: makeBatch({ ingestionMode: "transfer-variant", images: [] }),
     });
 
     render(<BulkIngestionWizard />);
@@ -272,9 +272,26 @@ describe("BulkIngestionWizard", () => {
       expect(screen.getByTestId("bulk-wizard-mode-locked")).toBeInTheDocument();
     });
     expect(screen.getByTestId("bulk-wizard-mode-locked")).toHaveTextContent(
-      "Variant (data-and-wording)",
+      "Transfer Variant",
     );
     expect(screen.queryByTestId("bulk-wizard-mode-original")).not.toBeInTheDocument();
+  });
+
+  it("shows a safe legacy label when resuming a legacy data-and-wording batch", async () => {
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({ ingestionMode: "data-and-wording", images: [] }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-mode-locked")).toBeInTheDocument();
+    });
+    // Legacy batches stay readable without offering the legacy value as a
+    // selectable new mode (#656).
+    expect(screen.getByTestId("bulk-wizard-mode-locked")).toHaveTextContent(
+      "Variant (legacy)",
+    );
+    expect(screen.queryByTestId("bulk-wizard-mode-data-and-wording")).not.toBeInTheDocument();
   });
 
   it("advances to review step when batch has committed images and queued items", async () => {

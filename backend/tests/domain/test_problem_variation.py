@@ -10,10 +10,12 @@ from app.domain.ingestion.variation import (
     VariantGenerationResult,
 )
 from app.problem_variation import (
+    CREATABLE_INGESTION_MODES,
     SEMANTIC_FIELDS,
     IngestionMode,
     VariationStatus,
     build_original_snapshot,
+    canonical_variation_mode,
     has_semantic_change,
     is_variant_mode,
     problem_content_from_snapshot,
@@ -28,7 +30,24 @@ def test_ingestion_mode_defaults_and_variant_detection() -> None:
     assert is_variant_mode(None) is False
     assert is_variant_mode("original") is False
     assert is_variant_mode("data-only") is True
+    assert is_variant_mode("transfer-variant") is True
+    # Legacy persisted batches stay readable/continuable (#656).
     assert is_variant_mode("data-and-wording") is True
+
+
+def test_transfer_variant_is_canonical_and_legacy_is_not_creatable() -> None:
+    """New batches use transfer-variant; the legacy name is continuation-only (#656)."""
+    assert IngestionMode.TRANSFER_VARIANT.value == "transfer-variant"
+    assert IngestionMode.TRANSFER_VARIANT in CREATABLE_INGESTION_MODES
+    assert IngestionMode.DATA_AND_WORDING not in CREATABLE_INGESTION_MODES
+
+
+def test_canonical_variation_mode_normalizes_legacy_alias() -> None:
+    assert canonical_variation_mode("data-and-wording") is IngestionMode.TRANSFER_VARIANT
+    assert canonical_variation_mode("transfer-variant") is IngestionMode.TRANSFER_VARIANT
+    assert canonical_variation_mode("data-only") is IngestionMode.DATA_ONLY
+    assert canonical_variation_mode("original") is IngestionMode.ORIGINAL
+    assert canonical_variation_mode(None) is IngestionMode.ORIGINAL
 
 
 def test_happy_path_lifecycle_transitions_are_legal() -> None:

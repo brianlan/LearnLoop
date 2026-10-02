@@ -2324,6 +2324,30 @@ async def test_create_batch_defaults_to_original_mode(
 
 
 @pytest.mark.asyncio
+async def test_create_batch_accepts_canonical_transfer_variant_mode(
+    authenticated_bulk_client: AsyncClient,
+) -> None:
+    response = await authenticated_bulk_client.post(
+        "/api/v1/ingestion-batches", json={"ingestionMode": "transfer-variant"}
+    )
+    assert response.status_code == 201
+    assert response.json()["batch"]["ingestionMode"] == "transfer-variant"
+
+
+@pytest.mark.asyncio
+async def test_create_batch_rejects_legacy_data_and_wording_mode(
+    authenticated_bulk_client: AsyncClient,
+) -> None:
+    """Legacy data-and-wording is read/continuation-only; new batches must
+    use transfer-variant (#656)."""
+    response = await authenticated_bulk_client.post(
+        "/api/v1/ingestion-batches", json={"ingestionMode": "data-and-wording"}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_INGESTION_MODE"
+
+
+@pytest.mark.asyncio
 async def test_variant_generate_rejects_original_mode_batch(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,
