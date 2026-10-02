@@ -285,15 +285,22 @@ async def backfill_variation_failure_kinds(database: Any) -> int:
                 or not variation.get("candidate")
             ):
                 continue
-            recomputed = assess_variant(
-                mode=canonical_variation_mode(batch.get("ingestionMode")).value,
-                source=problem_content_from_snapshot(variation["original"]),
-                candidate=VariantCandidate.model_validate(variation["candidate"]),
-                reports=[
-                    ValidatorReport.model_validate(report)
-                    for report in validation.get("reports") or []
-                ],
-            )
+            # Per-item fail-closed: one malformed legacy record must not
+            # abort application startup. Keep its stored kinds and continue
+            # with the rest of the scan; DB reads/writes stay outside this
+            # guard so operational errors still surface.
+            try:
+                recomputed = assess_variant(
+                    mode=canonical_variation_mode(batch.get("ingestionMode")).value,
+                    source=problem_content_from_snapshot(variation["original"]),
+                    candidate=VariantCandidate.model_validate(variation["candidate"]),
+                    reports=[
+                        ValidatorReport.model_validate(report)
+                        for report in validation.get("reports") or []
+                    ],
+                )
+            except Exception:
+                continue
             recomputed_kinds = {
                 failure.evidence: failure.kind for failure in recomputed.failures
             }

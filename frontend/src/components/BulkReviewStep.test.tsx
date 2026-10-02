@@ -2497,6 +2497,52 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
     );
   });
 
+  it("shows the failing checks for a needs-validation check-only FAIL", () => {
+    render(
+      variantReviewUi(
+        makeItem("item-1", {
+          variation: makeVariation({
+            status: "needs-validation",
+            validatedRevision: null,
+            validation: { verdict: "fail", failures: CHECK_FAILURES },
+          }),
+        }),
+      ),
+    );
+
+    // The evidence the teacher is waving stays visible above the action,
+    // even after the fail-attest → semantic-edit path drops the item to
+    // needs-validation.
+    const evidence = screen.getByTestId("bulk-review-evidence");
+    expect(evidence).toHaveTextContent("modeCompliance");
+    const override = screen.getByTestId("bulk-review-attest-fail");
+    expect(override).toBeEnabled();
+    expect(
+      override.compareDocumentPosition(evidence) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(0);
+  });
+
+  it("disables the failed-state override while a candidate save is pending", async () => {
+    handlers.onUpdateDraft.mockReturnValue(new Promise(() => {}));
+    render(variantReviewUi(failedItem(CHECK_FAILURES)));
+
+    const override = screen.getByTestId("bulk-review-attest-fail");
+    expect(override).toBeEnabled();
+
+    // Edit the candidate: the in-flight save would land after the attest
+    // and self-invalidate it, so the override must wait.
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "What is 3+4?" },
+    });
+
+    await waitFor(() => expect(override).toBeDisabled());
+    expect(override).toHaveAttribute(
+      "title",
+      "Candidate changes are still saving",
+    );
+  });
+
   it("admits an attested fail verdict through the pass gate", () => {
     const attestedFail = makeItem("item-1", {
       contentRevision: 2,

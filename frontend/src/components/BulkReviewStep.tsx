@@ -756,6 +756,17 @@ export function BulkReviewStep({
         : revalidatePendingSave
           ? "Candidate changes are still saving"
           : "";
+  // Shared attestation fence: attest sends the current server revision, so
+  // both attest paths (stale PASS and failed fail-override) must wait for
+  // editability, in-flight work, and pending candidate saves — including on
+  // `failed` items where the revalidate gating does not apply.
+  const attestDisabledReason = !isEditable
+    ? "Item is not editable"
+    : isActionWorking
+      ? "Draft save is still settling"
+      : revalidatePendingSave
+        ? "Candidate changes are still saving"
+        : "";
   // The stale PASS report is the attest precondition, mirroring the backend
   // attest predicate (needs-validation + stored verdict pass).
   const stalePassReport =
@@ -1016,9 +1027,9 @@ export function BulkReviewStep({
                   type="button"
                   data-testid="bulk-review-attest"
                   onClick={() => handleAttest(selectedItem)}
-                  disabled={revalidateDisabledReason !== "" || attesting}
+                  disabled={attestDisabledReason !== "" || attesting}
                   title={
-                    revalidateDisabledReason ||
+                    attestDisabledReason ||
                     "Keep the existing validation without revalidating"
                   }
                 >
@@ -1136,6 +1147,7 @@ export function BulkReviewStep({
             </div>
           )}
           {(variation?.status === "failed" ||
+            failOverrideEligible ||
             stalePassReport ||
             (variation?.status === "ready" && variation?.attestation)) && (
             <VariationFailureEvidence variation={variation} />
@@ -1149,9 +1161,9 @@ export function BulkReviewStep({
                 type="button"
                 data-testid="bulk-review-attest-fail"
                 onClick={() => handleAttest(selectedItem)}
-                disabled={revalidateDisabledReason !== "" || attesting}
+                disabled={attestDisabledReason !== "" || attesting}
                 title={
-                  revalidateDisabledReason ||
+                  attestDisabledReason ||
                   "Accept the failed judgment checks and approve this variant"
                 }
               >

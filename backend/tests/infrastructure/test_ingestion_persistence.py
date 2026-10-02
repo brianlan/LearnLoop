@@ -1100,6 +1100,31 @@ async def test_backfill_variation_failure_kinds_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_backfill_variation_failure_kinds_skips_malformed_records() -> None:
+    """One malformed legacy record must not abort the startup backfill:
+    it keeps its stored kinds while other batches still get retagged."""
+    database = FakeDatabase()
+    malformed = _legacy_variant_batch("transfer-variant")
+    malformed["_id"] = "batch-malformed"
+    # Candidate payload the variant model cannot parse.
+    malformed["items"][0]["variation"]["candidate"] = {"text": 12345}
+    good = _legacy_variant_batch("transfer-variant")
+    database[INGESTION_BATCHES_COLLECTION].seed(malformed, good)
+
+    assert await backfill_variation_failure_kinds(database) == 2
+
+    stored = await database[INGESTION_BATCHES_COLLECTION].find_one(
+        {"_id": "batch-malformed"}
+    )
+    failures = stored["items"][0]["variation"]["validation"]["failures"]
+    assert [failure["kind"] for failure in failures] == [
+        "content",
+        "content",
+        "content",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_backfill_variation_failure_kinds_ignores_non_variant_and_pass() -> None:
     database = FakeDatabase()
     batch = _legacy_variant_batch("transfer-variant")
