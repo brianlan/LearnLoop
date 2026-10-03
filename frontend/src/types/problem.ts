@@ -15,21 +15,17 @@ export interface VariationContent {
   correctAnswer?: CorrectAnswer;
 }
 
-export interface VariationOriginal extends VariationContent {
-  // Owned audit-image URL (owner-only route); never the normal problem image.
-  auditImageUrl?: string | null;
-}
-
 export interface VariationValidation {
   verdict: string;
   helperModel?: ModelIdentity | null;
 }
 
 // Read-only provenance of an admitted variant problem; mirrors the backend
-// ProblemVariationPayload. Absent/null means an ordinary problem.
+// ProblemVariationPayload. Source-derived evidence (original snapshot, audit
+// image, validation reports) is withheld at the backend serialization seam;
+// absent/null means an ordinary problem.
 export interface ProblemVariation {
   mode: string;
-  original: VariationOriginal;
   acceptedVariant: VariationContent;
   generator: ModelIdentity;
   generationCount: number;

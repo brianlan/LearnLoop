@@ -456,11 +456,9 @@ def test_problem_detail_serializes_immutable_variation_provenance() -> None:
     variation = detail.variation
     assert variation is not None
     assert variation.mode == "data-only"
-    assert variation.original.text == "What is 2+2?"
-    assert variation.original.correctAnswer.display == "4"
-    assert variation.original.auditImageUrl == (
-        f"/api/v1/problems/{problem['_id']}/variation/original/image"
-    )
+    # Source-derived provenance is withheld at the seam (issue #660).
+    assert "original" not in variation.model_dump()
+    assert "reports" not in variation.validation.model_dump()
     assert variation.acceptedVariant.text == "What is 3+5?"
     assert variation.acceptedVariant.correctAnswer.display == "8"
     assert variation.generator.model == "gen-model"
@@ -468,9 +466,6 @@ def test_problem_detail_serializes_immutable_variation_provenance() -> None:
     assert variation.validation.verdict == "pass"
     assert variation.validation.helperModel is not None
     assert variation.validation.helperModel.model == "val-model"
-    assert variation.validation.reports == (
-        VARIATION_PROVENANCE["validation"]["reports"]
-    )
     # Summary never carries the provenance.
     summary = _serialize_problem_summary(problem)
     assert not hasattr(summary, "variation")
