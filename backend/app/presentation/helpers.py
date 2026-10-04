@@ -33,10 +33,6 @@ def build_problem_image_url(problem_id: Any) -> str:
     return f"/api/v1/problems/{problem_id}/image"
 
 
-def build_problem_variation_image_url(problem_id: Any) -> str:
-    return f"/api/v1/problems/{problem_id}/variation/original/image"
-
-
 def build_ingestion_source_image_url(batch_id: Any, image_id: str) -> str:
     return f"/api/v1/ingestion-batches/{batch_id}/images/{image_id}/source"
 

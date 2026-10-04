@@ -99,19 +99,6 @@ const variantProblem = {
   imageUrl: "/api/v1/problems/abc123/image",
   variation: {
     mode: "data-only",
-    original: {
-      text: "What is 2+2?",
-      problemType: "single-choice",
-      subject: "math",
-      graphDsl: "board.create('point', [0, 0]);",
-      correctAnswer: {
-        display: "4",
-        normalizedText: "4",
-        normalizedSet: ["4"],
-        format: "single",
-      },
-      auditImageUrl: "/api/v1/problems/abc123/variation/original/image",
-    },
     acceptedVariant: {
       text: "What is 3+3?",
       problemType: "single-choice",
@@ -129,7 +116,6 @@ const variantProblem = {
     validation: {
       verdict: "PASS",
       helperModel: { provider: "openai", model: "gpt-helper" },
-      reports: [{ hidden: true }],
     },
   },
 };
@@ -1239,10 +1225,11 @@ describe("ProblemDetailPage", () => {
 
     const body = screen.getByTestId("problem-variation-provenance-body");
     expect(body).toHaveTextContent("Read-only evidence captured at admission.");
+    expect(body).toHaveTextContent("Source evidence is retained but withheld.");
 
-    // Original snapshot as stored.
-    expect(within(body).getByText("Original (source at admission)")).toBeInTheDocument();
-    expect(within(body).getByText("board.create('point', [0, 0]);")).toBeInTheDocument();
+    // Source-derived provenance is withheld: no original snapshot, no image.
+    expect(within(body).queryByText("Original (source at admission)")).not.toBeInTheDocument();
+    expect(within(body).queryByAltText("Source audit image")).not.toBeInTheDocument();
 
     // Admitted snapshot with the historical-approval labeling.
     expect(
@@ -1255,18 +1242,6 @@ describe("ProblemDetailPage", () => {
     expect(within(body).getByText("PASS")).toBeInTheDocument();
     expect(within(body).getByText("openai / gpt-helper")).toBeInTheDocument();
     expect(within(body).getByText("openai / gpt-gen · generation 2")).toBeInTheDocument();
-
-    // Hidden reasoning from raw reports is never rendered.
-    expect(within(body).queryByText("hidden")).not.toBeInTheDocument();
-
-    // The audit image loads from the owned URL, never the normal image field.
-    await user.click(within(body).getByRole("button", { name: /source audit image/i }));
-    const auditImage = within(body).getByAltText("Source audit image");
-    expect(auditImage).toHaveAttribute(
-      "src",
-      "/api/v1/problems/abc123/variation/original/image",
-    );
-    expect(auditImage).not.toHaveAttribute("src", variantProblem.imageUrl);
   });
 
   it("keeps the main edit request identical for variant problems and leaves provenance untouched", async () => {

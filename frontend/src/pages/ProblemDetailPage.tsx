@@ -346,7 +346,7 @@ function VariationProvenance({ variation }: { variation: ProblemVariation }) {
         className="btn btn-secondary"
         style={{ alignSelf: "flex-start", padding: "0.4rem 0.875rem", fontSize: "0.8125rem", borderRadius: "var(--radius-md)" }}
       >
-        {expanded ? "Hide" : "Show"} original & approval evidence
+        {expanded ? "Hide" : "Show"} approval evidence
       </button>
       {expanded && (
         <div
@@ -354,10 +354,9 @@ function VariationProvenance({ variation }: { variation: ProblemVariation }) {
           style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
         >
           <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
-            Read-only evidence captured at admission.
+            Read-only evidence captured at admission. Source evidence is
+            retained but withheld.
           </div>
-
-          <VariationContentSnapshot title="Original (source at admission)" content={variation.original} />
 
           <div>
             <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 0.5rem 0" }}>
@@ -399,20 +398,6 @@ function VariationProvenance({ variation }: { variation: ProblemVariation }) {
               </div>
             </div>
           </div>
-
-          {variation.original.auditImageUrl && (
-            <div>
-              <label style={evidenceLabelStyle}>
-                Source audit image (reference evidence)
-              </label>
-              <CollapsibleImage
-                src={variation.original.auditImageUrl}
-                alt="Source audit image"
-                label="source audit image"
-                style={{ maxWidth: "100%", maxHeight: "300px", borderRadius: "var(--radius-md)" }}
-              />
-            </div>
-          )}
         </div>
       )}
     </div>

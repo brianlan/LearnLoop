@@ -3,14 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.domain.models import Problem, ProblemType
 from app.presentation.errors import ApiError
-from app.presentation.helpers import (
-    build_problem_image_url,
-    build_problem_variation_image_url,
-)
+from app.presentation.helpers import build_problem_image_url
 from app.presentation.schemas import CorrectAnswerPayload, UTCDatetime
 
 
@@ -43,22 +40,13 @@ class VariationContentPayload(BaseModel):
     correctAnswer: CorrectAnswerPayload
 
 
-class OriginalProvenancePayload(VariationContentPayload):
-    auditImageUrl: str | None = None
-
-
 class ValidationProvenancePayload(BaseModel):
     verdict: str
     helperModel: ModelIdentityPayload | None = None
-    # Reports were serialized by the validation domain (alias-shaped dicts
-    # with model identities, checks, evidence and answer comparisons); they
-    # are presented verbatim and never contain provider secrets.
-    reports: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ProblemVariationPayload(BaseModel):
     mode: str
-    original: OriginalProvenancePayload
     acceptedVariant: VariationContentPayload
     generator: ModelIdentityPayload
     generationCount: int
@@ -250,29 +238,23 @@ def _serialize_variation_content(
 
 
 def _serialize_problem_variation(
-    problem_id: str,
     variation: Mapping[str, Any] | None,
 ) -> ProblemVariationPayload | None:
-    """Serialize the immutable admission provenance for problem details.
+    """Serialize the non-source provenance for problem details.
 
     Absent and null variation are both ordinary Problems and serialize as
-    ``None``. Only URL references to the audit image are exposed — storage
-    credentials and object keys never leave the server.
+    ``None``. Everything derived from the source problem (its text, answer,
+    graph, audit image, and the validation reports that can quote source
+    data) is withheld here so it never reaches any problem payload (issue
+    #660); the DB document and storage bytes are retained as ops evidence.
     """
     if not variation:
         return None
-    original = dict(variation.get("original") or {})
     generator = dict(variation.get("generator") or {})
     validation = dict(variation.get("validation") or {})
     helper_model = validation.get("helperModel") or None
     return ProblemVariationPayload(
         mode=str(variation.get("mode", "")),
-        original=OriginalProvenancePayload(
-            **_serialize_variation_content(original).model_dump(),
-            auditImageUrl=build_problem_variation_image_url(problem_id)
-            if original.get("auditImage")
-            else None,
-        ),
         acceptedVariant=_serialize_variation_content(
             dict(variation.get("acceptedVariant") or {})
         ),
@@ -289,19 +271,15 @@ def _serialize_problem_variation(
             )
             if helper_model
             else None,
-            reports=list(validation.get("reports") or []),
         ),
     )
 
 
 def _serialize_problem_detail(problem: dict[str, Any]) -> ProblemDetailPayload:
     summary = _serialize_problem_summary(problem)
-    problem_id = str(problem["_id"])
     return ProblemDetailPayload(
         **summary.model_dump(),
         correctAnswer=_serialize_correct_answer(problem),
         origin=_serialize_origin(problem),
-        variation=_serialize_problem_variation(
-            problem_id, problem.get("variation")
-        ),
+        variation=_serialize_problem_variation(problem.get("variation")),
     )

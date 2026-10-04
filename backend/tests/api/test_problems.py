@@ -1994,17 +1994,31 @@ async def test_attempt_history_excludes_other_problem_records(
 # Permanent variation provenance (issue #614)
 # ---------------------------------------------------------------------------
 
+# Unique strings planted in the withheld source provenance; the payload
+# invariant test greps raw response bodies for them (issue #660).
+VARIANT_SOURCE_MARKERS = {
+    "text": "SRCMARKER-source-text-660a",
+    "graphDsl": "SRCMARKER-source-graph-660b",
+    "answer": "SRCMARKER-source-answer-660c",
+}
+
+
 def make_variant_problem(user_id: ObjectId) -> dict[str, Any]:
     problem = make_problem(user_id, text="What is 3+5?")
     problem["sourceImage"] = None
     problem["variation"] = {
         "mode": "data-only",
         "original": {
-            "text": "What is 2+2?",
+            "text": f"What is 2+2? {VARIANT_SOURCE_MARKERS['text']}",
             "problemType": "short-answer",
             "subject": "math",
-            "graphDsl": None,
-            "correctAnswer": problem["correctAnswer"],
+            "graphDsl": f"board.create('point', [2, 2]); {VARIANT_SOURCE_MARKERS['graphDsl']}",
+            "correctAnswer": {
+                "display": VARIANT_SOURCE_MARKERS["answer"],
+                "normalizedText": VARIANT_SOURCE_MARKERS["answer"],
+                "normalizedSet": [VARIANT_SOURCE_MARKERS["answer"]],
+                "format": "single",
+            },
             "auditImage": {
                 "bucket": "learnloop-media",
                 "objectKey": f"users/{user_id}/problems/audit/b1/i1.png",
@@ -2038,30 +2052,23 @@ async def test_variant_problem_detail_and_audit_image_route(
     client: AsyncClient,
 ) -> None:
     database: FakeDatabase = problems_app.state.fake_database
-    storage: FakeStorage = problems_app.state.fake_storage
     problem = make_variant_problem(problems_app.state.primary_user["_id"])
     database["problems"].seed(problem)
-    audit = problem["variation"]["original"]["auditImage"]
-    storage.seed(audit["bucket"], audit["objectKey"], b"auditpng")
 
     detail = await client.get(f"/api/v1/problems/{problem['_id']}")
     assert detail.status_code == 200
     variation = detail.json()["problem"]["variation"]
     assert variation is not None
     assert variation["mode"] == "data-only"
-    assert variation["original"]["text"] == "What is 2+2?"
-    assert variation["original"]["auditImageUrl"] == (
-        f"/api/v1/problems/{problem['_id']}/variation/original/image"
-    )
+    assert "original" not in variation
     assert variation["acceptedVariant"]["text"] == "What is 3+5?"
     assert variation["validation"]["verdict"] == "pass"
 
+    # The audit-image route no longer exists, even for the owner.
     audit_response = await client.get(
         f"/api/v1/problems/{problem['_id']}/variation/original/image"
     )
-    assert audit_response.status_code == 200
-    assert audit_response.headers["content-type"] == "image/png"
-    assert audit_response.content == b"auditpng"
+    assert audit_response.status_code == 404
 
     # An ordinary image-only problem has no variation route payload.
     plain = make_problem(problems_app.state.primary_user["_id"])
@@ -2070,6 +2077,57 @@ async def test_variant_problem_detail_and_audit_image_route(
         f"/api/v1/problems/{plain['_id']}/variation/original/image"
     )
     assert plain_audit.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_variant_problem_payloads_withhold_source_provenance(
+    problems_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """Issue #660: source-derived provenance never enters a problem payload.
+
+    Both detail responses are searched as raw text for markers planted in the
+    stored source content; no marker, audit-image URL, or reports key may
+    appear on the wire while the kept provenance metadata stays present.
+    """
+    database: FakeDatabase = problems_app.state.fake_database
+    problem = make_variant_problem(problems_app.state.primary_user["_id"])
+    database["problems"].seed(problem)
+    original = problem["variation"]["original"]
+    markers = [
+        original["text"],
+        original["graphDsl"],
+        original["correctAnswer"]["display"],
+        "/api/v1/problems/{problem_id}/variation/original/image",
+    ]
+    stored = await database["problems"].find_one({"_id": problem["_id"]})
+    # Sanity: the markers live in the stored document (retention unchanged).
+    assert stored["variation"]["original"]["text"] == original["text"]
+
+    responses = [
+        await client.get(f"/api/v1/problems/{problem['_id']}"),
+        await client.patch(
+            f"/api/v1/problems/{problem['_id']}",
+            json={"tags": ["probe"]},
+        ),
+    ]
+    for response in responses:
+        assert response.status_code == 200
+        for marker in markers:
+            assert marker.replace("{problem_id}", str(problem["_id"])) not in response.text
+        variation = response.json()["problem"]["variation"]
+        assert variation is not None
+        assert "original" not in variation
+        assert "auditImageUrl" not in variation
+        assert "reports" not in variation["validation"]
+        assert variation["mode"] == "data-only"
+        assert variation["generator"] == {"provider": "fake", "model": "gen-model"}
+        assert variation["generationCount"] == 1
+        assert variation["validation"]["verdict"] == "pass"
+        assert variation["validation"]["helperModel"] == (
+            {"provider": "fake", "model": "val-model"}
+        )
+        assert variation["acceptedVariant"]["text"] == "What is 3+5?"
 
 
 @pytest.mark.asyncio
@@ -2106,8 +2164,8 @@ async def test_variant_problem_patch_edits_leave_variation_unchanged_and_skip_va
             assert body[field]["display"] == expected
         else:
             assert body[field] == expected
-        # Provenance is exposed read-only with the same frozen content.
-        assert body["variation"]["original"]["text"] == "What is 2+2?"
+        # Provenance metadata is exposed read-only; the source stays withheld.
+        assert "original" not in body["variation"]
         assert body["variation"]["acceptedVariant"]["text"] == "What is 3+5?"
 
         stored = await database["problems"].find_one({"_id": problem["_id"]})
@@ -2145,7 +2203,7 @@ async def test_correct_answer_patch_updates_both_problem_kinds(
     body = response.json()["problem"]
     assert body["correctAnswer"]["display"] == "16"
     assert body["variation"]["acceptedVariant"]["correctAnswer"]["display"] == "4"
-    assert body["variation"]["original"]["correctAnswer"]["display"] == "4"
+    assert "original" not in body["variation"]
     stored = await database["problems"].find_one({"_id": variant["_id"]})
     assert stored["correctAnswer"]["display"] == "16"
     assert stored["variation"] == variant["variation"]
@@ -2156,6 +2214,7 @@ async def test_variant_audit_image_route_denies_other_users(
     problems_app: FastAPI,
     client: AsyncClient,
 ) -> None:
+    """The audit-image route is deleted; nobody can reach it (issue #660)."""
     database: FakeDatabase = problems_app.state.fake_database
     other_problem = make_variant_problem(problems_app.state.secondary_user["_id"])
     database["problems"].seed(other_problem)
@@ -2163,5 +2222,4 @@ async def test_variant_audit_image_route_denies_other_users(
     response = await client.get(
         f"/api/v1/problems/{other_problem['_id']}/variation/original/image"
     )
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert response.status_code == 404

@@ -723,7 +723,7 @@ test.describe("Variant ingestion E2E", () => {
     }
 
     // Provenance of the exam-graded variant: collapsed by default, expands
-    // to original + admitted evidence.
+    // to the admitted evidence; the source snapshot is withheld (#660).
     await page.goto(`/problems/${examItems[0].problemId}`);
     await expect(
       page.getByTestId("problem-variation-provenance"),
@@ -731,7 +731,9 @@ test.describe("Variant ingestion E2E", () => {
     await page.getByTestId("problem-variation-provenance-toggle").click();
     const provenance = page.getByTestId("problem-variation-provenance-body");
     await expect(provenance).toBeVisible();
-    await expect(provenance).toContainText("What is 2 + 2?");
+    await expect(provenance).toContainText(
+      "Source evidence is retained but withheld.",
+    );
     await expect(provenance).toContainText("What is 3 + 3?");
     await expect(provenance).toContainText("validator-1");
     await expect(provenance).toContainText("variant-generator");
