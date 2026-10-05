@@ -33,7 +33,7 @@ import { BulkUploadStep } from "./BulkUploadStep";
 import { BulkDetectStep } from "./BulkDetectStep";
 import { BulkReviewStep } from "./BulkReviewStep";
 import { BulkSubmitStep } from "./BulkSubmitStep";
-import type { EditTarget } from "./BulkReviewStep.helpers";
+import type { EditTarget } from "./BulkReviewStep.editing";
 
 export type { BulkWizardStep };
 
