@@ -98,10 +98,7 @@ export interface ReviewEditingCallbacks {
     itemId: string,
     changes: Partial<BulkDraft>,
     options: { target: EditTarget; expectedRevision: number },
-  ) =>
-    | void
-    | { contentRevision: number }
-    | Promise<void | { contentRevision: number }>;
+  ) => void | { item: BulkItem } | Promise<void | { item: BulkItem }>;
   onGenerate: (
     itemId: string,
     original: VariationOriginalPayload,
@@ -133,7 +130,9 @@ export function useBulkReviewEditing(
   const serverDraftRefs = useRef<Record<string, string>>({});
   // A save can resolve before its returned batch reaches props. Ignore the
   // previous prop snapshot until the acknowledged content arrives.
-  const acknowledgedDraftRefs = useRef<Record<string, string>>({});
+  const acknowledgedDraftRefs = useRef<
+    Record<string, { saved: string; previous?: string }>
+  >({});
   const stampRefs = useRef<Record<string, TargetStamp>>({});
   // The revision used by a dirty full-form draft stays fixed until its own
   // save succeeds; observing another writer's revision cannot rebase it.
@@ -329,12 +328,9 @@ export function useBulkReviewEditing(
       };
       draftRefs.current = merged;
       setLocalDrafts(merged);
-      setDirtyKeys((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.add(key);
-        dirtyRefs.current = nextSet;
-        return nextSet;
-      });
+      const nextDirty = new Set(dirtyRefs.current).add(key);
+      dirtyRefs.current = nextDirty;
+      setDirtyKeys(nextDirty);
     },
     [],
   );
@@ -369,9 +365,10 @@ export function useBulkReviewEditing(
             (target === "candidate" && !item.variation?.candidate)
               ? undefined
               : JSON.stringify(targetDraft(item, target));
-          if (incomingDraft === acknowledged) {
+          if (incomingDraft === acknowledged.saved) {
             delete acknowledgedDraftRefs.current[key];
           } else if (
+            incomingDraft === acknowledged.previous &&
             previousStamp &&
             incoming.revision === previousStamp.revision &&
             incoming.generation === previousStamp.generation &&
@@ -493,7 +490,7 @@ export function useBulkReviewEditing(
       seq: number,
       outcome: "success" | "failure",
       sentSerialized: string,
-      result?: void | { contentRevision: number },
+      result?: void | { item: BulkItem },
       error?: unknown,
     ) => {
       const sent = inFlightRefs.current[key];
@@ -506,32 +503,46 @@ export function useBulkReviewEditing(
       });
 
       const stamp = stampRefs.current[key];
-      const savedRevision =
-        result && typeof result === "object"
-          ? result.contentRevision
-          : sent.revision;
+      const savedItem = result && typeof result === "object" ? result.item : undefined;
+      const target = key.split("::")[1] as EditTarget;
+      const returnedStamp = savedItem && targetStamp(savedItem, target);
+      const savedRevision = returnedStamp?.revision ?? sent.revision;
       // An observed version beyond this save's own result belongs to another
       // write. Keep the local draft, but do not silently rebase its full form.
       if (
-        stamp &&
-        (stamp.revision > savedRevision ||
-          stamp.generation !== sent.generation)
+        (stamp &&
+          (stamp.revision > savedRevision ||
+            stamp.generation !== sent.generation ||
+            (returnedStamp &&
+              !isStaleStamp(stamp, returnedStamp) &&
+              serverDraftRefs.current[key] !== sentSerialized))) ||
+        (savedItem &&
+          (savedItem.status === "deleted" ||
+            returnedStamp!.generation !== sent.generation ||
+            savedRevision > sent.revision + 1 ||
+            JSON.stringify(targetDraft(savedItem, target)) !== sentSerialized))
       ) {
         markConflict(key);
         return;
       }
 
       if (outcome === "success") {
-        const savedStamp = {
-          revision: savedRevision,
-          generation: sent.generation,
-          updatedAt: stamp?.updatedAt ?? 0,
-          updatedAtRaw: stamp?.updatedAtRaw ?? "",
-        };
+        const savedStamp =
+          returnedStamp && (!stamp || !isStaleStamp(returnedStamp, stamp))
+            ? returnedStamp
+            : {
+                revision: savedRevision,
+                generation: sent.generation,
+                updatedAt: stamp?.updatedAt ?? 0,
+                updatedAtRaw: stamp?.updatedAtRaw ?? "",
+              };
         draftBaseRefs.current[key] = savedStamp;
         stampRefs.current[key] = savedStamp;
+        acknowledgedDraftRefs.current[key] = {
+          saved: sentSerialized,
+          previous: serverDraftRefs.current[key],
+        };
         serverDraftRefs.current[key] = sentSerialized;
-        acknowledgedDraftRefs.current[key] = sentSerialized;
         setSaveFailures((prev) => {
           if (prev[key] === undefined) return prev;
           const next = { ...prev };
@@ -539,22 +550,22 @@ export function useBulkReviewEditing(
           saveFailuresRef.current = next;
           return next;
         });
-        setDirtyKeys((prevDirty) => {
-          const nextDirty = new Set(prevDirty);
-          if (
-            JSON.stringify(draftRefs.current[key]) === sentSerialized
-          ) {
-            nextDirty.delete(key);
-            delete draftBaseRefs.current[key];
-          }
+        const currentDraft = draftRefs.current[key];
+        if (currentDraft && JSON.stringify(currentDraft) === sentSerialized) {
+          const nextDirty = new Set(dirtyRefs.current);
+          nextDirty.delete(key);
           dirtyRefs.current = nextDirty;
-          return nextDirty;
-        });
-        // The reviewed SOURCE save settled: confirm the queued Generate with
-        // the post-save revision (falls back to the sent revision for saves
-        // that do not bump contentRevision, e.g. tag-only edits). Candidate
-        // saves pass their own key and never match the pending entry.
-        firePendingGenerate(key, savedRevision);
+          setDirtyKeys(nextDirty);
+          delete draftBaseRefs.current[key];
+          const confirmed = pendingGenerateRef.current.get(key);
+          if (
+            confirmed &&
+            JSON.stringify(sourcePayloadFromDraft(currentDraft)) ===
+              JSON.stringify(confirmed)
+          ) {
+            firePendingGenerate(key, savedRevision);
+          }
+        }
       } else {
         cancelPendingGenerate(key);
         if (

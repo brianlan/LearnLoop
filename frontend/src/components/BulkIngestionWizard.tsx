@@ -388,12 +388,11 @@ export function BulkIngestionWizard({
                 options.expectedRevision,
               );
         setBatchAndStep(response.batch);
-        // The review step needs the post-save revision to confirm Generate.
-        return {
-          contentRevision:
-            response.batch.items.find((item) => item.itemId === itemId)
-              ?.contentRevision ?? options.expectedRevision,
-        };
+        // The batch read can include another write after this save. Return its
+        // content too, so the editor can reject a revision it did not save.
+        const item = response.batch.items.find((entry) => entry.itemId === itemId);
+        if (!item) throw new Error("Saved item missing from batch response");
+        return { item };
       } catch (err) {
         if (isBatchExpiredError(err)) {
           await handleExpiredBatch();

@@ -150,12 +150,21 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
     });
 
     expect(mocks.updateItemDraft).toHaveBeenCalledTimes(1);
+    expect(mocks.updateItemDraft).toHaveBeenCalledWith(
+      "batch-1",
+      "item-1",
+      expect.objectContaining({ correctAnswer: "42" }),
+      0,
+    );
     expect(continueButton).toBeDisabled();
     expect(answerInput).not.toBeDisabled();
     expect(screen.queryByTestId("bulk-wizard-error")).not.toBeInTheDocument();
 
     await act(async () => {
-      resolveSave({ batch: makeBatch({ items: [makeItem({ draft: { ...makeItem().draft, correctAnswer: "42" } })] }) });
+      resolveSave({ batch: makeBatch({ items: [makeItem({
+        draft: { ...makeItem().draft, correctAnswer: "42" },
+        updatedAt: "2026-07-03T00:00:01Z",
+      })] }) });
     });
 
     await waitFor(() => {
@@ -206,7 +215,10 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       .mockRejectedValueOnce(new Error("network error"))
       .mockResolvedValueOnce({
         batch: makeBatch({
-          items: [makeItem({ draft: { ...makeItem().draft, correctAnswer: "7" } })],
+          items: [makeItem({
+            draft: { ...makeItem().draft, correctAnswer: "7" },
+            updatedAt: "2026-07-03T00:00:01Z",
+          })],
         }),
       });
 

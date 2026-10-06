@@ -292,10 +292,20 @@ describe("BulkReviewStep", () => {
   });
 
   it("accepts its own save receipt before saving a later local edit", async () => {
-    handlers.onUpdateDraft
-      .mockResolvedValueOnce({ contentRevision: 11 })
-      .mockResolvedValueOnce({ contentRevision: 12 });
     const original = makeItem("item-1", { contentRevision: 10 });
+    handlers.onUpdateDraft
+      .mockResolvedValueOnce({ item: makeItem("item-1", {
+        ...original,
+        contentRevision: 11,
+        updatedAt: "2026-07-03T00:00:01Z",
+        draft: { ...original.draft, correctAnswer: "A1" },
+      }) })
+      .mockResolvedValueOnce({ item: makeItem("item-1", {
+        ...original,
+        contentRevision: 12,
+        updatedAt: "2026-07-03T00:00:02Z",
+        draft: { ...original.draft, correctAnswer: "A2" },
+      }) });
     const { rerender } = render(
       <BulkReviewStep batch={makeBatch({ items: [original] })} isLoading={false} {...handlers} />,
     );
@@ -328,6 +338,69 @@ describe("BulkReviewStep", () => {
       expect.objectContaining({ expectedRevision: 11 }),
     );
     expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
+  });
+
+  it("does not attach a concurrent revision from a save response to a stale draft", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () => new Promise((resolve) => { resolveSave = resolve; }),
+    );
+    const original = makeItem("item-1", {
+      contentRevision: 10,
+      draft: { text: "T0", problemType: "short-answer", graphDsl: "", correctAnswer: "A0", tags: [], subject: "math" },
+    });
+    const review = (item: BulkItem) => (
+      <BulkReviewStep batch={makeBatch({ ingestionMode: "transfer-variant", items: [item] })} isLoading={false} {...handlers} />
+    );
+    const { rerender } = render(review(original));
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "A1" } });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "A2" } });
+
+    const concurrent = makeItem("item-1", {
+      ...original,
+      contentRevision: 12,
+      updatedAt: "2026-07-03T00:00:02Z",
+      draft: { ...original.draft, text: "T1", correctAnswer: "A1" },
+    });
+    rerender(review(concurrent));
+    await act(async () => { resolveSave({ contentRevision: 12, item: concurrent }); });
+    await act(async () => { vi.advanceTimersByTime(600); });
+
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("bulk-review-text")).toHaveValue("T0");
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("A2");
+    expect(screen.getByTestId("bulk-review-save-status")).toHaveTextContent(/changed elsewhere/i);
+  });
+
+  it("does not ignore different server content at the acknowledged stamp", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () => new Promise((resolve) => { resolveSave = resolve; }),
+    );
+    const original = makeItem("item-1", { contentRevision: 10 });
+    const review = (item: BulkItem) => (
+      <BulkReviewStep batch={makeBatch({ items: [item] })} isLoading={false} {...handlers} />
+    );
+    const { rerender } = render(review(original));
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "A1" } });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "A2" } });
+    const saved = makeItem("item-1", {
+      ...original,
+      contentRevision: 11,
+      updatedAt: "2026-07-03T00:00:01Z",
+      draft: { ...original.draft, correctAnswer: "A1" },
+    });
+    await act(async () => { resolveSave({ item: saved }); });
+    rerender(review({ ...saved, draft: { ...saved.draft, text: "Changed elsewhere" } }));
+    await act(async () => { vi.advanceTimersByTime(600); });
+
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("A2");
+    expect(screen.getByTestId("bulk-review-save-status")).toHaveTextContent(/changed elsewhere/i);
   });
 
   it("drops a deleted item's pending source save so other items can continue", async () => {
@@ -1661,7 +1734,11 @@ describe("BulkReviewStep variant generate", () => {
   }
 
   it("confirms the reviewed source with Generate exactly once, waiting for the autosave", async () => {
-    handlers.onUpdateDraft.mockResolvedValue({ contentRevision: 3 });
+    handlers.onUpdateDraft.mockResolvedValue({ item: makeItem("item-1", {
+      contentRevision: 3,
+      updatedAt: "2026-07-03T00:00:01Z",
+      draft: { ...makeItem("item-1").draft, correctAnswer: "66" },
+    }) });
     renderReview([makeItem("item-1", { contentRevision: 2 })]);
 
     fireEvent.change(screen.getByTestId("bulk-review-answer"), {
@@ -1699,7 +1776,11 @@ describe("BulkReviewStep variant generate", () => {
 
   it("locks the confirmed source until the Generate request settles", async () => {
     let resolveGenerate: () => void = () => undefined;
-    handlers.onUpdateDraft.mockResolvedValue({ contentRevision: 3 });
+    handlers.onUpdateDraft.mockResolvedValue({ item: makeItem("item-1", {
+      contentRevision: 3,
+      updatedAt: "2026-07-03T00:00:01Z",
+      draft: { ...makeItem("item-1").draft, correctAnswer: "A" },
+    }) });
     handlers.onGenerate.mockImplementation(
       () => new Promise<void>((resolve) => { resolveGenerate = resolve; }),
     );
@@ -1732,6 +1813,68 @@ describe("BulkReviewStep variant generate", () => {
 
     await act(async () => { resolveGenerate(); });
     expect(screen.getByTestId("bulk-review-answer")).toBeEnabled();
+  });
+
+  it("waits for the confirmed edit when an older source save is already in flight", async () => {
+    const resolveSaves: Array<(value: unknown) => void> = [];
+    handlers.onUpdateDraft.mockImplementation(
+      () => new Promise((resolve) => { resolveSaves.push(resolve); }),
+    );
+    const original = makeItem("item-1", { contentRevision: 10 });
+    const review = (item: BulkItem) => (
+      <BulkReviewStep batch={makeBatch({ ingestionMode: "transfer-variant", items: [item] })} isLoading={false} {...handlers} />
+    );
+    const { rerender } = render(review(original));
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "A1" } });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "A2" } });
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+
+    await act(async () => {
+      resolveSaves[0]({
+        contentRevision: 11,
+        item: makeItem("item-1", {
+          ...original,
+          contentRevision: 11,
+          updatedAt: "2026-07-03T00:00:01Z",
+          draft: { ...original.draft, correctAnswer: "A1" },
+        }),
+      });
+    });
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    expect(handlers.onUpdateDraft).toHaveBeenLastCalledWith(
+      "item-1",
+      expect.objectContaining({ correctAnswer: "A2" }),
+      expect.objectContaining({ expectedRevision: 11 }),
+    );
+    await act(async () => {
+      resolveSaves[1]({
+        contentRevision: 12,
+        item: makeItem("item-1", {
+          ...original,
+          contentRevision: 12,
+          updatedAt: "2026-07-03T00:00:02Z",
+          draft: { ...original.draft, correctAnswer: "A2" },
+        }),
+      });
+    });
+    expect(handlers.onGenerate).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({ correctAnswer: "A2" }),
+      12,
+    );
+
+    rerender(review(makeItem("item-1", {
+      ...original,
+      contentRevision: 13,
+      updatedAt: "2026-07-03T00:00:03Z",
+      draft: { ...original.draft, correctAnswer: "A2" },
+    })));
+    expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
   });
 
   it("sends Generate with the current revision when the source is already saved", () => {
@@ -1993,13 +2136,17 @@ describe("BulkReviewStep variant generate", () => {
 
     // The candidate save settles first: it must not release the Generate.
     await act(async () => {
-      resolvers.candidate({ contentRevision: 99 });
+      resolvers.candidate(undefined);
     });
     expect(handlers.onGenerate).not.toHaveBeenCalled();
 
     // The source save settles with the reviewed source: Generate fires once.
     await act(async () => {
-      resolvers.source({ contentRevision: 5 });
+      resolvers.source({ item: makeItem("item-1", {
+        contentRevision: 2,
+        updatedAt: "2026-07-03T00:00:01Z",
+        draft: { ...makeItem("item-1").draft, correctAnswer: "44" },
+      }) });
     });
     await waitFor(() => {
       expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
@@ -2007,7 +2154,7 @@ describe("BulkReviewStep variant generate", () => {
     expect(handlers.onGenerate).toHaveBeenCalledWith(
       "item-1",
       expect.objectContaining({ correctAnswer: "44" }),
-      5,
+      2,
     );
   });
 
@@ -2048,7 +2195,11 @@ describe("BulkReviewStep variant generate", () => {
     expect(handlers.onGenerate).not.toHaveBeenCalled();
 
     await act(async () => {
-      resolvers.source({ contentRevision: 5 });
+      resolvers.source({ item: makeItem("item-1", {
+        contentRevision: 2,
+        updatedAt: "2026-07-03T00:00:01Z",
+        draft: { ...makeItem("item-1").draft, correctAnswer: "44" },
+      }) });
     });
     await waitFor(() => {
       expect(handlers.onGenerate).toHaveBeenCalledTimes(1);
@@ -2056,7 +2207,7 @@ describe("BulkReviewStep variant generate", () => {
     expect(handlers.onGenerate).toHaveBeenCalledWith(
       "item-1",
       expect.objectContaining({ correctAnswer: "44" }),
-      5,
+      2,
     );
   });
 
@@ -2417,7 +2568,10 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
   });
 
   it("keeps a passed item submittable across a tags-only candidate save", async () => {
-    handlers.onUpdateDraft.mockResolvedValue({ contentRevision: 2 });
+    handlers.onUpdateDraft.mockResolvedValue({ item: passedItem({
+      draft: { ...passedItem().draft, tags: ["math", "calculus"] },
+      updatedAt: "2026-07-03T00:00:01Z",
+    }) });
     render(variantReviewUi(passedItem()));
 
     const tagField = screen.getByTestId("bulk-review-tags-field");
