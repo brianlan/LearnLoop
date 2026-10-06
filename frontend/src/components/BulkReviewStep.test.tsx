@@ -2603,6 +2603,12 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
         expect.objectContaining({ target: "candidate", expectedRevision: 2 }),
       );
     });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+      "item-1",
+      expect.objectContaining({ tags: ["math", "calculus"] }),
+      expect.objectContaining({ target: "source", expectedRevision: 2 }),
+    );
     expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
     expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();
   });

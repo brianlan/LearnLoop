@@ -388,13 +388,12 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       updatedAt: "2026-07-03T00:00:02Z",
     });
     mocks.generateVariation.mockResolvedValue({ batch: queued });
-    mocks.updateItemDraft.mockResolvedValue({ batch: queued });
     await renderAtReviewStep({ batch: initial });
 
-    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), {
-      target: { value: "calculus" },
-    });
-    fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+    // A no-op candidate save keeps the item content revision at r10 while
+    // its older batch response is delayed past the G2 queued response.
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "66" } });
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "6" } });
     await act(async () => { vi.advanceTimersByTime(600); });
     expect(mocks.editVariationCandidate).toHaveBeenCalledTimes(1);
 
@@ -407,7 +406,6 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         ingestionMode: "transfer-variant",
         revision: 21,
         items: [readyVariantItem({
-          draft: { ...g1.draft, tags: ["math", "calculus"] },
           updatedAt: "2026-07-03T00:00:01Z",
         })],
         updatedAt: "2026-07-03T00:00:01Z",
@@ -616,6 +614,72 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
     for (const tag of finalTags) {
       expect(screen.getByTestId(`bulk-review-tags-tag-${tag}`)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { change: "add", pendingTags: ["math", "algebra", "geometry"], finalTags: ["math", "algebra", "geometry", "trigonometry"] },
+    { change: "undo", pendingTags: ["math"], finalTags: ["math", "trigonometry"] },
+  ])("keeps source tag $change edits in both views after an older save returns", async ({ change, pendingTags, finalTags }) => {
+    let resolveFirstSource: (value: BatchResponse) => void = () => undefined;
+    const initialItem = readyVariantItem();
+    const firstSaved = readyVariantItem({
+      draft: { ...initialItem.draft, tags: ["math", "algebra"] },
+      updatedAt: "2026-07-03T00:00:01Z",
+    });
+    const finalItem = readyVariantItem({
+      draft: { ...initialItem.draft, tags: finalTags },
+      updatedAt: "2026-07-03T00:00:02Z",
+    });
+    mocks.updateItemDraft
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstSource = resolve; }))
+      .mockResolvedValue({ batch: makeBatch({
+        ingestionMode: "transfer-variant", revision: 22, items: [finalItem],
+      }) });
+    mocks.editVariationCandidate.mockResolvedValue({ batch: makeBatch({
+      ingestionMode: "transfer-variant", revision: 23, items: [finalItem],
+    }) });
+    await renderAtReviewStep({ batch: makeBatch({
+      ingestionMode: "transfer-variant", revision: 20, items: [initialItem],
+    }) });
+
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), { target: { value: "algebra" } });
+    fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(mocks.updateItemDraft).toHaveBeenCalledTimes(1);
+
+    if (change === "add") {
+      fireEvent.change(screen.getByTestId("bulk-review-tags-field"), { target: { value: "geometry" } });
+      fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+    } else {
+      fireEvent.click(screen.getByTestId("bulk-review-tags-remove-algebra"));
+    }
+    await act(async () => { resolveFirstSource({ batch: makeBatch({
+      ingestionMode: "transfer-variant", revision: 21, items: [firstSaved],
+    }) }); });
+
+    // The second edit is still unsaved when the first response reaches both views.
+    for (const tag of pendingTags) {
+      expect(screen.getByTestId(`bulk-review-tags-tag-${tag}`)).toBeInTheDocument();
+    }
+    if (change === "undo") {
+      expect(screen.queryByTestId("bulk-review-tags-tag-algebra")).not.toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
+    for (const tag of pendingTags) {
+      expect(screen.getByTestId(`bulk-review-tags-tag-${tag}`)).toBeInTheDocument();
+    }
+    if (change === "undo") {
+      expect(screen.queryByTestId("bulk-review-tags-tag-algebra")).not.toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), { target: { value: "trigonometry" } });
+    fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+    await act(async () => { vi.advanceTimersByTime(1200); });
+    await waitFor(() => { expect(mocks.editVariationCandidate).toHaveBeenCalled(); });
+    expect(mocks.editVariationCandidate).toHaveBeenLastCalledWith(
+      "batch-1", "item-1", expect.objectContaining({ tags: finalTags }),
+    );
     expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
   });
 

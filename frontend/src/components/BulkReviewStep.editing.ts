@@ -332,7 +332,9 @@ export function useBulkReviewEditing(
         ...draftRefs.current,
         [key]: { ...(draftRefs.current[key] ?? targetDraft(item, target)), ...next },
       };
-      // Tags belong to the item, so both editors see each local edit immediately.
+      const nextDirty = new Set(dirtyRefs.current).add(key);
+      // Tags and their pending save state belong to both editors of this item.
+      // ponytail: both targets may save the same tags; use one item-level buffer if traffic matters.
       if (next.tags && (target === "candidate" || item.variation?.candidate)) {
         const siblingTarget = target === "source" ? "candidate" : "source";
         const siblingKey = bufferKey(item.itemId, siblingTarget);
@@ -340,10 +342,14 @@ export function useBulkReviewEditing(
           ...(merged[siblingKey] ?? targetDraft(item, siblingTarget)),
           tags: next.tags,
         };
+        if (!draftBaseRefs.current[siblingKey]) {
+          draftBaseRefs.current[siblingKey] =
+            stampRefs.current[siblingKey] ?? targetStamp(item, siblingTarget);
+        }
+        nextDirty.add(siblingKey);
       }
       draftRefs.current = merged;
       setLocalDrafts(merged);
-      const nextDirty = new Set(dirtyRefs.current).add(key);
       dirtyRefs.current = nextDirty;
       setDirtyKeys(nextDirty);
     },
@@ -586,18 +592,6 @@ export function useBulkReviewEditing(
               draftBaseRefs.current[siblingKey] = siblingStamp;
               stampRefs.current[siblingKey] = siblingStamp;
               serverDraftRefs.current[siblingKey] = persistedSibling;
-              const siblingDraft = draftRefs.current[siblingKey];
-              if (
-                siblingDraft &&
-                JSON.stringify(siblingDraft.tags) === JSON.stringify(beforeSibling?.tags)
-              ) {
-                const nextDrafts = {
-                  ...draftRefs.current,
-                  [siblingKey]: { ...siblingDraft, tags: returnedSibling.tags },
-                };
-                draftRefs.current = nextDrafts;
-                setLocalDrafts(nextDrafts);
-              }
             } else {
               markConflict(siblingKey);
             }
