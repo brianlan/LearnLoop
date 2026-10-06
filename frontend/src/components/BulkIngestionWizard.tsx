@@ -127,8 +127,17 @@ export function BulkIngestionWizard({
   const [error, setError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
   const extractionStartedForBatch = useRef<Set<string>>(new Set());
+  const latestBatchRef = useRef<BulkBatch | null>(null);
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
+    const latest = latestBatchRef.current;
+    if (
+      latest?.id === nextBatch.id &&
+      latest.revision !== undefined &&
+      nextBatch.revision !== undefined &&
+      nextBatch.revision < latest.revision
+    ) return;
+    latestBatchRef.current = nextBatch;
     setBatch(nextBatch);
     setStep((currentStep) => {
       if (currentStep === "submit" && canPreserveSubmitStep(nextBatch)) {
@@ -189,6 +198,7 @@ export function BulkIngestionWizard({
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 404) {
+          latestBatchRef.current = null;
           setBatch(null);
           setStep("upload");
           setError("");
@@ -224,6 +234,7 @@ export function BulkIngestionWizard({
   // is shown before the next batch is created (mode always precedes
   // creation and defaults back to Original).
   const handleStartNewBatch = useCallback(() => {
+    latestBatchRef.current = null;
     setBatch(null);
     setStep("upload");
     setMode("original");

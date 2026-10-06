@@ -2130,21 +2130,35 @@ describe("BulkReviewStep variant generate", () => {
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    await waitFor(() => {
-      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
-    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
 
     // The candidate save settles first: it must not release the Generate.
     await act(async () => {
-      resolvers.candidate(undefined);
+      resolvers.candidate({ item: makeItem("item-1", {
+        contentRevision: 2,
+        updatedAt: "2026-07-03T00:00:01Z",
+        variation: makeVariation({
+          status: "needs-validation",
+          candidate: { ...makeVariation().candidate!, correctAnswer: "66" },
+          validation: null,
+          validatedRevision: null,
+        }),
+      }) });
     });
     expect(handlers.onGenerate).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    expect(handlers.onUpdateDraft).toHaveBeenLastCalledWith(
+      "item-1",
+      expect.objectContaining({ correctAnswer: "44" }),
+      expect.objectContaining({ target: "source", expectedRevision: 2 }),
+    );
 
     // The source save settles with the reviewed source: Generate fires once.
     await act(async () => {
       resolvers.source({ item: makeItem("item-1", {
-        contentRevision: 2,
-        updatedAt: "2026-07-03T00:00:01Z",
+        contentRevision: 3,
+        updatedAt: "2026-07-03T00:00:02Z",
         draft: { ...makeItem("item-1").draft, correctAnswer: "44" },
       }) });
     });
@@ -2154,7 +2168,7 @@ describe("BulkReviewStep variant generate", () => {
     expect(handlers.onGenerate).toHaveBeenCalledWith(
       "item-1",
       expect.objectContaining({ correctAnswer: "44" }),
-      2,
+      3,
     );
   });
 
@@ -2184,15 +2198,15 @@ describe("BulkReviewStep variant generate", () => {
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    await waitFor(() => {
-      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
-    });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
 
     // A failed candidate save must not drop the queued source Generate.
     await act(async () => {
       rejecters.candidate(new Error("candidate save exploded"));
     });
     expect(handlers.onGenerate).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       resolvers.source({ item: makeItem("item-1", {

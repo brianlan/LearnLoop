@@ -100,6 +100,34 @@ function makeBatch(overrides: Partial<BulkBatch> = {}): BulkBatch {
   };
 }
 
+function readyVariantItem(overrides: Partial<BulkItem> = {}): BulkItem {
+  return makeItem({
+    contentRevision: 10,
+    variation: {
+      status: "ready",
+      generationCount: 1,
+      original: {
+        text: "What is 2+2?",
+        problemType: "short-answer",
+        graphDsl: "",
+        correctAnswer: "4",
+        subject: "math",
+      },
+      candidate: {
+        text: "What is 3+3?",
+        problemType: "short-answer",
+        graphDsl: "",
+        correctAnswer: "6",
+      },
+      validation: { verdict: "pass" },
+      validatedRevision: 10,
+      attestation: null,
+      queuedAt: null,
+    },
+    ...overrides,
+  });
+}
+
 const reviewBatchResponse: BatchResponse = { batch: makeBatch() };
 
 async function renderAtReviewStep(response: BatchResponse = reviewBatchResponse) {
@@ -332,6 +360,192 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
         3,
       );
     });
+  });
+
+  it("keeps a withdrawn candidate hidden after an older save response arrives", async () => {
+    let resolveOldSave: (value: BatchResponse) => void = () => undefined;
+    mocks.editVariationCandidate.mockImplementation(
+      () => new Promise((resolve) => { resolveOldSave = resolve; }),
+    );
+    const g1 = readyVariantItem();
+    const initial = makeBatch({ ingestionMode: "transfer-variant", revision: 20, items: [g1] });
+    const queuedItem = readyVariantItem({
+      contentRevision: 11,
+      updatedAt: "2026-07-03T00:00:02Z",
+      variation: {
+        ...g1.variation!,
+        status: "queued",
+        generationCount: 2,
+        candidate: null,
+        validation: null,
+        validatedRevision: null,
+      },
+    });
+    const queued = makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 22,
+      items: [queuedItem],
+      updatedAt: "2026-07-03T00:00:02Z",
+    });
+    mocks.generateVariation.mockResolvedValue({ batch: queued });
+    mocks.updateItemDraft.mockResolvedValue({ batch: queued });
+    await renderAtReviewStep({ batch: initial });
+
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), {
+      target: { value: "calculus" },
+    });
+    fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(mocks.editVariationCandidate).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-review-edit-candidate")).not.toBeInTheDocument();
+    });
+    await act(async () => {
+      resolveOldSave({ batch: makeBatch({
+        ingestionMode: "transfer-variant",
+        revision: 21,
+        items: [readyVariantItem({
+          draft: { ...g1.draft, tags: ["math", "calculus"] },
+          updatedAt: "2026-07-03T00:00:01Z",
+        })],
+        updatedAt: "2026-07-03T00:00:01Z",
+      }) });
+    });
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), {
+      target: { value: "Edited after old response" },
+    });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(screen.queryByTestId("bulk-review-edit-candidate")).not.toBeInTheDocument();
+    expect(mocks.editVariationCandidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets source tags save after this page's candidate save advances the item revision", async () => {
+    let resolveCandidate: (value: BatchResponse) => void = () => undefined;
+    mocks.editVariationCandidate.mockImplementation(
+      () => new Promise((resolve) => { resolveCandidate = resolve; }),
+    );
+    const initialItem = readyVariantItem();
+    const initial = makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 20,
+      items: [initialItem],
+    });
+    const candidateSaved = readyVariantItem({
+      contentRevision: 11,
+      updatedAt: "2026-07-03T00:00:01Z",
+      variation: {
+        ...initialItem.variation!,
+        status: "needs-validation",
+        candidate: { ...initialItem.variation!.candidate!, correctAnswer: "66" },
+        validation: null,
+        validatedRevision: null,
+      },
+    });
+    const candidateResponse = makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 21,
+      items: [candidateSaved],
+      updatedAt: "2026-07-03T00:00:01Z",
+    });
+    mocks.updateItemDraft.mockResolvedValue({ batch: makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 22,
+      items: [{
+        ...candidateSaved,
+        draft: { ...candidateSaved.draft, tags: ["math", "calculus"] },
+        updatedAt: "2026-07-03T00:00:02Z",
+      }],
+      updatedAt: "2026-07-03T00:00:02Z",
+    }) });
+    await renderAtReviewStep({ batch: initial });
+
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "66" } });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(mocks.editVariationCandidate).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), {
+      target: { value: "calculus" },
+    });
+    fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+
+    await act(async () => { resolveCandidate({ batch: candidateResponse }); });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(mocks.updateItemDraft).toHaveBeenCalledWith(
+      "batch-1",
+      "item-1",
+      expect.objectContaining({ tags: ["math", "calculus"] }),
+      11,
+    );
+    expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
+    expect(screen.getByTestId("bulk-review-answer")).toHaveValue("66");
+    expect(screen.getByTestId("bulk-review-tags-tag-calculus")).toBeInTheDocument();
+  });
+
+  it("keeps source tags when a later candidate edit saves after the source response", async () => {
+    let resolveSource: (value: BatchResponse) => void = () => undefined;
+    mocks.updateItemDraft.mockImplementation(
+      () => new Promise((resolve) => { resolveSource = resolve; }),
+    );
+    const initialItem = readyVariantItem();
+    const initial = makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 20,
+      items: [initialItem],
+    });
+    const sourceSaved = readyVariantItem({
+      draft: { ...initialItem.draft, tags: ["math", "calculus"] },
+      updatedAt: "2026-07-03T00:00:01Z",
+    });
+    mocks.editVariationCandidate.mockResolvedValue({ batch: makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 22,
+      items: [readyVariantItem({
+        ...sourceSaved,
+        contentRevision: 11,
+        updatedAt: "2026-07-03T00:00:02Z",
+        variation: {
+          ...initialItem.variation!,
+          status: "needs-validation",
+          candidate: { ...initialItem.variation!.candidate!, correctAnswer: "66" },
+          validation: null,
+          validatedRevision: null,
+        },
+      })],
+    }) });
+    await renderAtReviewStep({ batch: initial });
+
+    fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+    fireEvent.change(screen.getByTestId("bulk-review-tags-field"), {
+      target: { value: "calculus" },
+    });
+    fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(mocks.updateItemDraft).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
+    fireEvent.change(screen.getByTestId("bulk-review-answer"), { target: { value: "66" } });
+    await act(async () => { resolveSource({ batch: makeBatch({
+      ingestionMode: "transfer-variant",
+      revision: 21,
+      items: [sourceSaved],
+      updatedAt: "2026-07-03T00:00:01Z",
+    }) }); });
+    await act(async () => { vi.advanceTimersByTime(600); });
+
+    expect(mocks.editVariationCandidate).toHaveBeenCalledWith(
+      "batch-1",
+      "item-1",
+      expect.objectContaining({
+        expectedRevision: 10,
+        correctAnswer: "66",
+        tags: ["math", "calculus"],
+      }),
+    );
+    expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
   });
 
   it("routes Generate to the generate endpoint with the reviewed source and expectedRevision", async () => {

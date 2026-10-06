@@ -24,6 +24,11 @@ function bufferKey(itemId: string, target: EditTarget): string {
   return `${itemId}::${target}`;
 }
 
+function otherBufferKey(key: string): string {
+  const [itemId, target] = key.split("::") as [string, EditTarget];
+  return bufferKey(itemId, target === "source" ? "candidate" : "source");
+}
+
 function targetDraft(item: BulkItem, target: EditTarget): BulkDraft {
   if (target === "candidate" && item.variation?.candidate) {
     const candidate = item.variation.candidate;
@@ -144,6 +149,7 @@ export function useBulkReviewEditing(
           seq: number;
           revision: number;
           generation: number;
+          siblingDraft?: string;
         }
       | undefined
     >
@@ -411,6 +417,7 @@ export function useBulkReviewEditing(
           !generationChanged &&
           base &&
           !inFlightRefs.current[key] &&
+          !inFlightRefs.current[otherBufferKey(key)] &&
           (incoming.revision !== base.revision ||
             incoming.generation !== base.generation ||
             (previousServerDraft !== undefined &&
@@ -543,6 +550,47 @@ export function useBulkReviewEditing(
           previous: serverDraftRefs.current[key],
         };
         serverDraftRefs.current[key] = sentSerialized;
+        const siblingKey = otherBufferKey(key);
+        const siblingBase = draftBaseRefs.current[siblingKey];
+        if (savedItem && siblingBase && dirtyRefs.current.has(siblingKey)) {
+          const siblingTarget = target === "source" ? "candidate" : "source";
+          if (siblingTarget !== "candidate" || savedItem.variation?.candidate) {
+            const siblingStamp = targetStamp(savedItem, siblingTarget);
+            const returnedSibling = targetDraft(savedItem, siblingTarget);
+            const persistedSibling = JSON.stringify(returnedSibling);
+            const beforeSibling = sent.siblingDraft
+              ? JSON.parse(sent.siblingDraft) as BulkDraft
+              : undefined;
+            const expectedSibling = beforeSibling && JSON.stringify({
+              ...beforeSibling,
+              tags: (JSON.parse(sentSerialized) as BulkDraft).tags,
+            });
+            if (
+              siblingBase.revision === sent.revision &&
+              siblingBase.generation === siblingStamp.generation &&
+              !isStaleStamp(siblingStamp, stampRefs.current[siblingKey]) &&
+              persistedSibling === expectedSibling
+            ) {
+              draftBaseRefs.current[siblingKey] = siblingStamp;
+              stampRefs.current[siblingKey] = siblingStamp;
+              serverDraftRefs.current[siblingKey] = persistedSibling;
+              const siblingDraft = draftRefs.current[siblingKey];
+              if (
+                siblingDraft &&
+                JSON.stringify(siblingDraft.tags) === JSON.stringify(beforeSibling?.tags)
+              ) {
+                const nextDrafts = {
+                  ...draftRefs.current,
+                  [siblingKey]: { ...siblingDraft, tags: returnedSibling.tags },
+                };
+                draftRefs.current = nextDrafts;
+                setLocalDrafts(nextDrafts);
+              }
+            } else {
+              markConflict(siblingKey);
+            }
+          }
+        }
         setSaveFailures((prev) => {
           if (prev[key] === undefined) return prev;
           const next = { ...prev };
@@ -590,6 +638,7 @@ export function useBulkReviewEditing(
       const failures = saveFailuresRef.current[key] ?? 0;
       timeoutIds[key] = window.setTimeout(() => {
         if (!dirtyRefs.current.has(key) || conflictRefs.current.has(key)) return;
+        if (inFlightRefs.current[key] || inFlightRefs.current[otherBufferKey(key)]) return;
         const draft = draftRefs.current[key];
         if (!draft) return;
         const sentDraft = JSON.parse(JSON.stringify(draft)) as BulkDraft;
@@ -600,6 +649,7 @@ export function useBulkReviewEditing(
           seq,
           revision: base?.revision ?? 0,
           generation: base?.generation ?? 0,
+          siblingDraft: serverDraftRefs.current[otherBufferKey(key)],
         };
         setSavingKeys((prev) => {
           const next = new Set(prev);

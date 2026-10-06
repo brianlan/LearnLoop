@@ -213,6 +213,8 @@ export interface BulkBatch {
   id: string;
   userId: string;
   status: BatchState;
+  // Server-wide write order; older HTTP/poll responses cannot replace it.
+  revision?: number;
   ingestionMode: IngestionMode;
   images: BulkImage[];
   items: BulkItem[];
