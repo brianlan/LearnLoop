@@ -332,6 +332,15 @@ export function useBulkReviewEditing(
         ...draftRefs.current,
         [key]: { ...(draftRefs.current[key] ?? targetDraft(item, target)), ...next },
       };
+      // Tags belong to the item, so both editors see each local edit immediately.
+      if (next.tags && (target === "candidate" || item.variation?.candidate)) {
+        const siblingTarget = target === "source" ? "candidate" : "source";
+        const siblingKey = bufferKey(item.itemId, siblingTarget);
+        merged[siblingKey] = {
+          ...(merged[siblingKey] ?? targetDraft(item, siblingTarget)),
+          tags: next.tags,
+        };
+      }
       draftRefs.current = merged;
       setLocalDrafts(merged);
       const nextDirty = new Set(dirtyRefs.current).add(key);
@@ -566,7 +575,10 @@ export function useBulkReviewEditing(
               tags: (JSON.parse(sentSerialized) as BulkDraft).tags,
             });
             if (
-              siblingBase.revision === sent.revision &&
+              // Polling may have established the sibling on this save's revision.
+              (siblingBase.revision === sent.revision ||
+                (siblingBase.revision === siblingStamp.revision &&
+                  serverDraftRefs.current[siblingKey] === persistedSibling)) &&
               siblingBase.generation === siblingStamp.generation &&
               !isStaleStamp(siblingStamp, stampRefs.current[siblingKey]) &&
               persistedSibling === expectedSibling
