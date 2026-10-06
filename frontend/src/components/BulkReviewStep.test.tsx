@@ -2581,7 +2581,7 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
     expect(screen.getByTestId("bulk-review-revalidate")).toBeEnabled();
   });
 
-  it("keeps a passed item submittable across a tags-only candidate save", async () => {
+  it("keeps a passed item submittable across a tags-only source save", async () => {
     handlers.onUpdateDraft.mockResolvedValue({ item: passedItem({
       draft: { ...passedItem().draft, tags: ["math", "calculus"] },
       updatedAt: "2026-07-03T00:00:01Z",
@@ -2600,15 +2600,10 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
       expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
         "item-1",
         expect.objectContaining({ tags: ["math", "calculus"] }),
-        expect.objectContaining({ target: "candidate", expectedRevision: 2 }),
+        expect.objectContaining({ target: "source", expectedRevision: 2 }),
       );
     });
-    await act(async () => { vi.advanceTimersByTime(600); });
-    expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
-      "item-1",
-      expect.objectContaining({ tags: ["math", "calculus"] }),
-      expect.objectContaining({ target: "source", expectedRevision: 2 }),
-    );
+    expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
     expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();
   });

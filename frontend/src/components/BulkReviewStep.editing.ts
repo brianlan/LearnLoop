@@ -130,6 +130,8 @@ export function useBulkReviewEditing(
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
+  // A tag edit belongs to the item, even when only one editor needs saving.
+  const pendingTagsRefs = useRef<Record<string, string[]>>({});
   const saveFailuresRef = useRef<Record<string, number>>({});
   const conflictRefs = useRef<Set<string>>(new Set());
   const serverDraftRefs = useRef<Record<string, string>>({});
@@ -174,7 +176,9 @@ export function useBulkReviewEditing(
 
   const getDraft = useCallback(
     (item: BulkItem, target: EditTarget): BulkDraft => {
-      return localDrafts[bufferKey(item.itemId, target)] ?? targetDraft(item, target);
+      const draft = localDrafts[bufferKey(item.itemId, target)] ?? targetDraft(item, target);
+      const tags = pendingTagsRefs.current[item.itemId];
+      return tags ? { ...draft, tags } : draft;
     },
     [localDrafts],
   );
@@ -324,29 +328,30 @@ export function useBulkReviewEditing(
       ) {
         return;
       }
-      const key = bufferKey(item.itemId, target);
+      // Tags use the source endpoint, including when the candidate cannot be edited.
+      const saveTarget = next.tags !== undefined && Object.keys(next).length === 1
+        ? "source"
+        : target;
+      const key = bufferKey(item.itemId, saveTarget);
       if (!draftBaseRefs.current[key]) {
-        draftBaseRefs.current[key] = stampRefs.current[key] ?? targetStamp(item, target);
+        draftBaseRefs.current[key] = stampRefs.current[key] ?? targetStamp(item, saveTarget);
       }
+      const editedKey = bufferKey(item.itemId, target);
       const merged = {
         ...draftRefs.current,
-        [key]: { ...(draftRefs.current[key] ?? targetDraft(item, target)), ...next },
+        [editedKey]: { ...(draftRefs.current[editedKey] ?? targetDraft(item, target)), ...next },
       };
       const nextDirty = new Set(dirtyRefs.current).add(key);
-      // Tags and their pending save state belong to both editors of this item.
-      // ponytail: both targets may save the same tags; use one item-level buffer if traffic matters.
-      if (next.tags && (target === "candidate" || item.variation?.candidate)) {
+      if (next.tags !== undefined) {
+        pendingTagsRefs.current[item.itemId] = next.tags;
+      }
+      if (next.tags !== undefined && (target === "candidate" || item.variation?.candidate)) {
         const siblingTarget = target === "source" ? "candidate" : "source";
         const siblingKey = bufferKey(item.itemId, siblingTarget);
         merged[siblingKey] = {
           ...(merged[siblingKey] ?? targetDraft(item, siblingTarget)),
           tags: next.tags,
         };
-        if (!draftBaseRefs.current[siblingKey]) {
-          draftBaseRefs.current[siblingKey] =
-            stampRefs.current[siblingKey] ?? targetStamp(item, siblingTarget);
-        }
-        nextDirty.add(siblingKey);
       }
       draftRefs.current = merged;
       setLocalDrafts(merged);
@@ -457,7 +462,8 @@ export function useBulkReviewEditing(
         if (nextDrafts === undefined) {
           nextDrafts = { ...draftRefs.current };
         }
-        nextDrafts[key] = serverDraft;
+        const pendingTags = pendingTagsRefs.current[item.itemId];
+        nextDrafts[key] = pendingTags ? { ...serverDraft, tags: pendingTags } : serverDraft;
         if (!generationChanged) delete draftBaseRefs.current[key];
       }
     }
@@ -495,6 +501,12 @@ export function useBulkReviewEditing(
       for (const key of droppedKeys) {
         delete nextDrafts[key];
         delete serverDraftRefs.current[key];
+      }
+    }
+
+    for (const itemId of Object.keys(pendingTagsRefs.current)) {
+      if (!items.some((item) => item.itemId === itemId && item.status !== "deleted")) {
+        delete pendingTagsRefs.current[itemId];
       }
     }
 
@@ -565,6 +577,16 @@ export function useBulkReviewEditing(
           previous: serverDraftRefs.current[key],
         };
         serverDraftRefs.current[key] = sentSerialized;
+        const itemId = key.split("::")[0];
+        const pendingTags = pendingTagsRefs.current[itemId];
+        if (
+          target === "source" &&
+          pendingTags &&
+          JSON.stringify(pendingTags) ===
+            JSON.stringify((JSON.parse(sentSerialized) as BulkDraft).tags)
+        ) {
+          delete pendingTagsRefs.current[itemId];
+        }
         const siblingKey = otherBufferKey(key);
         const siblingBase = draftBaseRefs.current[siblingKey];
         if (savedItem && siblingBase && dirtyRefs.current.has(siblingKey)) {
@@ -605,7 +627,12 @@ export function useBulkReviewEditing(
           return next;
         });
         const currentDraft = draftRefs.current[key];
-        if (currentDraft && JSON.stringify(currentDraft) === sentSerialized) {
+        const sentDraft = JSON.parse(sentSerialized) as BulkDraft;
+        if (currentDraft && (
+          JSON.stringify(currentDraft) === sentSerialized ||
+          (target === "candidate" && pendingTagsRefs.current[itemId] &&
+            JSON.stringify({ ...currentDraft, tags: sentDraft.tags }) === sentSerialized)
+        )) {
           const nextDirty = new Set(dirtyRefs.current);
           nextDirty.delete(key);
           dirtyRefs.current = nextDirty;

@@ -482,10 +482,57 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       11,
     );
     expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
+    expect(mocks.editVariationCandidate).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
     expect(screen.getByTestId("bulk-review-answer")).toHaveValue("66");
     expect(screen.getByTestId("bulk-review-tags-tag-calculus")).toBeInTheDocument();
   });
+
+  it.each(["failed", "validating"] as const)(
+    "saves source tags without a candidate write while variation is %s",
+    async (status) => {
+      const ready = readyVariantItem();
+      const item = readyVariantItem({
+        variation: {
+          ...ready.variation!,
+          status,
+          validatedRevision: null,
+          validation: status === "failed"
+            ? { verdict: "fail", failures: [{ kind: "check", evidence: "modeCompliance" }] }
+            : null,
+        },
+      });
+      const saved = {
+        ...item,
+        draft: { ...item.draft, tags: ["math", "algebra"] },
+        updatedAt: "2026-07-03T00:00:01Z",
+      };
+      mocks.updateItemDraft.mockResolvedValue({ batch: makeBatch({
+        ingestionMode: "transfer-variant", revision: 21, items: [saved],
+      }) });
+      mocks.editVariationCandidate.mockRejectedValue(new Error("Candidate cannot be edited"));
+      await renderAtReviewStep({ batch: makeBatch({
+        ingestionMode: "transfer-variant", revision: 20, items: [item],
+      }) });
+
+      fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
+      fireEvent.change(screen.getByTestId("bulk-review-tags-field"), { target: { value: "algebra" } });
+      fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
+      await act(async () => { vi.advanceTimersByTime(1800); });
+
+      expect(mocks.updateItemDraft).toHaveBeenCalledTimes(1);
+      expect(mocks.updateItemDraft).toHaveBeenCalledWith(
+        "batch-1", "item-1", expect.objectContaining({ tags: ["math", "algebra"] }), 10,
+      );
+      expect(mocks.editVariationCandidate).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
+      if (status === "failed") {
+        expect(screen.getByTestId("bulk-review-attest-fail")).toBeEnabled();
+      }
+      fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
+      expect(screen.getByTestId("bulk-review-tags-tag-algebra")).toBeInTheDocument();
+    },
+  );
 
   it("keeps source tags when a later candidate edit saves after the source response", async () => {
     let resolveSource: (value: BatchResponse) => void = () => undefined;
@@ -553,7 +600,7 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
   it.each([
     { change: "add", initialTags: ["math"], sourceTags: ["math", "algebra"], finalTags: ["math", "algebra", "geometry"] },
     { change: "remove", initialTags: ["math", "obsolete"], sourceTags: ["math"], finalTags: ["math", "geometry"] },
-  ])("shares tag $change edits across source and candidate saves", async ({ change, initialTags, sourceTags, finalTags }) => {
+  ])("shares tag $change edits across source and candidate views", async ({ change, initialTags, sourceTags, finalTags }) => {
     let resolveFirstSource: (value: BatchResponse) => void = () => undefined;
     const initialItem = readyVariantItem({
       draft: { ...makeItem().draft, tags: initialTags },
@@ -571,9 +618,6 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       .mockResolvedValue({ batch: makeBatch({
         ingestionMode: "transfer-variant", revision: 22, items: [finalItem],
       }) });
-    mocks.editVariationCandidate.mockResolvedValue({ batch: makeBatch({
-      ingestionMode: "transfer-variant", revision: 23, items: [finalItem],
-    }) });
     await renderAtReviewStep({ batch: makeBatch({
       ingestionMode: "transfer-variant", revision: 20, items: [initialItem],
     }) });
@@ -602,10 +646,11 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       ingestionMode: "transfer-variant", revision: 21, items: [sourceSaved],
     }) }); });
     await act(async () => { vi.advanceTimersByTime(1200); });
-    await waitFor(() => { expect(mocks.editVariationCandidate).toHaveBeenCalled(); });
-    expect(mocks.editVariationCandidate).toHaveBeenLastCalledWith(
-      "batch-1", "item-1", expect.objectContaining({ tags: finalTags }),
+    await waitFor(() => { expect(mocks.updateItemDraft).toHaveBeenCalledTimes(2); });
+    expect(mocks.updateItemDraft).toHaveBeenLastCalledWith(
+      "batch-1", "item-1", expect.objectContaining({ tags: finalTags }), 10,
     );
+    expect(mocks.editVariationCandidate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("bulk-review-edit-source"));
     for (const tag of finalTags) {
       expect(screen.getByTestId(`bulk-review-tags-tag-${tag}`)).toBeInTheDocument();
@@ -636,9 +681,6 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
       .mockResolvedValue({ batch: makeBatch({
         ingestionMode: "transfer-variant", revision: 22, items: [finalItem],
       }) });
-    mocks.editVariationCandidate.mockResolvedValue({ batch: makeBatch({
-      ingestionMode: "transfer-variant", revision: 23, items: [finalItem],
-    }) });
     await renderAtReviewStep({ batch: makeBatch({
       ingestionMode: "transfer-variant", revision: 20, items: [initialItem],
     }) });
@@ -676,10 +718,11 @@ describe("BulkIngestionWizard integrated autosave characterization", () => {
     fireEvent.change(screen.getByTestId("bulk-review-tags-field"), { target: { value: "trigonometry" } });
     fireEvent.keyDown(screen.getByTestId("bulk-review-tags-field"), { key: "Enter", code: "Enter" });
     await act(async () => { vi.advanceTimersByTime(1200); });
-    await waitFor(() => { expect(mocks.editVariationCandidate).toHaveBeenCalled(); });
-    expect(mocks.editVariationCandidate).toHaveBeenLastCalledWith(
-      "batch-1", "item-1", expect.objectContaining({ tags: finalTags }),
+    await waitFor(() => { expect(mocks.updateItemDraft).toHaveBeenCalledTimes(2); });
+    expect(mocks.updateItemDraft).toHaveBeenLastCalledWith(
+      "batch-1", "item-1", expect.objectContaining({ tags: finalTags }), 10,
     );
+    expect(mocks.editVariationCandidate).not.toHaveBeenCalled();
     expect(screen.queryByTestId("bulk-review-save-status")).not.toBeInTheDocument();
   });
 
