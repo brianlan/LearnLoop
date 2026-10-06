@@ -17,10 +17,16 @@ interface TargetStamp {
   revision: number;
   generation: number;
   updatedAt: number;
+  updatedAtRaw: string;
 }
 
 function bufferKey(itemId: string, target: EditTarget): string {
   return `${itemId}::${target}`;
+}
+
+function otherBufferKey(key: string): string {
+  const [itemId, target] = key.split("::") as [string, EditTarget];
+  return bufferKey(itemId, target === "source" ? "candidate" : "source");
 }
 
 function targetDraft(item: BulkItem, target: EditTarget): BulkDraft {
@@ -56,13 +62,14 @@ function targetStamp(item: BulkItem, target: EditTarget): TargetStamp {
     generation:
       target === "candidate" ? item.variation?.generationCount ?? 0 : 0,
     updatedAt: Date.parse(item.updatedAt) || 0,
+    updatedAtRaw: item.updatedAt,
   };
 }
 
 // An older snapshot (stale save or poll response) never replaces what this
 // buffer has already seen.
-// ponytail: two writes sharing one millisecond fall through to content
-// comparison below; exact ordering needs a server sequence number.
+// ponytail: equal revisions and exact timestamps cannot be ordered;
+// a server sequence number would resolve that case.
 function isStaleStamp(
   incoming: TargetStamp,
   current: TargetStamp | undefined,
@@ -70,6 +77,8 @@ function isStaleStamp(
   if (!current) return false;
   return (
     incoming.updatedAt < current.updatedAt ||
+    (incoming.updatedAt === current.updatedAt &&
+      incoming.updatedAtRaw < current.updatedAtRaw) ||
     incoming.revision < current.revision ||
     incoming.generation < current.generation
   );
@@ -94,10 +103,7 @@ export interface ReviewEditingCallbacks {
     itemId: string,
     changes: Partial<BulkDraft>,
     options: { target: EditTarget; expectedRevision: number },
-  ) =>
-    | void
-    | { contentRevision: number }
-    | Promise<void | { contentRevision: number }>;
+  ) => void | { item: BulkItem } | Promise<void | { item: BulkItem }>;
   onGenerate: (
     itemId: string,
     original: VariationOriginalPayload,
@@ -121,11 +127,23 @@ export function useBulkReviewEditing(
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
   const [saveFailures, setSaveFailures] = useState<Record<string, number>>({});
+  const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
+  // A tag edit belongs to the item, even when only one editor needs saving.
+  const pendingTagsRefs = useRef<Record<string, string[]>>({});
   const saveFailuresRef = useRef<Record<string, number>>({});
+  const conflictRefs = useRef<Set<string>>(new Set());
   const serverDraftRefs = useRef<Record<string, string>>({});
+  // A save can resolve before its returned batch reaches props. Ignore the
+  // previous prop snapshot until the acknowledged content arrives.
+  const acknowledgedDraftRefs = useRef<
+    Record<string, { saved: string; previous?: string }>
+  >({});
   const stampRefs = useRef<Record<string, TargetStamp>>({});
+  // The revision used by a dirty full-form draft stays fixed until its own
+  // save succeeds; observing another writer's revision cannot rebase it.
+  const draftBaseRefs = useRef<Record<string, TargetStamp>>({});
   const inFlightRefs = useRef<
     Record<
       string,
@@ -133,12 +151,14 @@ export function useBulkReviewEditing(
           seq: number;
           revision: number;
           generation: number;
+          siblingDraft?: string;
         }
       | undefined
     >
   >({});
   const saveSeqRef = useRef(0);
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
+  const generatingRefs = useRef<Set<string>>(new Set());
   const [generateErrors, setGenerateErrors] = useState<Record<string, string>>(
     {},
   );
@@ -156,9 +176,32 @@ export function useBulkReviewEditing(
 
   const getDraft = useCallback(
     (item: BulkItem, target: EditTarget): BulkDraft => {
-      return localDrafts[bufferKey(item.itemId, target)] ?? targetDraft(item, target);
+      const draft = localDrafts[bufferKey(item.itemId, target)] ?? targetDraft(item, target);
+      const tags = pendingTagsRefs.current[item.itemId];
+      return tags ? { ...draft, tags } : draft;
     },
     [localDrafts],
+  );
+
+  const cancelPendingGenerate = useCallback((key: string) => {
+    if (!pendingGenerateRef.current.delete(key)) return;
+    generatingRefs.current.delete(key.split("::")[0]);
+    setGeneratingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(key.split("::")[0]);
+      return next;
+    });
+  }, []);
+
+  const markConflict = useCallback(
+    (key: string) => {
+      if (conflictRefs.current.has(key)) return;
+      const next = new Set(conflictRefs.current).add(key);
+      conflictRefs.current = next;
+      setConflictKeys(next);
+      cancelPendingGenerate(key);
+    },
+    [cancelPendingGenerate],
   );
 
   const firePendingGenerate = useCallback(
@@ -175,6 +218,7 @@ export function useBulkReviewEditing(
           }));
         })
         .finally(() => {
+          generatingRefs.current.delete(itemId);
           setGeneratingIds((prev) => {
             const next = new Set(prev);
             next.delete(itemId);
@@ -190,11 +234,12 @@ export function useBulkReviewEditing(
       const { itemId } = item;
       const sourceKey = bufferKey(itemId, "source");
       if (
-        generatingIds.has(itemId) ||
+        generatingRefs.current.has(itemId) ||
         pendingGenerateRef.current.has(sourceKey)
       ) {
         return;
       }
+      generatingRefs.current.add(itemId);
       // Snapshot the reviewed source at click time.
       pendingGenerateRef.current.set(
         sourceKey,
@@ -212,7 +257,7 @@ export function useBulkReviewEditing(
       }
       // Otherwise the save pipeline fires it once the reviewed save settles.
     },
-    [dirtyKeys, firePendingGenerate, getDraft, generatingIds, savingKeys],
+    [dirtyKeys, firePendingGenerate, getDraft, savingKeys],
   );
 
   const handleRevalidate = useCallback(
@@ -276,35 +321,103 @@ export function useBulkReviewEditing(
 
   const updateDraft = useCallback(
     (item: BulkItem, target: EditTarget, next: Partial<BulkDraft>) => {
-      const key = bufferKey(item.itemId, target);
+      if (
+        target === "source" &&
+        generatingRefs.current.has(item.itemId) &&
+        Object.keys(next).some((field) => field !== "tags")
+      ) {
+        return;
+      }
+      // Tags use the source endpoint, including when the candidate cannot be edited.
+      const saveTarget = next.tags !== undefined && Object.keys(next).length === 1
+        ? "source"
+        : target;
+      const key = bufferKey(item.itemId, saveTarget);
+      if (!draftBaseRefs.current[key]) {
+        draftBaseRefs.current[key] = stampRefs.current[key] ?? targetStamp(item, saveTarget);
+      }
+      const editedKey = bufferKey(item.itemId, target);
       const merged = {
         ...draftRefs.current,
-        [key]: { ...(draftRefs.current[key] ?? targetDraft(item, target)), ...next },
+        [editedKey]: { ...(draftRefs.current[editedKey] ?? targetDraft(item, target)), ...next },
       };
+      const nextDirty = new Set(dirtyRefs.current).add(key);
+      if (next.tags !== undefined) {
+        pendingTagsRefs.current[item.itemId] = next.tags;
+      }
+      if (next.tags !== undefined && (target === "candidate" || item.variation?.candidate)) {
+        const siblingTarget = target === "source" ? "candidate" : "source";
+        const siblingKey = bufferKey(item.itemId, siblingTarget);
+        merged[siblingKey] = {
+          ...(merged[siblingKey] ?? targetDraft(item, siblingTarget)),
+          tags: next.tags,
+        };
+      }
       draftRefs.current = merged;
       setLocalDrafts(merged);
-      setDirtyKeys((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.add(key);
-        dirtyRefs.current = nextSet;
-        return nextSet;
-      });
+      dirtyRefs.current = nextDirty;
+      setDirtyKeys(nextDirty);
     },
     [],
   );
 
   useEffect(() => {
     let nextDrafts: Record<string, BulkDraft> | undefined;
+    const resetKeys = new Set<string>();
+    const droppedKeys = new Set<string>();
+
+    const hasTargetState = (key: string) =>
+      draftRefs.current[key] !== undefined ||
+      serverDraftRefs.current[key] !== undefined ||
+      draftBaseRefs.current[key] !== undefined ||
+      dirtyRefs.current.has(key) ||
+      savingKeys.has(key) ||
+      saveFailuresRef.current[key] !== undefined ||
+      conflictRefs.current.has(key) ||
+      inFlightRefs.current[key] !== undefined;
 
     for (const item of items) {
       for (const target of TARGETS) {
-        if (target === "candidate" && !item.variation?.candidate) continue;
         const key = bufferKey(item.itemId, target);
         const incoming = targetStamp(item, target);
         const previousStamp = stampRefs.current[key];
         // A stale save/poll response never replaces newer state.
         if (isStaleStamp(incoming, previousStamp)) continue;
+
+        const acknowledged = acknowledgedDraftRefs.current[key];
+        if (acknowledged) {
+          const incomingDraft =
+            item.status === "deleted" ||
+            (target === "candidate" && !item.variation?.candidate)
+              ? undefined
+              : JSON.stringify(targetDraft(item, target));
+          if (incomingDraft === acknowledged.saved) {
+            delete acknowledgedDraftRefs.current[key];
+          } else if (
+            incomingDraft === acknowledged.previous &&
+            previousStamp &&
+            incoming.revision === previousStamp.revision &&
+            incoming.generation === previousStamp.generation &&
+            incoming.updatedAt === previousStamp.updatedAt &&
+            incoming.updatedAtRaw === previousStamp.updatedAtRaw
+          ) {
+            continue;
+          } else {
+            delete acknowledgedDraftRefs.current[key];
+          }
+        }
         stampRefs.current[key] = incoming;
+
+        if (
+          item.status === "deleted" ||
+          (target === "candidate" && !item.variation?.candidate)
+        ) {
+          if (hasTargetState(key)) {
+            resetKeys.add(key);
+            droppedKeys.add(key);
+          }
+          continue;
+        }
 
         const serverDraft = targetDraft(item, target);
         const serializedServerDraft = JSON.stringify(serverDraft);
@@ -317,6 +430,21 @@ export function useBulkReviewEditing(
           target === "candidate" &&
           previousStamp !== undefined &&
           incoming.generation !== previousStamp.generation;
+        if (generationChanged) resetKeys.add(key);
+
+        const base = draftBaseRefs.current[key];
+        if (
+          !generationChanged &&
+          base &&
+          !inFlightRefs.current[key] &&
+          !inFlightRefs.current[otherBufferKey(key)] &&
+          (incoming.revision !== base.revision ||
+            incoming.generation !== base.generation ||
+            (previousServerDraft !== undefined &&
+              previousServerDraft !== serializedServerDraft))
+        ) {
+          markConflict(key);
+        }
 
         if (!generationChanged && previousServerDraft === serializedServerDraft) {
           continue;
@@ -325,7 +453,8 @@ export function useBulkReviewEditing(
           !generationChanged &&
           (dirtyRefs.current.has(key) ||
             savingKeys.has(key) ||
-            saveFailuresRef.current[key] !== undefined)
+            saveFailuresRef.current[key] !== undefined ||
+            conflictRefs.current.has(key))
         ) {
           continue;
         }
@@ -333,21 +462,51 @@ export function useBulkReviewEditing(
         if (nextDrafts === undefined) {
           nextDrafts = { ...draftRefs.current };
         }
-        nextDrafts[key] = serverDraft;
+        const pendingTags = pendingTagsRefs.current[item.itemId];
+        nextDrafts[key] = pendingTags ? { ...serverDraft, tags: pendingTags } : serverDraft;
+        if (!generationChanged) delete draftBaseRefs.current[key];
+      }
+    }
 
-        if (generationChanged) {
-          const nextDirty = new Set(dirtyRefs.current);
-          nextDirty.delete(key);
-          dirtyRefs.current = nextDirty;
-          setDirtyKeys(nextDirty);
-          setSaveFailures((prev) => {
-            if (prev[key] === undefined) return prev;
-            const next = { ...prev };
-            delete next[key];
-            saveFailuresRef.current = next;
-            return next;
-          });
-        }
+    if (resetKeys.size > 0) {
+      for (const key of resetKeys) {
+        inFlightRefs.current[key] = undefined;
+        delete draftBaseRefs.current[key];
+        delete acknowledgedDraftRefs.current[key];
+        cancelPendingGenerate(key);
+      }
+      setDirtyKeys((prev) => {
+        const next = new Set([...prev].filter((key) => !resetKeys.has(key)));
+        dirtyRefs.current = next;
+        return next;
+      });
+      setSavingKeys(
+        (prev) => new Set([...prev].filter((key) => !resetKeys.has(key))),
+      );
+      setSaveFailures((prev) => {
+        const next = { ...prev };
+        for (const key of resetKeys) delete next[key];
+        saveFailuresRef.current = next;
+        return next;
+      });
+      setConflictKeys((prev) => {
+        const next = new Set([...prev].filter((key) => !resetKeys.has(key)));
+        conflictRefs.current = next;
+        return next;
+      });
+    }
+
+    if (droppedKeys.size > 0) {
+      nextDrafts ??= { ...draftRefs.current };
+      for (const key of droppedKeys) {
+        delete nextDrafts[key];
+        delete serverDraftRefs.current[key];
+      }
+    }
+
+    for (const itemId of Object.keys(pendingTagsRefs.current)) {
+      if (!items.some((item) => item.itemId === itemId && item.status !== "deleted")) {
+        delete pendingTagsRefs.current[itemId];
       }
     }
 
@@ -355,7 +514,7 @@ export function useBulkReviewEditing(
       draftRefs.current = nextDrafts;
       setLocalDrafts(nextDrafts);
     }
-  }, [items, savingKeys]);
+  }, [items, savingKeys, cancelPendingGenerate, markConflict]);
 
   useEffect(() => {
     const timeoutIds: Record<string, number> = {};
@@ -365,7 +524,8 @@ export function useBulkReviewEditing(
       seq: number,
       outcome: "success" | "failure",
       sentSerialized: string,
-      result?: void | { contentRevision: number },
+      result?: void | { item: BulkItem },
+      error?: unknown,
     ) => {
       const sent = inFlightRefs.current[key];
       if (!sent || sent.seq !== seq) return;
@@ -376,18 +536,89 @@ export function useBulkReviewEditing(
         return next;
       });
 
-      // Response-ordering guard keyed by target + version: a response for an
-      // older candidate version is ignored, newer state wins.
       const stamp = stampRefs.current[key];
+      const savedItem = result && typeof result === "object" ? result.item : undefined;
+      const target = key.split("::")[1] as EditTarget;
+      const returnedStamp = savedItem && targetStamp(savedItem, target);
+      const savedRevision = returnedStamp?.revision ?? sent.revision;
+      // An observed version beyond this save's own result belongs to another
+      // write. Keep the local draft, but do not silently rebase its full form.
       if (
-        stamp &&
-        (stamp.revision !== sent.revision ||
-          stamp.generation !== sent.generation)
+        (stamp &&
+          (stamp.revision > savedRevision ||
+            stamp.generation !== sent.generation ||
+            (returnedStamp &&
+              !isStaleStamp(stamp, returnedStamp) &&
+              serverDraftRefs.current[key] !== sentSerialized))) ||
+        (savedItem &&
+          (savedItem.status === "deleted" ||
+            returnedStamp!.generation !== sent.generation ||
+            savedRevision > sent.revision + 1 ||
+            JSON.stringify(targetDraft(savedItem, target)) !== sentSerialized))
       ) {
+        markConflict(key);
         return;
       }
 
       if (outcome === "success") {
+        const savedStamp =
+          returnedStamp && (!stamp || !isStaleStamp(returnedStamp, stamp))
+            ? returnedStamp
+            : {
+                revision: savedRevision,
+                generation: sent.generation,
+                updatedAt: stamp?.updatedAt ?? 0,
+                updatedAtRaw: stamp?.updatedAtRaw ?? "",
+              };
+        draftBaseRefs.current[key] = savedStamp;
+        stampRefs.current[key] = savedStamp;
+        acknowledgedDraftRefs.current[key] = {
+          saved: sentSerialized,
+          previous: serverDraftRefs.current[key],
+        };
+        serverDraftRefs.current[key] = sentSerialized;
+        const itemId = key.split("::")[0];
+        const pendingTags = pendingTagsRefs.current[itemId];
+        if (
+          target === "source" &&
+          pendingTags &&
+          JSON.stringify(pendingTags) ===
+            JSON.stringify((JSON.parse(sentSerialized) as BulkDraft).tags)
+        ) {
+          delete pendingTagsRefs.current[itemId];
+        }
+        const siblingKey = otherBufferKey(key);
+        const siblingBase = draftBaseRefs.current[siblingKey];
+        if (savedItem && siblingBase && dirtyRefs.current.has(siblingKey)) {
+          const siblingTarget = target === "source" ? "candidate" : "source";
+          if (siblingTarget !== "candidate" || savedItem.variation?.candidate) {
+            const siblingStamp = targetStamp(savedItem, siblingTarget);
+            const returnedSibling = targetDraft(savedItem, siblingTarget);
+            const persistedSibling = JSON.stringify(returnedSibling);
+            const beforeSibling = sent.siblingDraft
+              ? JSON.parse(sent.siblingDraft) as BulkDraft
+              : undefined;
+            const expectedSibling = beforeSibling && JSON.stringify({
+              ...beforeSibling,
+              tags: (JSON.parse(sentSerialized) as BulkDraft).tags,
+            });
+            if (
+              // Polling may have established the sibling on this save's revision.
+              (siblingBase.revision === sent.revision ||
+                (siblingBase.revision === siblingStamp.revision &&
+                  serverDraftRefs.current[siblingKey] === persistedSibling)) &&
+              siblingBase.generation === siblingStamp.generation &&
+              !isStaleStamp(siblingStamp, stampRefs.current[siblingKey]) &&
+              persistedSibling === expectedSibling
+            ) {
+              draftBaseRefs.current[siblingKey] = siblingStamp;
+              stampRefs.current[siblingKey] = siblingStamp;
+              serverDraftRefs.current[siblingKey] = persistedSibling;
+            } else {
+              markConflict(siblingKey);
+            }
+          }
+        }
         setSaveFailures((prev) => {
           if (prev[key] === undefined) return prev;
           const next = { ...prev };
@@ -395,35 +626,37 @@ export function useBulkReviewEditing(
           saveFailuresRef.current = next;
           return next;
         });
-        setDirtyKeys((prevDirty) => {
-          const nextDirty = new Set(prevDirty);
-          if (
-            JSON.stringify(draftRefs.current[key]) === sentSerialized
-          ) {
-            nextDirty.delete(key);
-          }
+        const currentDraft = draftRefs.current[key];
+        const sentDraft = JSON.parse(sentSerialized) as BulkDraft;
+        if (currentDraft && (
+          JSON.stringify(currentDraft) === sentSerialized ||
+          (target === "candidate" && pendingTagsRefs.current[itemId] &&
+            JSON.stringify({ ...currentDraft, tags: sentDraft.tags }) === sentSerialized)
+        )) {
+          const nextDirty = new Set(dirtyRefs.current);
+          nextDirty.delete(key);
           dirtyRefs.current = nextDirty;
-          return nextDirty;
-        });
-        // The reviewed SOURCE save settled: confirm the queued Generate with
-        // the post-save revision (falls back to the sent revision for saves
-        // that do not bump contentRevision, e.g. tag-only edits). Candidate
-        // saves pass their own key and never match the pending entry.
-        firePendingGenerate(
-          key,
-          result && typeof result === "object"
-            ? result.contentRevision
-            : sent.revision,
-        );
+          setDirtyKeys(nextDirty);
+          delete draftBaseRefs.current[key];
+          const confirmed = pendingGenerateRef.current.get(key);
+          if (
+            confirmed &&
+            JSON.stringify(sourcePayloadFromDraft(currentDraft)) ===
+              JSON.stringify(confirmed)
+          ) {
+            firePendingGenerate(key, savedRevision);
+          }
+        }
       } else {
-        // A failed SOURCE save prevents a stale Generate; a failed candidate
-        // save cannot cancel it.
-        if (pendingGenerateRef.current.delete(key)) {
-          setGeneratingIds((prev) => {
-            const next = new Set(prev);
-            next.delete(key.split("::")[0]);
-            return next;
-          });
+        cancelPendingGenerate(key);
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "REVISION_MISMATCH"
+        ) {
+          markConflict(key);
+          return;
         }
         setSaveFailures((prev) => {
           const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
@@ -437,16 +670,19 @@ export function useBulkReviewEditing(
       window.clearTimeout(timeoutIds[key]);
       const failures = saveFailuresRef.current[key] ?? 0;
       timeoutIds[key] = window.setTimeout(() => {
+        if (!dirtyRefs.current.has(key) || conflictRefs.current.has(key)) return;
+        if (inFlightRefs.current[key] || inFlightRefs.current[otherBufferKey(key)]) return;
         const draft = draftRefs.current[key];
         if (!draft) return;
         const sentDraft = JSON.parse(JSON.stringify(draft)) as BulkDraft;
         const sentSerialized = JSON.stringify(sentDraft);
-        const stamp = stampRefs.current[key];
+        const base = draftBaseRefs.current[key] ?? stampRefs.current[key];
         const seq = (saveSeqRef.current += 1);
         inFlightRefs.current[key] = {
           seq,
-          revision: stamp?.revision ?? 0,
-          generation: stamp?.generation ?? 0,
+          revision: base?.revision ?? 0,
+          generation: base?.generation ?? 0,
+          siblingDraft: serverDraftRefs.current[otherBufferKey(key)],
         };
         setSavingKeys((prev) => {
           const next = new Set(prev);
@@ -457,16 +693,18 @@ export function useBulkReviewEditing(
         Promise.resolve(
           onUpdateDraft(itemId, sentDraft, {
             target,
-            expectedRevision: stamp?.revision ?? 0,
+            expectedRevision: base?.revision ?? 0,
           }),
         )
           .then((result) => finishSave(key, seq, "success", sentSerialized, result))
-          .catch(() => finishSave(key, seq, "failure", sentSerialized));
+          .catch((error: unknown) =>
+            finishSave(key, seq, "failure", sentSerialized, undefined, error),
+          );
       }, Math.min(500 * 2 ** failures, 4000));
     };
 
     dirtyKeys.forEach((key) => {
-      if (!savingKeys.has(key)) {
+      if (!savingKeys.has(key) && !conflictKeys.has(key)) {
         scheduleSave(key);
       }
     });
@@ -474,7 +712,15 @@ export function useBulkReviewEditing(
     return () => {
       Object.values(timeoutIds).forEach((id) => window.clearTimeout(id));
     };
-  }, [dirtyKeys, savingKeys, firePendingGenerate, onUpdateDraft]);
+  }, [
+    dirtyKeys,
+    savingKeys,
+    conflictKeys,
+    firePendingGenerate,
+    cancelPendingGenerate,
+    markConflict,
+    onUpdateDraft,
+  ]);
 
   function actionStateFor(item: BulkItem, isEditable: boolean, isLoading: boolean) {
     const itemPrefix = item.itemId + "::";
@@ -482,13 +728,16 @@ export function useBulkReviewEditing(
     const candidateKey = bufferKey(item.itemId, "candidate");
     const itemSaving = [...savingKeys].some((key) => key.startsWith(itemPrefix));
     const hasSaveFailed = Object.keys(saveFailures).some((key) =>
-      key.startsWith(itemPrefix),
+      key.startsWith(itemPrefix) && !conflictKeys.has(key),
     );
+    const hasConflict = [...conflictKeys].some((key) => key.startsWith(itemPrefix));
     const sourceGaps = getRequiredFieldGaps(getDraft(item, "source"));
     const sourceSaveFailed = saveFailures[sourceKey] !== undefined;
+    const sourceConflict = conflictKeys.has(sourceKey);
     const sourceSavePending = dirtyKeys.has(sourceKey) || savingKeys.has(sourceKey);
     const candidateSavePending =
       dirtyKeys.has(candidateKey) || savingKeys.has(candidateKey);
+    const candidateConflict = conflictKeys.has(candidateKey);
     const isActionWorking = isLoading || itemSaving;
     const generating = generatingIds.has(item.itemId);
     const revalidating = revalidatingIds.has(item.itemId);
@@ -500,6 +749,8 @@ export function useBulkReviewEditing(
     } else if (sourceGaps.text || sourceGaps.problemType || sourceGaps.correctAnswer) {
       generateDisabledReason =
         "Source needs text, problem type and a confirmed answer";
+    } else if (sourceConflict) {
+      generateDisabledReason = "Source changed elsewhere; copy your edits and reload";
     } else if (sourceSaveFailed) {
       generateDisabledReason = "Draft save failed, retrying";
     } else if (generating) {
@@ -517,22 +768,28 @@ export function useBulkReviewEditing(
       ? ""
       : !isEditable
         ? "Item is not editable"
+        : candidateConflict
+          ? "Candidate changed elsewhere; copy your edits and reload"
+          : isActionWorking
+            ? "Draft save is still settling"
+            : candidateSavePending
+              ? "Candidate changes are still saving"
+              : "";
+    const attestDisabledReason = !isEditable
+      ? "Item is not editable"
+      : candidateConflict
+        ? "Candidate changed elsewhere; copy your edits and reload"
         : isActionWorking
           ? "Draft save is still settling"
           : candidateSavePending
             ? "Candidate changes are still saving"
             : "";
-    const attestDisabledReason = !isEditable
-      ? "Item is not editable"
-      : isActionWorking
-        ? "Draft save is still settling"
-        : candidateSavePending
-          ? "Candidate changes are still saving"
-          : "";
 
     return {
       isActionWorking,
       hasSaveFailed,
+      hasConflict,
+      sourceLocked: generating,
       generateDisabledReason,
       generateHint,
       generateError: generateErrors[item.itemId],
@@ -552,8 +809,15 @@ export function useBulkReviewEditing(
     handleRevalidate,
     handleAttest,
     actionStateFor,
-    failedItemIds: new Set(Object.keys(saveFailures).map((key) => key.split("::")[0])),
-    hasPendingSaves: dirtyKeys.size > 0 || savingKeys.size > 0,
-    hasSaveFailures: Object.keys(saveFailures).length > 0,
+    failedItemIds: new Set(
+      Object.keys(saveFailures)
+        .filter((key) => !conflictKeys.has(key))
+        .map((key) => key.split("::")[0]),
+    ),
+    conflictedItemIds: new Set([...conflictKeys].map((key) => key.split("::")[0])),
+    hasPendingSaves:
+      [...dirtyKeys].some((key) => !conflictKeys.has(key)) || savingKeys.size > 0,
+    hasSaveFailures: Object.keys(saveFailures).some((key) => !conflictKeys.has(key)),
+    hasConflicts: conflictKeys.size > 0,
   };
 }

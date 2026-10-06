@@ -177,8 +177,10 @@ export function BulkReviewStep({
     handleAttest,
     actionStateFor,
     failedItemIds,
+    conflictedItemIds,
     hasPendingSaves,
     hasSaveFailures,
+    hasConflicts,
   } = useBulkReviewEditing(items, {
     onUpdateDraft,
     onGenerate,
@@ -311,6 +313,8 @@ export function BulkReviewStep({
   const {
     isActionWorking,
     hasSaveFailed,
+    hasConflict,
+    sourceLocked,
     generateDisabledReason,
     generateHint,
     generateError,
@@ -322,6 +326,8 @@ export function BulkReviewStep({
     attestDisabledReason,
   } = actionStateFor(selectedItem, isEditable, isLoading);
   const isFieldDisabled = !isEditable || isLoading;
+  const isSemanticFieldDisabled =
+    isFieldDisabled || (activeTarget === "source" && sourceLocked);
   const variation = selectedItem.variation;
   const variationNeedsValidation = variation?.status === "needs-validation";
   const stalePassReport =
@@ -379,6 +385,9 @@ export function BulkReviewStep({
   }
   if (hasSaveFailures) {
     continueDisabledReasons.push("Draft save failed, retrying");
+  }
+  if (hasConflicts) {
+    continueDisabledReasons.push("Draft changed elsewhere; copy your edits and reload");
   }
   const canContinue = continueDisabledReasons.length === 0;
 
@@ -479,6 +488,12 @@ export function BulkReviewStep({
                       (save failed)
                     </span>
                   )}
+                  {conflictedItemIds.has(item.itemId) && (
+                    <span style={{ fontSize: "0.85em", opacity: 0.8 }}>
+                      {" "}
+                      (conflict)
+                    </span>
+                  )}
                 </button>
               </li>
             ))}
@@ -506,7 +521,14 @@ export function BulkReviewStep({
                   {variationStatusLabel(variation.status)}
                 </span>
               )}
-              {hasSaveFailed && (
+              {hasConflict ? (
+                <span
+                  data-testid="bulk-review-save-status"
+                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
+                >
+                  Draft changed elsewhere. Copy your edits, then reload to resolve.
+                </span>
+              ) : hasSaveFailed && (
                 <span
                   data-testid="bulk-review-save-status"
                   style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
@@ -733,7 +755,7 @@ export function BulkReviewStep({
                 onChange={(event) =>
                   updateDraft(selectedItem, activeTarget, { text: event.target.value })
                 }
-                disabled={isFieldDisabled}
+                disabled={isSemanticFieldDisabled}
                 rows={4}
                 style={{
                   width: "100%",
@@ -782,7 +804,7 @@ export function BulkReviewStep({
                       problemType: event.target.value,
                     })
                   }
-                  disabled={isFieldDisabled}
+                  disabled={isSemanticFieldDisabled}
                   style={{
                     width: "100%",
                     border: selectedRequiredFieldGaps.problemType
@@ -808,7 +830,7 @@ export function BulkReviewStep({
                       subject: event.target.value,
                     })
                   }
-                  disabled={isFieldDisabled || activeTarget === "candidate"}
+                  disabled={isSemanticFieldDisabled || activeTarget === "candidate"}
                   title={
                     activeTarget === "candidate"
                       ? "Candidates share the source subject"
@@ -836,7 +858,7 @@ export function BulkReviewStep({
                     correctAnswer: event.target.value,
                   })
                 }
-                disabled={isFieldDisabled}
+                disabled={isSemanticFieldDisabled}
                 style={{
                   width: "100%",
                   border: selectedRequiredFieldGaps.correctAnswer
@@ -856,7 +878,7 @@ export function BulkReviewStep({
                     graphDsl: event.target.value,
                   })
                 }
-                disabled={isFieldDisabled}
+                disabled={isSemanticFieldDisabled}
                 rows={10}
                 style={{
                   width: "100%",

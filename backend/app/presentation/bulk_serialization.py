@@ -57,6 +57,7 @@ class BatchPayload(BaseModel):
     id: str
     userId: str
     status: str
+    revision: int = 0
     ingestionMode: str | None = None
     images: list[ImageResponse]
     items: list[ItemResponse]
@@ -174,6 +175,7 @@ def serialize_batch(batch: Document, *, include_deleted: bool = False) -> dict[s
             "id": batch_id,
             "userId": str(batch["userId"]),
             "status": batch["status"],
+            "revision": batch.get("revision", 0),
             "ingestionMode": batch.get("ingestionMode") or "original",
             "images": [_serialize_image(image, batch_id=batch_id) for image in images],
             "items": [_serialize_item(item, batch_id=batch_id) for item in items],

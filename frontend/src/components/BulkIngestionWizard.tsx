@@ -127,8 +127,17 @@ export function BulkIngestionWizard({
   const [error, setError] = useState<string>("");
   const [uploadError, setUploadError] = useState<string>("");
   const extractionStartedForBatch = useRef<Set<string>>(new Set());
+  const latestBatchRef = useRef<BulkBatch | null>(null);
 
   const setBatchAndStep = useCallback((nextBatch: BulkBatch) => {
+    const latest = latestBatchRef.current;
+    if (
+      latest?.id === nextBatch.id &&
+      latest.revision !== undefined &&
+      nextBatch.revision !== undefined &&
+      nextBatch.revision < latest.revision
+    ) return;
+    latestBatchRef.current = nextBatch;
     setBatch(nextBatch);
     setStep((currentStep) => {
       if (currentStep === "submit" && canPreserveSubmitStep(nextBatch)) {
@@ -189,6 +198,7 @@ export function BulkIngestionWizard({
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 404) {
+          latestBatchRef.current = null;
           setBatch(null);
           setStep("upload");
           setError("");
@@ -224,6 +234,7 @@ export function BulkIngestionWizard({
   // is shown before the next batch is created (mode always precedes
   // creation and defaults back to Original).
   const handleStartNewBatch = useCallback(() => {
+    latestBatchRef.current = null;
     setBatch(null);
     setStep("upload");
     setMode("original");
@@ -388,12 +399,11 @@ export function BulkIngestionWizard({
                 options.expectedRevision,
               );
         setBatchAndStep(response.batch);
-        // The review step needs the post-save revision to confirm Generate.
-        return {
-          contentRevision:
-            response.batch.items.find((item) => item.itemId === itemId)
-              ?.contentRevision ?? options.expectedRevision,
-        };
+        // The batch read can include another write after this save. Return its
+        // content too, so the editor can reject a revision it did not save.
+        const item = response.batch.items.find((entry) => entry.itemId === itemId);
+        if (!item) throw new Error("Saved item missing from batch response");
+        return { item };
       } catch (err) {
         if (isBatchExpiredError(err)) {
           await handleExpiredBatch();

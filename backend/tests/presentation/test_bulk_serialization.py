@@ -173,10 +173,11 @@ def test_serialize_batch_complete_shape():
 
 def test_serialize_batch_validates_as_batch_response():
     """The serialized dict must be accepted by the BatchResponse model."""
-    batch = _make_batch()
+    batch = _make_batch(revision=7)
     result = serialize_batch(batch)
     response = BatchResponse(**result)
     assert response.batch.id == BATCH_ID_STR
+    assert response.batch.revision == 7
 
 
 # ---------------------------------------------------------------------------
