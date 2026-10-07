@@ -1442,12 +1442,14 @@ async def edit_variation_candidate(
     expected_revision: int,
     now: datetime,
 ) -> None:
-    """Edit a ready/needs-validation candidate.
+    """Edit a ready/needs-validation/failed candidate.
 
     A semantic candidate change enters ``needs-validation`` and clears the
     current approval; tags alone never invalidate (they live in the shared
     ``item.draft.tags``). A mismatched candidate type is preserved on purpose
-    so validation can FAIL with evidence.
+    so validation can FAIL with evidence. A ``failed`` item may be edited
+    (#665): fixing the standard answer after an answer-kind FAIL re-enters
+    needs-validation with the stale FAIL report retained.
     """
     collection = _collection(database)
     allowed = ("text", "problemType", "graphDsl", "correctAnswer")
@@ -1496,6 +1498,7 @@ async def edit_variation_candidate(
                             "$in": [
                                 VariationStatus.READY.value,
                                 VariationStatus.NEEDS_VALIDATION.value,
+                                VariationStatus.FAILED.value,
                             ]
                         },
                         **_ITEM_ACTIONABLE_PREDICATE,
@@ -1578,9 +1581,10 @@ async def attest_variation_validation(
     two eligibility branches under a top-level ``$or``, both pinned on the
     item id, current revision and an actionable item: (a) needs-validation
     with a stored PASS report (#648 stale-PASS); (b) needs-validation or
-    failed with a FAIL whose failures are all check-kind — validator
-    judgment the teacher may override; any non-check (or kind-less legacy)
-    failure entry fails the branch (#658). ``validatedRevision`` stays None
+    failed with a FAIL whose failures are all check- or answer-kind —
+    validator judgment or answer comparison the teacher may override; any
+    non-check/answer (or kind-less legacy) failure entry fails the branch
+    (#658, #665). ``validatedRevision`` stays None
     so the two admission branches (validator-covered vs user-attested)
     remain mutually exclusive. The stored report is never mutated; the one
     exception is the startup kind-only legacy backfill, which retags
@@ -1623,7 +1627,9 @@ async def attest_variation_validation(
                             "variation.validation.failures.0": {"$exists": True},
                             "variation.validation.failures": {
                                 "$not": {
-                                    "$elemMatch": {"kind": {"$ne": "check"}}
+                                    "$elemMatch": {
+                                        "kind": {"$nin": ["check", "answer"]}
+                                    }
                                 }
                             },
                         },

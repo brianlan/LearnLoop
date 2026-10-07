@@ -456,9 +456,10 @@ def test_graph_parity_with_matching_graphs_passes_gate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Failure-kind split and attestation eligibility (issue #658).
-# Machines own correctness (answer/content kinds are never overridable);
-# humans own judgment (check-kind failures may be attested away).
+# Failure-kind split and attestation eligibility (issues #658, #665).
+# Machines provide correctness evidence (answer/check kinds are attestable);
+# humans own the final call. Content kinds are verified facts and are never
+# overridable.
 # ---------------------------------------------------------------------------
 
 
@@ -552,10 +553,21 @@ def test_is_attestable_truth_table() -> None:
         ],
     }
     assert is_attestable(multi_check) is True
-    # Any non-check failure makes the set non-attestable.
+    # Answer-only FAIL: the #665 answer-override path.
     assert is_attestable(
         {"verdict": "fail", "failures": [{"kind": "answer", "evidence": "a"}]}
-    ) is False
+    ) is True
+    # Check + answer mix: attestable in one click (#665).
+    assert is_attestable(
+        {
+            "verdict": "fail",
+            "failures": [
+                {"kind": "check", "evidence": "a"},
+                {"kind": "answer", "evidence": "b"},
+            ],
+        }
+    ) is True
+    # Any content failure makes the set non-attestable.
     assert is_attestable(
         {
             "verdict": "fail",
@@ -564,6 +576,9 @@ def test_is_attestable_truth_table() -> None:
                 {"kind": "content", "evidence": "b"},
             ],
         }
+    ) is False
+    assert is_attestable(
+        {"verdict": "fail", "failures": [{"kind": "provider", "evidence": "a"}]}
     ) is False
     # Empty failures, missing verdict, missing validation: never attestable.
     assert is_attestable({"verdict": "fail", "failures": []}) is False

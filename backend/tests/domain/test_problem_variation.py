@@ -63,8 +63,11 @@ def test_happy_path_lifecycle_transitions_are_legal() -> None:
     transition_variation_status(s.QUEUED, s.VALIDATING)
     transition_variation_status(s.VALIDATING, s.FAILED)
     transition_variation_status(s.FAILED, s.QUEUED)
-    # Fail-attest (#658): a check-kind-only FAIL may be attested into READY;
-    # this is the only failed -> READY edge.
+    # Candidate semantic edit (#665): a failed item's standard answer may
+    # be fixed; the item re-enters needs-validation.
+    transition_variation_status(s.FAILED, s.NEEDS_VALIDATION)
+    # Fail-attest (#658, #665): a check-/answer-kind-only FAIL may be
+    # attested into READY; this is the only failed -> READY edge.
     transition_variation_status(s.FAILED, s.READY)
     # Generate Again from ready discards the candidate and regenerates.
     transition_variation_status(s.READY, s.QUEUED)

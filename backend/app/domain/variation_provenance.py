@@ -55,7 +55,7 @@ class ValidationProvenance(BaseModel):
 
     ``attestedByUser`` marks an admission admitted via explicit user
     attestation instead of a validator run covering the current revision
-    (#648 stale-PASS, #658 check-kind FAIL); a stale validator report is
+    (#648 stale-PASS, #658 fail-attested FAIL); a stale validator report is
     never frozen as if validator-covered. ``verdict`` records the REAL
     verdict of the frozen evidence — a fail-attested admission freezes
     ``"fail"`` so the audit trail stays honest.

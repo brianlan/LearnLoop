@@ -81,7 +81,8 @@ export function variantPassGateReason(item: BulkItem): string | null {
         variation.attestation?.revision !== item.contentRevision
       ) {
         // #658: an attested FAIL verdict is admitted — the attest fence
-        // guaranteed a check-kind-only failure set on the current revision.
+        // guaranteed a check-/answer-kind-only failure set on the current
+        // revision.
         return "Variant validation failed";
       }
       if (
@@ -144,14 +145,15 @@ export function evidenceChecks(report: EvidenceReport): EvidenceCheck[] {
   return Object.values(report.checks ?? {});
 }
 
-// Backend failure kinds (#658): "check" is a validator judgment failure the
-// teacher may attest away; "answer" is an answer-correctness failure and
-// "content" a generated-content mismatch — both verified facts, never
-// overridable. "invalid-candidate" (checkpointed candidate failed schema
-// validation) is content/schema; "provider"/"invalid-response" and every
-// "vlm-*" code persisted by the worker (vlm-invalid-response, vlm-timeout,
-// vlm-network-error, vlm-provider-error, vlm-provider-rejected) come from
-// the model side. Unknown kinds are shown verbatim, never misclassified.
+// Backend failure kinds (#658): "check" is a validator judgment failure
+// and "answer" an answer-comparison failure — both the teacher may attest
+// away (#665); "content" a generated-content mismatch — a verified fact,
+// never overridable. "invalid-candidate" (checkpointed candidate failed
+// schema validation) is content/schema; "provider"/"invalid-response" and
+// every "vlm-*" code persisted by the worker (vlm-invalid-response,
+// vlm-timeout, vlm-network-error, vlm-provider-error,
+// vlm-provider-rejected) come from the model side. Unknown kinds are shown
+// verbatim, never misclassified.
 export function failureKindLabel(kind: string | undefined): string {
   if (kind === "check") {
     return "Validator judgment failure";
@@ -170,9 +172,9 @@ export function failureKindLabel(kind: string | undefined): string {
 
 // Whether the teacher may attest this item into READY, mirroring the
 // backend is_attestable predicate (#658): the stale-PASS path
-// (needs-validation only) or a FAIL whose failures are all check-kind
-// (from needs-validation or failed). Kind-less legacy entries and worker
-// raw kinds fail closed.
+// (needs-validation only) or a FAIL whose failures are all check- or
+// answer-kind (from needs-validation or failed, #665). Kind-less legacy
+// entries and worker raw kinds fail closed.
 export function canAttestVariant(item: BulkItem): boolean {
   const variation = item.variation;
   if (!variation) return false;
@@ -188,6 +190,8 @@ export function canAttestVariant(item: BulkItem): boolean {
   const failures = validation?.failures ?? [];
   return (
     failures.length > 0 &&
-    failures.every((failure) => failure.kind === "check")
+    failures.every(
+      (failure) => failure.kind === "check" || failure.kind === "answer",
+    )
   );
 }

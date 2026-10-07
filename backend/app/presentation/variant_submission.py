@@ -279,8 +279,8 @@ def _check_admission_guards(
     if variation.get("status") != VariationStatus.READY.value:
         raise _admission_guard_failure("Variant is not validated")
     # #658: an attested item is admitted even on a FAIL verdict — the
-    # attest fence already guaranteed the failure set was check-kind-only,
-    # and the attestation must cover the current revision.
+    # attest fence already guaranteed the failure set was check-/answer-kind
+    # only, and the attestation must cover the current revision.
     if validation.get("verdict") != "pass" and attestation.get("revision") != item.get(
         "contentRevision"
     ):
