@@ -3174,6 +3174,79 @@ async def test_variant_fail_attest_mixed_check_and_answer_admits(
 
 
 @pytest.mark.asyncio
+async def test_variant_edit_answer_before_first_attest_admits(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Answer-FAIL → the teacher fixes the standard answer straight from
+    failed, before any approval → attest at the new revision without
+    revalidation (#665 AC2)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_failed_check_only(bulk_app, user_id, batch_id, item_id)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.variation.validation.failures": [
+                    {
+                        "kind": "answer",
+                        "evidence": "helper comparison for variant answer: different - 8 vs 9",
+                    }
+                ],
+            }
+        },
+    )
+
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "correctAnswer": "9"},
+    )
+    assert edit.status_code == 200
+    edited = _variation_of(edit.json(), item_id)
+    assert edited["variation"]["status"] == "needs-validation"
+    assert edited["variation"]["attestation"] is None
+    assert edited["contentRevision"] == 2
+    # The FAIL report is retained as stale evidence, never mutated.
+    assert edited["variation"]["validation"]["verdict"] == "fail"
+    assert edited["variation"]["validation"]["failures"] == [
+        {
+            "kind": "answer",
+            "evidence": "helper comparison for variant answer: different - 8 vs 9",
+        }
+    ]
+
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert attest.status_code == 200
+    attested = _variation_of(attest.json(), item_id)
+    assert attested["variation"]["status"] == "ready"
+    assert attested["variation"]["attestation"]["revision"] == 2
+    # The admission branches stay mutually exclusive.
+    assert attested["variation"]["validatedRevision"] is None
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    problem_id = summary["items"][0]["submittedProblemId"]
+    problem = await database["problems"].find_one({"_id": ObjectId(problem_id)})
+    # Provenance honesty: the waved FAIL is frozen as a user-attested fail,
+    # never as a validator pass.
+    assert problem["variation"]["validation"]["verdict"] == "fail"
+    assert problem["variation"]["validation"]["attestedByUser"] is True
+
+
+@pytest.mark.asyncio
 async def test_variant_fail_attest_after_answer_edit_admits_at_new_revision(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,

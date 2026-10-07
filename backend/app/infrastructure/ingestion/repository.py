@@ -1442,12 +1442,14 @@ async def edit_variation_candidate(
     expected_revision: int,
     now: datetime,
 ) -> None:
-    """Edit a ready/needs-validation candidate.
+    """Edit a ready/needs-validation/failed candidate.
 
     A semantic candidate change enters ``needs-validation`` and clears the
     current approval; tags alone never invalidate (they live in the shared
     ``item.draft.tags``). A mismatched candidate type is preserved on purpose
-    so validation can FAIL with evidence.
+    so validation can FAIL with evidence. A ``failed`` item may be edited
+    (#665): fixing the standard answer after an answer-kind FAIL re-enters
+    needs-validation with the stale FAIL report retained.
     """
     collection = _collection(database)
     allowed = ("text", "problemType", "graphDsl", "correctAnswer")
@@ -1496,6 +1498,7 @@ async def edit_variation_candidate(
                             "$in": [
                                 VariationStatus.READY.value,
                                 VariationStatus.NEEDS_VALIDATION.value,
+                                VariationStatus.FAILED.value,
                             ]
                         },
                         **_ITEM_ACTIONABLE_PREDICATE,

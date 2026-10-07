@@ -1190,8 +1190,20 @@ test.describe("Variant ingestion E2E", () => {
       page.getByTestId("bulk-review-evidence-helper-variant").first(),
     ).toContainText("different");
     await expect(page.getByTestId("bulk-review-continue")).toBeDisabled();
-    // The answer-kind FAIL is attestable (#665): the teacher can override
-    // the wrong verdict and the item recovers to a submittable state.
+    // Edit-first recovery (#665 AC2): fix the standard answer straight
+    // from failed. The semantic edit re-enters needs validation with the
+    // stale FAIL evidence retained, then the override completes it.
+    await page.getByTestId("bulk-review-edit-candidate").click();
+    await page.getByTestId("bulk-review-answer").fill("9");
+    await page.waitForResponse(
+      (r) =>
+        r.request().method() === "PATCH" &&
+        r.url().includes("/variation/candidate"),
+    );
+    await expect(page.getByTestId("bulk-review-variation-status")).toHaveText(
+      "Variant: needs validation",
+    );
+    await expect(page.getByTestId("bulk-review-evidence")).toBeVisible();
     await page.getByTestId("bulk-review-attest-fail").click();
     await expect(page.getByTestId("bulk-review-variation-status")).toHaveText(
       "Variant: ready",
@@ -1233,8 +1245,13 @@ test.describe("Variant ingestion E2E", () => {
       "helper comparison for variant answer: uncertain",
     );
     await expect(page.getByTestId("bulk-review-continue")).toBeDisabled();
-    // Also an answer-kind FAIL (#665): the attest escape hatch exists.
-    await expect(page.getByTestId("bulk-review-attest-fail")).toBeEnabled();
+    // Also an answer-kind FAIL (#665): the direct override recovers the
+    // item without any edit.
+    await page.getByTestId("bulk-review-attest-fail").click();
+    await expect(page.getByTestId("bulk-review-variation-status")).toHaveText(
+      "Variant: ready",
+    );
+    await expect(page.getByTestId("bulk-review-continue")).toBeEnabled();
   });
 
   test("second-validator transport failure fails closed on one report", async ({

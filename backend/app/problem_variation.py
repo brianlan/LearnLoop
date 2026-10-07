@@ -117,6 +117,9 @@ VARIATION_TRANSITIONS: dict[VariationStatus, list[VariationStatus]] = {
         # Fail-attest (#658): a check-/answer-kind-only FAIL may be attested
         # into READY; the attest fence enforces the eligibility predicate.
         VariationStatus.READY,
+        # Candidate semantic edit (#665): fixing the standard answer
+        # re-enters needs-validation with the stale FAIL report retained.
+        VariationStatus.NEEDS_VALIDATION,
         # A source semantic edit discards the failed attempt.
         VariationStatus.NOT_REQUESTED,
     ],
