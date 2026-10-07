@@ -608,6 +608,30 @@ describe("HomePage", () => {
     expect(screen.getByTestId("home-score-distribution-never-tested-count-value").textContent).toBe("2");
   });
 
+  // Regression: zero-count segments must not render a 1px floor line.
+  // bug: minHeight was keyed on `total > 0` instead of `count > 0`,
+  // so every non-empty bucket drew a 1px line for zero-count categories.
+  it("does not render a floor line for zero-count score-distribution segments", async () => {
+    const buckets = [{ start: 0, neverTested: 1, minAged: 1, tested: 2, cooldown: 0 }];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: buckets }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-plot")).toBeInTheDocument();
+    });
+
+    // Regression: cooldown count is 0 — segment must have no floor line.
+    const cooldownSegment = screen.getByTestId("home-score-distribution-cooldown-count");
+    expect(cooldownSegment.style.minHeight).toBe("0");
+    expect(cooldownSegment.style.height).toBe("0px");
+
+    // Control: tested count is 2 — nonzero segment keeps its 1px floor.
+    const testedSegment = screen.getByTestId("home-score-distribution-tested-count");
+    expect(testedSegment.style.minHeight).toBe("1px");
+  });
+
   it("renders all four category segments with count values and accessible labels", async () => {
     const buckets = [
       { start: 0, neverTested: 1, minAged: 1, tested: 1, cooldown: 1 },

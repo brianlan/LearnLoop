@@ -494,7 +494,7 @@ function ScoreDistributionCard({ buckets }: { buckets: ScoreDistributionBucket[]
                         <div
                           key={seg.key}
                           data-testid={`home-score-distribution-${seg.testIdSuffix}-count`}
-                          style={{ width: "100%", height: `${heightPct * (pct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: seg.color, borderRadius: rounded ? "2px 2px 0 0" : "0", minHeight: total > 0 ? "1px" : "0" }}
+                          style={{ width: "100%", height: `${heightPct * (pct / 100) * PLOT_HEIGHT_PX}px`, backgroundColor: seg.color, borderRadius: rounded ? "2px 2px 0 0" : "0", minHeight: count > 0 ? "1px" : "0" }}
                         >
                           {count > 0 && (
                             <span data-testid={`home-score-distribution-${seg.testIdSuffix}-count-value`} style={{ display: "block", textAlign: "center", fontSize: "0.625rem", color: "var(--color-text)" }}>
