@@ -1190,9 +1190,13 @@ test.describe("Variant ingestion E2E", () => {
       page.getByTestId("bulk-review-evidence-helper-variant").first(),
     ).toContainText("different");
     await expect(page.getByTestId("bulk-review-continue")).toBeDisabled();
-    await expect(
-      page.getByRole("button", { name: /accept|override|fallback/i }),
-    ).toHaveCount(0);
+    // The answer-kind FAIL is attestable (#665): the teacher can override
+    // the wrong verdict and the item recovers to a submittable state.
+    await page.getByTestId("bulk-review-attest-fail").click();
+    await expect(page.getByTestId("bulk-review-variation-status")).toHaveText(
+      "Variant: ready",
+    );
+    await expect(page.getByTestId("bulk-review-continue")).toBeEnabled();
   });
 
   test("helper uncertainty fails validation with visible evidence", async ({
@@ -1229,6 +1233,8 @@ test.describe("Variant ingestion E2E", () => {
       "helper comparison for variant answer: uncertain",
     );
     await expect(page.getByTestId("bulk-review-continue")).toBeDisabled();
+    // Also an answer-kind FAIL (#665): the attest escape hatch exists.
+    await expect(page.getByTestId("bulk-review-attest-fail")).toBeEnabled();
   });
 
   test("second-validator transport failure fails closed on one report", async ({

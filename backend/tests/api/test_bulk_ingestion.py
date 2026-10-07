@@ -3079,29 +3079,184 @@ async def test_variant_fail_attest_from_needs_validation_and_re_attest(
 
 
 @pytest.mark.asyncio
+async def test_variant_fail_attest_answer_only_from_failed_admits_submit(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """An answer-kind-only FAIL may be attested from failed (#665): READY,
+    submit gates accept it, and provenance freezes the REAL fail verdict."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_failed_check_only(bulk_app, user_id, batch_id, item_id)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.variation.validation.failures": [
+                    {
+                        "kind": "answer",
+                        "evidence": "helper comparison for variant answer: different - 8 vs 9",
+                    }
+                ],
+            }
+        },
+    )
+
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 1},
+    )
+    assert attest.status_code == 200
+    item = _variation_of(attest.json(), item_id)
+    assert item["variation"]["status"] == "ready"
+    assert item["variation"]["attestation"]["revision"] == 1
+    # The admission branches stay mutually exclusive.
+    assert item["variation"]["validatedRevision"] is None
+    assert item["contentRevision"] == 1
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    problem_id = summary["items"][0]["submittedProblemId"]
+
+    problem = await database["problems"].find_one({"_id": ObjectId(problem_id)})
+    # Provenance honesty: the waved FAIL is frozen as a user-attested fail,
+    # never as a validator pass.
+    assert problem["variation"]["validation"]["verdict"] == "fail"
+    assert problem["variation"]["validation"]["attestedByUser"] is True
+
+
+@pytest.mark.asyncio
+async def test_variant_fail_attest_mixed_check_and_answer_admits(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """A mixed check+answer FAIL is attestable in one click (#665)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_failed_check_only(bulk_app, user_id, batch_id, item_id)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.variation.validation.failures": [
+                    {
+                        "kind": "answer",
+                        "evidence": "helper comparison for variant answer: different - 8 vs 9",
+                    },
+                    {
+                        "kind": "check",
+                        "evidence": "modeCompliance: noncompliant - near-template drill",
+                    },
+                ],
+            }
+        },
+    )
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 1},
+    )
+    assert attest.status_code == 200
+    assert _variation_of(attest.json(), item_id)["variation"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_variant_fail_attest_after_answer_edit_admits_at_new_revision(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """Answer-FAIL attest → the teacher fixes the standard answer → re-attest
+    at the new revision without revalidation (#665)."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    database = bulk_app.state.fake_database
+    user_id = (await database["users"].find_one({"username": "student1"}))["_id"]
+    await _drive_to_failed_check_only(bulk_app, user_id, batch_id, item_id)
+    await database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": ObjectId(batch_id), "items.itemId": item_id},
+        {
+            "$set": {
+                "items.$.variation.validation.failures": [
+                    {
+                        "kind": "answer",
+                        "evidence": "helper comparison for variant answer: different - 8 vs 9",
+                    }
+                ],
+            }
+        },
+    )
+
+    attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 1},
+    )
+    assert attest.status_code == 200
+
+    # The stored standard answer was wrong: the teacher edits it. The
+    # semantic edit clears the attestation and bumps contentRevision.
+    edit = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/candidate",
+        json={"expectedRevision": 1, "correctAnswer": "9"},
+    )
+    assert edit.status_code == 200
+    edited = _variation_of(edit.json(), item_id)["variation"]
+    assert edited["status"] == "needs-validation"
+    assert edited["attestation"] is None
+    assert edited["validation"]["verdict"] == "fail"
+
+    # The stale answer-only FAIL re-attests at the new revision, no
+    # revalidation required.
+    re_attest = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/attest",
+        json={"expectedRevision": 2},
+    )
+    assert re_attest.status_code == 200
+    re_attested = _variation_of(re_attest.json(), item_id)["variation"]
+    assert re_attested["status"] == "ready"
+    assert re_attested["attestation"]["revision"] == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failures",
     [
-        # Answer-kind: correctness is machine-owned, never overridable.
-        [{"kind": "answer", "evidence": "helper comparison for variant answer: different - 8 vs 9"}],
         # Content-kind: verified fact with an edit-or-regenerate remedy.
         [{"kind": "content", "evidence": "candidate text is empty"}],
         # Worker raw kind: non-attestable by construction.
         [{"kind": "vlm-timeout", "evidence": "validator failed: timeout"}],
-        # Mixed: one non-check failure poisons the whole set.
+        # Kind-less legacy entry: fail closed.
+        [{"evidence": "legacy failure entry"}],
+        # Mixed: one content failure poisons the whole set.
         [
-            {"kind": "check", "evidence": "modeCompliance: noncompliant - x"},
+            {"kind": "answer", "evidence": "helper comparison: different - 8 vs 9"},
             {"kind": "content", "evidence": "candidate correctAnswer is empty"},
         ],
     ],
 )
-async def test_variant_fail_attest_rejects_non_check_failures(
+async def test_variant_fail_attest_rejects_non_attestable_failures(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,
     helper_vlm: FakeHelperVLMClient,
     failures: list[dict[str, str]],
 ) -> None:
-    """Any non-check failure entry blocks the fail-attest with 409 (#658)."""
+    """Any non-check/answer failure entry blocks the fail-attest with 409
+    (#658, #665)."""
     _enable_variant_profiles(bulk_app)
     batch_id, _, item_id = await _create_variant_batch(
         authenticated_bulk_client, bulk_app, helper_vlm

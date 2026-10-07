@@ -1578,9 +1578,10 @@ async def attest_variation_validation(
     two eligibility branches under a top-level ``$or``, both pinned on the
     item id, current revision and an actionable item: (a) needs-validation
     with a stored PASS report (#648 stale-PASS); (b) needs-validation or
-    failed with a FAIL whose failures are all check-kind — validator
-    judgment the teacher may override; any non-check (or kind-less legacy)
-    failure entry fails the branch (#658). ``validatedRevision`` stays None
+    failed with a FAIL whose failures are all check- or answer-kind —
+    validator judgment or answer comparison the teacher may override; any
+    non-check/answer (or kind-less legacy) failure entry fails the branch
+    (#658, #665). ``validatedRevision`` stays None
     so the two admission branches (validator-covered vs user-attested)
     remain mutually exclusive. The stored report is never mutated; the one
     exception is the startup kind-only legacy backfill, which retags
@@ -1623,7 +1624,9 @@ async def attest_variation_validation(
                             "variation.validation.failures.0": {"$exists": True},
                             "variation.validation.failures": {
                                 "$not": {
-                                    "$elemMatch": {"kind": {"$ne": "check"}}
+                                    "$elemMatch": {
+                                        "kind": {"$nin": ["check", "answer"]}
+                                    }
                                 }
                             },
                         },

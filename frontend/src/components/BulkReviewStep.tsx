@@ -72,7 +72,7 @@ function VariationFailureEvidence({
           User-attested at revision {variation.attestation.revision} — kept by
           the teacher, not covered by a validator run.
           {failures.length > 0 &&
-            " Waved checks are listed below; the teacher accepted them as-is."}
+            " Waved failures are listed below; the teacher accepted them as-is."}
         </div>
       )}
       <div data-testid="bulk-review-evidence-types">
@@ -736,12 +736,10 @@ export function BulkReviewStep({
                 disabled={attestDisabledReason !== "" || attesting}
                 title={
                   attestDisabledReason ||
-                  "Accept the failed judgment checks and approve this variant"
+                  "Accept the flagged failures and approve this variant"
                 }
               >
-                {attesting
-                  ? "Approving..."
-                  : "Override failed checks — approve anyway"}
+                {attesting ? "Approving..." : "Override failures — approve anyway"}
               </button>
             </div>
           )}

@@ -2775,7 +2775,7 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
   });
 });
 
-describe("BulkReviewStep check-kind fail attestation (#658)", () => {
+describe("BulkReviewStep check/answer-kind fail attestation (#658, #665)", () => {
   const handlers = {
     onRefresh: vi.fn(),
     onUpdateDraft: vi.fn(),
@@ -2802,6 +2802,13 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
     { kind: "check", evidence: "surfaceDivergence: insufficient - too similar" },
   ];
 
+  const ANSWER_FAILURES = [
+    {
+      kind: "answer",
+      evidence: "helper comparison for variant answer: different - 8 vs 9",
+    },
+  ];
+
   function failedItem(failures: unknown[]): BulkItem {
     return makeItem("item-1", {
       contentRevision: 1,
@@ -2824,8 +2831,12 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
   }
 
   it("canAttestVariant mirrors the backend is_attestable predicate", () => {
-    // Check-only FAIL: attestable from failed and needs-validation.
+    // Check-only and answer-only FAILs: attestable from failed and
+    // needs-validation (#665 widens to answer-kind).
     expect(canAttestVariant(failedItem(CHECK_FAILURES))).toBe(true);
+    expect(
+      canAttestVariant(failedItem(ANSWER_FAILURES)),
+    ).toBe(true);
     expect(
       canAttestVariant(
         makeItem("item-1", {
@@ -2849,12 +2860,7 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
         }),
       ),
     ).toBe(true);
-    // Non-check kinds, empty failures and kind-less legacy entries fail closed.
-    expect(
-      canAttestVariant(
-        failedItem([{ kind: "answer", evidence: "helper comparison: different" }]),
-      ),
-    ).toBe(false);
+    // Content kinds, empty failures and kind-less legacy entries fail closed.
     expect(
       canAttestVariant(
         failedItem([{ kind: "content", evidence: "candidate text is empty" }]),
@@ -2889,7 +2895,7 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
 
     const override = screen.getByTestId("bulk-review-attest-fail");
     expect(override).toHaveTextContent(
-      "Override failed checks — approve anyway",
+      "Override failures — approve anyway",
     );
     // The failing checks stay visible above the action.
     const evidence = screen.getByTestId("bulk-review-evidence");
@@ -2903,12 +2909,27 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
     expect(handlers.onAttest).toHaveBeenCalledWith("item-1", 1);
   });
 
-  it("offers no override for answer/content-kind failures", () => {
+  it("offers the override for answer-kind failures (#665)", async () => {
+    render(variantReviewUi(failedItem(ANSWER_FAILURES)));
+
+    const override = screen.getByTestId("bulk-review-attest-fail");
+    expect(override).toBeEnabled();
+    // The failing comparison evidence stays visible above the action.
+    const evidence = screen.getByTestId("bulk-review-evidence");
+    expect(evidence).toHaveTextContent("helper comparison");
+    expect(override.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(0);
+
+    fireEvent.click(override);
+    await waitFor(() => {
+      expect(handlers.onAttest).toHaveBeenCalledTimes(1);
+    });
+    expect(handlers.onAttest).toHaveBeenCalledWith("item-1", 1);
+  });
+
+  it("offers no override for content-kind failures", () => {
     render(
       variantReviewUi(
-        failedItem([
-          { kind: "answer", evidence: "helper comparison: different - 8 vs 9" },
-        ]),
+        failedItem([{ kind: "content", evidence: "candidate text is empty" }]),
       ),
     );
 
@@ -2981,7 +3002,7 @@ describe("BulkReviewStep check-kind fail attestation (#658)", () => {
     render(variantReviewUi(attestedFail));
     expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
     const banner = screen.getByTestId("bulk-review-attestation");
-    expect(banner).toHaveTextContent(/waved checks/i);
+    expect(banner).toHaveTextContent(/waved failures/i);
   });
 
   it("blocks a fail verdict whose attestation covers an older revision", () => {

@@ -1713,10 +1713,73 @@ async def test_fail_attest_update_matches_on_real_mongo(
     # pymongo returns tz-naive datetimes; only the instant matters.
     assert attestation["at"] == NOW.replace(tzinfo=None)
 
-    # The other item satisfies neither branch: the write must not match and
-    # the conflict is classified against a fresh read instead.
+    # An answer-kind-only FAIL attests through the real fence too (#665).
+    await _set_item_fields(
+        real_database, batch_id, user_id, variant_item,
+        contentRevision=1,
+        variation={
+            "status": "failed",
+            "generationCount": 1,
+            "original": dict(VARIANT_ORIGINAL),
+            "candidate": dict(VARIANT_CANDIDATE),
+            "validation": {
+                "verdict": "fail",
+                "failures": [
+                    {
+                        "kind": "answer",
+                        "evidence": "helper comparison for variant answer: different - 8 vs 9",
+                    }
+                ],
+                "reports": [],
+            },
+            "validatedRevision": None,
+            "attestation": None,
+            "claimToken": None,
+            "leaseUntil": None,
+            "queuedAt": None,
+        },
+    )
+    await attest_variation_validation(
+        real_database, batch_id, user_id, variant_item,
+        expected_revision=1, now=NOW,
+    )
+    batch = await get_batch(real_database, batch_id, user_id)
+    item = next(i for i in batch["items"] if i["itemId"] == variant_item)
+    assert item["variation"]["status"] == "ready"
+
+    # A kind-less legacy entry fails closed on real mongo: the missing
+    # ``kind`` matches ``$nin``, so the inner ``$elemMatch`` hits and the
+    # outer ``$not`` rejects the document.
     from app.problem_variation import InvalidVariationStateError
 
+    await _set_item_fields(
+        real_database, batch_id, user_id, variant_item,
+        contentRevision=1,
+        variation={
+            "status": "failed",
+            "generationCount": 1,
+            "original": dict(VARIANT_ORIGINAL),
+            "candidate": dict(VARIANT_CANDIDATE),
+            "validation": {
+                "verdict": "fail",
+                "failures": [{"evidence": "legacy failure entry"}],
+                "reports": [],
+            },
+            "validatedRevision": None,
+            "attestation": None,
+            "claimToken": None,
+            "leaseUntil": None,
+            "queuedAt": None,
+        },
+    )
+    with pytest.raises(InvalidVariationStateError):
+        await attest_variation_validation(
+            real_database, batch_id, user_id, variant_item,
+            expected_revision=1, now=NOW,
+        )
+
+    # The other item satisfies neither branch: the write must not match and
+    # the conflict is classified against a fresh read instead.
     with pytest.raises(InvalidVariationStateError):
         await attest_variation_validation(
             real_database, batch_id, user_id, other_item,

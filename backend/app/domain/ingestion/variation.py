@@ -129,11 +129,12 @@ class VariantCandidate(BaseModel):
 
 
 class AssessmentFailure(BaseModel):
-    # Failure-kind split (#658): machines own correctness, humans own
-    # judgment. ``content``/``answer`` are verified facts or correctness
-    # failures and are never overridable; ``check`` are validator judgment
-    # failures and may be attested away by the teacher. ``provider`` and
-    # ``invalid-response`` are model-execution failures.
+    # Failure-kind split (#658): machines own correctness checks, humans own
+    # the final call. ``check`` are validator judgment failures and
+    # ``answer`` are answer-comparison failures; both may be attested away
+    # by the teacher (#665). ``content`` are verified content defects and
+    # are never overridable; ``provider`` and ``invalid-response`` are
+    # model-execution failures.
     kind: Literal["content", "check", "answer", "provider", "invalid-response"]
     evidence: str
 
@@ -342,10 +343,10 @@ def is_attestable(validation: Mapping[str, Any] | None) -> bool:
     """Whether a stored validation record may be attested into READY (#658).
 
     True for the #648 stale-PASS path and for a FAIL whose failures are all
-    check-kind (validator judgment). Answer/content/provider kinds are
-    correctness or verified facts and are never overridable; kind-less
-    legacy entries and worker raw kinds fail closed. Status gating
-    (needs-validation/failed) happens at the attest fence, not here.
+    check- or answer-kind (validator judgment / answer comparison, #665).
+    Content/provider kinds are verified facts and are never overridable;
+    kind-less legacy entries and worker raw kinds fail closed. Status
+    gating (needs-validation/failed) happens at the attest fence, not here.
     """
     if not validation:
         return False
@@ -356,5 +357,5 @@ def is_attestable(validation: Mapping[str, Any] | None) -> bool:
         return False
     failures = validation.get("failures") or []
     return bool(failures) and all(
-        failure.get("kind") == "check" for failure in failures
+        failure.get("kind") in ("check", "answer") for failure in failures
     )
