@@ -276,14 +276,27 @@ class TestStripLeadingQuestionNumber:
             "12 名学生参加",
             "1:2 的比例",
             "17:30",
+            # Ratios/times keep working when a space follows the separator.
+            "1 : 2 的比例",
+            "17: 30 发车",
+            "1：2 的比例",
             "(4) × 5 = 20",  # leading arithmetic expression
             "(3)+(5)=8",
             "(1) > (2) 的大小",
+            # Parenthesized operand before an inline-LaTeX operator stays.
+            "(4) $\\times$ 5 = 20",
+            "(4) $+$ 5 = 9",
+            "(1) $> (2) 的大小",
             "解下列各题．\n(1) 某游戏…",  # sub-question number behind a prefix stays
         ],
     )
     def test_preserves_non_marker_starts(self, raw: str) -> None:
         assert strip_leading_question_number(raw) == raw
+
+    def test_numeric_question_starting_with_number_still_strips(self) -> None:
+        # The ratio guard is colon-only: a "1." question marker followed by
+        # numeric content must still strip.
+        assert strip_leading_question_number("1. 2 + 3 等于几") == "2 + 3 等于几"
 
 
 class TestNormalizeExtractedProblemTextStripsLeadingQuestionNumber:
@@ -293,4 +306,20 @@ class TestNormalizeExtractedProblemTextStripsLeadingQuestionNumber:
     def test_numeric_unwrap_happens_before_strip(self) -> None:
         # $12$ unwraps to 12 first, then the leading 12、 marker is stripped.
         assert normalize_extracted_problem_text("$12$、已知") == "已知"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            # Unwrapped ratio with spaces stays intact.
+            ("$1$ : $2$ 的比例", "1 : 2 的比例"),
+            # Parenthesized operand before an inline-LaTeX operator stays.
+            ("(4) $\\times$ 5 = 20", "(4) $\\times$ 5 = 20"),
+            ("(4) $+$ 5 = 9", "(4) $+$ 5 = 9"),
+            ("(1) $> (2) 的大小", "(1) $> (2) 的大小"),
+        ],
+    )
+    def test_preserves_content_through_pipeline(
+        self, raw: str, expected: str
+    ) -> None:
+        assert normalize_extracted_problem_text(raw) == expected
 
