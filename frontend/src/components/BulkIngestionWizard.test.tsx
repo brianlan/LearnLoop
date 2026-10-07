@@ -1168,7 +1168,7 @@ describe("BulkIngestionWizard", () => {
     expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
   });
 
-  it("ignores repeated, modified, and editable-origin s key events", async () => {
+  it("ignores repeated and modified s key events; saves when the subject select is focused", async () => {
     mocks.getActiveBatch.mockResolvedValue({
       batch: makeBatch({
         images: [
@@ -1214,10 +1214,19 @@ describe("BulkIngestionWizard", () => {
     });
     expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
 
+    // A focused subject select is not a typing target (#667): plain `s`
+    // must trigger the save instead of being swallowed.
     await act(async () => {
       fireEvent.keyDown(screen.getByTestId("bulk-detect-subject-img-1"), { key: "s" });
     });
-    expect(mocks.saveImageBoxes).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mocks.saveImageBoxes).toHaveBeenCalledWith(
+        "batch-1",
+        "img-1",
+        [expect.objectContaining({ boxId: "box-1" })],
+        "english",
+      );
+    });
   });
 
   it("prevents a second save sequence while one is in progress", async () => {

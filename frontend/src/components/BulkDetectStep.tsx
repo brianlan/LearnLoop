@@ -117,11 +117,13 @@ export function BulkDetectStep({
       if (event.key !== "s" || event.repeat) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
+      // Only swallow `s` while the user is typing text; non-typing
+      // controls (e.g. the focused subject <select>) must not kill the
+      // save shortcut (#667).
       if (
         target &&
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
           target.isContentEditable)
       ) {
         return;
