@@ -251,6 +251,10 @@ class TestStripLeadingQuestionNumber:
             ("12、已知", "已知"),
             # (N) not followed by an arithmetic operator.
             ("(4) She often", "She often"),
+            # Non-operator math commands do not protect the marker.
+            ("(4) $\\alpha$ 的值是多少", "$\\alpha$ 的值是多少"),
+            ("(4) $\\frac{1}{2}$ 是多少", "$\\frac{1}{2}$ 是多少"),
+            ("（4） $\\sqrt{2}$ 的值是多少", "$\\sqrt{2}$ 的值是多少"),
             # Stacked markers.
             ("1. 【题3】foo", "foo"),
             # Leading whitespace / blank lines tolerated.
@@ -286,7 +290,7 @@ class TestStripLeadingQuestionNumber:
             # Parenthesized operand before an inline-LaTeX operator stays.
             "(4) $\\times$ 5 = 20",
             "(4) $+$ 5 = 9",
-            "(1) $> (2) 的大小",
+            "(1) $>$ (2) 的大小",
             "解下列各题．\n(1) 某游戏…",  # sub-question number behind a prefix stays
         ],
     )
@@ -315,7 +319,11 @@ class TestNormalizeExtractedProblemTextStripsLeadingQuestionNumber:
             # Parenthesized operand before an inline-LaTeX operator stays.
             ("(4) $\\times$ 5 = 20", "(4) $\\times$ 5 = 20"),
             ("(4) $+$ 5 = 9", "(4) $+$ 5 = 9"),
-            ("(1) $> (2) 的大小", "(1) $> (2) 的大小"),
+            ("(1) $>$ (2) 的大小", "(1) $>$ (2) 的大小"),
+            # Non-operator math commands do not protect the marker.
+            ("(4) $\\alpha$ 的值是多少", "$\\alpha$ 的值是多少"),
+            ("(4) $\\frac{1}{2}$ 是多少", "$\\frac{1}{2}$ 是多少"),
+            ("（4） $\\sqrt{2}$ 的值是多少", "$\\sqrt{2}$ 的值是多少"),
         ],
     )
     def test_preserves_content_through_pipeline(

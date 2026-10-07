@@ -44,7 +44,9 @@ _LEADING_QUESTION_NUMBER_RE = re.compile(
     r"|\[[题例]\s*[0-9]{1,3}\s*\]"              # ASCII [题15]
     r"|[0-9]{1,3}\s*[:：](?![ \t]*[0-9])"        # 17:30, 1 : 2 — ratios/times stay intact even with spaces
     r"|[0-9]{1,3}\s*[.、．,，)）](?![0-9])"       # 1.  3、  5)  17,  (not "1.5")
-    r"|[（(][0-9]{1,3}[)）](?!\s*(?:[+×÷*\-/=−<>≥≤≈]|\$[ \t]*[+×÷*\-/=−<>≥≤≈\\]))"  # (4)  （5）, not "(4) × 5 = 20" / "(4) $\times$ 5 = 20"
+    r"|[（(][0-9]{1,3}[)）](?!\s*(?:[+×÷*\-/=−<>≥≤≈]"   # (4)  （5）, not "(4) × 5 = 20"
+    r"|\$[ \t]*(?:[+×÷*\-/=−<>≥≤≈]"                     # nor "(4) $+$ 5 = 9" / "(1) $>$ (2)"
+    r"|\\(?:times|cdot|ast|leq|geq|neq|lt|gt|le|ge|ne|pm|div)(?![a-zA-Z]))))"  # nor "(4) $\times$ 5" — operator commands only, not $\alpha$/$\frac$/$\sqrt$
     r"|[一二三四五六七八九十]{1,3}、"             # section marker 三、 (marker only)
     r")[ \t]*"                                   # horizontal whitespace only; never crosses lines
 )
