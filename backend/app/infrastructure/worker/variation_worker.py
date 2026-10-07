@@ -235,6 +235,8 @@ async def process_variation(
                     f"generator {generator.identity['provider']}/{generator.identity['model']}",
                     exc,
                 ),
+                # Generation failed: nothing to re-validate (#671).
+                candidate_present=False,
                 now=_utc_now(),
             )
             if not saved:
@@ -315,6 +317,7 @@ async def process_variation(
                 ],
                 "reports": [],
             },
+            candidate_present=True,
             now=_utc_now(),
         )
         if not saved:
@@ -367,6 +370,9 @@ async def process_variation(
             claimed_revision=claimed_revision,
             verdict="fail",
             validation=_failed_validation_evidence("variation validation", exc),
+            # The candidate is checkpointed; an execution-only failure set
+            # lands needs-validation so Revalidate applies (#671).
+            candidate_present=True,
             now=_utc_now(),
         )
         if not saved:
@@ -390,6 +396,8 @@ async def process_variation(
         claimed_revision=claimed_revision,
         verdict=verdict,
         validation=serialize_generation_result(result),
+        # The candidate is always stored by the time a verdict lands.
+        candidate_present=True,
         now=_utc_now(),
     )
     if not saved:

@@ -1410,6 +1410,7 @@ async def test_same_item_source_edit_invalidates_in_flight_claim_and_result(
         real_database, batch_id, user_id, item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     ) is False
     batch = await get_batch(real_database, batch_id, user_id)
@@ -1450,6 +1451,7 @@ async def test_distinct_item_background_work_and_edit_both_survive(
             token=claimed_a["variation"]["claimToken"], claimed_revision=1,
             verdict="pass",
             validation={"verdict": "pass", "failures": [], "reports": []},
+            candidate_present=True,
             now=NOW,
         )
 
@@ -1500,6 +1502,7 @@ async def test_expired_batch_rejects_variation_claims_and_results(
         real_database, batch_id, user_id, item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     ) is False
     # And no new work can be claimed on the expired batch.
@@ -1531,6 +1534,7 @@ async def test_old_candidate_checkpoint_cannot_land_after_regeneration(
         real_database, batch_id, user_id, item_id,
         token=first_token, claimed_revision=1, verdict="fail",
         validation={"verdict": "fail", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     )
     await request_variation_generation(

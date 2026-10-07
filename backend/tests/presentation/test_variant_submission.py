@@ -195,6 +195,7 @@ async def _seed_ready_variant_item(
         database, batch["_id"], "user-1", item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation=dict(PASSING_VALIDATION), now=NOW,
+        candidate_present=True,
     )
     if variation_overrides or validated_revision is not None:
         update: dict[str, Any] = {"variation": dict(variation_overrides or {})}

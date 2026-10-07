@@ -685,8 +685,11 @@ async def test_reports_preserved_when_helper_fails() -> None:
     report = result.reports[0]
     assert report.original_solved_answer == "60"
     assert report.variant_solved_answer == "60"
-    # The comparison never ran: default uncertain comparison, not a fake pass.
-    assert report.answer_comparison_original.result == "uncertain"
+    # The comparison never ran: it stays None (#671) rather than a
+    # fabricated uncertain verdict; the helper crash is recorded as the
+    # explicit provider failure above.
+    assert report.answer_comparison_original is None
+    assert report.answer_comparison_variant is None
     assert result.candidate is not None
 
 
