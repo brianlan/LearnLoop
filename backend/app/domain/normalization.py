@@ -46,7 +46,7 @@ _LEADING_QUESTION_NUMBER_RE = re.compile(
     r"|[0-9]{1,3}\s*[.、．,，)）](?![0-9])"       # 1.  3、  5)  17,  (not "1.5")
     r"|[（(][0-9]{1,3}[)）](?!\s*(?:[+×÷*\-/=−<>≥≤≈]"   # (4)  （5）, not "(4) × 5 = 20"
     r"|\$[ \t]*(?:[+×÷*\-/=−<>≥≤≈]"                     # nor "(4) $+$ 5 = 9" / "(1) $>$ (2)"
-    r"|\\(?:times|cdot|ast|leq|geq|neq|lt|gt|le|ge|ne|pm|div)(?![a-zA-Z]))))"  # nor "(4) $\times$ 5" — operator commands only, not $\alpha$/$\frac$/$\sqrt$
+    r"|\\(?:times|cdot|ast|approx|leq|geq|neq|lt|gt|le|ge|ne|pm|div)(?![a-zA-Z]))))"  # nor "(4) $\times$ 5" — operator commands only, not $\alpha$/$\frac$/$\sqrt$
     r"|[一二三四五六七八九十]{1,3}、"             # section marker 三、 (marker only)
     r")[ \t]*"                                   # horizontal whitespace only; never crosses lines
 )

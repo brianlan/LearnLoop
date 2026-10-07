@@ -291,6 +291,8 @@ class TestStripLeadingQuestionNumber:
             "(4) $\\times$ 5 = 20",
             "(4) $+$ 5 = 9",
             "(1) $>$ (2) 的大小",
+            "(4) ≈ 4.0",
+            "(4) $\\approx$ 4.0",
             "解下列各题．\n(1) 某游戏…",  # sub-question number behind a prefix stays
         ],
     )
@@ -320,6 +322,8 @@ class TestNormalizeExtractedProblemTextStripsLeadingQuestionNumber:
             ("(4) $\\times$ 5 = 20", "(4) $\\times$ 5 = 20"),
             ("(4) $+$ 5 = 9", "(4) $+$ 5 = 9"),
             ("(1) $>$ (2) 的大小", "(1) $>$ (2) 的大小"),
+            ("(4) ≈ 4.0", "(4) ≈ 4.0"),
+            ("(4) $\\approx$ 4.0", "(4) $\\approx$ 4.0"),
             # Non-operator math commands do not protect the marker.
             ("(4) $\\alpha$ 的值是多少", "$\\alpha$ 的值是多少"),
             ("(4) $\\frac{1}{2}$ 是多少", "$\\frac{1}{2}$ 是多少"),
