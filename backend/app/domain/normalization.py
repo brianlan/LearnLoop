@@ -14,7 +14,7 @@ def normalize_extracted_problem_text(text: str) -> str:
     """Normalize inline LaTeX in extracted problem text.
 
     Applied to VLM-extracted draft text only; the raw extraction text must be
-    preserved separately. Two rules run in order:
+    preserved separately. Three rules run in order:
 
     1. Unwrap pure unsigned numbers: ``$45$`` -> ``45``, ``$3.14$`` -> ``3.14``.
        Negatives, comma-grouped numbers, percentages, fractions, variables and
@@ -22,10 +22,40 @@ def normalize_extracted_problem_text(text: str) -> str:
     2. Normalize spacing around remaining inline ``$...$``: exactly one ASCII
        space before and after the expression unless it is at the start or end of
        a line.
+    3. Strip leading question-number markers (``【题10】``, ``17,``, ``(4)``,
+       ``三、`` ...) so saved problem bodies start with the question content.
     """
     text = _unwrap_numeric_inline_math(text)
     text = _normalize_inline_math_spacing(text)
+    text = strip_leading_question_number(text)
     return text
+
+
+# Leading question-number markers at the very start of an extracted body.
+#
+# ponytail: known accepted limitations — bodies that begin with a
+# number-comma list ("3, 5, 7 都是质数") or an ideographic numeral section
+# header ("一、二年级共有…") get stripped too; fullwidth digit question
+# numbers ("３、") are not matched (0 occurrences in the 655-problem
+# analysis). Widen digit classes to [0-9０-９] if fullwidth markers appear.
+_LEADING_QUESTION_NUMBER_RE = re.compile(
+    r"^(?:"
+    r"【[题例]\s*[0-9]{1,3}\s*】"               # 【题10】 / 【例 7】
+    r"|\[[题例]\s*[0-9]{1,3}\s*\]"              # ASCII [题15]
+    r"|[0-9]{1,3}\s*[.、．,，)）:：](?![0-9])"   # 1.  3、  5)  17,  (not "1.5")
+    r"|[（(][0-9]{1,3}[)）](?!\s*[+×÷*\-/=−<>≥≤≈])"  # (4)  （5）, not "(4) × 5 = 20"
+    r"|[一二三四五六七八九十]{1,3}、"             # section marker 三、 (marker only)
+    r")[ \t]*"                                   # horizontal whitespace only; never crosses lines
+)
+
+
+def strip_leading_question_number(text: str) -> str:
+    stripped = text.lstrip()          # tolerate leading whitespace / blank lines
+    while True:                       # tolerate stacked markers: 1. 【题3】foo
+        new = _LEADING_QUESTION_NUMBER_RE.sub("", stripped, count=1)
+        if new == stripped:
+            return stripped.lstrip()  # final cleanup; must not re-enter the loop
+        stripped = new
 
 
 def _unwrap_numeric_inline_math(text: str) -> str:
