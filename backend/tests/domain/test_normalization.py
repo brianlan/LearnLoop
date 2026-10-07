@@ -1,6 +1,10 @@
 import pytest
 from app.domain import ProblemType, CorrectAnswer, normalize_answer
-from app.domain.normalization import compare_answers, normalize_extracted_problem_text
+from app.domain.normalization import (
+    compare_answers,
+    normalize_extracted_problem_text,
+    strip_leading_question_number,
+)
 
 
 def test_single_choice_normalization():
@@ -231,4 +235,103 @@ class TestNormalizeExtractedProblemTextCombined:
     def test_numeric_unwrap_runs_before_spacing(self) -> None:
         # $45$ unwraps to 45 (no longer inline math), while $x$ gets spacing.
         assert normalize_extracted_problem_text("已知$45$和$x$。") == "已知45和 $x$ 。"
+
+
+class TestStripLeadingQuestionNumber:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            # 【题N】 family and ASCII [题N].
+            ("【题10】在 8001", "在 8001"),
+            ("【例 7】如图", "如图"),
+            ("[题15]图中", "图中"),
+            # Digits + separator.
+            ("3、甲、乙", "甲、乙"),
+            ("17, Without air", "Without air"),
+            ("12、已知", "已知"),
+            # (N) not followed by an arithmetic operator.
+            ("(4) She often", "She often"),
+            # Non-operator math commands do not protect the marker.
+            ("(4) $\\alpha$ 的值是多少", "$\\alpha$ 的值是多少"),
+            ("(4) $\\frac{1}{2}$ 是多少", "$\\frac{1}{2}$ 是多少"),
+            ("（4） $\\sqrt{2}$ 的值是多少", "$\\sqrt{2}$ 的值是多少"),
+            # Stacked markers.
+            ("1. 【题3】foo", "foo"),
+            # Leading whitespace / blank lines tolerated.
+            ("\n【题10】foo", "foo"),
+            # Section marker stripped, section title kept.
+            (
+                "三、请写出以下句子中动词的正确时态\n1. My",
+                "请写出以下句子中动词的正确时态\n1. My",
+            ),
+            # Never strips across a line boundary; final whitespace cleanup.
+            ("三、\n1. My", "1. My"),
+            ("【题5】\n已知…", "已知…"),
+        ],
+    )
+    def test_strips_leading_markers(self, raw: str, expected: str) -> None:
+        assert strip_leading_question_number(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "1.5 倍的数",  # decimal, not "1." marker
+            "4 They had …",  # bare N + whitespace stays
+            "12 名学生参加",
+            "1:2 的比例",
+            "17:30",
+            # Ratios/times keep working when a space follows the separator.
+            "1 : 2 的比例",
+            "17: 30 发车",
+            "1：2 的比例",
+            "(4) × 5 = 20",  # leading arithmetic expression
+            "(3)+(5)=8",
+            "(1) > (2) 的大小",
+            # Parenthesized operand before an inline-LaTeX operator stays.
+            "(4) $\\times$ 5 = 20",
+            "(4) $+$ 5 = 9",
+            "(1) $>$ (2) 的大小",
+            "(4) ≈ 4.0",
+            "(4) $\\approx$ 4.0",
+            "解下列各题．\n(1) 某游戏…",  # sub-question number behind a prefix stays
+        ],
+    )
+    def test_preserves_non_marker_starts(self, raw: str) -> None:
+        assert strip_leading_question_number(raw) == raw
+
+    def test_numeric_question_starting_with_number_still_strips(self) -> None:
+        # The ratio guard is colon-only: a "1." question marker followed by
+        # numeric content must still strip.
+        assert strip_leading_question_number("1. 2 + 3 等于几") == "2 + 3 等于几"
+
+
+class TestNormalizeExtractedProblemTextStripsLeadingQuestionNumber:
+    def test_strip_runs_as_final_step(self) -> None:
+        assert normalize_extracted_problem_text("【题10】在 8001") == "在 8001"
+
+    def test_numeric_unwrap_happens_before_strip(self) -> None:
+        # $12$ unwraps to 12 first, then the leading 12、 marker is stripped.
+        assert normalize_extracted_problem_text("$12$、已知") == "已知"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            # Unwrapped ratio with spaces stays intact.
+            ("$1$ : $2$ 的比例", "1 : 2 的比例"),
+            # Parenthesized operand before an inline-LaTeX operator stays.
+            ("(4) $\\times$ 5 = 20", "(4) $\\times$ 5 = 20"),
+            ("(4) $+$ 5 = 9", "(4) $+$ 5 = 9"),
+            ("(1) $>$ (2) 的大小", "(1) $>$ (2) 的大小"),
+            ("(4) ≈ 4.0", "(4) ≈ 4.0"),
+            ("(4) $\\approx$ 4.0", "(4) $\\approx$ 4.0"),
+            # Non-operator math commands do not protect the marker.
+            ("(4) $\\alpha$ 的值是多少", "$\\alpha$ 的值是多少"),
+            ("(4) $\\frac{1}{2}$ 是多少", "$\\frac{1}{2}$ 是多少"),
+            ("（4） $\\sqrt{2}$ 的值是多少", "$\\sqrt{2}$ 的值是多少"),
+        ],
+    )
+    def test_preserves_content_through_pipeline(
+        self, raw: str, expected: str
+    ) -> None:
+        assert normalize_extracted_problem_text(raw) == expected
 
