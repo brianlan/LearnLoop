@@ -604,6 +604,11 @@ def test_rank_sorts_by_all_columns_both_directions_with_id_tiebreak():
     assert _rank(problems, now=now, sort_by="failureCount", sort_order="asc") == ["c", "a", "b"]
     assert _rank(problems, now=now, sort_by="addDate", sort_order="desc") == ["a", "c", "b"]
     assert _rank(problems, now=now, sort_by="addDate", sort_order="asc") == ["b", "c", "a"]
+    # All four columns × both directions (#680): score order is monotonic in
+    # age here (identical failure/last-wrong components), so the ranking is
+    # b (200d) > c (150d) > a (100d).
+    assert _rank(problems, now=now, sort_by="selectionScore", sort_order="desc") == ["b", "c", "a"]
+    assert _rank(problems, now=now, sort_by="selectionScore", sort_order="asc") == ["a", "c", "b"]
 
 
 def test_rank_default_is_selection_score_desc():

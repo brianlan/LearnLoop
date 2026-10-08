@@ -1444,7 +1444,7 @@ async def test_foreign_exam_operations_leave_owner_state_unchanged(
 # ---------------------------------------------------------------------------
 
 
-def _seed_picker_problems(exams_app: FastAPI, client: AsyncClient) -> dict[str, dict[str, Any]]:
+def _seed_picker_problems(exams_app: FastAPI) -> dict[str, dict[str, Any]]:
     database: FakeDatabase = exams_app.state.fake_database
     user_id = exams_app.state.primary_user["_id"]
     now = datetime.now(UTC)
@@ -1474,7 +1474,7 @@ def _seed_picker_problems(exams_app: FastAPI, client: AsyncClient) -> dict[str, 
 async def test_manual_create_exam_items_follow_problem_ids_order(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app, client)
+    problems = _seed_picker_problems(exams_app)
     ordered_ids = [str(problems["gamma"]["_id"]), str(problems["alpha"]["_id"])]
 
     response = await client.post(
@@ -1497,10 +1497,59 @@ async def test_manual_create_exam_items_follow_problem_ids_order(
 
 
 @pytest.mark.asyncio
+async def test_manual_create_accepts_uppercase_and_mixed_case_ids_in_order(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    """ObjectId spellings are case-insensitive hex: uppercase/mixed-case
+    spellings of owned eligible ids must create the exam in submitted order,
+    not be reported as missing identities (#680 review B1)."""
+    problems = _seed_picker_problems(exams_app)
+    gamma_upper = str(problems["gamma"]["_id"]).upper()
+    alpha_canonical = str(problems["alpha"]["_id"])
+    alpha_mixed = "".join(
+        char.upper() if index % 2 else char.lower()
+        for index, char in enumerate(alpha_canonical)
+    )
+
+    response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [gamma_upper, alpha_mixed]},
+    )
+
+    assert response.status_code == 201
+    exam = response.json()["exam"]
+    assert [item["problemId"] for item in exam["items"]] == [
+        str(problems["gamma"]["_id"]),
+        alpha_canonical,
+    ]
+    assert exam["configSnapshot"]["mode"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_manual_create_rejects_mixed_case_aliases_as_duplicates(
+    client: AsyncClient,
+) -> None:
+    """Upper/lower spellings of one identity are the same id: mixed-case
+    aliases must fail as duplicates before any insert (#680 review B1)."""
+    canonical = str(ObjectId())
+    alias_upper = canonical.upper()
+
+    response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [canonical, alias_upper]},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_SELECTION"
+    assert error["details"]["problemIds"] == [canonical]
+
+
+@pytest.mark.asyncio
 async def test_manual_create_exam_records_same_policy_and_generated_at_as_random(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app, client)
+    problems = _seed_picker_problems(exams_app)
 
     manual = await client.post(
         "/api/v1/exams",
@@ -1546,7 +1595,7 @@ async def test_manual_create_shape_failures_return_invalid_selection(
 async def test_manual_create_duplicate_ids_return_invalid_selection(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app, client)
+    problems = _seed_picker_problems(exams_app)
     pid = str(problems["alpha"]["_id"])
 
     response = await client.post(
@@ -1564,7 +1613,7 @@ async def test_manual_create_duplicate_ids_return_invalid_selection(
 async def test_manual_create_invalid_and_foreign_ids_share_one_shape(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app, client)
+    problems = _seed_picker_problems(exams_app)
 
     invalid = await client.post(
         "/api/v1/exams",
@@ -1590,7 +1639,7 @@ async def test_manual_create_invalid_and_foreign_ids_share_one_shape(
 async def test_manual_create_unknown_id_returns_invalid_selection(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    _seed_picker_problems(exams_app, client)
+    _seed_picker_problems(exams_app)
     missing_id = str(ObjectId())
 
     response = await client.post(
@@ -1653,7 +1702,7 @@ async def test_manual_create_rejects_min_age_problem_as_ineligible(
 async def test_manual_create_still_blocked_by_active_exam(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app, client)
+    problems = _seed_picker_problems(exams_app)
 
     first = await client.post(
         "/api/v1/exams",
@@ -1684,7 +1733,7 @@ async def test_random_mode_missing_max_problem_count_returns_validation_error(
 async def test_legacy_exam_snapshot_without_mode_serializes_as_random(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app, client)
+    problems = _seed_picker_problems(exams_app)
     created = await client.post(
         "/api/v1/exams",
         json={"mode": "manual", "problemIds": [str(problems["alpha"]["_id"])]},
@@ -1720,9 +1769,18 @@ async def test_selection_candidates_exclude_ineligible_problems(
     fresh = make_problem(user_id, text="Too new", problem_type="fill-in-the-blank", correct_answer="6")
     fresh["createdAt"] = now - timedelta(hours=1)
     fresh["updatedAt"] = now - timedelta(hours=1)
+    # Old enough and outside cooldown so each record's own property — not
+    # freshness — is the reason it is excluded (#680 review B2).
+    stale_created = now - timedelta(days=30)
     deleted = make_problem(user_id, text="Deleted", problem_type="fill-in-the-blank", correct_answer="7", is_deleted=True)
+    deleted["createdAt"] = stale_created
+    deleted["updatedAt"] = stale_created
     disabled = make_problem(user_id, text="Disabled", problem_type="fill-in-the-blank", correct_answer="8", is_disabled=True)
+    disabled["createdAt"] = stale_created
+    disabled["updatedAt"] = stale_created
     answerless = make_problem(user_id, text="No answer", problem_type="fill-in-the-blank", correct_answer="")
+    answerless["createdAt"] = stale_created
+    answerless["updatedAt"] = stale_created
     database["problems"].seed(eligible, cooling, fresh, deleted, disabled, answerless)
 
     response = await client_with_min_age.get("/api/v1/exams/selection-candidates")
@@ -1778,6 +1836,52 @@ async def test_selection_candidates_keyword_sort_and_pagination(
         params={"sortBy": "failureCount", "sortOrder": "asc"},
     )
     assert failures_asc.json()["items"][-1]["id"] == str(algebra_two["_id"])
+
+    # Remaining directions of the 4×2 matrix (#680 review B2): success count
+    # and add date have robust exact orders; selection score direction is
+    # pinned by monotonic score values (weights make exact ranks brittle).
+    success_desc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "successCount", "sortOrder": "desc"},
+    )
+    assert [item["id"] for item in success_desc.json()["items"]] == [
+        str(algebra_one["_id"]),
+        str(algebra_two["_id"]),
+        str(geography["_id"]),
+    ]
+    success_asc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "successCount", "sortOrder": "asc"},
+    )
+    assert [item["id"] for item in success_asc.json()["items"]] == [
+        str(geography["_id"]),
+        str(algebra_one["_id"]),
+        str(algebra_two["_id"]),
+    ]
+
+    add_date_asc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "addDate", "sortOrder": "asc"},
+    )
+    assert [item["id"] for item in add_date_asc.json()["items"]] == [
+        str(algebra_one["_id"]),
+        str(algebra_two["_id"]),
+        str(geography["_id"]),
+    ]
+
+    score_desc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "selectionScore", "sortOrder": "desc"},
+    )
+    scores_desc = [item["selectionScore"] for item in score_desc.json()["items"]]
+    assert scores_desc == sorted(scores_desc, reverse=True)
+    score_asc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "selectionScore", "sortOrder": "asc"},
+    )
+    scores_asc = [item["selectionScore"] for item in score_asc.json()["items"]]
+    assert scores_asc == sorted(scores_asc)
+    assert scores_desc[0] == scores_asc[-1]
 
     add_date_desc = await client.get(
         "/api/v1/exams/selection-candidates", params={"sortBy": "addDate"}

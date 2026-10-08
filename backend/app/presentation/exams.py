@@ -60,6 +60,11 @@ def _validate_manual_problem_ids(problem_ids: list[str] | None) -> list[str]:
     Deliberately no ``parse_object_id``/``get_owned_problem`` here: those map
     bad shapes to 404/500, while manual-selection failures must all funnel
     through ``422 INVALID_SELECTION`` with the offending ids in ``details``.
+
+    Returns canonical ``str(ObjectId(...))`` spellings so duplicate detection,
+    the ownership query and the order-sensitive document lookup all compare
+    one identity form — uppercase/mixed-case spellings of a valid id must not
+    be reported missing or treated as a distinct id (#680).
     """
     if not problem_ids:
         raise ApiError(
@@ -75,23 +80,11 @@ def _validate_manual_problem_ids(problem_ids: list[str] | None) -> list[str]:
             "Too many problems selected",
             details={"problemIds": problem_ids},
         )
-    seen: set[str] = set()
-    duplicates: list[str] = []
-    for problem_id in problem_ids:
-        if problem_id in seen and problem_id not in duplicates:
-            duplicates.append(problem_id)
-        seen.add(problem_id)
-    if duplicates:
-        raise ApiError(
-            422,
-            "INVALID_SELECTION",
-            "Duplicate problem ids in selection",
-            details={"problemIds": duplicates},
-        )
+    canonical_ids: list[str] = []
     invalid: list[str] = []
     for problem_id in problem_ids:
         try:
-            ObjectId(problem_id)
+            canonical_ids.append(str(ObjectId(problem_id)))
         except Exception:
             # bson's InvalidId is not a ValueError subclass in all pymongo
             # versions; any construction failure means "bad id format" (#680).
@@ -103,7 +96,20 @@ def _validate_manual_problem_ids(problem_ids: list[str] | None) -> list[str]:
             "Invalid problem id format",
             details={"problemIds": invalid},
         )
-    return problem_ids
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for canonical_id in canonical_ids:
+        if canonical_id in seen and canonical_id not in duplicates:
+            duplicates.append(canonical_id)
+        seen.add(canonical_id)
+    if duplicates:
+        raise ApiError(
+            422,
+            "INVALID_SELECTION",
+            "Duplicate problem ids in selection",
+            details={"problemIds": duplicates},
+        )
+    return canonical_ids
 
 
 @router.post("", response_model=CreateExamResponse, status_code=201)
@@ -135,6 +141,8 @@ async def create_exam(
         now = datetime.now(UTC)
 
         if payload.mode == "manual":
+            # Canonical ids: uppercase/mixed-case spellings must match the
+            # stored documents and never duplicate one identity (#680).
             problem_ids = _validate_manual_problem_ids(payload.problemIds)
             problem_documents = await database["problems"].find(
                 {
@@ -143,8 +151,8 @@ async def create_exam(
                 },
                 session=session,
             ).to_list(length=None)
-            found_ids = {str(doc["_id"]) for doc in problem_documents}
-            missing = [pid for pid in problem_ids if pid not in found_ids]
+            document_by_id = {str(doc["_id"]): doc for doc in problem_documents}
+            missing = [pid for pid in problem_ids if pid not in document_by_id]
             if missing:
                 # Unknown and foreign ids are deliberately indistinguishable.
                 raise ApiError(
@@ -168,10 +176,8 @@ async def create_exam(
                     "Some selected problems are not exam-eligible",
                     details={"problemIds": ineligible},
                 )
-            document_by_id = {str(doc["_id"]): doc for doc in problem_documents}
             selected_documents = [document_by_id[pid] for pid in problem_ids]
             max_problem_count = len(problem_ids)
-            mode = "manual"
         else:
             problem_documents = await database["problems"].find(
                 {
@@ -207,7 +213,6 @@ async def create_exam(
                 if problem.id is not None and problem.id in document_by_id
             ]
             max_problem_count = payload.maxProblemCount
-            mode = "random"
 
         items = [
             make_exam_item(problem, order=index)
@@ -221,7 +226,7 @@ async def create_exam(
                 "maxProblemCount": max_problem_count,
                 "selectionPolicy": selection_policy.model_dump(),
                 "generatedAt": now,
-                "mode": mode,
+                "mode": payload.mode,
             },
             "items": items,
             "summary": build_exam_summary(items),
