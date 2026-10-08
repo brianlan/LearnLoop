@@ -309,6 +309,15 @@ async def test_edit_candidate_semantic_change_and_665_candidate_from_nothing() -
     stored = get_session(database, session_id)
     assert stored["variation"]["candidate"]["correctAnswer"] == "42"
     assert stored["variation"]["status"] == VariationStatus.NEEDS_VALIDATION.value
+    # Codex P2: the hand-built candidate must carry the immutable fields the
+    # PATCH schema doesn't accept, or the next revalidate fails
+    # VariantCandidate.model_validate and drops back to failed.
+    assert stored["variation"]["candidate"]["subject"] == "math"
+    assert stored["variation"]["candidate"]["generator"] == {
+        "provider": "user",
+        "model": "manual-edit",
+    }
+    VariantCandidate.model_validate(stored["variation"]["candidate"])
 
     # Editing is rejected in in-flight states.
     database = FakeDatabase()
@@ -623,6 +632,32 @@ async def test_executor_revalidation_validates_stored_candidate(
     assert stored["variation"]["candidate"]["correctAnswer"] == "11"
     assert stored["variation"]["validatedRevision"] == 2
     variant_executor.cancel_problem_variant_task(session_id)
+
+
+async def test_executor_removes_completed_task_from_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P2: completed attempts leave _tasks (no per-session leak)."""
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.QUEUED.value)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    async def fake_generate_and_validate(**kwargs: Any) -> Any:
+        return _pass_result()
+
+    monkeypatch.setattr(
+        variant_executor, "generate_and_validate", fake_generate_and_validate
+    )
+    await start_problem_variant_generation(
+        database, settings=None,
+        user_id="user-1", problem_id=PROBLEM_ID, session_id=session_id,
+        clients=(FakeGenerator(), object(), None, object()),
+    )
+    await variant_executor._tasks[str(session_id)]
+    # Done callbacks run on the next loop tick.
+    await asyncio.sleep(0)
+    assert str(session_id) not in variant_executor._tasks
 
 
 async def test_executor_drops_stale_candidate_after_override(

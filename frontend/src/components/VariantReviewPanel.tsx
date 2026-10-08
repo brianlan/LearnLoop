@@ -361,7 +361,7 @@ export function VariantReviewPanel({
         />
       )}
 
-      {variation?.candidate && (
+      {(variation?.candidate || variation?.status === "failed") && (
         <div
           data-testid="bulk-review-edit-target"
           role="group"

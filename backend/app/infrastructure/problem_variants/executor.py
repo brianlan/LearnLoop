@@ -239,7 +239,8 @@ async def start_problem_variant_generation(
 ) -> None:
     """(Re)start the generation task for one session."""
     cancel_problem_variant_task(session_id)
-    _tasks[str(session_id)] = asyncio.create_task(
+    key = str(session_id)
+    task = asyncio.create_task(
         _run_session_generation_guarded(
             database,
             settings,
@@ -249,3 +250,12 @@ async def start_problem_variant_generation(
             clients,
         )
     )
+    _tasks[key] = task
+
+    def _forget(done: asyncio.Task[Any], key: str = key) -> None:
+        # Completed attempts leave the registry unless a newer attempt
+        # already replaced the entry (regenerate/discard pop their own).
+        if _tasks.get(key) is done:
+            _tasks.pop(key, None)
+
+    task.add_done_callback(_forget)

@@ -444,8 +444,19 @@ async def edit_problem_variant_candidate(
             raise VariationNotFoundError("Variant session not found")
 
         variation = dict(session.get("variation") or {})
+        base = variation.get("candidate")
+        if base is None:
+            # Candidate-from-nothing (#665): seed the immutable fields the
+            # PATCH schema doesn't accept so the hand-built candidate passes
+            # VariantCandidate validation when the executor revalidates it.
+            original = variation.get("original") or {}
+            base = {
+                "subject": original.get("subject", ""),
+                # Provenance for a hand-built candidate: no model made it.
+                "generator": {"provider": "user", "model": "manual-edit"},
+            }
         merged_candidate = {
-            **(variation.get("candidate") or {}),
+            **base,
             **candidate_update,
         }
         semantic_changed = has_semantic_change(

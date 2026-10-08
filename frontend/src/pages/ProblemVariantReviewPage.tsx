@@ -228,6 +228,7 @@ export function ProblemVariantReviewPage() {
     handleRevalidate: runRevalidate,
     handleAttest: runAttest,
     actionStateFor,
+    hasPendingSaves,
   } = useBulkReviewEditing(items, {
     onUpdateDraft: handleUpdateDraft,
     onGenerate: handleGenerate,
@@ -280,9 +281,12 @@ export function ProblemVariantReviewPage() {
   }, [navigate, problemId, session]);
 
   const item = items[0];
-  const activeTarget: EditTarget = item?.variation?.candidate
-    ? editTarget
-    : "source";
+  // A failed session with no candidate still supports candidate-from-nothing
+  // recovery (#665): the PATCH creates the candidate from the edited fields.
+  const activeTarget: EditTarget =
+    item?.variation?.candidate || item?.variation?.status === "failed"
+      ? editTarget
+      : "source";
 
   const handleTagsChange = useCallback(
     (nextTags: string[], prevTags: string[]) => {
@@ -431,11 +435,13 @@ export function ProblemVariantReviewPage() {
                 data-testid="variant-submit"
                 className="btn btn-primary"
                 onClick={handleSubmit}
-                disabled={isSubmitting || actionState.hasConflict}
+                disabled={isSubmitting || actionState.hasConflict || hasPendingSaves}
                 title={
                   actionState.hasConflict
                     ? "Resolve the draft conflict first"
-                    : "Admit this variant as a new problem"
+                    : hasPendingSaves
+                      ? "Saving your edits…"
+                      : "Admit this variant as a new problem"
                 }
               >
                 {isSubmitting ? "Submitting..." : "Submit"}

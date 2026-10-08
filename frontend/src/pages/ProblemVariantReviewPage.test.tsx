@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { ProblemVariantReviewPage } from "./ProblemVariantReviewPage";
 import type { ProblemVariantSession } from "@/types/problemVariants";
+import type { ProblemVariantSessionResponse } from "@/api/problemVariants";
 
 vi.mock("@/api/client", () => ({
   api: {
@@ -344,6 +345,111 @@ describe("ProblemVariantReviewPage", () => {
       );
     });
   });
+
+  it("blocks submit while candidate edits are still saving", async () => {
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: readySession(),
+    });
+    let resolveSave: (value: ProblemVariantSessionResponse) => void =
+      () => undefined;
+    vi.mocked(editProblemVariantCandidate).mockImplementation(
+      () =>
+        new Promise<ProblemVariantSessionResponse>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    renderPage();
+
+    const answer = await screen.findByDisplayValue("8");
+    fireEvent.change(answer, { target: { value: "8.5" } });
+
+    // Codex P1: submitting during the autosave window would admit the stale
+    // server-side candidate and silently drop the visible edit.
+    await waitFor(() => {
+      expect(screen.getByTestId("variant-submit")).toBeDisabled();
+    });
+    // Release only once the debounced save is actually in flight, so the
+    // captured resolver belongs to the real pending save.
+    await waitFor(() => {
+      expect(editProblemVariantCandidate).toHaveBeenCalled();
+    });
+
+    const current = readySession();
+    resolveSave({
+      session: {
+        ...current,
+        contentRevision: 2,
+        variation: {
+          ...current.variation,
+          status: "needs-validation",
+          validatedRevision: null,
+          candidate: { ...current.variation?.candidate, correctAnswer: "8.5" },
+        },
+      } as ProblemVariantSession,
+    });
+    // Once saved, the session leaves ready and submit disappears entirely.
+    await waitFor(() => {
+      expect(screen.queryByTestId("variant-submit")).not.toBeInTheDocument();
+    });
+  });
+
+  it("exposes candidate editing for a failed session with no candidate", async () => {
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: queuedSession({
+        contentRevision: 1,
+        variation: {
+          ...queuedSession().variation,
+          status: "failed",
+          validation: {
+            verdict: "fail",
+            failures: [{ kind: "provider", evidence: "VLM unreachable" }],
+            reports: [],
+          },
+        },
+      }),
+    });
+    vi.mocked(editProblemVariantCandidate).mockImplementation(async (_p, _s, body) => {
+      const current = queuedSession();
+      return {
+        session: {
+          ...current,
+          contentRevision: 2,
+          variation: {
+            ...current.variation,
+            status: "needs-validation",
+            candidate: {
+              text: "hand fix",
+              problemType: "short-answer",
+              graphDsl: null,
+              correctAnswer: (body as { correctAnswer?: string }).correctAnswer ?? "",
+            },
+          },
+        } as ProblemVariantSession,
+      };
+    });
+
+    renderPage();
+
+    // Codex P2: candidate-from-nothing recovery needs the target chooser and
+    // an editable candidate form even when no candidate is stored yet.
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-edit-candidate")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-edit-candidate"));
+
+    const answer = await screen.findByTestId("bulk-review-answer");
+    fireEvent.change(answer, { target: { value: "42" } });
+
+    await waitFor(() => {
+      expect(editProblemVariantCandidate).toHaveBeenCalled();
+    });
+    const body = vi.mocked(editProblemVariantCandidate).mock.calls[0][2] as Record<
+      string,
+      unknown
+     >;
+     expect(body["correctAnswer"]).toBe("42");
+   });
 
   it("discards the session and returns to the source problem", async () => {
     vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
