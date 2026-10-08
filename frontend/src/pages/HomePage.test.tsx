@@ -641,6 +641,41 @@ describe("HomePage", () => {
     });
     expect(screen.queryByTestId("home-score-distribution-plot")).not.toBeInTheDocument();
   });
+
+  it("gives zero-count segments no 1px floor in a non-empty bucket", async () => {
+    const buckets = [
+      { start: -2, neverTested: 1, minAged: 1, tested: 2, cooldown: 0 },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: buckets }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-plot")).toBeInTheDocument();
+    });
+
+    // jsdom returns style strings verbatim: the source writes "0", not "0px".
+    const cooldown = screen.getByTestId("home-score-distribution-cooldown-count");
+    expect(cooldown.style.minHeight).toBe("0");
+    expect(cooldown.style.height).toBe("0px");
+  });
+
+  it("keeps the 1px floor for nonzero segments in a non-empty bucket", async () => {
+    const buckets = [
+      { start: -2, neverTested: 1, minAged: 1, tested: 2, cooldown: 0 },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({ scoreDistributionBuckets: buckets }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-score-distribution-plot")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("home-score-distribution-tested-count").style.minHeight).toBe("1px");
+  });
 });
 
 function buildDayRange(startDate: string, count: number): { date: string; count: number }[] {
