@@ -1437,3 +1437,375 @@ async def test_foreign_exam_operations_leave_owner_state_unchanged(
 
     after = await database["exams"].find_one({"_id": exam_id})
     assert after == snapshot
+
+
+# ---------------------------------------------------------------------------
+# Manual exam creation + selection candidates (#680)
+# ---------------------------------------------------------------------------
+
+
+def _seed_picker_problems(exams_app: FastAPI, client: AsyncClient) -> dict[str, dict[str, Any]]:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    now = datetime.now(UTC)
+    problems = {
+        "alpha": make_problem(
+            user_id, text="What is 2+2?", problem_type="fill-in-the-blank",
+            correct_answer="4",
+            tracking={"exposureCount": 2, "correctCount": 2, "failedCount": 0,
+                      "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": True},
+        ),
+        "beta": make_problem(
+            user_id, text="Capital of France?", problem_type="short-answer",
+            correct_answer="Paris",
+            tracking={"exposureCount": 5, "correctCount": 2, "failedCount": 3,
+                      "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": False},
+        ),
+        "gamma": make_problem(
+            user_id, text="Name a prime number", problem_type="short-answer",
+            correct_answer="7",
+        ),
+    }
+    database["problems"].seed(*problems.values())
+    return problems
+
+
+@pytest.mark.asyncio
+async def test_manual_create_exam_items_follow_problem_ids_order(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    problems = _seed_picker_problems(exams_app, client)
+    ordered_ids = [str(problems["gamma"]["_id"]), str(problems["alpha"]["_id"])]
+
+    response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": ordered_ids},
+    )
+
+    assert response.status_code == 201
+    exam = response.json()["exam"]
+    assert [item["problemId"] for item in exam["items"]] == ordered_ids
+    assert [item["order"] for item in exam["items"]] == [1, 2]
+    snapshot = exam["configSnapshot"]
+    assert snapshot["mode"] == "manual"
+    assert snapshot["maxProblemCount"] == 2
+    assert snapshot["selectionPolicy"] == {
+        "cooldownDays": 7, "lastWrongWeight": 1.0, "failureRateWeight": 1.0,
+        "recencyWeight": 1.0, "minProblemAgeDays": 0,
+    }
+    assert snapshot["generatedAt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_manual_create_exam_records_same_policy_and_generated_at_as_random(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    problems = _seed_picker_problems(exams_app, client)
+
+    manual = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(problems["alpha"]["_id"])]},
+    )
+    assert manual.status_code == 201
+    # Discard so the random-mode create passes the active-exam guard.
+    exam_id = manual.json()["exam"]["id"]
+    await client.post(f"/api/v1/exams/{exam_id}/discard")
+
+    random_create = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+
+    assert random_create.status_code == 201
+    manual_snapshot = manual.json()["exam"]["configSnapshot"]
+    random_snapshot = random_create.json()["exam"]["configSnapshot"]
+    assert manual_snapshot["selectionPolicy"] == random_snapshot["selectionPolicy"]
+    assert set(manual_snapshot.keys()) == set(random_snapshot.keys())
+    assert manual_snapshot["mode"] == "manual"
+    assert random_snapshot["mode"] == "random"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"mode": "manual"},
+        {"mode": "manual", "problemIds": []},
+        {"mode": "manual", "problemIds": [str(ObjectId()) for _ in range(31)]},
+    ],
+)
+async def test_manual_create_shape_failures_return_invalid_selection(
+    client: AsyncClient, payload: dict[str, Any]
+) -> None:
+    response = await client.post("/api/v1/exams", json=payload)
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_SELECTION"
+    assert "problemIds" in error["details"]
+
+
+@pytest.mark.asyncio
+async def test_manual_create_duplicate_ids_return_invalid_selection(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    problems = _seed_picker_problems(exams_app, client)
+    pid = str(problems["alpha"]["_id"])
+
+    response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [pid, pid]},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_SELECTION"
+    assert error["details"]["problemIds"] == [pid]
+
+
+@pytest.mark.asyncio
+async def test_manual_create_invalid_and_foreign_ids_share_one_shape(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    problems = _seed_picker_problems(exams_app, client)
+
+    invalid = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": ["not-an-objectid"]},
+    )
+    foreign_user = make_user(username="someoneelse")
+    foreign = make_problem(foreign_user["_id"], text="foreign", problem_type="fill-in-the-blank", correct_answer="x")
+    exams_app.state.fake_database["problems"].seed(foreign)
+    foreign_response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(foreign["_id"])]},
+    )
+
+    assert invalid.status_code == foreign_response.status_code == 422
+    invalid_error = invalid.json()["error"]
+    foreign_error = foreign_response.json()["error"]
+    assert invalid_error["code"] == foreign_error["code"] == "INVALID_SELECTION"
+    assert invalid_error["details"]["problemIds"] == ["not-an-objectid"]
+    assert foreign_error["details"]["problemIds"] == [str(foreign["_id"])]
+
+
+@pytest.mark.asyncio
+async def test_manual_create_unknown_id_returns_invalid_selection(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    _seed_picker_problems(exams_app, client)
+    missing_id = str(ObjectId())
+
+    response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [missing_id]},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_SELECTION"
+    assert error["details"]["problemIds"] == [missing_id]
+
+
+@pytest.mark.asyncio
+async def test_manual_create_rejects_cooldown_problem_as_ineligible(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    now = datetime.now(UTC)
+    cooling = make_problem(
+        user_id, text="Just tested", problem_type="fill-in-the-blank", correct_answer="4",
+        tracking={"exposureCount": 1, "correctCount": 0, "failedCount": 1,
+                  "lastTestedAt": now - timedelta(days=1), "lastAttemptCorrect": False},
+    )
+    database["problems"].seed(cooling)
+
+    response = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(cooling["_id"])]},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INELIGIBLE_PROBLEMS"
+    assert error["details"]["problemIds"] == [str(cooling["_id"])]
+
+
+@pytest.mark.asyncio
+async def test_manual_create_rejects_min_age_problem_as_ineligible(
+    exams_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app_with_min_age.state.fake_database
+    user_id = exams_app_with_min_age.state.primary_user["_id"]
+    too_new = make_problem(user_id, text="Fresh", problem_type="fill-in-the-blank", correct_answer="4")
+    database["problems"].seed(too_new)
+
+    response = await client_with_min_age.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(too_new["_id"])]},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INELIGIBLE_PROBLEMS"
+    assert error["details"]["problemIds"] == [str(too_new["_id"])]
+
+
+@pytest.mark.asyncio
+async def test_manual_create_still_blocked_by_active_exam(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    problems = _seed_picker_problems(exams_app, client)
+
+    first = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(problems["alpha"]["_id"])]},
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(problems["beta"]["_id"])]},
+    )
+
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "ACTIVE_EXAM_EXISTS"
+
+
+@pytest.mark.asyncio
+async def test_random_mode_missing_max_problem_count_returns_validation_error(
+    client: AsyncClient,
+) -> None:
+    response = await client.post("/api/v1/exams", json={"mode": "random"})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_legacy_exam_snapshot_without_mode_serializes_as_random(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    problems = _seed_picker_problems(exams_app, client)
+    created = await client.post(
+        "/api/v1/exams",
+        json={"mode": "manual", "problemIds": [str(problems["alpha"]["_id"])]},
+    )
+    exam_id = created.json()["exam"]["id"]
+    database: FakeDatabase = exams_app.state.fake_database
+    stored = database["exams"]._documents[0]
+    del stored["configSnapshot"]["mode"]
+
+    response = await client.get(f"/api/v1/exams/{exam_id}")
+
+    assert response.status_code == 200
+    assert response.json()["exam"]["configSnapshot"]["mode"] == "random"
+
+
+@pytest.mark.asyncio
+async def test_selection_candidates_exclude_ineligible_problems(
+    exams_app_with_min_age: FastAPI, client_with_min_age: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app_with_min_age.state.fake_database
+    user_id = exams_app_with_min_age.state.primary_user["_id"]
+    now = datetime.now(UTC)
+    eligible = make_problem(user_id, text="Eligible?", problem_type="fill-in-the-blank", correct_answer="4")
+    eligible["createdAt"] = now - timedelta(days=30)
+    eligible["updatedAt"] = now - timedelta(days=30)
+    cooling = make_problem(
+        user_id, text="Cooling down", problem_type="fill-in-the-blank", correct_answer="5",
+        tracking={"exposureCount": 1, "correctCount": 0, "failedCount": 1,
+                  "lastTestedAt": now - timedelta(days=1), "lastAttemptCorrect": False},
+    )
+    cooling["createdAt"] = now - timedelta(days=30)
+    cooling["updatedAt"] = now - timedelta(days=30)
+    fresh = make_problem(user_id, text="Too new", problem_type="fill-in-the-blank", correct_answer="6")
+    fresh["createdAt"] = now - timedelta(hours=1)
+    fresh["updatedAt"] = now - timedelta(hours=1)
+    deleted = make_problem(user_id, text="Deleted", problem_type="fill-in-the-blank", correct_answer="7", is_deleted=True)
+    disabled = make_problem(user_id, text="Disabled", problem_type="fill-in-the-blank", correct_answer="8", is_disabled=True)
+    answerless = make_problem(user_id, text="No answer", problem_type="fill-in-the-blank", correct_answer="")
+    database["problems"].seed(eligible, cooling, fresh, deleted, disabled, answerless)
+
+    response = await client_with_min_age.get("/api/v1/exams/selection-candidates")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert [item["id"] for item in body["items"]] == [str(eligible["_id"])]
+
+
+@pytest.mark.asyncio
+async def test_selection_candidates_keyword_sort_and_pagination(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    now = datetime.now(UTC)
+    algebra_one = make_problem(
+        user_id, text="algebra one", problem_type="fill-in-the-blank", correct_answer="1",
+        tracking={"exposureCount": 3, "correctCount": 3, "failedCount": 0,
+                  "lastTestedAt": now - timedelta(days=40), "lastAttemptCorrect": True},
+    )
+    algebra_two = make_problem(
+        user_id, text="algebra two", problem_type="fill-in-the-blank", correct_answer="2",
+        tracking={"exposureCount": 6, "correctCount": 3, "failedCount": 3,
+                  "lastTestedAt": now - timedelta(days=40), "lastAttemptCorrect": False},
+    )
+    geography = make_problem(
+        user_id, text="Capital of France?", problem_type="short-answer", correct_answer="Paris",
+    )
+    geography["tags"] = ["algebra", "geography"]
+    database["problems"].seed(algebra_one, algebra_two, geography)
+
+    by_tag = await client.get("/api/v1/exams/selection-candidates", params={"q": "ALGEBRA"})
+    assert by_tag.status_code == 200
+    assert by_tag.json()["total"] == 3
+
+    by_text = await client.get("/api/v1/exams/selection-candidates", params={"q": "capital"})
+    assert [item["id"] for item in by_text.json()["items"]] == [str(geography["_id"])]
+
+    failures_desc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "failureCount", "sortOrder": "desc"},
+    )
+    items = failures_desc.json()["items"]
+    assert [item["failedCount"] for item in items] == sorted(
+        [item["failedCount"] for item in items], reverse=True
+    )
+    assert items[0]["id"] == str(algebra_two["_id"])
+
+    failures_asc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "failureCount", "sortOrder": "asc"},
+    )
+    assert failures_asc.json()["items"][-1]["id"] == str(algebra_two["_id"])
+
+    add_date_desc = await client.get(
+        "/api/v1/exams/selection-candidates", params={"sortBy": "addDate"}
+    )
+    assert add_date_desc.status_code == 200
+    assert [item["id"] for item in add_date_desc.json()["items"]] == [
+        str(geography["_id"]),
+        str(algebra_two["_id"]),
+        str(algebra_one["_id"]),
+    ]
+
+    paged = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"page": 2, "pageSize": 2, "sortBy": "addDate"},
+    )
+    paged_body = paged.json()
+    assert paged_body["page"] == 2
+    assert paged_body["pageSize"] == 2
+    assert paged_body["total"] == 3
+    assert [item["id"] for item in paged_body["items"]] == [str(algebra_one["_id"])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [{"sortBy": "bogus"}, {"sortOrder": "sideways"}])
+async def test_selection_candidates_reject_bogus_sort_params(
+    client: AsyncClient, params: dict[str, str]
+) -> None:
+    response = await client.get("/api/v1/exams/selection-candidates", params=params)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
