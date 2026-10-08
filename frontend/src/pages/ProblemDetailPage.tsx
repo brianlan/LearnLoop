@@ -19,6 +19,7 @@ import type {
   VariationContent,
 } from "@/types/problem";
 import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
+import { getActiveProblemVariantSession } from "@/api/problemVariants";
 
 interface TrackingData {
   problemId: string;
@@ -490,6 +491,16 @@ export function ProblemDetailPage() {
     },
   });
 
+  // #685 scope item 6: an existing non-terminal variant session turns the
+  // entry button into "View session" — the review page enters it instead of
+  // creating a second one.
+  const { data: activeVariant } = useQuery({
+    queryKey: ["problem-variant-session", problemId],
+    queryFn: () => getActiveProblemVariantSession(problemId),
+    enabled: !!problemId && !problem?.isDeleted && !problem?.isDisabled,
+  });
+  const hasActiveVariantSession = !!activeVariant?.session;
+
   const solutionStatus = solutionStatusData?.status;
 
   const solutionStatusLabel: Record<string, string> = {
@@ -748,7 +759,8 @@ export function ProblemDetailPage() {
               </button>
             )}
             {/* #685: hidden on deleted/disabled problems. When a variant
-                session already exists the review page shows it instead. */}
+                session already exists the button offers the review page's
+                session entry instead of another create. */}
             {!problem.isDeleted && !problem.isDisabled && (
               <button
                 type="button"
@@ -762,7 +774,7 @@ export function ProblemDetailPage() {
                   fontWeight: 700,
                 }}
               >
-                Create variant
+                {hasActiveVariantSession ? "View session" : "Create variant"}
               </button>
             )}
           </div>

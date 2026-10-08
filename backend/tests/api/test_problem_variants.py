@@ -827,3 +827,79 @@ async def test_stale_terminal_requests_are_rejected(
     assert stored["discardedAt"] is None
     assert stored["submit"] is None
     assert stored["contentRevision"] == 3
+
+
+async def test_submit_walks_a_real_three_level_chain(
+    variants_app: FastAPI, client: AsyncClient
+) -> None:
+    """Codex R7: a genuine 3-level chain (P1 → P2 → P3, two admissions from
+    variant sources) keeps ONE audit image, points each provenance at its
+    DIRECT source, preserves the whole frozen source at admission, and the
+    unreadable-intermediate suppression premise holds: the deleted middle
+    404s while the leaf keeps its provenance link."""
+    source_problem = await create_problem(variants_app)
+    source_audit_key = source_problem["sourceImage"]["objectKey"]
+
+    async def admit_variant_from(source: dict[str, Any]) -> dict[str, Any]:
+        session = make_session_doc(
+            source["_id"],
+            variants_app.state.primary_user["_id"],
+            status="ready",
+            content_revision=1,
+            candidate=dict(CANDIDATE),
+            validation=PASSING_VALIDATION,
+            validated_revision=1,
+        )
+        # The real create endpoint freezes the SOURCE problem's content into
+        # the session original; mirror that instead of the fixture's canned
+        # values so level 3 derives from level 2's actual content.
+        session["variation"]["original"] = {
+            "text": source["text"],
+            "problemType": source["problemType"],
+            "graphDsl": source["graphDsl"],
+            "correctAnswer": source["correctAnswer"]["display"],
+            "subject": source["subject"],
+        }
+        await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(
+            session
+        )
+        response = await client.post(
+            f"/api/v1/problems/{source['_id']}/variants/{session['_id']}/submit",
+            json={"expectedRevision": 1},
+        )
+        assert response.status_code == 200
+        return await variants_app.state.fake_database["problems"].find_one(
+            {"_id": ObjectId(response.json()["problemId"])}
+        )
+
+    p2 = await admit_variant_from(source_problem)
+    p3 = await admit_variant_from(p2)
+
+    # Provenance points at the DIRECT source, never a skip-link to the origin.
+    assert p2["variation"]["original"]["sourceProblemId"] == str(source_problem["_id"])
+    assert p3["variation"]["original"]["sourceProblemId"] == str(p2["_id"])
+
+    # One audit image inherited through the whole chain.
+    assert p2["variation"]["original"]["auditImage"]["objectKey"] == source_audit_key
+    assert p3["variation"]["original"]["auditImage"]["objectKey"] == source_audit_key
+
+    # Whole-source preservation: every admission freezes the complete source
+    # content with the normalized original answer, not selected fields.
+    for child, source in ((p2, source_problem), (p3, p2)):
+        frozen = child["variation"]["original"]
+        assert frozen["text"] == source["text"]
+        assert frozen["problemType"] == source["problemType"]
+        assert frozen["subject"] == source["subject"]
+        assert frozen["graphDsl"] == source["graphDsl"]
+        assert frozen["correctAnswer"] == source["correctAnswer"]
+
+    # Suppression premise: the soft-deleted intermediate becomes unreadable
+    # while the leaf retains its provenance link for the UI to suppress.
+    delete_response = await client.delete(f"/api/v1/problems/{p2['_id']}")
+    assert delete_response.status_code == 200
+    assert (
+        await client.get(f"/api/v1/problems/{p2['_id']}")
+    ).status_code == 404
+    leaf = await client.get(f"/api/v1/problems/{p3['_id']}")
+    assert leaf.status_code == 200
+    assert leaf.json()["problem"]["variation"]["sourceProblemId"] == str(p2["_id"])

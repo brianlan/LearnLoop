@@ -879,3 +879,51 @@ async def test_expired_submit_reservation_does_not_block_generate() -> None:
         admitted_problem_id=ObjectId(), expected_revision=1,
         now=NOW + timedelta(minutes=11), submit_token=stale,
     ) is False
+
+
+async def test_cancel_stops_a_running_task_and_registers_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex R7: Generate-override/discard cancellation stops the actually
+    running task, leaves no result behind, and cleans the registry entry."""
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.QUEUED.value)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    started = asyncio.Event()
+
+    async def slow_generate_and_validate(**kwargs: Any) -> Any:
+        started.set()
+        await asyncio.Event().wait()  # cancelled before this returns
+
+    monkeypatch.setattr(
+        variant_executor, "generate_and_validate", slow_generate_and_validate
+    )
+    await start_problem_variant_generation(
+        database, settings=None,
+        user_id="user-1", problem_id=PROBLEM_ID, session_id=session_id,
+        clients=(FakeGenerator(), object(), None, object()),
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task = variant_executor._tasks[str(session_id)]
+    assert not task.done()
+    # The claim flipped the session to generating, and the checkpoint moved
+    # it to validating before the (stubbed) validation step blocked.
+    stored = get_session(database, session_id)
+    assert stored["variation"]["status"] == VariationStatus.VALIDATING.value
+    assert stored["variation"]["candidate"] is not None
+
+    # The override/discard path cancels the running handle.
+    variant_executor.cancel_problem_variant_task(session_id)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # Done callback cleans the registry on the next loop tick.
+    await asyncio.sleep(0)
+    assert str(session_id) not in variant_executor._tasks
+
+    # Nothing landed after the cancel point: no validation verdict — the
+    # endpoint re-queues after cancelling.
+    stored = get_session(database, session_id)
+    assert stored["variation"]["status"] == VariationStatus.VALIDATING.value
+    assert stored["variation"]["validation"] is None

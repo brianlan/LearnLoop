@@ -909,6 +909,8 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ problem: baseProblem })
       .mockResolvedValueOnce(baseTracking)
+      // #685: the active-variant query consumes the next api.get slot.
+      .mockResolvedValueOnce({ session: null })
       .mockResolvedValueOnce({ problem: { ...baseProblem, isDisabled: true } });
 
     vi.mocked(api.setProblemDisabled).mockResolvedValueOnce({
@@ -1249,8 +1251,13 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ problem: variantProblem })
       .mockResolvedValueOnce(baseTracking)
+      // #685: the active-variant query consumes the next api.get slot.
+      .mockResolvedValueOnce({ session: null })
       .mockResolvedValueOnce({ problem: { ...variantProblem, text: "Edited variant text" } })
       .mockResolvedValueOnce(baseTracking);
+    // Provenance walk-back fetch (and any further reads) resolve to the
+    // variant problem so the "Derived from" section renders.
+    vi.mocked(api.get).mockResolvedValue({ problem: variantProblem });
     vi.mocked(api.patch).mockResolvedValueOnce({
       problem: { ...variantProblem, text: "Edited variant text" },
     });
@@ -1347,11 +1354,62 @@ describe("ProblemDetailPage: create variant (#685)", () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ problem: { ...baseProblem, isDeleted: true } })
       .mockResolvedValueOnce(baseTracking);
+    const deleted = renderProblemDetailPage();
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("create-variant-button")).not.toBeInTheDocument();
+    deleted.unmount();
+
+    // Codex R7: the disabled case must be covered too, not only deletion.
+    vi.mocked(api.get).mockReset();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, isDisabled: true } })
+      .mockResolvedValueOnce(baseTracking);
     renderProblemDetailPage();
     await waitFor(() => {
       expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("create-variant-button")).not.toBeInTheDocument();
+  });
+
+  it("shows View session when a non-terminal variant session exists", async () => {
+    // Codex R7 scope item 6: the detail entry must reflect the existing
+    // session instead of always offering another create.
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem } })
+      .mockResolvedValueOnce(baseTracking)
+      .mockResolvedValueOnce({
+        session: {
+          sessionId: "sess-9",
+          problemId: "abc123",
+          mode: "transfer-variant",
+          contentRevision: 0,
+          tags: [],
+          variation: {
+            status: "queued",
+            generationCount: 1,
+            original: {},
+            candidate: null,
+            validation: null,
+            validatedRevision: null,
+            attestation: null,
+            queuedAt: "2024-01-01T00:00:00Z",
+          },
+          submit: null,
+          discardedAt: null,
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+        },
+      });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-variant-button")).toHaveTextContent(
+        "View session",
+      );
+    });
   });
 
   it("navigates to the variant review route on click", async () => {

@@ -455,6 +455,48 @@ describe("ProblemVariantReviewPage", () => {
      expect(body["correctAnswer"]).toBe("42");
    });
 
+  it("polls an in-flight session and stops at a terminal state", async () => {
+    // Codex R7: the busy-to-terminal polling lifecycle with cleanup.
+    // Note: no waitFor here — RTL waitFor relies on real timers, which
+    // deadlock under fake timers.
+    vi.useFakeTimers();
+    try {
+      const generating = queuedSession({
+        variation: { ...queuedSession().variation, status: "generating" },
+      });
+      vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+        session: generating,
+      });
+
+      renderPage();
+
+      // Initial load.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getActiveProblemVariantSession).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("bulk-review-generate")).toBeInTheDocument();
+
+      // One poll tick while in flight.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(getActiveProblemVariantSession).toHaveBeenCalledTimes(2);
+
+      // The next poll lands the terminal (ready) session.
+      vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+        session: readySession(),
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getActiveProblemVariantSession).toHaveBeenCalledTimes(3);
+      expect(screen.getByTestId("variant-submit")).toBeInTheDocument();
+
+      // Terminal state clears the interval: no further polls.
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(getActiveProblemVariantSession).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends only tags for tag edits even when a ready candidate exists", async () => {
     // Codex R1 (P1): the hook routes tag saves through the read-only source
     // target with a full form; forwarding that form through the candidate
