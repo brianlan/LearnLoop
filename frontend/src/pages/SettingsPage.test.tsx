@@ -58,6 +58,7 @@ const mockSettings = {
     model: "helper-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 30,
     status: "configured",
   },
@@ -66,6 +67,7 @@ const mockSettings = {
     model: "math-ingestion-model",
     provider: "ollama",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 120,
     status: "configured",
   },
@@ -74,6 +76,7 @@ const mockSettings = {
     model: "english-ingestion-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 120,
     status: "configured",
   },
@@ -82,6 +85,7 @@ const mockSettings = {
     model: "grading-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 60,
     status: "configured",
   },
@@ -90,6 +94,7 @@ const mockSettings = {
     model: "math-solution-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 90,
     status: "configured",
   },
@@ -98,6 +103,7 @@ const mockSettings = {
     model: "english-solution-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 90,
     status: "configured",
   },
@@ -106,6 +112,7 @@ const mockSettings = {
     model: "math-coaching-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 45,
     status: "configured",
   },
@@ -114,6 +121,7 @@ const mockSettings = {
     model: "english-coaching-model",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 45,
     status: "configured",
   },
@@ -122,6 +130,7 @@ const mockSettings = {
     model: "variant-generator-model",
     provider: "openai",
     api_mode: "responses",
+    reasoning_effort: "high",
     timeout_seconds: 120,
     status: "configured",
   },
@@ -130,6 +139,7 @@ const mockSettings = {
     model: "validator-1",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "none",
     timeout_seconds: 120,
     status: "misconfigured",
   },
@@ -138,6 +148,7 @@ const mockSettings = {
     model: "replace-me",
     provider: "openai",
     api_mode: "chat",
+    reasoning_effort: "high",
     timeout_seconds: 120,
     status: "unconfigured",
   },
@@ -245,6 +256,12 @@ describe("SettingsPage", () => {
     renderWithProviders();
     expect(await screen.findAllByText("API mode")).toHaveLength(11);
     expect(await screen.findByText("responses")).toBeInTheDocument();
+  });
+
+  it("renders VLM reasoning effort values (#677)", async () => {
+    renderWithProviders();
+    expect(await screen.findAllByText("Reasoning effort")).toHaveLength(11);
+    expect(await screen.findByText("none")).toBeInTheDocument();
   });
 
   it("renders a status badge per VLM profile with hints for problem states", async () => {

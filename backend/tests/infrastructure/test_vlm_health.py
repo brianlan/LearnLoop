@@ -289,3 +289,32 @@ async def test_begin_run_guard_and_reset_after_run() -> None:
     assert health._running is False
     assert health.begin_run() is True
     health._running = False  # leave module state clean for other tests
+
+
+@pytest.mark.asyncio
+async def test_probe_request_carries_configured_reasoning_effort() -> None:
+    """The health probe request carries each profile's configured effort (#677)."""
+    settings = _build_settings(
+        helper_vlm_reasoning_effort="low",
+        **UNCONFIGURED_VALIDATOR2,
+    )
+    harness = _ProbeHarness()
+
+    snap = await health.run_probe(
+        settings=settings,
+        client_factory=harness.factory,
+        sleep=harness._sleep,
+    )
+
+    assert snap["profiles"]["helper_vlm"]["status"] == "ok"
+    chat_call = next(
+        c for c in harness.chat_calls if c["api_base"] == "https://helper_vlm.example/api"
+    )
+    assert chat_call["reasoning_effort"] == "low"
+    # Profiles left at the default still send the default value.
+    other_call = next(
+        c
+        for c in harness.chat_calls
+        if c["api_base"] == "https://math_ingestion_vlm.example/api"
+    )
+    assert other_call["reasoning_effort"] == "high"

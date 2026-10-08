@@ -62,6 +62,8 @@ def _build_client(
     *,
     error_factory: Any | None = None,
     provider: str = "openai",
+    responses_fn: Any | None = None,
+    **extra: Any,
 ) -> BaseVLMClient:
     return _TestClient(
         endpoint="https://vlm.example/api",
@@ -70,7 +72,9 @@ def _build_client(
         timeout_seconds=5,
         provider=provider,
         completion_fn=completion_fn,
+        responses_fn=responses_fn,
         error_factory=error_factory,
+        **extra,
     )
 
 
@@ -251,3 +255,80 @@ async def test_base_vlm_chat_completion_validation_error_names_field() -> None:
     message = str(exc_info.value)
     assert "VLM provider response failed chat completion validation" in message
     assert "choices" in message
+
+
+@pytest.mark.asyncio
+async def test_base_vlm_chat_send_passes_reasoning_effort_through() -> None:
+    captured: dict[str, Any] = {}
+
+    async def completion_fn(**kwargs):
+        captured.update(kwargs)
+        return _mock_response(content="{}")
+
+    client = _build_client(completion_fn, reasoning_effort="high")
+
+    await client._send_chat_completion({"model": "demo", "messages": []})
+
+    assert captured["reasoning_effort"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_base_vlm_responses_send_passes_reasoning_effort() -> None:
+    captured: dict[str, Any] = {}
+
+    async def responses_fn(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(output_text="{}")
+
+    client = _build_client(responses_fn=responses_fn, reasoning_effort="low")
+
+    await client._send_responses_request({"input": "Return your answer as JSON."})
+
+    assert captured["reasoning"] == {"effort": "low"}
+
+
+@pytest.mark.asyncio
+async def test_base_vlm_reasoning_effort_none_omits_parameter_on_both_modes() -> None:
+    chat_captured: dict[str, Any] = {}
+    responses_captured: dict[str, Any] = {}
+
+    async def completion_fn(**kwargs):
+        chat_captured.update(kwargs)
+        return _mock_response(content="{}")
+
+    async def responses_fn(**kwargs):
+        responses_captured.update(kwargs)
+        return SimpleNamespace(output_text="{}")
+
+    client = _build_client(
+        completion_fn, responses_fn=responses_fn, reasoning_effort="none"
+    )
+
+    await client._send_chat_completion({"model": "demo", "messages": []})
+    await client._send_responses_request({"input": "Return your answer as JSON."})
+
+    assert "reasoning_effort" not in chat_captured
+    assert "reasoning" not in responses_captured
+
+
+@pytest.mark.asyncio
+async def test_base_vlm_constructor_default_omits_reasoning_parameter() -> None:
+    """Callers that do not pass reasoning_effort keep pre-change requests (#677)."""
+    chat_captured: dict[str, Any] = {}
+    responses_captured: dict[str, Any] = {}
+
+    async def completion_fn(**kwargs):
+        chat_captured.update(kwargs)
+        return _mock_response(content="{}")
+
+    async def responses_fn(**kwargs):
+        responses_captured.update(kwargs)
+        return SimpleNamespace(output_text="{}")
+
+    client = _build_client(completion_fn, responses_fn=responses_fn)
+
+    await client._send_chat_completion({"model": "demo", "messages": []})
+    await client._send_responses_request({"input": "Return your answer as JSON."})
+
+    assert "reasoning_effort" not in chat_captured
+    assert "reasoning" not in responses_captured

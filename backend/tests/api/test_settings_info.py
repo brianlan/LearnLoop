@@ -82,6 +82,7 @@ def _expected_profile(prefix: str, *, status: str) -> dict:
             "model": "replace-me",
             "provider": "openai",
             "api_mode": "chat",
+            "reasoning_effort": "high",
             "timeout_seconds": 120.0,
             "status": status,
         }
@@ -90,6 +91,7 @@ def _expected_profile(prefix: str, *, status: str) -> dict:
         "model": f"{prefix}-model",
         "provider": "openai",
         "api_mode": "chat",
+        "reasoning_effort": "high",
         "timeout_seconds": 10,
         "status": status,
     }
@@ -121,6 +123,30 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
         "min_problem_age_days": 3,
     }
     assert "practice" not in payload
+
+
+@pytest.mark.asyncio
+async def test_settings_info_exposes_configured_reasoning_effort(monkeypatch) -> None:
+    """The payload surfaces each profile's configured reasoning effort (#677)."""
+    settings = _build_settings()
+    for prefix in ALL_VLM_PROFILES:
+        setattr(
+            settings,
+            f"{prefix}_reasoning_effort",
+            "none" if prefix == "helper_vlm" else "xhigh",
+        )
+    monkeypatch.setattr(settings_presentation, "get_settings", lambda: settings)
+
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["helper_vlm"]["reasoning_effort"] == "none"
+    for prefix in ALL_VLM_PROFILES:
+        if prefix != "helper_vlm":
+            assert payload[prefix]["reasoning_effort"] == "xhigh", prefix
 
 
 @pytest.mark.asyncio

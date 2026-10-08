@@ -1000,3 +1000,47 @@ async def test_solution_vlm_client_uses_whitelisted_image_media_type() -> None:
     )
 
     assert result.final_answer == "2"
+
+
+def test_solution_client_honors_per_subject_reasoning_effort() -> None:
+    """Solution construction sites honor their profile's value (#677)."""
+    math_settings = Settings(
+        math_solution_vlm_endpoint="https://solution.example/api",
+        math_solution_vlm_model="solution-model",
+        math_solution_vlm_api_key="solution-key",
+        math_solution_vlm_reasoning_effort="minimal",
+    )
+    english_settings = Settings(
+        english_solution_vlm_endpoint="https://solution.example/api",
+        english_solution_vlm_model="solution-model",
+        english_solution_vlm_api_key="solution-key",
+        english_solution_vlm_reasoning_effort="none",
+    )
+
+    math_client = SolutionVLMClient(settings=math_settings, subject="math")
+    english_client = SolutionVLMClient(settings=english_settings, subject="english")
+
+    assert math_client._reasoning_effort == "minimal"
+    assert english_client._reasoning_effort == "none"
+
+
+def test_coaching_client_honors_per_subject_reasoning_effort() -> None:
+    """Coaching construction sites honor their profile's value (#677)."""
+    math_settings = Settings(
+        math_coaching_vlm_endpoint="https://coaching.example/api",
+        math_coaching_vlm_model="coaching-model",
+        math_coaching_vlm_api_key="coaching-key",
+        math_coaching_vlm_reasoning_effort="low",
+    )
+    english_settings = Settings(
+        english_coaching_vlm_endpoint="https://coaching.example/api",
+        english_coaching_vlm_model="coaching-model",
+        english_coaching_vlm_api_key="coaching-key",
+        english_coaching_vlm_reasoning_effort="xhigh",
+    )
+
+    math_client = CoachingVLMClient(settings=math_settings, subject="math")
+    english_client = CoachingVLMClient(settings=english_settings, subject="english")
+
+    assert math_client._reasoning_effort == "low"
+    assert english_client._reasoning_effort == "xhigh"

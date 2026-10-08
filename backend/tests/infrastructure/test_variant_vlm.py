@@ -1040,3 +1040,25 @@ async def test_validator_schema_validation_error_names_offending_field() -> None
     message = str(exc_info.value)
     assert "Variant VLM response failed schema validation" in message
     assert "originalSolvedAnswer" in message
+
+
+def test_builders_thread_per_profile_reasoning_effort() -> None:
+    """Every variant construction site honors its profile's value (#677)."""
+    settings = _settings().model_copy(
+        update={
+            "variant_generator_vlm_reasoning_effort": "none",
+            "variant_validator_vlm_reasoning_effort": "minimal",
+            "variant_validator2_vlm_reasoning_effort": "xhigh",
+            "helper_vlm_reasoning_effort": "low",
+        }
+    )
+
+    generator = build_variant_generator_vlm_client(settings)
+    validator = build_variant_validator_vlm_client(settings)
+    validator2 = build_variant_validator_vlm_client(settings, second=True)
+    helper = build_variant_helper_vlm_client(settings)
+
+    assert generator._reasoning_effort == "none"
+    assert validator is not None and validator._reasoning_effort == "minimal"
+    assert validator2 is not None and validator2._reasoning_effort == "xhigh"
+    assert helper._reasoning_effort == "low"
