@@ -168,7 +168,7 @@ class FakeValidator:
         self,
         *,
         report: ValidatorReport | None = None,
-        error: BaseVLMError | None = None,
+        error: Exception | None = None,
     ) -> None:
         self.identity = {"provider": "fake", "model": "val-model"}
         self.report = report
@@ -186,7 +186,7 @@ class FakeValidator:
 
 
 class FakeHelper:
-    def __init__(self, *, error: BaseVLMError | None = None) -> None:
+    def __init__(self, *, error: Exception | None = None) -> None:
         self.identity = {"provider": "fake", "model": "helper-model"}
         self.error = error
 
@@ -957,3 +957,110 @@ async def test_heartbeat_loss_discards_stale_call(monkeypatch: pytest.MonkeyPatc
     assert variation["status"] == VariationStatus.GENERATING.value
     assert variation["candidate"] is None
     assert variation["claimToken"] == token
+
+
+async def test_generation_raw_mapping_error_lands_failed_with_evidence() -> None:
+    """A raw provider mapping error (e.g. LiteLLM's ValueError for an
+    unsupported reasoning effort) is not a BaseVLMError: it must still land a
+    fenced failure with the original message visible instead of leaving the
+    item generating until the lease expires (#677)."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+
+    generator = FakeGenerator()
+    generator.responses.append(ValueError("Model does not support reasoning effort xhigh"))
+
+    await process_variation(
+        claimed, batch, database, generator, [], None, make_settings(), now=NOW
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    # FAILED items are not claimable: the attempt is not silently reclaimed.
+    assert variation["status"] == VariationStatus.FAILED.value
+    assert variation["candidate"] is None
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "provider"
+    assert "reasoning effort xhigh" in failure["evidence"]
+    assert "gen-model" in failure["evidence"]
+
+
+async def test_validator_raw_mapping_error_lands_needs_validation() -> None:
+    """A raw provider mapping error raised by a validator (not a
+    BaseVLMError) escapes generate_and_validate's inner BaseVLMError handling
+    and must be contained by the worker's fenced failure path: the
+    checkpointed candidate is preserved and the original message stays
+    visible (#677)."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+    validator = FakeValidator(
+        error=ValueError("Model does not support reasoning effort xhigh")
+    )
+
+    # The real generate_and_validate runs (no monkeypatch).
+    await process_variation(
+        claimed, batch, database, generator, [validator], FakeHelper(),
+        make_settings(), now=NOW,
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    # needs-validation keeps the candidate for Revalidate; it is not reclaimed.
+    assert variation["status"] == VariationStatus.NEEDS_VALIDATION.value
+    assert variation["candidate"]["text"] == GENERATED_CANDIDATE["text"]
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "provider"
+    assert "reasoning effort xhigh" in failure["evidence"]
+    assert validator.calls, "the validator must have been invoked"
+
+
+async def test_helper_raw_mapping_error_lands_needs_validation() -> None:
+    """A raw provider mapping error raised by the helper (not a
+    BaseVLMError) escapes generate_and_validate's inner BaseVLMError handling
+    and lands needs-validation through the worker's fenced failure path
+    (#677)."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+    validator = FakeValidator(report=passing_validator_report())
+    helper = FakeHelper(error=ValueError("Model does not support reasoning effort xhigh"))
+
+    await process_variation(
+        claimed, batch, database, generator, [validator], helper,
+        make_settings(), now=NOW,
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.NEEDS_VALIDATION.value
+    assert variation["candidate"]["text"] == GENERATED_CANDIDATE["text"]
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "provider"
+    assert "reasoning effort xhigh" in failure["evidence"]

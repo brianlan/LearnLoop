@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 import math
 import random
+import re
 
 from .models import Problem
 
@@ -181,3 +182,59 @@ def select_problems(
         rng = random.Random()
 
     return _weighted_sample_without_replacement(weighted, count, rng)
+
+
+_RANK_SORT_KEYS = ("selectionScore", "addDate", "successCount", "failureCount")
+
+
+def rank_eligible_problems(
+    problems: List[Problem],
+    config: ProblemSelectionConfig,
+    now: datetime,
+    *,
+    q: str | None = None,
+    sort_by: str = "selectionScore",
+    sort_order: str = "desc",
+) -> list[tuple[Problem, float]]:
+    """Exam-picker candidate rows: keyword filter, eligibility, score, sort (#680).
+
+    Pure helper — no I/O. ``sort_by``/``sort_order`` are plain ``str``: the
+    endpoint's ``Literal`` query params are the validation boundary, and an
+    unknown value raises ``ValueError`` here rather than falling back silently.
+    """
+    if sort_by not in _RANK_SORT_KEYS:
+        raise ValueError(f"unknown sort_by: {sort_by!r}")
+    if sort_order not in ("asc", "desc"):
+        raise ValueError(f"unknown sort_order: {sort_order!r}")
+
+    if q is not None:
+        trimmed = q.strip()
+        if trimmed:
+            pattern = re.compile(re.escape(trimmed), re.IGNORECASE)
+            problems = [
+                problem
+                for problem in problems
+                if pattern.search(problem.text)
+                or any(pattern.search(tag) for tag in problem.tags)
+            ]
+
+    scored = [
+        (problem, compute_score_breakdown(problem, config, now).total)
+        for problem in get_eligible_problems(problems, config, now)
+    ]
+
+    def _sort_value(item: tuple[Problem, float]) -> Any:
+        problem, score = item
+        if sort_by == "selectionScore":
+            return score
+        if sort_by == "addDate":
+            return problem.createdAt
+        if sort_by == "successCount":
+            return problem.tracking.correctCount
+        return problem.tracking.failedCount
+
+    # Stable sort: id tiebreak first (mirrors _problem_id_sort_value), then
+    # the requested column, so equal keys keep a deterministic order.
+    scored.sort(key=lambda item: str(item[0].id))
+    scored.sort(key=_sort_value, reverse=(sort_order == "desc"))
+    return scored

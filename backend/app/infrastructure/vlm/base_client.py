@@ -46,6 +46,9 @@ class BaseVLMClient:
         timeout_seconds: float,
         provider: str = "openai",
         api_mode: Literal["chat", "responses"] = "chat",
+        reasoning_effort: Literal[
+            "none", "minimal", "low", "medium", "high", "xhigh"
+        ] = "none",
         completion_fn: Callable[..., Any] | None = None,
         responses_fn: Callable[..., Any] | None = None,
         error_factory: Callable[..., BaseException] | None = None,
@@ -56,6 +59,7 @@ class BaseVLMClient:
         self._timeout_seconds = timeout_seconds
         self._provider = provider
         self._api_mode = api_mode
+        self._reasoning_effort = reasoning_effort
         self._effective_model = f"{provider}/{model}"
         self._completion_fn = completion_fn or litellm.acompletion
         self._responses_fn = responses_fn or litellm.aresponses
@@ -66,7 +70,7 @@ class BaseVLMClient:
 
     async def _send_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            response = await self._completion_fn(
+            kwargs: dict[str, Any] = dict(
                 model=self._effective_model,
                 messages=payload["messages"],
                 api_base=self._endpoint,
@@ -74,6 +78,11 @@ class BaseVLMClient:
                 timeout=self._timeout_seconds,
                 num_retries=0,
             )
+            # "none" means "no reasoning parameter at all" (#677): requests
+            # must stay byte-identical to the pre-reasoning-effort behavior.
+            if self._reasoning_effort != "none":
+                kwargs["reasoning_effort"] = self._reasoning_effort
+            response = await self._completion_fn(**kwargs)
         except Timeout as exc:
             raise self._make_error(
                 "VLM request timed out",
@@ -94,7 +103,7 @@ class BaseVLMClient:
     async def _send_responses_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_responses_input_mentions_json(payload)
         try:
-            response = await self._responses_fn(
+            kwargs: dict[str, Any] = dict(
                 model=self._effective_model,
                 instructions=payload.get("instructions"),
                 input=payload.get("input"),
@@ -104,6 +113,9 @@ class BaseVLMClient:
                 timeout=self._timeout_seconds,
                 num_retries=0,
             )
+            if self._reasoning_effort != "none":
+                kwargs["reasoning"] = {"effort": self._reasoning_effort}
+            response = await self._responses_fn(**kwargs)
         except Timeout as exc:
             raise self._make_error(
                 "VLM request timed out",

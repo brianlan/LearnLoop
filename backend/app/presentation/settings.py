@@ -21,6 +21,7 @@ def _vlm_profile(settings: Settings, prefix: str) -> dict:
     model = getattr(settings, f"{prefix}_model")
     provider = getattr(settings, f"{prefix}_provider")
     api_mode = getattr(settings, f"{prefix}_api_mode")
+    reasoning_effort = getattr(settings, f"{prefix}_reasoning_effort")
     timeout_seconds = getattr(settings, f"{prefix}_timeout_seconds")
     api_key = getattr(settings, f"{prefix}_api_key")
     return {
@@ -28,6 +29,7 @@ def _vlm_profile(settings: Settings, prefix: str) -> dict:
         "model": model,
         "provider": provider,
         "api_mode": api_mode,
+        "reasoning_effort": reasoning_effort,
         "timeout_seconds": timeout_seconds,
         "status": profile_status(endpoint=endpoint, model=model, api_key=api_key),
     }

@@ -195,6 +195,9 @@ def _build_vlm_client(
     timeout_seconds: float,
     provider: str = "openai",
     api_mode: Literal["chat", "responses"] = "chat",
+    reasoning_effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh"
+    ] = "none",
     completion_fn: Callable[..., Any] | None = None,
     responses_fn: Callable[..., Any] | None = None,
     extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
@@ -207,6 +210,7 @@ def _build_vlm_client(
         timeout_seconds=timeout_seconds,
         provider=provider,
         api_mode=api_mode,
+        reasoning_effort=reasoning_effort,
         completion_fn=completion_fn,
         responses_fn=responses_fn,
         extraction_system_prompt=extraction_system_prompt,
@@ -222,6 +226,7 @@ def build_helper_vlm_client(settings: Settings) -> VLMClient:
         timeout_seconds=settings.helper_vlm_timeout_seconds,
         provider=settings.helper_vlm_provider,
         api_mode=settings.helper_vlm_api_mode,
+        reasoning_effort=settings.helper_vlm_reasoning_effort,
     )
 
 
@@ -233,6 +238,7 @@ def build_math_ingestion_vlm_client(settings: Settings) -> VLMClient:
         timeout_seconds=settings.math_ingestion_vlm_timeout_seconds,
         provider=settings.math_ingestion_vlm_provider,
         api_mode=settings.math_ingestion_vlm_api_mode,
+        reasoning_effort=settings.math_ingestion_vlm_reasoning_effort,
     )
 
 
@@ -244,6 +250,7 @@ def build_english_ingestion_vlm_client(settings: Settings) -> VLMClient:
         timeout_seconds=settings.english_ingestion_vlm_timeout_seconds,
         provider=settings.english_ingestion_vlm_provider,
         api_mode=settings.english_ingestion_vlm_api_mode,
+        reasoning_effort=settings.english_ingestion_vlm_reasoning_effort,
         extraction_system_prompt=ENGLISH_EXTRACTION_SYSTEM_PROMPT,
         request_correct_answer=True,
     )
@@ -257,6 +264,7 @@ def build_grading_vlm_client(settings: Settings) -> VLMClient:
         timeout_seconds=settings.grading_vlm_timeout_seconds,
         provider=settings.grading_vlm_provider,
         api_mode=settings.grading_vlm_api_mode,
+        reasoning_effort=settings.grading_vlm_reasoning_effort,
     )
 
 
@@ -270,6 +278,9 @@ class VLMClient(BaseVLMClient):
         timeout_seconds: float,
         provider: str = "openai",
         api_mode: Literal["chat", "responses"] = "chat",
+        reasoning_effort: Literal[
+            "none", "minimal", "low", "medium", "high", "xhigh"
+        ] = "none",
         completion_fn: Callable[..., Any] | None = None,
         responses_fn: Callable[..., Any] | None = None,
         extraction_system_prompt: str = MATH_EXTRACTION_SYSTEM_PROMPT,
@@ -282,6 +293,7 @@ class VLMClient(BaseVLMClient):
             timeout_seconds=timeout_seconds,
             provider=provider,
             api_mode=api_mode,
+            reasoning_effort=reasoning_effort,
             completion_fn=completion_fn,
             responses_fn=responses_fn,
             error_factory=VLMError,
