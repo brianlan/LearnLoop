@@ -468,6 +468,7 @@ async def attest_problem_variant(
 async def submit_problem_variant(
     problem_id: str,
     session_id: str,
+    request: ProblemVariantRevisionRequest,
     database: DatabaseDependency,
     adapter: AdapterDependency,
     user: CurrentUserDependency,
@@ -475,8 +476,9 @@ async def submit_problem_variant(
     """Admit the accepted candidate as a NEW problem inside a transaction.
 
     The source problem is never modified; the session records the admitted
-    problem id. Idempotency is an explicit 409: the client navigates to the
-    admitted problem instead of creating a second one.
+    problem id. The admission only lands at the caller's reviewed revision.
+    Idempotency is an explicit 409: the client navigates to the admitted
+    problem instead of creating a second one.
     """
     session_object_id = parse_object_id(session_id, resource_name="Variant session")
     now = datetime.now(UTC)
@@ -497,6 +499,14 @@ async def submit_problem_variant(
                 409,
                 "VARIANT_ALREADY_SUBMITTED",
                 "This variant session already admitted a problem",
+            )
+        if session.get("contentRevision") != request.expectedRevision:
+            # Reject stale reviews before any admission work.
+            raise ApiError(
+                409,
+                "REVISION_MISMATCH",
+                f"expectedRevision {request.expectedRevision} does not match "
+                f"session contentRevision {session.get('contentRevision')}",
             )
         variation = session.get("variation") or {}
         validation = variation.get("validation") or {}
@@ -542,6 +552,7 @@ async def submit_problem_variant(
                 problem_id,
                 session["_id"],
                 admitted_problem_id=admitted_id,
+                expected_revision=request.expectedRevision,
                 now=now,
                 session=record_session,
             )
@@ -586,18 +597,28 @@ async def submit_problem_variant(
 async def discard_problem_variant(
     problem_id: str,
     session_id: str,
+    request: ProblemVariantRevisionRequest,
     database: DatabaseDependency,
     user: CurrentUserDependency,
 ) -> ProblemVariantSessionResponse:
-    """Terminal discard (session mode is immutable at creation, so a wrong
-    mode or abandoned candidate is otherwise unrecoverable). Cancels any
-    in-flight task handle."""
+    """Terminal discard at the caller's reviewed revision (session mode is
+    immutable at creation, so a wrong mode or abandoned candidate is
+    otherwise unrecoverable). Cancels any in-flight task handle."""
     session = await _load_owned_session(database, problem_id, session_id, user["_id"])
+    if session.get("contentRevision") != request.expectedRevision:
+        # Reject stale requests before cancelling anything.
+        raise ApiError(
+            409,
+            "REVISION_MISMATCH",
+            f"expectedRevision {request.expectedRevision} does not match "
+            f"session contentRevision {session.get('contentRevision')}",
+        )
     discarded = await discard_problem_variant_session(
         database,
         user["_id"],
         problem_id,
         session["_id"],
+        expected_revision=request.expectedRevision,
         now=datetime.now(UTC),
     )
     if discarded:

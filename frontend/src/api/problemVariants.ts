@@ -81,20 +81,22 @@ export async function attestProblemVariant(
 export async function submitProblemVariant(
   problemId: string,
   sessionId: string,
+  expectedRevision: number,
 ): Promise<{ problemId: string; alreadySubmitted: boolean }> {
   return api.post(
     `/problems/${problemId}/variants/${sessionId}/submit`,
-    undefined,
+    { expectedRevision },
   );
 }
 
 export async function discardProblemVariant(
   problemId: string,
   sessionId: string,
+  expectedRevision: number,
 ): Promise<ProblemVariantSessionResponse> {
   return api.post<ProblemVariantSessionResponse>(
     `/problems/${problemId}/variants/${sessionId}/discard`,
-    undefined,
+    { expectedRevision },
   );
 }
 

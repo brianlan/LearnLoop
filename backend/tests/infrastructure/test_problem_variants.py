@@ -496,7 +496,7 @@ async def test_submit_recording_and_discard_liveness() -> None:
 
     assert await mark_problem_variant_session_submitted(
         database, "user-1", PROBLEM_ID, session_id,
-        admitted_problem_id=admitted, now=NOW,
+        admitted_problem_id=admitted, expected_revision=1, now=NOW,
     ) is True
     stored = get_session(database, session_id)
     assert stored["submit"]["submittedProblemId"] == str(admitted)
@@ -506,13 +506,14 @@ async def test_submit_recording_and_discard_liveness() -> None:
     other = ObjectId()
     assert await mark_problem_variant_session_submitted(
         database, "user-1", PROBLEM_ID, session_id,
-        admitted_problem_id=other, now=NOW,
+        admitted_problem_id=other, expected_revision=1, now=NOW,
     ) is False
     assert get_session(database, session_id)["submit"]["submittedProblemId"] == str(admitted)
 
     # A submitted session cannot be discarded afterwards.
     assert await discard_problem_variant_session(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=1, now=NOW,
     ) is False
 
     # A live session discards and disappears from the active lookup.
@@ -524,7 +525,8 @@ async def test_submit_recording_and_discard_liveness() -> None:
         database, "user-1", PROBLEM_ID
     ) is not None
     assert await discard_problem_variant_session(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=0, now=NOW,
     ) is True
     assert await find_active_problem_variant_session(
         database, "user-1", PROBLEM_ID

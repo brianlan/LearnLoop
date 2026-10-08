@@ -543,7 +543,8 @@ async def test_submit_admits_new_problem_with_provenance(
     )
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 2},
     )
     assert response.status_code == 200
     admitted_id = response.json()["problemId"]
@@ -597,7 +598,8 @@ async def test_submit_admits_new_problem_with_provenance(
 
     # Duplicate submit is an explicit 409.
     duplicate = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 2},
     )
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "VARIANT_ALREADY_SUBMITTED"
@@ -647,7 +649,8 @@ async def test_submit_inherits_audit_image_through_variant_chain(
     await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 1},
     )
     assert response.status_code == 200
     admitted = await variants_app.state.fake_database["problems"].find_one(
@@ -676,7 +679,8 @@ async def test_submit_rejects_stale_validation_without_attestation(
     await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 5},
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "VARIANT_INVALIDATED"
@@ -698,7 +702,8 @@ async def test_submit_rejects_soft_deleted_source(
     await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 1},
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "VARIANT_SOURCE_GONE"
@@ -724,7 +729,8 @@ async def test_submit_admits_fail_attested_variant(
     await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 3},
     )
     assert response.status_code == 200
     admitted = await variants_app.state.fake_database["problems"].find_one(
@@ -743,7 +749,8 @@ async def test_discard_is_terminal(
     await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard",
+        json={"expectedRevision": 0},
     )
     assert response.status_code == 200
     assert response.json()["session"]["discardedAt"] is not None
@@ -771,7 +778,52 @@ async def test_discard_after_submit_conflicts(
     await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
 
     response = await client.post(
-        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard"
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard",
+        json={"expectedRevision": 1},
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "VARIANT_ALREADY_SUBMITTED"
+
+
+async def test_stale_terminal_requests_are_rejected(
+    variants_app: FastAPI, client: AsyncClient
+) -> None:
+    """Codex R5: submit and discard honor the caller's reviewed revision —
+    stale requests are rejected before admission or cancellation."""
+    problem = await create_problem(variants_app)
+    user_id = variants_app.state.primary_user["_id"]
+    session = make_session_doc(
+        problem["_id"],
+        user_id,
+        status="ready",
+        content_revision=3,
+        candidate=dict(CANDIDATE),
+        validation=PASSING_VALIDATION,
+        validated_revision=3,
+    )
+    await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
+
+    # Stale submit admits nothing.
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+    assert await variants_app.state.fake_database["problems"].count_documents(
+        {}
+    ) == 1  # only the source problem exists
+
+    # Stale discard rejects and cancels nothing: the session stays live.
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+    stored = await variants_app.state.fake_database[
+        PROBLEM_VARIANT_SESSIONS
+    ].find_one({"_id": session["_id"]})
+    assert stored["discardedAt"] is None
+    assert stored["submit"] is None
+    assert stored["contentRevision"] == 3

@@ -287,7 +287,11 @@ export function ProblemVariantReviewPage() {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      const result = await submitProblemVariant(problemId, session.sessionId);
+      const result = await submitProblemVariant(
+        problemId,
+        session.sessionId,
+        session.contentRevision,
+      );
       queryClient.invalidateQueries({ queryKey: ["problems"] });
       queryClient.invalidateQueries({ queryKey: ["tags"] });
       navigate(`/problems/${result.problemId}`);
@@ -301,7 +305,11 @@ export function ProblemVariantReviewPage() {
   const handleDiscard = useCallback(async () => {
     if (!session) return;
     try {
-      await discardProblemVariant(problemId, session.sessionId);
+      await discardProblemVariant(
+        problemId,
+        session.sessionId,
+        session.contentRevision,
+      );
       navigate(`/problems/${problemId}`);
     } catch (err) {
       setPageError(err instanceof Error ? err.message : "Discard failed");

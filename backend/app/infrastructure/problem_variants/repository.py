@@ -551,6 +551,7 @@ async def mark_problem_variant_session_submitted(
     session_id: Any,
     *,
     admitted_problem_id: Any,
+    expected_revision: int,
     now: datetime,
     session: Any = None,
 ) -> bool:
@@ -558,14 +559,16 @@ async def mark_problem_variant_session_submitted(
 
     Must run in the same Mongo transaction that inserted the admitted
     Problem, so the problem and the session record commit or roll back
-    together. Requires the session to still be live; a concurrent
-    submit/generate/discard makes it match nothing.
+    together. Requires the session to still be live at the caller's reviewed
+    revision; a concurrent submit/generate/discard/edit makes it match
+    nothing.
     """
     result = await _collection(database).update_one(
         {
             "_id": _object_id(session_id),
             "problemId": str(problem_id),
             "userId": user_id,
+            "contentRevision": expected_revision,
             **_LIVE_PREDICATE,
         },
         {
@@ -590,14 +593,17 @@ async def discard_problem_variant_session(
     problem_id: str,
     session_id: Any,
     *,
+    expected_revision: int,
     now: datetime,
 ) -> bool:
-    """Terminal discard. Rejected after submit; idempotent otherwise."""
+    """Terminal discard at the caller's reviewed revision. Rejected after
+    submit or on a stale revision; idempotent otherwise."""
     result = await _collection(database).update_one(
         {
             "_id": _object_id(session_id),
             "problemId": str(problem_id),
             "userId": user_id,
+            "contentRevision": expected_revision,
             "submit": None,
             "discardedAt": None,
         },

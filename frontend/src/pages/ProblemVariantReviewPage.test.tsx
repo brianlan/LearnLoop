@@ -277,7 +277,11 @@ describe("ProblemVariantReviewPage", () => {
     fireEvent.click(screen.getByTestId("variant-submit"));
 
     await waitFor(() => {
-      expect(submitProblemVariant).toHaveBeenCalledWith("src-1", "sess-1");
+      expect(submitProblemVariant).toHaveBeenCalledWith(
+        "src-1",
+        "sess-1",
+        1,
+      );
     });
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith("/problems/admitted-9");
@@ -624,7 +628,7 @@ describe("ProblemVariantReviewPage", () => {
     fireEvent.click(screen.getByTestId("variant-discard"));
 
     await waitFor(() => {
-      expect(discardProblemVariant).toHaveBeenCalledWith("src-1", "sess-1");
+      expect(discardProblemVariant).toHaveBeenCalledWith("src-1", "sess-1", 0);
     });
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith("/problems/src-1");
