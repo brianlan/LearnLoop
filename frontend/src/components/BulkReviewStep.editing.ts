@@ -734,7 +734,6 @@ export function useBulkReviewEditing(
     const sourceGaps = getRequiredFieldGaps(getDraft(item, "source"));
     const sourceSaveFailed = saveFailures[sourceKey] !== undefined;
     const sourceConflict = conflictKeys.has(sourceKey);
-    const sourceSavePending = dirtyKeys.has(sourceKey) || savingKeys.has(sourceKey);
     const candidateSavePending =
       dirtyKeys.has(candidateKey) || savingKeys.has(candidateKey);
     const candidateConflict = conflictKeys.has(candidateKey);
@@ -758,9 +757,17 @@ export function useBulkReviewEditing(
     } else if (item.variation && isVariantBusy(item.variation.status)) {
       generateDisabledReason = "Variant work is still running";
     }
+    // The hint promises Generate-relevant news. Tag-only saves share the
+    // source buffer but change nothing Generate consumes (tags are excluded
+    // from the Generate payload), so compare payloads instead of raw
+    // buffer-busy state.
+    const sourceContentPending =
+      (dirtyKeys.has(sourceKey) || savingKeys.has(sourceKey)) &&
+      JSON.stringify(sourcePayloadFromDraft(getDraft(item, "source"))) !==
+        JSON.stringify(sourcePayloadFromDraft(targetDraft(item, "source")));
     const generateHint =
       generateDisabledReason ||
-      (sourceSavePending
+      (sourceContentPending
         ? "Generate confirms the reviewed source once its save settles"
         : "");
 
