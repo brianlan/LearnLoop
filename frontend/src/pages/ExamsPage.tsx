@@ -114,6 +114,8 @@ export function ExamsPage() {
   const [page, setPage] = useState(1);
   const [showActiveExamPrompt, setShowActiveExamPrompt] = useState(false);
   const [showCreateExamModal, setShowCreateExamModal] = useState(false);
+  const [staleProblemIds, setStaleProblemIds] = useState<string[]>([]);
+  const [ineligibleMessage, setIneligibleMessage] = useState<string | null>(null);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const pageSize = 10;
 
@@ -126,23 +128,36 @@ export function ExamsPage() {
     mutationFn: (req: CreateExamRequest) => createExam(req),
     onSuccess: () => {
       setShowCreateExamModal(false);
+      setStaleProblemIds([]);
+      setIneligibleMessage(null);
       queryClient.invalidateQueries({ queryKey: ["exams"] });
       navigate("/exams/active");
     },
   });
 
   const handleOpenCreateExamModal = () => {
+    setStaleProblemIds([]);
+    setIneligibleMessage(null);
     setShowCreateExamModal(true);
   };
 
-  const handleCreateExam = async (maxProblemCount: number) => {
+  const handleCreateExam = async (request: CreateExamRequest) => {
     try {
-      await createExamMutation.mutateAsync({ maxProblemCount });
+      await createExamMutation.mutateAsync(request);
     } catch (err) {
-      const code = (err as Error & { code?: string }).code;
-      if (code === "ACTIVE_EXAM_EXISTS") {
+      const apiErr = err as Error & { code?: string; details?: Record<string, unknown> };
+      if (apiErr.code === "ACTIVE_EXAM_EXISTS") {
         setShowCreateExamModal(false);
         setShowActiveExamPrompt(true);
+      } else if (apiErr.code === "INELIGIBLE_PROBLEMS") {
+        // Mark exactly the stale rows and refresh the list so the user can
+        // adjust the selection and retry (#682).
+        const ids = Array.isArray(apiErr.details?.problemIds)
+          ? (apiErr.details.problemIds as string[])
+          : [];
+        setStaleProblemIds(ids);
+        setIneligibleMessage(apiErr.message);
+        await queryClient.invalidateQueries({ queryKey: ["selection-candidates"] });
       }
     }
   };
@@ -188,7 +203,9 @@ export function ExamsPage() {
           isOpen={showCreateExamModal}
           isCreating={createExamMutation.isPending}
           onClose={() => setShowCreateExamModal(false)}
-          onCreate={(maxProblemCount) => void handleCreateExam(maxProblemCount)}
+          onCreate={(request) => void handleCreateExam(request)}
+          staleProblemIds={staleProblemIds}
+          ineligibleMessage={ineligibleMessage}
         />
 
         {showActiveExamPrompt && (

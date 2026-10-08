@@ -223,13 +223,72 @@ describe("ActiveExamPage", () => {
         expect.stringContaining("/api/v1/exams"),
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ maxProblemCount: 8 }),
+          body: JSON.stringify({ mode: "random", maxProblemCount: 8 }),
         }),
       );
     });
 
     expect(await screen.findByText("Active Exam")).toBeInTheDocument();
     expect(screen.getByText(/Question 1 of 1/)).toBeInTheDocument();
+  });
+
+  it("creates an exam from the manual picker with the new request shape", async () => {
+    const user = userEvent.setup();
+    let activeExamRequested = false;
+    const okExam = () => ({ ok: true, json: async () => ({ exam: baseExam }) });
+    mockFetch.mockImplementation(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.includes("selection-candidates")) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              { id: "id-b", text: "problem b", selectionScore: 2, createdAt: "2024-01-01T00:00:00Z", successCount: 1, failedCount: 0 },
+              { id: "id-a", text: "problem a", selectionScore: 1, createdAt: "2024-01-01T00:00:00Z", successCount: 0, failedCount: 0 },
+            ],
+            page: 1,
+            pageSize: 10,
+            total: 2,
+          }),
+        };
+      }
+      if ((init?.method ?? "GET") === "POST") {
+        activeExamRequested = true;
+        return okExam();
+      }
+      if (url.endsWith("/exams/active")) {
+        return activeExamRequested
+          ? okExam()
+          : { ok: false, status: 404, statusText: "Not Found", json: async () => ({ error: { message: "No active exam" } }) };
+      }
+      return okExam();
+    });
+
+    renderActiveExamPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("No active exam found.")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+    await user.click(screen.getByRole("radio", { name: "Manual" }));
+    await screen.findByRole("table");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem a" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select problem b" }));
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/exams",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ mode: "manual", problemIds: ["id-b", "id-a"] }),
+        }),
+      );
+    });
+
+    expect(await screen.findByText("Active Exam")).toBeInTheDocument();
   });
 
   it("renders active exam with problem text and navigation", async () => {

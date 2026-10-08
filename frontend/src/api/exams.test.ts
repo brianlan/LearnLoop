@@ -4,6 +4,7 @@ import {
   createExam,
   getActiveExam,
   getExam,
+  getSelectionCandidates,
   saveExamAnswer,
   submitExam,
   discardExam,
@@ -14,6 +15,7 @@ import type {
   ExamHistoryResponse,
   ExamResponse,
   SaveAnswerResponse,
+  SelectionCandidatesResponse,
   SelfReportResponse,
 } from "@/types/exam";
 
@@ -85,15 +87,108 @@ describe("exams API module", () => {
     const mockFetch = mockOk(response);
     vi.stubGlobal("fetch", mockFetch);
 
-    await createExam({ maxProblemCount: 5 });
+    await createExam({ mode: "random", maxProblemCount: 5 });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/exams", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ maxProblemCount: 5 }),
+      body: JSON.stringify({ mode: "random", maxProblemCount: 5 }),
     });
+  });
+
+  it("createExam POSTs the manual request shape", async () => {
+    const response: CreateExamResponse = {
+      exam: {
+        id: "e1",
+        state: "in-progress",
+        configSnapshot: {
+          maxProblemCount: 2,
+          selectionPolicy: {
+            cooldownDays: 7,
+            lastWrongWeight: 1,
+            failureRateWeight: 1,
+            recencyWeight: 1,
+            minProblemAgeDays: 0,
+          },
+          generatedAt: "2024-01-01T00:00:00Z",
+          mode: "manual",
+        },
+        items: [],
+        summary: {
+          totalProblems: 0,
+          answeredProblems: 0,
+          gradedProblems: 0,
+          pendingProblems: 0,
+          correctProblems: 0,
+          failedProblems: 0,
+          score: null,
+        },
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      },
+    };
+    const mockFetch = mockOk(response);
+    vi.stubGlobal("fetch", mockFetch);
+
+    await createExam({ mode: "manual", problemIds: ["id-b", "id-a"] });
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/exams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ mode: "manual", problemIds: ["id-b", "id-a"] }),
+    });
+  });
+
+  it("getSelectionCandidates GETs /exams/selection-candidates with params", async () => {
+    const response: SelectionCandidatesResponse = {
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    };
+    const mockFetch = mockOk(response);
+    vi.stubGlobal("fetch", mockFetch);
+
+    await getSelectionCandidates({
+      q: "algebra",
+      sortBy: "successCount",
+      sortOrder: "asc",
+      page: 2,
+      pageSize: 10,
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v1/exams/selection-candidates?sortBy=successCount&sortOrder=asc&page=2&pageSize=10&q=algebra",
+      { credentials: "include" },
+    );
+  });
+
+  it("getSelectionCandidates omits empty q", async () => {
+    const response: SelectionCandidatesResponse = {
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    };
+    const mockFetch = mockOk(response);
+    vi.stubGlobal("fetch", mockFetch);
+
+    await getSelectionCandidates({
+      q: "   ",
+      sortBy: "selectionScore",
+      sortOrder: "desc",
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v1/exams/selection-candidates?sortBy=selectionScore&sortOrder=desc&page=1&pageSize=10",
+      { credentials: "include" },
+    );
   });
 
   it("getActiveExam GETs /exams/active", async () => {

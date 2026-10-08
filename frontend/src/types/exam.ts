@@ -76,6 +76,9 @@ export interface ExamConfigSnapshot {
   maxProblemCount: number;
   selectionPolicy: SelectionPolicy;
   generatedAt: string;
+  // Backend always emits this ("random" fallback for legacy docs); optional
+  // keeps existing configSnapshot test fixtures churn-free (#682).
+  mode?: "random" | "manual";
 }
 
 export interface ExamSummary {
@@ -110,8 +113,32 @@ export interface ExamHistoryItem {
   summary: ExamSummary;
 }
 
-export interface CreateExamRequest {
-  maxProblemCount: number;
+export type CreateExamRequest =
+  | { mode: "random"; maxProblemCount: number }
+  | { mode: "manual"; problemIds: string[] };
+
+export type SelectionCandidateSortBy =
+  | "selectionScore"
+  | "addDate"
+  | "successCount"
+  | "failureCount";
+
+export type SelectionCandidateSortOrder = "asc" | "desc";
+
+export interface SelectionCandidate {
+  id: string;
+  text: string;
+  selectionScore: number;
+  createdAt: string;
+  successCount: number;
+  failedCount: number;
+}
+
+export interface SelectionCandidatesResponse {
+  items: SelectionCandidate[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface CreateExamResponse {

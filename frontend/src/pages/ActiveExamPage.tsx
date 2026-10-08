@@ -15,7 +15,7 @@ import { LatexText } from "@/components/LatexText";
 import { AnswerInput, parseOptions } from "@/components/AnswerInput";
 import { Modal } from "@/components/Modal";
 import { CreateExamModal } from "@/components/CreateExamModal";
-import type { ExamItem, ExamResponse, SaveAnswerRequest } from "@/types/exam";
+import type { CreateExamRequest, ExamItem, ExamResponse, SaveAnswerRequest } from "@/types/exam";
 
 const DEFAULT_QUESTION_MIN_HEIGHT = 250;
 const QUESTION_MIN_HEIGHT_STORAGE_KEY = "learnloop-print-question-min-height";
@@ -41,6 +41,8 @@ export function ActiveExamPage() {
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [showCreateExamModal, setShowCreateExamModal] = useState(false);
+  const [staleProblemIds, setStaleProblemIds] = useState<string[]>([]);
+  const [ineligibleMessage, setIneligibleMessage] = useState<string | null>(null);
   const [questionMinHeight, setQuestionMinHeight] = useState<number>(getInitialQuestionMinHeight);
 
   const {
@@ -70,6 +72,8 @@ export function ActiveExamPage() {
     mutationFn: createExam,
     onSuccess: () => {
       setShowCreateExamModal(false);
+      setStaleProblemIds([]);
+      setIneligibleMessage(null);
       queryClient.invalidateQueries({ queryKey: ["active-exam"] });
       refetchExam();
     },
@@ -166,12 +170,30 @@ export function ActiveExamPage() {
   }, [exam, discardExamMutation]);
 
   const handleOpenCreateExamModal = useCallback(() => {
+    setStaleProblemIds([]);
+    setIneligibleMessage(null);
     setShowCreateExamModal(true);
   }, []);
 
-  const handleConfirmCreateExam = useCallback((maxProblemCount: number) => {
-    createExamMutation.mutate({ maxProblemCount });
-  }, [createExamMutation]);
+  const handleConfirmCreateExam = useCallback(
+    (request: CreateExamRequest) => {
+      void createExamMutation
+        .mutateAsync(request)
+        .catch(async (err: Error & { code?: string; details?: Record<string, unknown> }) => {
+          if (err.code === "INELIGIBLE_PROBLEMS") {
+            // Mark exactly the stale rows and refresh the list so the user
+            // can adjust the selection and retry (#682).
+            const ids = Array.isArray(err.details?.problemIds)
+              ? (err.details.problemIds as string[])
+              : [];
+            setStaleProblemIds(ids);
+            setIneligibleMessage(err.message);
+            await queryClient.invalidateQueries({ queryKey: ["selection-candidates"] });
+          }
+        });
+    },
+    [createExamMutation, queryClient],
+  );
 
   const handleOpenPrintPreview = useCallback(() => {
     setShowPrintPreview(true);
@@ -274,6 +296,8 @@ export function ActiveExamPage() {
           isCreating={createExamMutation.isPending}
           onClose={() => setShowCreateExamModal(false)}
           onCreate={handleConfirmCreateExam}
+          staleProblemIds={staleProblemIds}
+          ineligibleMessage={ineligibleMessage}
         />
       </main>
     );

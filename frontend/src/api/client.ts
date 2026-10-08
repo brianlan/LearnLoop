@@ -9,12 +9,19 @@ const API_BASE = "/api/v1";
 export class ApiError extends Error {
   code?: string;
   status: number;
+  details?: Record<string, unknown>;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -36,10 +43,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const rawData = await response.json().catch(() => ({}));
     const errorData = rawData && typeof rawData === "object" ? rawData : {};
+    const details =
+      errorData.error?.details &&
+      typeof errorData.error.details === "object"
+        ? (errorData.error.details as Record<string, unknown>)
+        : undefined;
     throw new ApiError(
       errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`,
       response.status,
       errorData.error?.code,
+      details,
     );
   }
   if (response.status === 204) {

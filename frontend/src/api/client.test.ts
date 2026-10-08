@@ -59,6 +59,31 @@ describe("API Client postFormData", () => {
     }
   });
 
+  it("parses error.error.details into ApiError.details", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      statusText: "Unprocessable Entity",
+      json: () => Promise.resolve({
+        error: {
+          code: "INELIGIBLE_PROBLEMS",
+          message: "Some selected problems are not exam-eligible",
+          details: { problemIds: ["abc", "def"] },
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    try {
+      await api.get("/test-path");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      const error = err as ApiError;
+      expect(error.code).toBe("INELIGIBLE_PROBLEMS");
+      expect(error.details).toEqual({ problemIds: ["abc", "def"] });
+    }
+  });
+
   it("falls back to HTTP status text when error body is missing", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
