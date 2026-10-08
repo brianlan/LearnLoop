@@ -177,7 +177,7 @@ export function failureKindLabel(kind: string | undefined): string {
 // (needs-validation only) or a FAIL whose failures are all check- or
 // answer-kind (from needs-validation or failed, #665). Kind-less legacy
 // entries and worker raw kinds fail closed.
-export function canAttestVariant(item: BulkItem): boolean {
+export function canAttestVariant(item: Pick<BulkItem, "variation">): boolean {
   const variation = item.variation;
   if (!variation) return false;
   const verdict = variation.validation?.verdict;

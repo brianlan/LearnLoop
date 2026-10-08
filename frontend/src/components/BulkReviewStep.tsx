@@ -1,17 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type {
-  BulkBatch,
-  BulkDraft,
-  BulkItem,
-} from "@/types/bulkIngestion";
-import { TagInput } from "./TagInput";
-import { GraphSandbox } from "./GraphSandbox";
-import { LatexText } from "./LatexText";
+import type { BulkBatch, BulkItem } from "@/types/bulkIngestion";
 import {
-  canAttestVariant,
-  evidenceChecks,
-  evidenceView,
-  failureKindLabel,
   getRequiredFieldGaps,
   hasActiveVariantWork,
   statusLabel,
@@ -23,108 +12,10 @@ import {
   type EditTarget,
   type ReviewEditingCallbacks,
 } from "./BulkReviewStep.editing";
+import { VariantReviewPanel } from "./VariantReviewPanel";
 
 const POLL_INTERVAL_MS = 2500;
 const ACTION_REQUIRED_BORDER = "2px solid var(--color-error, #dc2626)";
-
-const PROBLEM_TYPES = [
-  { value: "single-choice", label: "Single choice" },
-  { value: "multi-choice", label: "Multiple choice" },
-  { value: "fill-in-the-blank", label: "Fill in the blank" },
-  { value: "short-answer", label: "Short answer" },
-];
-
-const SUBJECTS = [
-  { value: "math", label: "Math" },
-  { value: "english", label: "English" },
-];
-
-// Read-only structured failure evidence for a failed variant run (#613
-// report payload). No accept/override/fallback controls exist here.
-function VariationFailureEvidence({
-  variation,
-}: {
-  variation: NonNullable<BulkItem["variation"]>;
-}) {
-  const validation = evidenceView(variation.validation);
-  const failures = validation?.failures ?? [];
-  const reports = validation?.reports ?? [];
-  return (
-    <div
-      data-testid="bulk-review-evidence"
-      style={{
-        border: "1px solid var(--color-border)",
-        borderRadius: "6px",
-        padding: "12px",
-        marginBottom: "12px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "8px",
-        fontSize: "0.9em",
-      }}
-    >
-      <div style={{ fontWeight: 600 }}>Generation evidence (read-only)</div>
-      {variation.status === "ready" && variation.attestation && (
-        <div
-          data-testid="bulk-review-attestation"
-          style={{ color: "var(--color-warning, #b45309)" }}
-        >
-          User-attested at revision {variation.attestation.revision} — kept by
-          the teacher, not covered by a validator run.
-          {failures.length > 0 &&
-            " Waved failures are listed below; the teacher accepted them as-is."}
-        </div>
-      )}
-      <div data-testid="bulk-review-evidence-types">
-        Source type: {variation.original?.problemType ?? "unknown"} · Candidate
-        type: {variation.candidate?.problemType ?? "unknown"}
-      </div>
-      <div data-testid="bulk-review-evidence-answers">
-        Expected answer (source): {variation.original?.correctAnswer ?? "—"} ·
-        Expected answer (candidate): {variation.candidate?.correctAnswer ?? "—"}
-      </div>
-      {failures.map((failure, index) => (
-        <div key={index} data-testid="bulk-review-evidence-failure">
-          <strong data-testid="bulk-review-evidence-failure-kind">
-            {failureKindLabel(failure.kind)}
-          </strong>
-          : {failure.evidence}
-        </div>
-      ))}
-      {reports.map((report, index) => (
-        <div key={index} data-testid="bulk-review-evidence-report">
-          <div data-testid="bulk-review-evidence-solved">
-            Solved (original): {report.originalSolvedAnswer ?? "—"} · Solved
-            (variant): {report.variantSolvedAnswer ?? "—"}
-          </div>
-          <div data-testid="bulk-review-evidence-helper-original">
-            Helper {report.validatorModel?.provider ?? "?"} /{" "}
-            {report.validatorModel?.model ?? "?"} (original):{" "}
-            {report.answerComparisonOriginal?.result ?? "no judgement"}
-            {report.answerComparisonOriginal?.evidence
-              ? ` — ${report.answerComparisonOriginal.evidence}`
-              : ""}
-          </div>
-          <div data-testid="bulk-review-evidence-helper-variant">
-            Helper {report.validatorModel?.provider ?? "?"} /{" "}
-            {report.validatorModel?.model ?? "?"} (variant):{" "}
-            {report.answerComparisonVariant?.result ?? "no judgement"}
-            {report.answerComparisonVariant?.evidence
-              ? ` — ${report.answerComparisonVariant.evidence}`
-              : ""}
-          </div>
-          <ul data-testid="bulk-review-evidence-checks" style={{ margin: 0 }}>
-            {evidenceChecks(report).map((check) => (
-              <li key={check.category}>
-                {check.category}: {check.evidence}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export interface BulkReviewStepProps extends ReviewEditingCallbacks {
   batch: BulkBatch;
@@ -310,30 +201,9 @@ export function BulkReviewStep({
     selectedItem.status !== "extracting" &&
     selectedItem.status !== "submitted";
   const currentDraft = getDraft(selectedItem, activeTarget);
-  const {
-    isActionWorking,
-    hasSaveFailed,
-    hasConflict,
-    sourceLocked,
-    generateDisabledReason,
-    generateHint,
-    generateError,
-    revalidating,
-    revalidateError,
-    attesting,
-    attestError,
-    revalidateDisabledReason,
-    attestDisabledReason,
-  } = actionStateFor(selectedItem, isEditable, isLoading);
+  const actionState = actionStateFor(selectedItem, isEditable, isLoading);
   const isFieldDisabled = !isEditable || isLoading;
-  const isSemanticFieldDisabled =
-    isFieldDisabled || (activeTarget === "source" && sourceLocked);
   const variation = selectedItem.variation;
-  const variationNeedsValidation = variation?.status === "needs-validation";
-  const stalePassReport =
-    variationNeedsValidation && variation?.validation?.verdict === "pass";
-  const failOverrideEligible =
-    canAttestVariant(selectedItem) && variation?.validation?.verdict === "fail";
   const activeItems = items.filter((item) => item.status !== "deleted");
   const itemValidation = activeItems.map((item) => {
     const draft = getDraft(item, "source");
@@ -390,16 +260,6 @@ export function BulkReviewStep({
     continueDisabledReasons.push("Draft changed elsewhere; copy your edits and reload");
   }
   const canContinue = continueDisabledReasons.length === 0;
-
-  const currentTagSet = new Set(currentDraft.tags ?? []);
-  const visibleRecentTags = recentTags.filter((tag) => !currentTagSet.has(tag));
-
-  const handleRecentTagClick = (tag: string) => {
-    if (isFieldDisabled) return;
-    const currentTags = currentDraft.tags ?? [];
-    if (currentTags.includes(tag)) return;
-    handleTagsChange(selectedItem, activeTarget, [...currentTags, tag], currentTags);
-  };
 
   return (
     <div data-testid="bulk-wizard-review-step">
@@ -501,478 +361,61 @@ export function BulkReviewStep({
         </div>
 
         <div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "12px",
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              <span data-testid="bulk-review-status">
-                {statusLabel(selectedItem.status)}
-              </span>
-              {variation && (
-                <span
-                  data-testid="bulk-review-variation-status"
-                  style={{ fontSize: "0.85em" }}
-                >
-                  {variationStatusLabel(variation.status)}
-                </span>
-              )}
-            <div
-              data-testid="bulk-review-status-messages"
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-                minHeight: "1.4em",
-              }}
-            >
-              {hasConflict ? (
-                <span
-                  data-testid="bulk-review-save-status"
-                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
-                >
-                  Draft changed elsewhere. Copy your edits, then reload to resolve.
-                </span>
-              ) : hasSaveFailed && (
-                <span
-                  data-testid="bulk-review-save-status"
-                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
-                >
-                  Save failed, retrying...
-                </span>
-              )}
-              {generateHint && (
-                <span
-                  data-testid="bulk-review-generate-hint"
-                  style={{ fontSize: "0.85em", opacity: 0.8 }}
-                >
-                  {generateHint}
-                </span>
-              )}
-              {generateError && (
-                <span
-                  data-testid="bulk-review-generate-error"
-                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
-                >
-                  Generate failed: {generateError}
-                </span>
-              )}
-              {revalidateError && (
-                <span
-                  data-testid="bulk-review-revalidate-error"
-                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
-                >
-                  Revalidate failed: {revalidateError}
-                </span>
-              )}
-              {attestError && (
-                <span
-                  data-testid="bulk-review-attest-error"
-                  style={{ color: "var(--color-error, #dc2626)", fontSize: "0.85em" }}
-                >
-                  Attest failed: {attestError}
-                </span>
-              )}
-            </div>
-            </div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {isEditable && batch.ingestionMode !== "original" && (
-                <button
-                  type="button"
-                  data-testid="bulk-review-generate"
-                  onClick={() => handleGenerate(selectedItem)}
-                  disabled={generateDisabledReason !== ""}
-                  title={generateHint || undefined}
-                >
-                  {variation?.status === "failed"
-                    ? "Generate Again"
-                    : "Generate variant"}
-                </button>
-              )}
-              {variation?.status === "needs-validation" && (
-                <button
-                  type="button"
-                  data-testid="bulk-review-revalidate"
-                  onClick={() => handleRevalidate(selectedItem)}
-                  disabled={revalidateDisabledReason !== "" || revalidating}
-                  title={revalidateDisabledReason || undefined}
-                >
-                  {revalidating ? "Revalidating..." : "Revalidate"}
-                </button>
-              )}
-              {stalePassReport && (
-                <button
-                  type="button"
-                  data-testid="bulk-review-attest"
-                  onClick={() => handleAttest(selectedItem)}
-                  disabled={attestDisabledReason !== "" || attesting}
-                  title={
-                    attestDisabledReason ||
-                    "Keep the existing validation without revalidating"
-                  }
-                >
-                  {attesting ? "Keeping..." : "Keep validation"}
-                </button>
-              )}
-              {selectedItem.status === "failed" && (
-                <button
-                  type="button"
-                  data-testid="bulk-review-retry"
-                  onClick={() => onRetry(selectedItem.itemId)}
-                  disabled={isActionWorking}
-                >
-                  Retry extraction
-                </button>
-              )}
-              {isDeleted ? (
-                <button
-                  type="button"
-                  data-testid="bulk-review-undo"
-                  onClick={() => onUndoDelete(selectedItem.itemId)}
-                  disabled={isActionWorking}
-                >
-                  Undo delete
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  data-testid="bulk-review-delete"
-                  onClick={() => onDelete(selectedItem.itemId)}
-                  disabled={isActionWorking}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          </div>
-
-          {selectedItem.extraction.failureMessage && (
-            <div
-              data-testid="bulk-review-failure"
-              style={{ color: "var(--color-error, #dc2626)", marginBottom: "12px" }}
-            >
-              {selectedItem.extraction.failureMessage}
-            </div>
-          )}
-
-          {previewUrl && (
-            <img
-              src={previewUrl}
-              alt="Crop preview"
-              data-testid="bulk-review-preview"
-              style={{
-                maxWidth: "100%",
-                maxHeight: "200px",
-                marginBottom: "12px",
-                border: "1px solid var(--color-border)",
-              }}
-            />
-          )}
-
-          {selectedItem.variation?.candidate && (
-            <div
-              data-testid="bulk-review-edit-target"
-              role="group"
-              aria-label="Editing target"
-              style={{ display: "flex", gap: "8px", marginBottom: "12px" }}
-            >
-              <button
-                type="button"
-                data-testid="bulk-review-edit-candidate"
-                aria-pressed={activeTarget === "candidate"}
-                onClick={() => setEditTarget("candidate")}
-                disabled={isFieldDisabled}
-              >
-                Edit candidate
-              </button>
-              <button
-                type="button"
-                data-testid="bulk-review-edit-source"
-                aria-pressed={activeTarget === "source"}
-                onClick={() => setEditTarget("source")}
-                disabled={isFieldDisabled}
-              >
-                Edit source
-              </button>
-            </div>
-          )}
-
-          {activeTarget === "source" && variation?.original && (
-            <div
-              data-testid="bulk-review-source-invalidation-warning"
-              style={{
-                color: "var(--color-warning, #b45309)",
-                fontSize: "0.9em",
-                marginBottom: "12px",
-              }}
-            >
-              Saving source changes invalidates the current variant and
-              requires a new generation.
-            </div>
-          )}
-
-          {stalePassReport && (
-            <div
-              data-testid="bulk-review-stale-validation"
-              style={{
-                color: "var(--color-warning, #b45309)",
-                fontSize: "0.9em",
-                marginBottom: "12px",
-              }}
-            >
-              Validation covers a previous version of this candidate.
-              Revalidate, or keep it if you accept the current version as-is.
-            </div>
-          )}
-          {/* #671: an execution-only failure keeps its stored fail report
-              visible alongside the Revalidate action. */}
-          {(variation?.status === "failed" ||
-            failOverrideEligible ||
-            stalePassReport ||
-            (variation?.status === "ready" && variation?.attestation) ||
-            (variation?.status === "needs-validation" &&
-              variation?.validation?.verdict === "fail")) && (
-            <VariationFailureEvidence variation={variation} />
-          )}
-
-          {/* #658: fail-override attestation sits below the evidence panel
-              so the failing checks the teacher is waving stay visible. */}
-          {failOverrideEligible && variation && (
-            <div style={{ marginBottom: "12px" }}>
-              <button
-                type="button"
-                data-testid="bulk-review-attest-fail"
-                onClick={() => handleAttest(selectedItem)}
-                disabled={attestDisabledReason !== "" || attesting}
-                title={
-                  attestDisabledReason ||
-                  "Accept the flagged failures and approve this variant"
-                }
-              >
-                {attesting ? "Approving..." : "Override failures — approve anyway"}
-              </button>
-            </div>
-          )}
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            <label>
-              Text
-              <textarea
-                data-testid="bulk-review-text"
-                value={currentDraft.text ?? ""}
-                onChange={(event) =>
-                  updateDraft(selectedItem, activeTarget, { text: event.target.value })
-                }
-                disabled={isSemanticFieldDisabled}
-                rows={4}
-                style={{
-                  width: "100%",
-                  border: selectedRequiredFieldGaps.text
-                    ? ACTION_REQUIRED_BORDER
-                    : undefined,
-                }}
-              />
-            </label>
-
-            <div>
-              <div
-                style={{
-                  fontSize: "0.85em",
-                  fontWeight: 600,
-                  marginBottom: "6px",
-                }}
-              >
-                Text preview
-              </div>
-              <div
-                data-testid="bulk-review-text-preview"
-                style={{
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "6px",
-                  padding: "12px",
-                  minHeight: "64px",
-                  backgroundColor: "var(--color-surface-muted)",
-                }}
-              >
-                <LatexText
-                  text={currentDraft.text ?? ""}
-                  style={{ whiteSpace: "pre-wrap" }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: "12px" }}>
-              <label style={{ flex: 1 }}>
-                Problem type
-                <select
-                  data-testid="bulk-review-type"
-                  value={currentDraft.problemType ?? "short-answer"}
-                  onChange={(event) =>
-                    updateDraft(selectedItem, activeTarget, {
-                      problemType: event.target.value,
-                    })
-                  }
-                  disabled={isSemanticFieldDisabled}
-                  style={{
-                    width: "100%",
-                    border: selectedRequiredFieldGaps.problemType
-                      ? ACTION_REQUIRED_BORDER
-                      : undefined,
-                  }}
-                >
-                  {PROBLEM_TYPES.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label style={{ flex: 1 }}>
-                Subject
-                <select
-                  data-testid="bulk-review-subject"
-                  value={currentDraft.subject ?? "math"}
-                  onChange={(event) =>
-                    updateDraft(selectedItem, activeTarget, {
-                      subject: event.target.value,
-                    })
-                  }
-                  disabled={isSemanticFieldDisabled || activeTarget === "candidate"}
-                  title={
-                    activeTarget === "candidate"
-                      ? "Candidates share the source subject"
-                      : undefined
-                  }
-                  style={{ width: "100%" }}
-                >
-                  {SUBJECTS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <label>
-              Correct answer
-              <input
-                type="text"
-                data-testid="bulk-review-answer"
-                value={currentDraft.correctAnswer ?? ""}
-                onChange={(event) =>
-                  updateDraft(selectedItem, activeTarget, {
-                    correctAnswer: event.target.value,
-                  })
-                }
-                disabled={isSemanticFieldDisabled}
-                style={{
-                  width: "100%",
-                  border: selectedRequiredFieldGaps.correctAnswer
-                    ? ACTION_REQUIRED_BORDER
-                    : undefined,
-                }}
-              />
-            </label>
-
-            <label>
-              Graph DSL
-              <textarea
-                data-testid="bulk-review-graphdsl"
-                value={currentDraft.graphDsl ?? ""}
-                onChange={(event) =>
-                  updateDraft(selectedItem, activeTarget, {
-                    graphDsl: event.target.value,
-                  })
-                }
-                disabled={isSemanticFieldDisabled}
-                rows={10}
-                style={{
-                  width: "100%",
-                  minHeight: "180px",
-                  resize: "vertical",
-                  fontFamily: "monospace",
-                  fontSize: "0.9em",
-                  lineHeight: 1.4,
-                }}
-              />
-            </label>
-
-            {currentDraft.graphDsl?.trim() && (
-              <div>
-                <div
-                  style={{
-                    fontSize: "0.85em",
-                    fontWeight: 600,
-                    marginBottom: "6px",
-                  }}
-                >
-                  Graph preview
-                </div>
-                <GraphSandbox dsl={currentDraft.graphDsl} height={300} />
-              </div>
-            )}
-
-            {visibleRecentTags.length > 0 && (
-              <div
-                data-testid="bulk-review-recent-tags"
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "6px",
-                  alignItems: "center",
-                  marginBottom: "8px",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "0.85em",
-                    fontWeight: 600,
-                    color: "var(--color-text-muted)",
-                  }}
-                >
-                  Recent tags:
-                </span>
-                {visibleRecentTags.map((tag) => (
+          <VariantReviewPanel
+            status={selectedItem.status}
+            failureMessage={selectedItem.extraction.failureMessage}
+            variation={variation}
+            draft={currentDraft}
+            requiredFieldGaps={selectedRequiredFieldGaps}
+            imageSource={previewUrl}
+            target={activeTarget}
+            onTargetChange={setEditTarget}
+            isFieldDisabled={isFieldDisabled}
+            showGenerate={isEditable && batch.ingestionMode !== "original"}
+            actionState={actionState}
+            onUpdateDraft={(changes) => updateDraft(selectedItem, activeTarget, changes)}
+            onGenerate={() => handleGenerate(selectedItem)}
+            onRevalidate={() => handleRevalidate(selectedItem)}
+            onAttest={() => handleAttest(selectedItem)}
+            reviewTagSuggestions={reviewTagSuggestions}
+            recentTags={recentTags}
+            onTagsChange={(nextTags, prevTags) =>
+              handleTagsChange(selectedItem, activeTarget, nextTags, prevTags)
+            }
+            extraActions={
+              <>
+                {selectedItem.status === "failed" && (
                   <button
-                    key={tag}
                     type="button"
-                    data-testid={`bulk-review-recent-tag-${tag}`}
-                    disabled={isFieldDisabled}
-                    onClick={() => handleRecentTagClick(tag)}
-                    style={{
-                      padding: "2px 8px",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: "4px",
-                      backgroundColor: "var(--color-surface)",
-                      color: "var(--color-text)",
-                      fontSize: "0.8em",
-                      cursor: isFieldDisabled ? "not-allowed" : "pointer",
-                    }}
+                    data-testid="bulk-review-retry"
+                    onClick={() => onRetry(selectedItem.itemId)}
+                    disabled={actionState.isActionWorking}
                   >
-                    {tag}
+                    Retry extraction
                   </button>
-                ))}
-              </div>
-            )}
-
-            <TagInput
-              tags={currentDraft.tags ?? []}
-              onChange={(tags) =>
-                handleTagsChange(selectedItem, activeTarget, tags, currentDraft.tags ?? [])
-              }
-              suggestions={reviewTagSuggestions}
-              placeholder="Add a tag..."
-              disabled={isFieldDisabled}
-              label="Tags"
-              testId="bulk-review-tags"
-            />
-          </div>
+                )}
+                {isDeleted ? (
+                  <button
+                    type="button"
+                    data-testid="bulk-review-undo"
+                    onClick={() => onUndoDelete(selectedItem.itemId)}
+                    disabled={actionState.isActionWorking}
+                  >
+                    Undo delete
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="bulk-review-delete"
+                    onClick={() => onDelete(selectedItem.itemId)}
+                    disabled={actionState.isActionWorking}
+                  >
+                    Delete
+                  </button>
+                )}
+              </>
+            }
+          />
         </div>
       </div>
 
