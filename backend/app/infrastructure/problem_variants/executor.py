@@ -96,7 +96,12 @@ async def _run_session_generation(
     if not isinstance(claimed_revision, int):
         return
     claimed = await claim_problem_variant_generation(
-        database, user_id, problem_id, session_id, now=_utc_now()
+        database,
+        user_id,
+        problem_id,
+        session_id,
+        claimed_revision=claimed_revision,
+        now=_utc_now(),
     )
     if claimed is None:
         return

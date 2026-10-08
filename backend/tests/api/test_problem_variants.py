@@ -690,3 +690,28 @@ async def test_discard_is_terminal(
 
     active = await client.get(f"/api/v1/problems/{problem['_id']}/variants/active")
     assert active.json()["session"] is None
+
+
+async def test_discard_after_submit_conflicts(
+    variants_app: FastAPI, client: AsyncClient
+) -> None:
+    """Codex P2: a discard that lost a race with submit must return 409 —
+    never 200 — so the client does not navigate away believing a problem
+    was not admitted."""
+    problem = await create_problem(variants_app)
+    session = make_session_doc(
+        problem["_id"],
+        variants_app.state.primary_user["_id"],
+        status="ready",
+        content_revision=1,
+        candidate=dict(CANDIDATE),
+        validation={"verdict": "pass", "failures": [], "reports": []},
+        submit={"submittedProblemId": str(ObjectId()), "success": True},
+    )
+    await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
+
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard"
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "VARIANT_ALREADY_SUBMITTED"

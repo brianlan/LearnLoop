@@ -590,6 +590,15 @@ async def discard_problem_variant(
     fresh = await find_problem_variant_session(
         database, user["_id"], problem_id, session["_id"]
     )
+    if not discarded and fresh is not None and not fresh.get("discardedAt"):
+        # The write matched nothing and the session is neither discarded nor
+        # live-claimable: submit won the race and admitted a problem. Never
+        # report success for a discard that did not happen.
+        raise ApiError(
+            409,
+            "VARIANT_ALREADY_SUBMITTED",
+            "This variant session already admitted a problem",
+        )
     return ProblemVariantSessionResponse(
         session=serialize_problem_variant_session(fresh)
     )

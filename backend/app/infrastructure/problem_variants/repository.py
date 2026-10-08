@@ -139,14 +139,17 @@ async def claim_problem_variant_generation(
     problem_id: str,
     session_id: Any,
     *,
+    claimed_revision: int,
     now: datetime,
 ) -> dict[str, Any] | None:
     """Atomically transition a queued session to ``generating``.
 
     The in-process executor's claim: fencing is the session's
     ``contentRevision`` (no token/lease is needed — the task handle is
-    cancelled directly on override/discard). Returns the claimed session or
-    ``None`` when it was superseded or is no longer live.
+    cancelled directly on override/discard). The claim predicate includes
+    the revision the executor actually observed, so a superseded task can
+    never consume a newly queued replacement attempt. Returns the claimed
+    session or ``None`` when it was superseded or is no longer live.
     """
     claimed = await _collection(database).find_one_and_update(
         {
@@ -155,6 +158,7 @@ async def claim_problem_variant_generation(
             "userId": user_id,
             **_LIVE_PREDICATE,
             "variation.status": VariationStatus.QUEUED.value,
+            "contentRevision": claimed_revision,
         },
         {
             "$set": {

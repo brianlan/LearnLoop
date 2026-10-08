@@ -20,6 +20,7 @@ from bson import ObjectId
 from app.infrastructure.problem_variants.repository import (
     PROBLEM_VARIANT_SESSIONS_COLLECTION,
     attest_problem_variant_validation,
+    claim_problem_variant_generation,
     discard_problem_variant_session,
     edit_problem_variant_candidate,
     find_active_problem_variant_session,
@@ -199,6 +200,34 @@ async def test_checkpoint_is_fenced_on_revision_and_liveness() -> None:
         database, "user-1", PROBLEM_ID, submitted_id,
         claimed_revision=1, candidate=candidate, now=NOW,
     ) is False
+
+
+async def test_claim_is_fenced_on_observed_revision() -> None:
+    """Codex P2: the queued→generating claim must match the revision the
+    executor actually observed, or a superseded attempt can consume a newly
+    queued replacement attempt and leave the session stuck in generating."""
+    database = FakeDatabase()
+    # Queued at revision 2 after a Generate override; the superseded
+    # executor still holds revision 1 from its pre-override read.
+    session = make_session(status=VariationStatus.QUEUED.value, content_revision=2)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    assert await claim_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        claimed_revision=1, now=NOW,
+    ) is None
+    assert get_session(database, session_id)["variation"]["status"] == (
+        VariationStatus.QUEUED.value
+    )
+
+    # The replacement attempt holding the current revision claims it.
+    claimed = await claim_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        claimed_revision=2, now=NOW,
+    )
+    assert claimed is not None
+    assert claimed["variation"]["status"] == VariationStatus.GENERATING.value
 
 
 def _fail_validation(kind: str) -> dict[str, Any]:
