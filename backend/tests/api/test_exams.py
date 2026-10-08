@@ -1613,8 +1613,6 @@ async def test_manual_create_duplicate_ids_return_invalid_selection(
 async def test_manual_create_invalid_and_foreign_ids_share_one_shape(
     exams_app: FastAPI, client: AsyncClient
 ) -> None:
-    problems = _seed_picker_problems(exams_app)
-
     invalid = await client.post(
         "/api/v1/exams",
         json={"mode": "manual", "problemIds": ["not-an-objectid"]},
