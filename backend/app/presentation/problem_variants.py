@@ -33,8 +33,10 @@ from app.infrastructure.problem_variants.repository import (
     find_active_problem_variant_session,
     find_problem_variant_session,
     mark_problem_variant_session_submitted,
+    release_problem_variant_submit_reservation,
     request_problem_variant_generation,
     request_problem_variant_revalidation,
+    reserve_problem_variant_for_submit,
     update_problem_variant_session_tags,
 )
 from app.infrastructure.vlm.variant_client import (
@@ -483,6 +485,28 @@ async def submit_problem_variant(
     session_object_id = parse_object_id(session_id, resource_name="Variant session")
     now = datetime.now(UTC)
 
+    # Submit-reserve: atomically claim the ready session so a concurrent
+    # Generate cannot clear the candidate mid-admission (#685 contract).
+    token = await reserve_problem_variant_for_submit(
+        database, user["_id"], problem_id, session_object_id, now=now
+    )
+    if token is None:
+        # Not reservable: classify against fresh state (404 / stale revision /
+        # already submitted / not ready).
+        fresh = await find_problem_variant_session(
+            database, user["_id"], problem_id, session_object_id
+        )
+        if fresh is not None and fresh.get("submit"):
+            raise ApiError(
+                409,
+                "VARIANT_ALREADY_SUBMITTED",
+                "This variant session already admitted a problem",
+            )
+        _classify_variant_conflict(fresh, request.expectedRevision)
+        raise ApiError(
+            409, "VARIANT_INVALIDATED", "Variant is not ready for submission"
+        )
+
     async def _transaction(txn_session: Any) -> dict[str, Any]:
         session = await database[PROBLEM_VARIANT_SESSIONS_COLLECTION].find_one(
             {
@@ -507,6 +531,15 @@ async def submit_problem_variant(
                 "REVISION_MISMATCH",
                 f"expectedRevision {request.expectedRevision} does not match "
                 f"session contentRevision {session.get('contentRevision')}",
+            )
+        reservation = (session.get("variation") or {}).get("submitReservation") or {}
+        if (
+            reservation.get("token") != token
+            or reservation.get("expiresAt") is None
+            or reservation.get("expiresAt") <= now
+        ):
+            raise ApiError(
+                409, "VARIATION_BUSY", "Submit reservation is no longer held"
             )
         variation = session.get("variation") or {}
         validation = variation.get("validation") or {}
@@ -555,6 +588,7 @@ async def submit_problem_variant(
                 expected_revision=request.expectedRevision,
                 now=now,
                 session=record_session,
+                submit_token=token,
             )
 
         return await admit_variant_problem(
@@ -576,8 +610,18 @@ async def submit_problem_variant(
             session=txn_session,
         )
 
-    async with adapter.start_session() as mongo_session:
-        result = await mongo_session.with_transaction(_transaction)
+    try:
+        async with adapter.start_session() as mongo_session:
+            result = await mongo_session.with_transaction(_transaction)
+    except Exception:
+        # Release the reservation so Generate is not blocked for the timeout
+        # window after a failed submit. Best-effort: the reservation also
+        # expires on its own.
+        await release_problem_variant_submit_reservation(
+            database, user["_id"], problem_id, session_object_id,
+            token=token, now=datetime.now(UTC),
+        )
+        raise
     # Post-commit, best-effort: a tag failure never invalidates the admitted
     # problem (ingest parity).
     session = await find_problem_variant_session(

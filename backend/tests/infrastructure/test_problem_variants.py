@@ -11,7 +11,7 @@ create_index is a no-op.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -25,8 +25,11 @@ from app.infrastructure.problem_variants.repository import (
     edit_problem_variant_candidate,
     find_active_problem_variant_session,
     mark_problem_variant_session_submitted,
+    release_problem_variant_submit_reservation,
+    renew_problem_variant_submit_reservation,
     request_problem_variant_generation,
     request_problem_variant_revalidation,
+    reserve_problem_variant_for_submit,
     save_problem_variant_checkpoint,
     save_problem_variant_result,
     update_problem_variant_session_tags,
@@ -758,3 +761,121 @@ async def test_executor_lands_fenced_failure_on_generator_crash(
     assert stored["variation"]["candidate"] is None
     assert stored["variation"]["validation"]["verdict"] == "fail"
     variant_executor.cancel_problem_variant_task(session_id)
+
+
+async def test_submit_reservation_blocks_generate_and_owns_recording() -> None:
+    """Codex R6: a live submit reservation blocks Generate, cannot be
+    double-booked, and owner-checks the admission recording."""
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.READY.value, content_revision=1)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    token = await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+    )
+    assert isinstance(token, str) and token
+
+    # A live reservation wins the Generate-vs-submit race.
+    assert await request_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=1, now=NOW,
+    ) is False
+    # A second submit cannot double-book the session.
+    assert await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+    ) is None
+
+    # Renewal and release are owner-checked.
+    assert await renew_problem_variant_submit_reservation(
+        database, "user-1", PROBLEM_ID, session_id,
+        token=token, now=NOW,
+    ) is True
+    assert await release_problem_variant_submit_reservation(
+        database, "user-1", PROBLEM_ID, session_id,
+        token="not-the-owner", now=NOW,
+    ) is False
+    # Generate is blocked again right up until the release.
+    assert await request_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=1, now=NOW,
+    ) is False
+    assert await release_problem_variant_submit_reservation(
+        database, "user-1", PROBLEM_ID, session_id,
+        token=token, now=NOW,
+    ) is True
+    assert await request_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=1, now=NOW,
+    ) is True
+
+    # Owner-checked recording: only the reservation holder may land the
+    # admission.
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.READY.value, content_revision=1)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+    token = await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+    )
+    assert await mark_problem_variant_session_submitted(
+        database, "user-1", PROBLEM_ID, session_id,
+        admitted_problem_id=ObjectId(), expected_revision=1,
+        now=NOW, submit_token="not-the-owner",
+    ) is False
+    assert get_session(database, session_id)["submit"] is None
+    assert await mark_problem_variant_session_submitted(
+        database, "user-1", PROBLEM_ID, session_id,
+        admitted_problem_id=ObjectId(), expected_revision=1,
+        now=NOW, submit_token=token,
+    ) is True
+    stored = get_session(database, session_id)
+    assert stored["submit"]["success"] is True
+    # Recording clears the reservation.
+    assert stored["variation"]["submitReservation"] is None
+
+
+async def test_expired_submit_reservation_does_not_block_generate() -> None:
+    """Codex R6: expiry reclaims reservations from crashed submits, and a
+    Generate that wins over an expired reservation clears it so the stale
+    submit can never record."""
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.READY.value, content_revision=1)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    token = await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+    )
+    assert token is not None
+
+    later = NOW + timedelta(minutes=11)
+    assert await request_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=1, now=later,
+    ) is True
+    stored = get_session(database, session_id)
+    assert stored["variation"]["status"] == VariationStatus.QUEUED.value
+    assert stored["variation"]["submitReservation"] is None
+
+    # The expired reservation is also reclaimable by a fresh submit before
+    # Generate runs.
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.READY.value, content_revision=1)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+    stale = await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+    )
+    assert stale is not None
+    reclaimed = await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id,
+        now=NOW + timedelta(minutes=11),
+    )
+    assert isinstance(reclaimed, str) and reclaimed != stale
+    # The stale owner lost ownership: its recording matches nothing.
+    assert await mark_problem_variant_session_submitted(
+        database, "user-1", PROBLEM_ID, session_id,
+        admitted_problem_id=ObjectId(), expected_revision=1,
+        now=NOW + timedelta(minutes=11), submit_token=stale,
+    ) is False

@@ -149,3 +149,97 @@ async def test_history_rows_do_not_block_new_sessions(real_database: Any) -> Non
     assert active["mode"] == "transfer-variant"
 
 
+
+
+def _ready_session_document(problem_id: str, user_id: ObjectId) -> dict[str, Any]:
+    doc = build_problem_variant_session_document(
+        problem_id=problem_id,
+        user_id=user_id,
+        mode="transfer-variant",
+        original={"text": "s", "problemType": "short-answer",
+                  "graphDsl": None, "correctAnswer": "4", "subject": "math"},
+        tags=[],
+        now=NOW,
+    )
+    doc["variation"]["status"] = "ready"
+    doc["variation"]["candidate"] = {
+        "text": "v", "problemType": "short-answer", "graphDsl": None,
+        "correctAnswer": "8", "subject": "math",
+        "generator": {"provider": "p", "model": "m"},
+    }
+    doc["variation"]["validation"] = {"verdict": "pass", "failures": [], "reports": []}
+    doc["variation"]["validatedRevision"] = 0
+    return doc
+
+
+async def test_live_submit_reservation_blocks_generate_race(
+    real_database: Any,
+) -> None:
+    """Codex R6: a live submit reservation wins the Generate-vs-submit race
+    against real Mongo — even when Generate fires concurrently."""
+    from datetime import timedelta
+
+    from app.infrastructure.problem_variants.repository import (
+        release_problem_variant_submit_reservation,
+        reserve_problem_variant_for_submit,
+        request_problem_variant_generation,
+    )
+
+    problem_id = str(ObjectId())
+    user_id = ObjectId()
+    doc = _ready_session_document(problem_id, user_id)
+    await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(doc)
+
+    token = await reserve_problem_variant_for_submit(
+        real_database, user_id, problem_id, doc["_id"], now=NOW,
+    )
+    assert isinstance(token, str) and token
+
+    races = await asyncio.gather(*[
+        request_problem_variant_generation(
+            real_database, user_id, problem_id, doc["_id"],
+            expected_revision=0, now=NOW,
+        )
+        for _ in range(3)
+    ])
+    assert not any(races)
+
+    # The reservation releases; Generate then wins and clears fields.
+    assert await release_problem_variant_submit_reservation(
+        real_database, user_id, problem_id, doc["_id"],
+        token=token, now=NOW,
+    )
+    later = NOW + timedelta(seconds=1)
+    assert await request_problem_variant_generation(
+        real_database, user_id, problem_id, doc["_id"],
+        expected_revision=0, now=later,
+    )
+    stored = await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].find_one(
+        {"_id": doc["_id"]}
+    )
+    assert stored["variation"]["status"] == "queued"
+    assert stored["variation"]["candidate"] is None
+    assert stored["variation"]["submitReservation"] is None
+
+
+async def test_concurrent_submit_reserves_are_mutually_exclusive(
+    real_database: Any,
+) -> None:
+    """Codex R6: only one of two simultaneous submit reservations wins."""
+    from app.infrastructure.problem_variants.repository import (
+        reserve_problem_variant_for_submit,
+    )
+
+    problem_id = str(ObjectId())
+    user_id = ObjectId()
+    doc = _ready_session_document(problem_id, user_id)
+    await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(doc)
+
+    tokens = await asyncio.gather(*[
+        reserve_problem_variant_for_submit(
+            real_database, user_id, problem_id, doc["_id"], now=NOW,
+        )
+        for _ in range(2)
+    ])
+    won = [t for t in tokens if isinstance(t, str)]
+    assert len(won) == 1

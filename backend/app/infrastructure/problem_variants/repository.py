@@ -15,8 +15,9 @@ revision alone and is cancelled directly on override/discard.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -31,6 +32,12 @@ from app.problem_variation import (
 )
 
 PROBLEM_VARIANT_SESSIONS_COLLECTION = "problem_variant_sessions"
+
+# How long a submit reservation blocks Generate. ponytail: fixed window; the
+# submit transaction re-proves ownership (token + expiry) inside the same
+# transaction that admits the problem, so expiry only reclaims reservations
+# from crashed/dead submit requests — mirroring the ingest batch pattern.
+_SUBMIT_RESERVATION_TIMEOUT = timedelta(minutes=10)
 
 # A session may only be created for these modes; the legacy
 # ``data-and-wording`` value is rejected at the presentation boundary.
@@ -205,6 +212,14 @@ async def request_problem_variant_generation(
                     VariationStatus.NEEDS_VALIDATION.value,
                 ]
             },
+            # A live submit reservation owns the session: problem admission
+            # is about to commit, and overriding it would clear the candidate
+            # under the submit. Expired reservations belong to crashed
+            # submits and do not block.
+            "$or": [
+                {"variation.submitReservation": {"$in": [None]}},
+                {"variation.submitReservation.expiresAt": {"$lte": now}},
+            ],
         },
         {
             "$set": {
@@ -214,6 +229,9 @@ async def request_problem_variant_generation(
                 "variation.validatedRevision": None,
                 "variation.attestation": None,
                 "variation.queuedAt": now,
+                # Generate won over an expired reservation: clear it so the
+                # stale submit completion can never record a submission.
+                "variation.submitReservation": None,
                 "updatedAt": now,
             },
             "$inc": {
@@ -544,6 +562,110 @@ async def update_problem_variant_session_tags(
     return result.matched_count == 1
 
 
+async def reserve_problem_variant_for_submit(
+    database: Any,
+    user_id: Any,
+    problem_id: str,
+    session_id: Any,
+    *,
+    now: datetime,
+) -> str | None:
+    """Atomically reserve a ready, live session for original-submit.
+
+    Closes the Generate-vs-submit side-effect race: only a ready, live
+    session without a live reservation gets one, Generate refuses a
+    reserved session, and the admission only lands while this token is
+    held. Reservations expire (crashed submit request) and are then
+    reclaimable. Returns the token, or ``None`` when the session is not
+    reservable.
+    """
+    token = str(uuid4())
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(session_id),
+            "problemId": str(problem_id),
+            "userId": user_id,
+            **_LIVE_PREDICATE,
+            "variation.status": VariationStatus.READY.value,
+            "$or": [
+                {"variation.submitReservation": {"$in": [None]}},
+                {"variation.submitReservation.expiresAt": {"$lte": now}},
+            ],
+        },
+        {
+            "$set": {
+                "variation.submitReservation": {
+                    "token": token,
+                    "expiresAt": now + _SUBMIT_RESERVATION_TIMEOUT,
+                },
+                "updatedAt": now,
+            },
+        },
+    )
+    return token if result.matched_count == 1 else None
+
+
+async def renew_problem_variant_submit_reservation(
+    database: Any,
+    user_id: Any,
+    problem_id: str,
+    session_id: Any,
+    *,
+    token: str,
+    now: datetime,
+) -> bool:
+    """Extend one session's submit reservation while it is held.
+
+    Ownership requires a live reservation: once the deadline passes the
+    former owner cannot revive it (Generate reclaims the session).
+    """
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(session_id),
+            "problemId": str(problem_id),
+            "userId": user_id,
+            "variation.submitReservation.token": token,
+            "variation.submitReservation.expiresAt": {"$gt": now},
+        },
+        {
+            "$set": {
+                "variation.submitReservation.expiresAt": (
+                    now + _SUBMIT_RESERVATION_TIMEOUT
+                ),
+                "updatedAt": now,
+            },
+        },
+    )
+    return result.matched_count == 1
+
+
+async def release_problem_variant_submit_reservation(
+    database: Any,
+    user_id: Any,
+    problem_id: str,
+    session_id: Any,
+    *,
+    token: str,
+    now: datetime,
+) -> bool:
+    """Best-effort release when the submit fails before recording."""
+    result = await _collection(database).update_one(
+        {
+            "_id": _object_id(session_id),
+            "problemId": str(problem_id),
+            "userId": user_id,
+            "variation.submitReservation.token": token,
+        },
+        {
+            "$set": {
+                "variation.submitReservation": None,
+                "updatedAt": now,
+            },
+        },
+    )
+    return result.matched_count == 1
+
+
 async def mark_problem_variant_session_submitted(
     database: Any,
     user_id: Any,
@@ -554,6 +676,7 @@ async def mark_problem_variant_session_submitted(
     expected_revision: int,
     now: datetime,
     session: Any = None,
+    submit_token: str | None = None,
 ) -> bool:
     """Record the admission inside the caller's transaction.
 
@@ -561,27 +684,33 @@ async def mark_problem_variant_session_submitted(
     Problem, so the problem and the session record commit or roll back
     together. Requires the session to still be live at the caller's reviewed
     revision; a concurrent submit/generate/discard/edit makes it match
-    nothing.
+    nothing. With ``submit_token`` the write is owner-checked: only the
+    request holding the live reservation may land the admission, and the
+    reservation is cleared on success.
     """
+    predicate: dict[str, Any] = {
+        "_id": _object_id(session_id),
+        "problemId": str(problem_id),
+        "userId": user_id,
+        "contentRevision": expected_revision,
+        **_LIVE_PREDICATE,
+    }
+    if submit_token is not None:
+        predicate["variation.submitReservation.token"] = submit_token
+    set_fields: dict[str, Any] = {
+        "submit": {
+            "submittedProblemId": str(admitted_problem_id),
+            "success": True,
+            "failureCode": None,
+            "failureMessage": None,
+        },
+        "updatedAt": now,
+    }
+    if submit_token is not None:
+        set_fields["variation.submitReservation"] = None
     result = await _collection(database).update_one(
-        {
-            "_id": _object_id(session_id),
-            "problemId": str(problem_id),
-            "userId": user_id,
-            "contentRevision": expected_revision,
-            **_LIVE_PREDICATE,
-        },
-        {
-            "$set": {
-                "submit": {
-                    "submittedProblemId": str(admitted_problem_id),
-                    "success": True,
-                    "failureCode": None,
-                    "failureMessage": None,
-                },
-                "updatedAt": now,
-            },
-        },
+        predicate,
+        {"$set": set_fields},
         session=session,
     )
     return result.matched_count == 1
