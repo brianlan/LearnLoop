@@ -28,7 +28,6 @@ from app.infrastructure.ingestion.repository import (
     save_variation_candidate_checkpoint,
     save_variation_result,
 )
-from app.infrastructure.vlm.base_client import BaseVLMError
 from app.infrastructure.vlm.variant_client import (
     VariantCandidate,
     VariantGenerationResult,
@@ -99,13 +98,18 @@ async def _run_with_lease_heartbeat(
 
 
 def _failed_validation_evidence(
-    clients_identity: str, exc: BaseVLMError
+    clients_identity: str, exc: Exception
 ) -> dict[str, Any]:
+    # VLM errors carry a code; raw provider errors (e.g. LiteLLM's ValueError
+    # when a model rejects a reasoning-effort value) have none and reuse the
+    # generic "provider" execution kind, so a stored candidate still routes
+    # to needs-validation (#677).
+    kind = getattr(exc, "code", "provider")
     return {
         "verdict": "fail",
         "failures": [
             {
-                "kind": exc.code,
+                "kind": kind,
                 "evidence": f"{clients_identity} failed: {exc}",
             }
         ],
@@ -222,7 +226,11 @@ async def process_variation(
                 token=token,
                 lease_timeout_seconds=settings.variation_lease_timeout_seconds,
             )
-        except BaseVLMError as exc:
+        except Exception as exc:
+            # Any failure escaping the generator — including raw provider
+            # mapping errors that are not BaseVLMError — must land a fenced
+            # failure instead of leaving the item in flight until the lease
+            # expires (#677).
             saved = await save_variation_result(
                 database,
                 batch_id,
@@ -358,9 +366,11 @@ async def process_variation(
             token=token,
             lease_timeout_seconds=settings.variation_lease_timeout_seconds,
         )
-    except BaseVLMError as exc:
+    except Exception as exc:
         # Provider/transport failure during an orchestration step that does
-        # not already fail closed: record structured evidence.
+        # not already fail closed: record structured evidence. Raw mapping
+        # errors (not BaseVLMError) are contained here too, so they cannot
+        # leave a live attempt to be silently reclaimed (#677).
         saved = await save_variation_result(
             database,
             batch_id,
