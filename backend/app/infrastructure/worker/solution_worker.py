@@ -114,7 +114,10 @@ async def process_task(
     except SolutionCoachingVLMError as exc:
         retry_count = int(task.get("retry_count", 0)) + 1
         logger.warning(f"VLM error for task {task['_id']}: {exc}")
-        if retry_count > max_retries:
+        # Non-retryable provider rejections (e.g. an unsupported reasoning
+        # effort) fail immediately: retrying a typed rejection cannot
+        # succeed (#677).
+        if not exc.retryable or retry_count > max_retries:
             now = _utc_now()
             await tasks_col.update_one(
                 {"_id": task["_id"]},

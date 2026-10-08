@@ -95,6 +95,7 @@ interface VlmProfileSettings {
   model: string;
   provider: string;
   api_mode: string;
+  reasoning_effort: string;
   timeout_seconds: number;
   status: string;
 }
@@ -209,6 +210,7 @@ function VlmSection({
       <SettingRow label="Model" value={vlm.model} />
       <SettingRow label="Provider" value={vlm.provider} />
       <SettingRow label="API mode" value={vlm.api_mode} />
+      <SettingRow label="Reasoning effort" value={vlm.reasoning_effort} />
       <SettingRow label="Timeout (seconds)" value={vlm.timeout_seconds} />
       <div
         style={{

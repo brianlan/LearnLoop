@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     helper_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
     helper_vlm_provider: str = Field(default="openai")
     helper_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    helper_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     variant_generator_vlm_endpoint: str = Field(default="https://example-variant-generator-vlm-provider.invalid/api")
     variant_generator_vlm_model: str = Field(default="replace-me")
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     variant_generator_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     variant_generator_vlm_provider: str = Field(default="openai")
     variant_generator_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    variant_generator_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     variant_validator_vlm_endpoint: str = Field(default="https://example-variant-validator-vlm-provider.invalid/api")
     variant_validator_vlm_model: str = Field(default="replace-me")
@@ -55,6 +57,7 @@ class Settings(BaseSettings):
     variant_validator_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     variant_validator_vlm_provider: str = Field(default="openai")
     variant_validator_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    variant_validator_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     variant_validator2_vlm_endpoint: str = Field(default="https://example-variant-validator2-vlm-provider.invalid/api")
     variant_validator2_vlm_model: str = Field(default="replace-me")
@@ -62,6 +65,7 @@ class Settings(BaseSettings):
     variant_validator2_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     variant_validator2_vlm_provider: str = Field(default="openai")
     variant_validator2_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    variant_validator2_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     math_ingestion_vlm_endpoint: str = Field(default="https://example-math-ingestion-vlm-provider.invalid/api")
     math_ingestion_vlm_model: str = Field(default="replace-me")
@@ -69,6 +73,7 @@ class Settings(BaseSettings):
     math_ingestion_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     math_ingestion_vlm_provider: str = Field(default="openai")
     math_ingestion_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    math_ingestion_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     english_ingestion_vlm_endpoint: str = Field(default="https://example-english-ingestion-vlm-provider.invalid/api")
     english_ingestion_vlm_model: str = Field(default="replace-me")
@@ -76,6 +81,7 @@ class Settings(BaseSettings):
     english_ingestion_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     english_ingestion_vlm_provider: str = Field(default="openai")
     english_ingestion_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    english_ingestion_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     grading_vlm_endpoint: str = Field(default="https://example-grading-vlm-provider.invalid/api")
     grading_vlm_model: str = Field(default="replace-me")
@@ -83,6 +89,7 @@ class Settings(BaseSettings):
     grading_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
     grading_vlm_provider: str = Field(default="openai")
     grading_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    grading_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
     preview_extracting_window_seconds: float = Field(default=150.0, gt=0)
 
     math_solution_vlm_endpoint: str = Field(default="https://example-math-solution-provider.invalid/api")
@@ -91,6 +98,7 @@ class Settings(BaseSettings):
     math_solution_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     math_solution_vlm_provider: str = Field(default="openai")
     math_solution_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    math_solution_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     english_solution_vlm_endpoint: str = Field(default="https://example-english-solution-provider.invalid/api")
     english_solution_vlm_model: str = Field(default="replace-me")
@@ -98,6 +106,7 @@ class Settings(BaseSettings):
     english_solution_vlm_timeout_seconds: float = Field(default=120.0, gt=0)
     english_solution_vlm_provider: str = Field(default="openai")
     english_solution_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    english_solution_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     math_coaching_vlm_endpoint: str = Field(default="https://example-math-coaching-provider.invalid/api")
     math_coaching_vlm_model: str = Field(default="replace-me")
@@ -105,6 +114,7 @@ class Settings(BaseSettings):
     math_coaching_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
     math_coaching_vlm_provider: str = Field(default="openai")
     math_coaching_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    math_coaching_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     english_coaching_vlm_endpoint: str = Field(default="https://example-english-coaching-provider.invalid/api")
     english_coaching_vlm_model: str = Field(default="replace-me")
@@ -112,6 +122,7 @@ class Settings(BaseSettings):
     english_coaching_vlm_timeout_seconds: float = Field(default=60.0, gt=0)
     english_coaching_vlm_provider: str = Field(default="openai")
     english_coaching_vlm_api_mode: Literal["chat", "responses"] = Field(default="chat")
+    english_coaching_vlm_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(default="high")
 
     solution_worker_poll_interval_seconds: int = Field(default=5, gt=0)
     solution_task_timeout_minutes: int = Field(default=10, gt=0)

@@ -33,24 +33,28 @@ def _settings(**overrides: Any) -> Settings:
         "helper_vlm_timeout_seconds": 30.0,
         "helper_vlm_provider": "openai",
         "helper_vlm_api_mode": "chat",
+        "helper_vlm_reasoning_effort": "high",
         "math_ingestion_vlm_endpoint": "https://math.example/api",
         "math_ingestion_vlm_model": "math-model",
         "math_ingestion_vlm_api_key": "math-key",
         "math_ingestion_vlm_timeout_seconds": 45.0,
         "math_ingestion_vlm_provider": "openai",
         "math_ingestion_vlm_api_mode": "chat",
+        "math_ingestion_vlm_reasoning_effort": "high",
         "english_ingestion_vlm_endpoint": "https://english.example/api",
         "english_ingestion_vlm_model": "english-model",
         "english_ingestion_vlm_api_key": "english-key",
         "english_ingestion_vlm_timeout_seconds": 60.0,
         "english_ingestion_vlm_provider": "openai",
         "english_ingestion_vlm_api_mode": "chat",
+        "english_ingestion_vlm_reasoning_effort": "high",
         "grading_vlm_endpoint": "https://grading.example/api",
         "grading_vlm_model": "grading-model",
         "grading_vlm_api_key": "grading-key",
         "grading_vlm_timeout_seconds": 90.0,
         "grading_vlm_provider": "openai",
         "grading_vlm_api_mode": "chat",
+        "grading_vlm_reasoning_effort": "high",
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -89,6 +93,7 @@ def test_build_helper_vlm_client_passes_expected_kwargs(monkeypatch: Any) -> Non
         "timeout_seconds": 30.0,
         "provider": "openai",
         "api_mode": "chat",
+        "reasoning_effort": "high",
     }
 
 
@@ -110,6 +115,7 @@ def test_build_math_ingestion_vlm_client_passes_expected_kwargs(monkeypatch: Any
         "timeout_seconds": 45.0,
         "provider": "openai",
         "api_mode": "chat",
+        "reasoning_effort": "high",
     }
 
 
@@ -131,6 +137,7 @@ def test_build_english_ingestion_vlm_client_passes_expected_kwargs(monkeypatch: 
         "timeout_seconds": 60.0,
         "provider": "openai",
         "api_mode": "chat",
+        "reasoning_effort": "high",
         "extraction_system_prompt": ENGLISH_EXTRACTION_SYSTEM_PROMPT,
         "request_correct_answer": True,
     }
@@ -154,6 +161,7 @@ def test_build_grading_vlm_client_passes_expected_kwargs(monkeypatch: Any) -> No
         "timeout_seconds": 90.0,
         "provider": "openai",
         "api_mode": "chat",
+        "reasoning_effort": "high",
     }
 
 
@@ -173,6 +181,25 @@ def test_builders_honor_api_mode_override(monkeypatch: Any) -> None:
     assert build_math_ingestion_vlm_client(settings)._api_mode == "responses"
     assert build_english_ingestion_vlm_client(settings)._api_mode == "responses"
     assert build_grading_vlm_client(settings)._api_mode == "responses"
+
+
+def test_builders_honor_reasoning_effort_override(monkeypatch: Any) -> None:
+    """Builders forward each profile's configured reasoning effort (#677)."""
+    settings = _settings(
+        helper_vlm_reasoning_effort="none",
+        math_ingestion_vlm_reasoning_effort="minimal",
+        english_ingestion_vlm_reasoning_effort="xhigh",
+        grading_vlm_reasoning_effort="low",
+    )
+    monkeypatch.setattr(
+        "app.infrastructure.vlm.client._build_vlm_client",
+        lambda *, closed=None, **kwargs: _recording_build_client(closed=closed, **kwargs),
+    )
+
+    assert build_helper_vlm_client(settings)._reasoning_effort == "none"
+    assert build_math_ingestion_vlm_client(settings)._reasoning_effort == "minimal"
+    assert build_english_ingestion_vlm_client(settings)._reasoning_effort == "xhigh"
+    assert build_grading_vlm_client(settings)._reasoning_effort == "low"
 
 
 @pytest.mark.asyncio

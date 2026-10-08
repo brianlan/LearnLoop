@@ -109,6 +109,7 @@ async def run_probe(
         provider = getattr(settings, f"{prefix}_provider")
         api_mode = getattr(settings, f"{prefix}_api_mode")
         api_key = getattr(settings, f"{prefix}_api_key")
+        reasoning_effort = getattr(settings, f"{prefix}_reasoning_effort")
         status = profile_status(endpoint=endpoint, model=model, api_key=api_key)
         entry: dict[str, Any] = {"status": status, "checked_at": _utcnow()}
         if status == PROFILE_STATUS_CONFIGURED:
@@ -118,6 +119,7 @@ async def run_probe(
                 api_key=api_key,
                 provider=provider,
                 api_mode=api_mode,
+                reasoning_effort=reasoning_effort,
                 timeout_seconds=timeout_s,
             )
             try:

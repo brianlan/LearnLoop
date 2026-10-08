@@ -44,13 +44,66 @@ def test_settings_rejects_invalid_api_mode(monkeypatch) -> None:
     monkeypatch.setenv("HELPER_VLM_MODEL", "test-model")
     monkeypatch.setenv("HELPER_VLM_API_KEY", "test-key")
     monkeypatch.setenv("HELPER_VLM_API_MODE", "invalid-mode")
-    
+
     with pytest.raises(ValidationError) as exc_info:
         Settings()
-    
+
     # Check that the error mentions the field name
     error_str = str(exc_info.value)
     assert "helper_vlm_api_mode" in error_str.lower()
+
+
+REASONING_EFFORT_PROFILES = (
+    "helper_vlm",
+    "variant_generator_vlm",
+    "variant_validator_vlm",
+    "variant_validator2_vlm",
+    "math_ingestion_vlm",
+    "english_ingestion_vlm",
+    "grading_vlm",
+    "math_solution_vlm",
+    "english_solution_vlm",
+    "math_coaching_vlm",
+    "english_coaching_vlm",
+)
+
+
+def test_settings_reasoning_effort_defaults_to_high(monkeypatch) -> None:
+    """Every VLM profile should default its reasoning effort to 'high' (#677)."""
+    monkeypatch.setenv("HELPER_VLM_ENDPOINT", "https://example.com")
+    monkeypatch.setenv("HELPER_VLM_MODEL", "test-model")
+    monkeypatch.setenv("HELPER_VLM_API_KEY", "test-key")
+
+    settings = Settings()
+
+    for prefix in REASONING_EFFORT_PROFILES:
+        assert getattr(settings, f"{prefix}_reasoning_effort") == "high", prefix
+
+
+@pytest.mark.parametrize("value", ["ultra", "max"])
+def test_settings_rejects_invalid_reasoning_effort(monkeypatch, value) -> None:
+    """Values outside the canonical vocabulary are rejected at load (#677)."""
+    monkeypatch.setenv("HELPER_VLM_ENDPOINT", "https://example.com")
+    monkeypatch.setenv("HELPER_VLM_MODEL", "test-model")
+    monkeypatch.setenv("HELPER_VLM_API_KEY", "test-key")
+    monkeypatch.setenv("HELPER_VLM_REASONING_EFFORT", value)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings()
+
+    error_str = str(exc_info.value)
+    assert "helper_vlm_reasoning_effort" in error_str.lower()
+
+
+def test_settings_accepts_valid_reasoning_effort(monkeypatch) -> None:
+    monkeypatch.setenv("HELPER_VLM_ENDPOINT", "https://example.com")
+    monkeypatch.setenv("HELPER_VLM_MODEL", "test-model")
+    monkeypatch.setenv("HELPER_VLM_API_KEY", "test-key")
+    monkeypatch.setenv("HELPER_VLM_REASONING_EFFORT", "none")
+
+    settings = Settings()
+
+    assert settings.helper_vlm_reasoning_effort == "none"
 
 
 def test_all_vlm_roles_have_api_mode_settings(monkeypatch) -> None:

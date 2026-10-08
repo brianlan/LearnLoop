@@ -138,6 +138,39 @@ async def test_process_task_retry_and_fail():
 
 
 @pytest.mark.asyncio
+async def test_process_task_non_retryable_vlm_error_fails_immediately():
+    """A typed non-retryable provider rejection (e.g. an unsupported
+    reasoning effort) is terminal on the first attempt: failed with a visible
+    reason, no automatic requeue (#677)."""
+    client = FakeSolutionVLMClient()
+    client.error_to_raise = SolutionCoachingVLMError(
+        "litellm.UnsupportedParamsError: reasoning_effort not supported",
+        code="vlm-request-error",
+        retryable=False,
+    )
+    storage = FakeStorage()
+    tasks_col = FakeCollection()
+    solutions_col = FakeCollection()
+    problems_col = FakeCollection()
+
+    problem_id = str(ObjectId())
+    task_id = ObjectId()
+
+    problems_col.seed({"_id": ObjectId(problem_id), "text": "prob", "correctAnswer": {"display": "ans"}, "sourceImage": {"bucket": "b", "objectKey": "k"}})
+    storage.seed("b", "k", b"image")
+
+    task = {"_id": task_id, "problem_id": problem_id, "user_id": "u", "status": "pending", "retry_count": 0}
+    tasks_col.seed(task)
+    await process_task(task, client, storage, tasks_col, solutions_col, problems_col, 3)
+    updated = await tasks_col.find_one({"_id": task_id})
+    assert updated["status"] == "failed"
+    assert "reasoning_effort not supported" in updated["failure_reason"]
+    # The fail path stamps process_after == updated_at (no 30s requeue backoff).
+    assert updated["retry_count"] == 1
+    assert updated["process_after"] == updated["updated_at"]
+
+
+@pytest.mark.asyncio
 async def test_run_worker_stuck_task_recovery(monkeypatch):
     class FakeSettings:
         solution_worker_poll_interval_seconds = 0.01

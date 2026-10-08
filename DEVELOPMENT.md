@@ -291,24 +291,28 @@ The canonical template lives in `.env.example`.
 | `HELPER_VLM_TIMEOUT_SECONDS` | Helper VLM request timeout | `60` |
 | `HELPER_VLM_PROVIDER` | Helper VLM LiteLLM provider | `openai` |
 | `HELPER_VLM_API_MODE` | Helper VLM API contract (`chat` or `responses`) | `chat` |
+| `HELPER_VLM_REASONING_EFFORT` | Helper VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `MATH_INGESTION_VLM_ENDPOINT` | Math ingestion VLM endpoint for math problem extraction | example placeholder |
 | `MATH_INGESTION_VLM_MODEL` | Math ingestion VLM model identifier | `replace-me` |
 | `MATH_INGESTION_VLM_API_KEY` | Math ingestion VLM credential | `replace-me` |
 | `MATH_INGESTION_VLM_TIMEOUT_SECONDS` | Math ingestion VLM request timeout | `120` |
 | `MATH_INGESTION_VLM_PROVIDER` | Math ingestion VLM LiteLLM provider | `openai` |
 | `MATH_INGESTION_VLM_API_MODE` | Math ingestion VLM API contract (`chat` or `responses`) | `chat` |
+| `MATH_INGESTION_VLM_REASONING_EFFORT` | Math ingestion VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `ENGLISH_INGESTION_VLM_ENDPOINT` | English ingestion VLM endpoint for English problem extraction | example placeholder |
 | `ENGLISH_INGESTION_VLM_MODEL` | English ingestion VLM model identifier | `replace-me` |
 | `ENGLISH_INGESTION_VLM_API_KEY` | English ingestion VLM credential | `replace-me` |
 | `ENGLISH_INGESTION_VLM_TIMEOUT_SECONDS` | English ingestion VLM request timeout | `120` |
 | `ENGLISH_INGESTION_VLM_PROVIDER` | English ingestion VLM LiteLLM provider | `openai` |
 | `ENGLISH_INGESTION_VLM_API_MODE` | English ingestion VLM API contract (`chat` or `responses`) | `chat` |
+| `ENGLISH_INGESTION_VLM_REASONING_EFFORT` | English ingestion VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `GRADING_VLM_ENDPOINT` | Grading VLM endpoint for short-answer judging in practice and exams | example placeholder |
 | `GRADING_VLM_MODEL` | Grading VLM model identifier | `replace-me` |
 | `GRADING_VLM_API_KEY` | Grading VLM credential | `replace-me` |
 | `GRADING_VLM_TIMEOUT_SECONDS` | Grading VLM request timeout | `60` |
 | `GRADING_VLM_PROVIDER` | Grading VLM LiteLLM provider | `openai` |
 | `GRADING_VLM_API_MODE` | Grading VLM API contract (`chat` or `responses`) | `chat` |
+| `GRADING_VLM_REASONING_EFFORT` | Grading VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `PREVIEW_EXTRACTING_WINDOW_SECONDS` | Stale preview recovery window | `150` |
 | `MATH_SOLUTION_VLM_ENDPOINT` | Math solution generation VLM endpoint | example placeholder |
 | `MATH_SOLUTION_VLM_MODEL` | Math solution generation VLM model identifier | `replace-me` |
@@ -316,24 +320,31 @@ The canonical template lives in `.env.example`.
 | `MATH_SOLUTION_VLM_TIMEOUT_SECONDS` | Math solution generation VLM request timeout | `120` |
 | `MATH_SOLUTION_VLM_PROVIDER` | Math solution generation VLM LiteLLM provider | `openai` |
 | `MATH_SOLUTION_VLM_API_MODE` | Math solution VLM API contract (`chat` or `responses`) | `chat` |
+| `MATH_SOLUTION_VLM_REASONING_EFFORT` | Math solution VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `ENGLISH_SOLUTION_VLM_ENDPOINT` | English solution generation VLM endpoint | example placeholder |
 | `ENGLISH_SOLUTION_VLM_MODEL` | English solution generation VLM model identifier | `replace-me` |
 | `ENGLISH_SOLUTION_VLM_API_KEY` | English solution generation VLM credential | `replace-me` |
 | `ENGLISH_SOLUTION_VLM_TIMEOUT_SECONDS` | English solution generation VLM request timeout | `120` |
 | `ENGLISH_SOLUTION_VLM_PROVIDER` | English solution generation VLM LiteLLM provider | `openai` |
 | `ENGLISH_SOLUTION_VLM_API_MODE` | English solution VLM API contract (`chat` or `responses`) | `chat` |
+| `ENGLISH_SOLUTION_VLM_REASONING_EFFORT` | English solution VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `MATH_COACHING_VLM_ENDPOINT` | Math coaching VLM endpoint | example placeholder |
 | `MATH_COACHING_VLM_MODEL` | Math coaching VLM model identifier | `replace-me` |
 | `MATH_COACHING_VLM_API_KEY` | Math coaching VLM credential | `replace-me` |
 | `MATH_COACHING_VLM_TIMEOUT_SECONDS` | Math coaching VLM request timeout | `60` |
 | `MATH_COACHING_VLM_PROVIDER` | Math coaching VLM LiteLLM provider | `openai` |
 | `MATH_COACHING_VLM_API_MODE` | Math coaching VLM API contract (`chat` or `responses`) | `chat` |
+| `MATH_COACHING_VLM_REASONING_EFFORT` | Math coaching VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `ENGLISH_COACHING_VLM_ENDPOINT` | English coaching VLM endpoint | example placeholder |
 | `ENGLISH_COACHING_VLM_MODEL` | English coaching VLM model identifier | `replace-me` |
 | `ENGLISH_COACHING_VLM_API_KEY` | English coaching VLM credential | `replace-me` |
 | `ENGLISH_COACHING_VLM_TIMEOUT_SECONDS` | English coaching VLM request timeout | `60` |
 | `ENGLISH_COACHING_VLM_PROVIDER` | English coaching VLM LiteLLM provider | `openai` |
 | `ENGLISH_COACHING_VLM_API_MODE` | English coaching VLM API contract (`chat` or `responses`) | `chat` |
+| `ENGLISH_COACHING_VLM_REASONING_EFFORT` | English coaching VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
+| `VARIANT_GENERATOR_VLM_REASONING_EFFORT` | Variant generator VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
+| `VARIANT_VALIDATOR_VLM_REASONING_EFFORT` | Variant validator VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
+| `VARIANT_VALIDATOR2_VLM_REASONING_EFFORT` | Second variant validator VLM reasoning effort (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) | `high` |
 | `SOLUTION_WORKER_POLL_INTERVAL_SECONDS` | Solution worker poll interval | `5` |
 | `SOLUTION_TASK_TIMEOUT_MINUTES` | Solution task timeout | `10` |
 | `SOLUTION_MAX_RETRIES` | Solution max retries | `3` |

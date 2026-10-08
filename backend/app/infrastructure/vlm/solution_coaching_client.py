@@ -132,6 +132,9 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
         timeout_seconds: float,
         provider: str = "openai",
         api_mode: Literal["chat", "responses"] = "chat",
+        reasoning_effort: Literal[
+            "none", "minimal", "low", "medium", "high", "xhigh"
+        ] = "none",
         completion_fn: Callable[..., Any] | None = None,
         responses_fn: Callable[..., Any] | None = None,
     ) -> None:
@@ -142,6 +145,7 @@ class _BaseSolutionCoachingVLMClient(BaseVLMClient):
             timeout_seconds=timeout_seconds,
             provider=provider,
             api_mode=api_mode,
+            reasoning_effort=reasoning_effort,
             completion_fn=completion_fn,
             responses_fn=responses_fn,
             error_factory=SolutionCoachingVLMError,
@@ -186,6 +190,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             timeout_seconds = self._settings.english_solution_vlm_timeout_seconds
             provider = self._settings.english_solution_vlm_provider
             api_mode = self._settings.english_solution_vlm_api_mode
+            reasoning_effort = self._settings.english_solution_vlm_reasoning_effort
         else:
             endpoint = self._settings.math_solution_vlm_endpoint
             model = self._settings.math_solution_vlm_model
@@ -193,6 +198,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             timeout_seconds = self._settings.math_solution_vlm_timeout_seconds
             provider = self._settings.math_solution_vlm_provider
             api_mode = self._settings.math_solution_vlm_api_mode
+            reasoning_effort = self._settings.math_solution_vlm_reasoning_effort
         super().__init__(
             endpoint=endpoint,
             model=model,
@@ -200,6 +206,7 @@ class SolutionVLMClient(_BaseSolutionCoachingVLMClient):
             timeout_seconds=timeout_seconds,
             provider=provider,
             api_mode=api_mode,
+            reasoning_effort=reasoning_effort,
             completion_fn=completion_fn,
             responses_fn=responses_fn,
         )
@@ -349,6 +356,7 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             timeout_seconds = self._settings.english_coaching_vlm_timeout_seconds
             provider = self._settings.english_coaching_vlm_provider
             api_mode = self._settings.english_coaching_vlm_api_mode
+            reasoning_effort = self._settings.english_coaching_vlm_reasoning_effort
         else:
             endpoint = self._settings.math_coaching_vlm_endpoint
             model = self._settings.math_coaching_vlm_model
@@ -356,6 +364,7 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             timeout_seconds = self._settings.math_coaching_vlm_timeout_seconds
             provider = self._settings.math_coaching_vlm_provider
             api_mode = self._settings.math_coaching_vlm_api_mode
+            reasoning_effort = self._settings.math_coaching_vlm_reasoning_effort
         super().__init__(
             endpoint=endpoint,
             model=model,
@@ -363,6 +372,7 @@ class CoachingVLMClient(_BaseSolutionCoachingVLMClient):
             timeout_seconds=timeout_seconds,
             provider=provider,
             api_mode=api_mode,
+            reasoning_effort=reasoning_effort,
             completion_fn=completion_fn,
             responses_fn=responses_fn,
         )
