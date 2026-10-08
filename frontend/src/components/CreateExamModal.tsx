@@ -94,6 +94,17 @@ export function CreateExamModal({
 
   const staleSet = useMemo(() => new Set(staleProblemIds), [staleProblemIds]);
 
+  // Drop rejected ids from the selection so a retry cannot resubmit them
+  // invisibly after the eligible-only refetch removes their rows (#682).
+  useEffect(() => {
+    if (staleProblemIds.length === 0) return;
+    setSelected((previous) => {
+      const next = new Map(previous);
+      for (const id of staleProblemIds) next.delete(id);
+      return next;
+    });
+  }, [staleProblemIds]);
+
   const handleSortClick = (column: SelectionCandidateSortBy) => {
     if (sortBy === column) {
       setSortOrder(sortOrder === "desc" ? "asc" : "desc");
@@ -155,8 +166,10 @@ export function CreateExamModal({
       isOpen={isOpen}
       onClose={handleClose}
       ariaLabelledby="create-exam-title"
+      // ponytail: bounded card with vertical scroll; shared Modal overlay stays untouched
+      cardStyle={{ maxWidth: "640px", maxHeight: "calc(100vh - 2rem)", overflowY: "auto" }}
     >
-      <div style={{ padding: "0.5rem", maxWidth: "640px" }}>
+      <div style={{ padding: "0.5rem" }}>
         <h2 id="create-exam-title" style={{ marginTop: 0, fontWeight: 800, fontSize: "1.35rem", letterSpacing: "-0.01em" }}>Start New Exam</h2>
         <form
           onSubmit={(event) => {

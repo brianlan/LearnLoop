@@ -245,25 +245,51 @@ describe("CreateExamModal", () => {
     }
   });
 
-  it("marks stale rows and shows the ineligible message", async () => {
+  it("marks stale rows, shows the ineligible message, and drops them from the selection", async () => {
     const user = userEvent.setup();
     mockCandidatesEndpoint([
       candidate("id-stale"),
       candidate("id-fresh"),
     ]);
-    renderModal({
-      staleProblemIds: ["id-stale"],
-      ineligibleMessage: "Some selected problems are not exam-eligible",
-    });
+    const onCreate = vi.fn();
+    const client = createQueryClient();
+    const ui = (stale: { staleProblemIds?: string[]; ineligibleMessage?: string | null }) => (
+      <QueryClientProvider client={client}>
+        <CreateExamModal isOpen isCreating={false} onClose={vi.fn()} onCreate={onCreate} {...stale} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui({}));
     await openManualPicker(user);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    await user.click(screen.getByRole("checkbox", { name: "Select problem id-stale" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select problem id-fresh" }));
+    expect(screen.getByRole("button", { name: "Create Exam (2 selected)" })).toBeEnabled();
+
+    // 422 INELIGIBLE_PROBLEMS arrives: the page names id-stale and rerenders.
+    rerender(
+      ui({
+        staleProblemIds: ["id-stale"],
+        ineligibleMessage: "Some selected problems are not exam-eligible",
+      }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "Some selected problems are not exam-eligible",
     );
     const staleRow = screen.getByText("problem id-stale").closest("tr") as HTMLElement;
     expect(within(staleRow).getByText("no longer eligible")).toBeInTheDocument();
     const freshRow = screen.getByText("problem id-fresh").closest("tr") as HTMLElement;
     expect(within(freshRow).queryByText("no longer eligible")).not.toBeInTheDocument();
+
+    // The rejected id is stripped so a retry cannot resubmit it invisibly.
+    expect(screen.getByRole("button", { name: "Create Exam (1 selected)" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Create Exam (1 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith({
+        mode: "manual",
+        problemIds: ["id-fresh"],
+      });
+    });
   });
 
   it("disables Create until at least one problem is selected", async () => {

@@ -383,6 +383,10 @@ describe("ExamsPage", () => {
     await waitFor(() => {
       expect(candidatesFetched).toBeGreaterThan(1);
     });
+
+    // The rejected id is dropped from the selection, so a retry only
+    // resubmits the still-eligible id.
+    expect(screen.getByRole("button", { name: "Create Exam (1 selected)" })).toBeEnabled();
   });
 
   it("renders grading exam card with grading label and hidden final metrics", async () => {
