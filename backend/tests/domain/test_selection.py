@@ -13,6 +13,7 @@ from app.domain.selection import (
     compute_score_breakdown,
     ensure_utc,
     get_eligible_problems,
+    rank_eligible_problems,
     select_problems,
 )
 
@@ -516,3 +517,124 @@ def test_ensure_utc_aware():
     result = ensure_utc(aware)
     assert result.tzinfo is not None
     assert result.hour == 12
+
+
+def _picker_problem(
+    problem_id: str,
+    *,
+    text: str = "problem",
+    tags: list[str] | None = None,
+    failed_count: int = 0,
+    correct_count: int = 0,
+    created_at: datetime | None = None,
+    last_tested_at: datetime | None = None,
+    last_attempt_correct: bool | None = None,
+) -> Problem:
+    """Picker-specific builder: controllable text/tags/counts for #680 tests."""
+    from app.domain import Tracking
+
+    tracking = Tracking(
+        exposureCount=correct_count + failed_count,
+        correctCount=correct_count,
+        failedCount=failed_count,
+    )
+    if last_tested_at is not None:
+        tracking.lastTestedAt = last_tested_at
+    if last_attempt_correct is not None:
+        tracking.lastAttemptCorrect = last_attempt_correct
+    return Problem(
+        id=problem_id,
+        userId="u1",
+        text=text,
+        problemType=ProblemType.SINGLE_CHOICE,
+        correctAnswer=CorrectAnswer(display="a", normalizedText="a", normalizedSet=[], format="single"),
+        tags=tags or [],
+        tracking=tracking,
+        createdAt=created_at or datetime.now(timezone.utc) - timedelta(days=30),
+    )
+
+
+def _rank(problems, **kwargs):
+    config = ProblemSelectionConfig(recency_weight=1.0, failure_rate_weight=1.0, last_wrong_weight=1.0)
+    now = kwargs.pop("now", datetime.now(timezone.utc))
+    return [p.id for p, _ in rank_eligible_problems(problems, config, now, **kwargs)]
+
+
+def test_rank_keyword_filters_text_and_tags_case_insensitive():
+    problems = [
+        _picker_problem("1", text="What is 2+2?", tags=["algebra"]),
+        _picker_problem("2", text="Capital of France?", tags=["GEOGRAPHY"]),
+        _picker_problem("3", text="Plain text", tags=[]),
+    ]
+
+    assert _rank(problems, q="2+2") == ["1"]
+    assert _rank(problems, q="france") == ["2"]
+    assert _rank(problems, q="geo") == ["2"]
+
+
+def test_rank_keyword_handles_regex_special_characters():
+    problems = [_picker_problem("1", text="a.b+c(d)e*")]
+
+    assert _rank(problems, q="a.b+c(d)e*") == ["1"]
+    assert _rank(problems, q=".*") == []
+
+
+def test_rank_excludes_min_age_and_cooldown_problems():
+    now = datetime.now(timezone.utc)
+    problems = [
+        _picker_problem("fresh", created_at=now - timedelta(days=1)),
+        _picker_problem("cooldown", last_tested_at=now - timedelta(days=2)),
+        _picker_problem("ok", created_at=now - timedelta(days=30)),
+    ]
+
+    assert _rank(problems, now=now) == ["ok"]
+
+
+def test_rank_sorts_by_all_columns_both_directions_with_id_tiebreak():
+    now = datetime.now(timezone.utc)
+    problems = [
+        _picker_problem("a", text="a", correct_count=3, failed_count=1, created_at=now - timedelta(days=100)),
+        _picker_problem("b", text="b", correct_count=3, failed_count=1, created_at=now - timedelta(days=200)),
+        _picker_problem("c", text="c", correct_count=9, failed_count=0, created_at=now - timedelta(days=150)),
+    ]
+
+    assert _rank(problems, now=now, sort_by="successCount", sort_order="desc") == ["c", "a", "b"]
+    assert _rank(problems, now=now, sort_by="successCount", sort_order="asc") == ["a", "b", "c"]
+    assert _rank(problems, now=now, sort_by="failureCount", sort_order="desc") == ["a", "b", "c"]
+    assert _rank(problems, now=now, sort_by="failureCount", sort_order="asc") == ["c", "a", "b"]
+    assert _rank(problems, now=now, sort_by="addDate", sort_order="desc") == ["a", "c", "b"]
+    assert _rank(problems, now=now, sort_by="addDate", sort_order="asc") == ["b", "c", "a"]
+    # All four columns × both directions (#680): score order is monotonic in
+    # age here (identical failure/last-wrong components), so the ranking is
+    # b (200d) > c (150d) > a (100d).
+    assert _rank(problems, now=now, sort_by="selectionScore", sort_order="desc") == ["b", "c", "a"]
+    assert _rank(problems, now=now, sort_by="selectionScore", sort_order="asc") == ["a", "c", "b"]
+
+
+def test_rank_default_is_selection_score_desc():
+    now = datetime.now(timezone.utc)
+    problems = [
+        _picker_problem(
+            "low",
+            correct_count=8,
+            failed_count=0,
+            last_tested_at=now - timedelta(days=30),
+            last_attempt_correct=True,
+        ),
+        _picker_problem("high", failed_count=5, correct_count=1),
+    ]
+
+    ranked = _rank(problems, now=now)
+    assert ranked == ["high", "low"]
+    explicit = _rank(problems, now=now, sort_by="selectionScore", sort_order="desc")
+    assert explicit == ranked
+
+
+def test_rank_rejects_unknown_sort_keys():
+    config = ProblemSelectionConfig()
+    now = datetime.now(timezone.utc)
+
+    with pytest.raises(ValueError):
+        rank_eligible_problems([], config, now, sort_by="bogus")
+    with pytest.raises(ValueError):
+        rank_eligible_problems([], config, now, sort_order="sideways")

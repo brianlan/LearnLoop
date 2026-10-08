@@ -9,7 +9,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Query
 
 from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
-from app.domain.selection import select_problems
+from app.domain.selection import get_eligible_problems, rank_eligible_problems, select_problems
 from app.domain.state import transition_exam_state
 from app.exam_grading import build_exam_summary, build_tracking_update, grade_item
 from app.presentation.selection_config import problem_selection_config_from_settings
@@ -21,6 +21,7 @@ from app.presentation.exam_helpers import (
     requires_vlm_grading,
 )
 from app.presentation.problem_serialization import problem_document_to_model
+from app.presentation.problems import ProblemSortOrder
 from app.presentation.deps import (
     AdapterDependency,
     CurrentUserDependency,
@@ -40,12 +41,75 @@ from app.presentation.exam_serialization import (
     SaveAnswerResponse,
     SelfReportRequest,
     SelfReportResponse,
+    SelectionCandidatePayload,
+    SelectionCandidateSortBy,
+    SelectionCandidatesResponse,
     serialize_exam,
     serialize_exam_item,
     serialize_exam_summary,
 )
 
 router = APIRouter(prefix="/exams", tags=["exams"])
+
+MANUAL_SELECTION_MAX = 30
+
+
+def _validate_manual_problem_ids(problem_ids: list[str] | None) -> list[str]:
+    """Shape-validate manual ``problemIds``; every failure is one 422 shape (#680).
+
+    Deliberately no ``parse_object_id``/``get_owned_problem`` here: those map
+    bad shapes to 404/500, while manual-selection failures must all funnel
+    through ``422 INVALID_SELECTION`` with the offending ids in ``details``.
+
+    Returns canonical ``str(ObjectId(...))`` spellings so duplicate detection,
+    the ownership query and the order-sensitive document lookup all compare
+    one identity form — uppercase/mixed-case spellings of a valid id must not
+    be reported missing or treated as a distinct id (#680).
+    """
+    if not problem_ids:
+        raise ApiError(
+            422,
+            "INVALID_SELECTION",
+            "problemIds is required for manual mode",
+            details={"problemIds": problem_ids or []},
+        )
+    if len(problem_ids) > MANUAL_SELECTION_MAX:
+        raise ApiError(
+            422,
+            "INVALID_SELECTION",
+            "Too many problems selected",
+            details={"problemIds": problem_ids},
+        )
+    canonical_ids: list[str] = []
+    invalid: list[str] = []
+    for problem_id in problem_ids:
+        try:
+            canonical_ids.append(str(ObjectId(problem_id)))
+        except Exception:
+            # bson's InvalidId is not a ValueError subclass in all pymongo
+            # versions; any construction failure means "bad id format" (#680).
+            invalid.append(problem_id)
+    if invalid:
+        raise ApiError(
+            422,
+            "INVALID_SELECTION",
+            "Invalid problem id format",
+            details={"problemIds": invalid},
+        )
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for canonical_id in canonical_ids:
+        if canonical_id in seen and canonical_id not in duplicates:
+            duplicates.append(canonical_id)
+        seen.add(canonical_id)
+    if duplicates:
+        raise ApiError(
+            422,
+            "INVALID_SELECTION",
+            "Duplicate problem ids in selection",
+            details={"problemIds": duplicates},
+        )
+    return canonical_ids
 
 
 @router.post("", response_model=CreateExamResponse, status_code=201)
@@ -74,40 +138,81 @@ async def create_exam(
         if existing is not None:
             raise ApiError(409, "ACTIVE_EXAM_EXISTS", "An active exam already exists")
 
-        problem_documents = await database["problems"].find(
-            {
-                "userId": current_user["_id"],
-                "isDeleted": False,
-                "isDisabled": {"$ne": True},
-            },
-            session=session,
-        ).to_list(length=None)
-        eligible_documents = [
-            problem
-            for problem in problem_documents
-            if problem.get("correctAnswer")
-            and str(problem.get("correctAnswer", {}).get("display", "")).strip()
-        ]
-        if not eligible_documents:
-            raise ApiError(422, "NO_ELIGIBLE_PROBLEMS", "No eligible problems available")
-
         now = datetime.now(UTC)
-        selected_models = select_problems(
-            [problem_document_to_model(problem) for problem in eligible_documents],
-            payload.maxProblemCount,
-            selection_config,
-            now=now,
-            rng=Random(),
-        )
-        if not selected_models:
-            raise ApiError(422, "NO_ELIGIBLE_PROBLEMS", "No eligible problems available")
 
-        document_by_id = {str(problem["_id"]): problem for problem in eligible_documents}
-        selected_documents = [
-            document_by_id[problem.id]
-            for problem in selected_models
-            if problem.id is not None and problem.id in document_by_id
-        ]
+        if payload.mode == "manual":
+            # Canonical ids: uppercase/mixed-case spellings must match the
+            # stored documents and never duplicate one identity (#680).
+            problem_ids = _validate_manual_problem_ids(payload.problemIds)
+            problem_documents = await database["problems"].find(
+                {
+                    "_id": {"$in": [ObjectId(pid) for pid in problem_ids]},
+                    "userId": current_user["_id"],
+                },
+                session=session,
+            ).to_list(length=None)
+            document_by_id = {str(doc["_id"]): doc for doc in problem_documents}
+            missing = [pid for pid in problem_ids if pid not in document_by_id]
+            if missing:
+                # Unknown and foreign ids are deliberately indistinguishable.
+                raise ApiError(
+                    422,
+                    "INVALID_SELECTION",
+                    "Some selected problems do not exist",
+                    details={"problemIds": missing},
+                )
+            selected_models = [
+                problem_document_to_model(doc) for doc in problem_documents
+            ]
+            eligible_ids = {
+                problem.id
+                for problem in get_eligible_problems(selected_models, selection_config, now)
+            }
+            ineligible = [pid for pid in problem_ids if pid not in eligible_ids]
+            if ineligible:
+                raise ApiError(
+                    422,
+                    "INELIGIBLE_PROBLEMS",
+                    "Some selected problems are not exam-eligible",
+                    details={"problemIds": ineligible},
+                )
+            selected_documents = [document_by_id[pid] for pid in problem_ids]
+            max_problem_count = len(problem_ids)
+        else:
+            problem_documents = await database["problems"].find(
+                {
+                    "userId": current_user["_id"],
+                    "isDeleted": False,
+                    "isDisabled": {"$ne": True},
+                },
+                session=session,
+            ).to_list(length=None)
+            eligible_documents = [
+                problem
+                for problem in problem_documents
+                if problem.get("correctAnswer")
+                and str(problem.get("correctAnswer", {}).get("display", "")).strip()
+            ]
+            if not eligible_documents:
+                raise ApiError(422, "NO_ELIGIBLE_PROBLEMS", "No eligible problems available")
+
+            selected_models = select_problems(
+                [problem_document_to_model(problem) for problem in eligible_documents],
+                payload.maxProblemCount,
+                selection_config,
+                now=now,
+                rng=Random(),
+            )
+            if not selected_models:
+                raise ApiError(422, "NO_ELIGIBLE_PROBLEMS", "No eligible problems available")
+
+            document_by_id = {str(problem["_id"]): problem for problem in eligible_documents}
+            selected_documents = [
+                document_by_id[problem.id]
+                for problem in selected_models
+                if problem.id is not None and problem.id in document_by_id
+            ]
+            max_problem_count = payload.maxProblemCount
 
         items = [
             make_exam_item(problem, order=index)
@@ -118,9 +223,10 @@ async def create_exam(
             "userId": current_user["_id"],
             "state": ExamState.IN_PROGRESS.value,
             "configSnapshot": {
-                "maxProblemCount": payload.maxProblemCount,
+                "maxProblemCount": max_problem_count,
                 "selectionPolicy": selection_policy.model_dump(),
                 "generatedAt": now,
+                "mode": payload.mode,
             },
             "items": items,
             "summary": build_exam_summary(items),
@@ -161,6 +267,49 @@ async def get_active_exam(
         exam["updatedAt"] = now
 
     return ExamResponse(exam=serialize_exam(exam))
+
+
+@router.get("/selection-candidates", response_model=SelectionCandidatesResponse)
+async def list_selection_candidates(
+    database: DatabaseDependency,
+    current_user: CurrentUserDependency,
+    settings: SettingsDependency,
+    q: str | None = Query(default=None),
+    sort_by: SelectionCandidateSortBy = Query(
+        default="selectionScore", alias="sortBy"
+    ),
+    sort_order: ProblemSortOrder = Query(default="desc", alias="sortOrder"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+) -> SelectionCandidatesResponse:
+    """Eligibility-filtered, sortable candidate rows for manual exam mode (#680)."""
+    problem_documents = await database["problems"].find(
+        {"userId": current_user["_id"], "isDeleted": False}
+    ).to_list(length=None)
+    ranked = rank_eligible_problems(
+        [problem_document_to_model(doc) for doc in problem_documents],
+        problem_selection_config_from_settings(settings),
+        now=datetime.now(UTC),
+        q=q,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    total = len(ranked)
+    start = (page - 1) * page_size
+    items = [
+        SelectionCandidatePayload(
+            id=str(problem.id),
+            text=problem.text,
+            selectionScore=score,
+            createdAt=problem.createdAt,
+            successCount=problem.tracking.correctCount,
+            failedCount=problem.tracking.failedCount,
+        )
+        for problem, score in ranked[start : start + page_size]
+    ]
+    return SelectionCandidatesResponse(
+        items=items, page=page, pageSize=page_size, total=total
+    )
 
 
 @router.get("/{exam_id}", response_model=ExamResponse)

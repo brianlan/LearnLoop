@@ -1,17 +1,28 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.domain.models import ExamState, GradingStatus, ProblemType
 from app.presentation.helpers import build_problem_image_url
 from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload, UTCDatetime
 
 
+SelectionCandidateSortBy = Literal["selectionScore", "addDate", "successCount", "failureCount"]
+
+
 class CreateExamRequest(BaseModel):
-    maxProblemCount: int = Field(ge=1, le=30)
+    mode: Literal["random", "manual"] = "random"
+    maxProblemCount: int | None = Field(default=None, ge=1, le=30)
+    problemIds: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _require_max_problem_count_for_random(self) -> "CreateExamRequest":
+        if self.mode == "random" and self.maxProblemCount is None:
+            raise ValueError("maxProblemCount is required when mode is 'random'")
+        return self
 
 
 class SaveAnswerRequest(BaseModel):
@@ -71,6 +82,23 @@ class ExamConfigSnapshotPayload(BaseModel):
     maxProblemCount: int
     selectionPolicy: SelectionPolicyPayload
     generatedAt: UTCDatetime
+    mode: Literal["random", "manual"] = "random"
+
+
+class SelectionCandidatePayload(BaseModel):
+    id: str
+    text: str
+    selectionScore: float
+    createdAt: UTCDatetime
+    successCount: int
+    failedCount: int
+
+
+class SelectionCandidatesResponse(BaseModel):
+    items: list[SelectionCandidatePayload]
+    page: int
+    pageSize: int
+    total: int
 
 
 class ExamSummaryPayload(BaseModel):
@@ -214,6 +242,8 @@ def serialize_exam(exam: Mapping[str, Any]) -> ExamPayload:
                 minProblemAgeDays=int(selection_policy.get("minProblemAgeDays", 3)),
             ),
             generatedAt=config_snapshot["generatedAt"],
+            # Backward compatibility: legacy snapshots predate the mode key (#680).
+            mode=config_snapshot.get("mode", "random"),
         ),
         items=[
             serialize_exam_item(
