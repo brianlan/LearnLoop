@@ -152,6 +152,7 @@ export function useBulkReviewEditing(
           revision: number;
           generation: number;
           siblingDraft?: string;
+          sentSerialized?: string;
         }
       | undefined
     >
@@ -683,6 +684,7 @@ export function useBulkReviewEditing(
           revision: base?.revision ?? 0,
           generation: base?.generation ?? 0,
           siblingDraft: serverDraftRefs.current[otherBufferKey(key)],
+          sentSerialized,
         };
         setSavingKeys((prev) => {
           const next = new Set(prev);
@@ -760,11 +762,22 @@ export function useBulkReviewEditing(
     // The hint promises Generate-relevant news. Tag-only saves share the
     // source buffer but change nothing Generate consumes (tags are excluded
     // from the Generate payload), so compare payloads instead of raw
-    // buffer-busy state.
+    // buffer-busy state. The in-flight save counts too: reverting the field
+    // to the server value while its save is still in flight does not stop
+    // Generate from waiting on that save.
+    const sourcePropsPayload = sourcePayloadFromDraft(
+      targetDraft(item, "source"),
+    );
+    const sourceDraftPayload = sourcePayloadFromDraft(getDraft(item, "source"));
+    const inFlightSent = inFlightRefs.current[sourceKey]?.sentSerialized;
     const sourceContentPending =
       (dirtyKeys.has(sourceKey) || savingKeys.has(sourceKey)) &&
-      JSON.stringify(sourcePayloadFromDraft(getDraft(item, "source"))) !==
-        JSON.stringify(sourcePayloadFromDraft(targetDraft(item, "source")));
+      (JSON.stringify(sourceDraftPayload) !==
+        JSON.stringify(sourcePropsPayload) ||
+        (inFlightSent !== undefined &&
+          JSON.stringify(
+            sourcePayloadFromDraft(JSON.parse(inFlightSent) as BulkDraft),
+          ) !== JSON.stringify(sourcePropsPayload)));
     const generateHint =
       generateDisabledReason ||
       (sourceContentPending

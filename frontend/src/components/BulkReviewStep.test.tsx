@@ -960,6 +960,49 @@ describe("BulkReviewStep", () => {
     });
   });
 
+  it("keeps the generate hint while a content save is in flight after reverting the field", async () => {
+    let resolveSave: () => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const textField = screen.getByTestId("bulk-review-text");
+    fireEvent.change(textField, { target: { value: "Changed content" } });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    // Reverting to the server value does not cancel the in-flight content
+    // save, and Generate still waits on it, so the hint stays.
+    fireEvent.change(textField, { target: { value: "What is 2+2?" } });
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSave();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+    });
+  });
+
   it("keeps the generate hint visible when a tag edit stacks on a pending content save", async () => {
     let resolveSave: () => void = () => undefined;
     handlers.onUpdateDraft.mockImplementation(
