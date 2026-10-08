@@ -219,7 +219,7 @@ describe("ExamsPage", () => {
         expect.stringContaining("/api/v1/exams"),
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ maxProblemCount: 8 }),
+          body: JSON.stringify({ mode: "random", maxProblemCount: 8 }),
         }),
       );
     });
@@ -276,6 +276,117 @@ describe("ExamsPage", () => {
 
     expect(await screen.findByText("An active exam already exists. Would you like to continue it?")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("sends the manual request shape with problemIds in picker order", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.includes("selection-candidates")) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              { id: "id-b", text: "problem b", selectionScore: 2, createdAt: "2024-01-01T00:00:00Z", successCount: 1, failedCount: 0 },
+              { id: "id-a", text: "problem a", selectionScore: 1, createdAt: "2024-01-01T00:00:00Z", successCount: 0, failedCount: 0 },
+            ],
+            page: 1,
+            pageSize: 10,
+            total: 2,
+          }),
+        };
+      }
+      if ((init?.method ?? "GET") === "POST") {
+        return { ok: true, json: async () => createExamResponse() };
+      }
+      return { ok: true, json: async () => ({ items: [], page: 1, pageSize: 10, total: 0 }) };
+    });
+
+    renderExamsPage();
+    await screen.findByText("No submitted exams yet");
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+    await user.click(screen.getByRole("radio", { name: "Manual" }));
+    await screen.findByRole("table");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem a" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select problem b" }));
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/v1/exams",
+        expect.objectContaining({
+          method: "POST",
+          // Displayed order at confirm: selectionScore desc → b before a.
+          body: JSON.stringify({ mode: "manual", problemIds: ["id-b", "id-a"] }),
+        }),
+      );
+    });
+    expect(mockNavigate).toHaveBeenCalledWith("/exams/active");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("marks the ineligible rows and refetches candidates on INELIGIBLE_PROBLEMS", async () => {
+    const user = userEvent.setup();
+    let candidatesFetched = 0;
+    mockFetch.mockImplementation(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (url.includes("selection-candidates")) {
+        candidatesFetched += 1;
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              { id: "id-stale", text: "problem stale", selectionScore: 2, createdAt: "2024-01-01T00:00:00Z", successCount: 0, failedCount: 0 },
+              { id: "id-ok", text: "problem ok", selectionScore: 1, createdAt: "2024-01-01T00:00:00Z", successCount: 0, failedCount: 0 },
+            ],
+            page: 1,
+            pageSize: 10,
+            total: 2,
+          }),
+        };
+      }
+      if ((init?.method ?? "GET") === "POST") {
+        return {
+          ok: false,
+          status: 422,
+          statusText: "Unprocessable Entity",
+          json: async () => ({
+            error: {
+              code: "INELIGIBLE_PROBLEMS",
+              message: "Some selected problems are not exam-eligible",
+              details: { problemIds: ["id-stale"] },
+            },
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ items: [], page: 1, pageSize: 10, total: 0 }) };
+    });
+
+    renderExamsPage();
+    await screen.findByText("No submitted exams yet");
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+    await user.click(screen.getByRole("radio", { name: "Manual" }));
+    await screen.findByRole("table");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem stale" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select problem ok" }));
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+
+    // Modal stays open; the stale row is marked and the message is shown.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some selected problems are not exam-eligible",
+    );
+    expect(screen.getByText("problem stale").closest("tr")).toHaveTextContent("no longer eligible");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(candidatesFetched).toBeGreaterThan(1);
+    });
+
+    // The rejected id is dropped from the selection, so a retry only
+    // resubmits the still-eligible id.
+    expect(screen.getByRole("button", { name: "Create Exam (1 selected)" })).toBeEnabled();
   });
 
   it("renders grading exam card with grading label and hidden final metrics", async () => {

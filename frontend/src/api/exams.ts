@@ -6,9 +6,35 @@ import type {
   ExamResponse,
   SaveAnswerRequest,
   SaveAnswerResponse,
+  SelectionCandidateSortBy,
+  SelectionCandidateSortOrder,
+  SelectionCandidatesResponse,
   SelfReportRequest,
   SelfReportResponse,
 } from "@/types/exam";
+
+export interface SelectionCandidatesQuery {
+  q?: string;
+  sortBy: SelectionCandidateSortBy;
+  sortOrder: SelectionCandidateSortOrder;
+  page: number;
+  pageSize: number;
+}
+
+export async function getSelectionCandidates(
+  query: SelectionCandidatesQuery,
+): Promise<SelectionCandidatesResponse> {
+  const params = new URLSearchParams({
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+    page: String(query.page),
+    pageSize: String(query.pageSize),
+  });
+  if (query.q?.trim()) params.append("q", query.q.trim());
+  return api.get<SelectionCandidatesResponse>(
+    `/exams/selection-candidates?${params.toString()}`,
+  );
+}
 
 export async function getExamHistory(
   page: number,
