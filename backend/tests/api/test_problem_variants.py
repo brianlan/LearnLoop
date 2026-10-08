@@ -785,6 +785,67 @@ async def test_discard_after_submit_conflicts(
     assert response.json()["error"]["code"] == "VARIANT_ALREADY_SUBMITTED"
 
 
+async def test_discard_losing_revision_race_reports_mismatch(
+    variants_app: FastAPI,
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reviewer R8: when a Generate/semantic PATCH bumps the revision between
+    the discard route's read and its atomic write, the lost discard must
+    report REVISION_MISMATCH — not VARIANT_ALREADY_SUBMITTED — and the newer
+    work must survive untouched (no task cancellation)."""
+    from typing import Any
+
+    from app.presentation import problem_variants as pv_module
+
+    problem = await create_problem(variants_app)
+    session = make_session_doc(
+        problem["_id"],
+        variants_app.state.primary_user["_id"],
+        status="ready",
+        content_revision=1,
+        candidate=dict(CANDIDATE),
+        validation={"verdict": "pass", "failures": [], "reports": []},
+    )
+    await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
+
+    original_discard = pv_module.discard_problem_variant_session
+
+    async def bump_revision_then_discard(*args: Any, **kwargs: Any) -> bool:
+        # A Generate or semantic PATCH wins the read-to-write race.
+        await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].update_one(
+            {"_id": session["_id"]},
+            {"$set": {"contentRevision": 2, "variation.status": "needs-validation"}},
+        )
+        return await original_discard(*args, **kwargs)
+
+    cancelled: list[Any] = []
+    monkeypatch.setattr(
+        pv_module, "discard_problem_variant_session", bump_revision_then_discard
+    )
+    monkeypatch.setattr(
+        pv_module,
+        "cancel_problem_variant_task",
+        lambda session_id: cancelled.append(session_id),
+    )
+
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/discard",
+        json={"expectedRevision": 1},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+
+    fresh = await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].find_one(
+        {"problemId": str(problem["_id"])}
+    )
+    assert fresh["contentRevision"] == 2
+    assert fresh["variation"]["status"] == "needs-validation"
+    assert fresh["submit"] is None
+    assert fresh["discardedAt"] is None
+    assert cancelled == []
+
+
 async def test_stale_terminal_requests_are_rejected(
     variants_app: FastAPI, client: AsyncClient
 ) -> None:

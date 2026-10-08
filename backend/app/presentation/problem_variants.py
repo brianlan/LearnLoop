@@ -671,13 +671,21 @@ async def discard_problem_variant(
         database, user["_id"], problem_id, session["_id"]
     )
     if not discarded and fresh is not None and not fresh.get("discardedAt"):
-        # The write matched nothing and the session is neither discarded nor
-        # live-claimable: submit won the race and admitted a problem. Never
-        # report success for a discard that did not happen.
+        # The write matched nothing. Distinguish a submit that admitted a
+        # problem from a revision bump (Generate or a semantic PATCH) that
+        # won the read-to-write race — the caller must retry against the
+        # newer revision, not hear "already admitted".
+        if fresh.get("submit"):
+            raise ApiError(
+                409,
+                "VARIANT_ALREADY_SUBMITTED",
+                "This variant session already admitted a problem",
+            )
         raise ApiError(
             409,
-            "VARIANT_ALREADY_SUBMITTED",
-            "This variant session already admitted a problem",
+            "REVISION_MISMATCH",
+            f"expectedRevision {request.expectedRevision} does not match "
+            f"session contentRevision {fresh.get('contentRevision')}",
         )
     return ProblemVariantSessionResponse(
         session=serialize_problem_variant_session(fresh)
