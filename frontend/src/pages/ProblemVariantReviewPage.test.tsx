@@ -451,6 +451,163 @@ describe("ProblemVariantReviewPage", () => {
      expect(body["correctAnswer"]).toBe("42");
    });
 
+  it("sends only tags for tag edits even when a ready candidate exists", async () => {
+    // Codex R1 (P1): the hook routes tag saves through the read-only source
+    // target with a full form; forwarding that form through the candidate
+    // route overwrote a ready candidate with source content.
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: readySession(),
+    });
+    vi.mocked(editProblemVariantCandidate).mockResolvedValue({
+      session: readySession(),
+    });
+
+    renderPage();
+
+    const tagInput = await screen.findByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "algebra" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(editProblemVariantCandidate).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(editProblemVariantCandidate)).toHaveBeenCalledWith(
+      "src-1",
+      "sess-1",
+      { expectedRevision: 1, tags: ["algebra"] },
+    );
+  });
+
+  it("sends only tags for tag edits while the session is busy", async () => {
+    // Busy states reject candidate content; the tags branch is
+    // status-independent, so the payload must be tags-only here too.
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: queuedSession(),
+    });
+    vi.mocked(editProblemVariantCandidate).mockResolvedValue({
+      session: queuedSession(),
+    });
+
+    renderPage();
+
+    const tagInput = await screen.findByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "algebra" } });
+    fireEvent.keyDown(tagInput, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(editProblemVariantCandidate).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(editProblemVariantCandidate)).toHaveBeenCalledWith(
+      "src-1",
+      "sess-1",
+      { expectedRevision: 0, tags: ["algebra"] },
+    );
+  });
+
+  it("keeps the provisional candidate buffer while the first save is in flight", async () => {
+    // Codex R2 (P2): with no stored candidate, the reconciliation used to
+    // drop the editing buffer the moment the first save started, reverting
+    // the editor to the source mid-save.
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: queuedSession({
+        contentRevision: 1,
+        variation: {
+          ...queuedSession().variation,
+          status: "failed",
+          validation: {
+            verdict: "fail",
+            failures: [{ kind: "provider", evidence: "VLM unreachable" }],
+            reports: [],
+          },
+        },
+      }),
+    });
+    let resolveSave: (value: ProblemVariantSessionResponse) => void =
+      () => undefined;
+    vi.mocked(editProblemVariantCandidate).mockImplementation(
+      () =>
+        new Promise<ProblemVariantSessionResponse>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId("bulk-review-edit-candidate"));
+    const text = await screen.findByTestId("bulk-review-text");
+    fireEvent.change(text, {
+      target: { value: "Teacher's complete hand-built candidate" },
+    });
+
+    await waitFor(() => {
+      expect(editProblemVariantCandidate).toHaveBeenCalled();
+    });
+    expect((screen.getByTestId("bulk-review-text") as HTMLInputElement).value).toBe(
+      "Teacher's complete hand-built candidate",
+    );
+
+    resolveSave({
+      session: queuedSession({
+        contentRevision: 2,
+        variation: {
+          ...queuedSession().variation,
+          status: "needs-validation",
+          candidate: {
+            text: "Teacher's complete hand-built candidate",
+            problemType: "short-answer",
+            graphDsl: null,
+            correctAnswer: "4",
+          },
+        },
+      }),
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("bulk-review-text") as HTMLInputElement).value,
+      ).toBe("Teacher's complete hand-built candidate");
+    });
+  });
+
+  it("keeps the provisional candidate buffer when the first save fails", async () => {
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: queuedSession({
+        contentRevision: 1,
+        variation: {
+          ...queuedSession().variation,
+          status: "failed",
+          validation: {
+            verdict: "fail",
+            failures: [{ kind: "provider", evidence: "VLM unreachable" }],
+            reports: [],
+          },
+        },
+      }),
+    });
+    vi.mocked(editProblemVariantCandidate).mockRejectedValue(
+      Object.assign(new Error("Save failed"), { status: 500 }),
+    );
+
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId("bulk-review-edit-candidate"));
+    const text = await screen.findByTestId("bulk-review-text");
+    fireEvent.change(text, {
+      target: { value: "Teacher's complete hand-built candidate" },
+    });
+
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("bulk-review-text") as HTMLInputElement).value,
+      ).toBe("Teacher's complete hand-built candidate");
+    });
+    // The failure is surfaced for retry, not silently dropped.
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-review-save-status")).toHaveTextContent(
+        /retry|failed/i,
+      );
+    });
+  });
+
   it("discards the session and returns to the source problem", async () => {
     vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
       session: queuedSession(),

@@ -29,6 +29,12 @@ import { getRequiredFieldGaps, isVariantBusy } from "@/components/BulkReviewStep
 const POLL_INTERVAL_MS = 2000;
 const IN_FLIGHT_STATUSES = new Set(["queued", "generating", "validating"]);
 
+// Module-level so the editing hook's reconciliation effect sees a stable
+// predicate identity.
+function keepFailedCandidateDraft(item: BulkItem): boolean {
+  return item.variation?.status === "failed";
+}
+
 // One synthetic batch item adapts the session into the exact shape the
 // extracted review surface and editing hook consume (issue #685): the
 // session's `variation` subtree mirrors `item.variation`, the stored source
@@ -149,22 +155,38 @@ export function ProblemVariantReviewPage() {
       if (!session) return;
       const onlyTags =
         Object.keys(changes).length === 1 && changes.tags !== undefined;
+      // Tag-only saves route through the read-only source target (hook
+      // convention), but the source is immutable in this flow: only tags may
+      // travel to the status-independent backend branch. Forwarding the full
+      // source form through the candidate route would overwrite the stored
+      // candidate with source content.
+      if (options.target === "source" || onlyTags) {
+        const response = await editProblemVariantCandidate(
+          problemId,
+          session.sessionId,
+          { expectedRevision: options.expectedRevision, tags: changes.tags },
+        );
+        applySession(response);
+        const nextItem = response.session
+          ? sessionToItem(response.session, problem)
+          : undefined;
+        if (!nextItem) throw new Error("Saved session missing from response");
+        return { item: nextItem };
+      }
       const response = await editProblemVariantCandidate(
         problemId,
         session.sessionId,
-        onlyTags
-          ? { expectedRevision: options.expectedRevision, tags: changes.tags }
-          : {
-              expectedRevision: options.expectedRevision,
-              text: changes.text ?? undefined,
-              problemType: changes.problemType ?? undefined,
-              // Empty graphDsl is sent as null: "" vs null counts as a
-              // semantic change on the backend (#613 contract).
-              graphDsl:
-                "graphDsl" in changes ? changes.graphDsl || null : undefined,
-              correctAnswer: changes.correctAnswer ?? undefined,
-              tags: changes.tags,
-            },
+        {
+          expectedRevision: options.expectedRevision,
+          text: changes.text ?? undefined,
+          problemType: changes.problemType ?? undefined,
+          // Empty graphDsl is sent as null: "" vs null counts as a
+          // semantic change on the backend (#613 contract).
+          graphDsl:
+            "graphDsl" in changes ? changes.graphDsl || null : undefined,
+          correctAnswer: changes.correctAnswer ?? undefined,
+          tags: changes.tags,
+        },
       );
       applySession(response);
       const nextItem = response.session
@@ -229,12 +251,18 @@ export function ProblemVariantReviewPage() {
     handleAttest: runAttest,
     actionStateFor,
     hasPendingSaves,
-  } = useBulkReviewEditing(items, {
-    onUpdateDraft: handleUpdateDraft,
-    onGenerate: handleGenerate,
-    onRevalidate: handleRevalidate,
-    onAttest: handleAttest,
-  });
+  } = useBulkReviewEditing(
+    items,
+    {
+      onUpdateDraft: handleUpdateDraft,
+      onGenerate: handleGenerate,
+      onRevalidate: handleRevalidate,
+      onAttest: handleAttest,
+    },
+    // Candidate-from-nothing (#665): a failed session's provisional
+    // candidate buffer must survive its first in-flight save.
+    { keepCandidateWithoutServerCandidate: keepFailedCandidateDraft },
+  );
 
   const handleCreate = useCallback(async () => {
     setEntryError(null);

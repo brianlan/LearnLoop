@@ -105,13 +105,17 @@ async def _run_session_generation(
     )
     if claimed is None:
         return
-    snapshot = variation.get("original")
+    # Execute from the claimed document: the claim is authoritative, and a
+    # concurrent override between the read above and the claim would have
+    # left the pre-claim snapshot stale.
+    claimed_variation = claimed.get("variation") or {}
+    snapshot = claimed_variation.get("original")
     if not snapshot:
         return
-    mode = canonical_variation_mode(session.get("mode")).value
+    mode = canonical_variation_mode(claimed.get("mode")).value
     source = problem_content_from_snapshot(snapshot)
 
-    stored_candidate = variation.get("candidate")
+    stored_candidate = claimed_variation.get("candidate")
     if isinstance(stored_candidate, dict):
         # Validator-only revalidation: the revalidate endpoint keeps the
         # stored, possibly user-edited candidate, so validate it instead of

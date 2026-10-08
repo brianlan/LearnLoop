@@ -461,6 +461,66 @@ async def test_attest_fail_override_restores_ready(
     assert body["variation"]["attestation"]["revision"] == 3
 
 
+async def test_action_conflicts_return_structured_409s(
+    variants_app: FastAPI, client: AsyncClient
+) -> None:
+    """Codex R3: stale-revision and invalid-state rejections on Generate,
+    Revalidate and Attest must surface as structured 409s (like PATCH),
+    never 500s, and must leave the session state unchanged."""
+    problem = await create_problem(variants_app)
+    user_id = variants_app.state.primary_user["_id"]
+
+    # Stale revision on Generate.
+    session = make_session_doc(
+        problem["_id"], user_id, status="queued", content_revision=5
+    )
+    await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(session)
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/generate",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+
+    # Stale revision on Revalidate.
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/revalidate",
+        json={"expectedRevision": 2},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+
+    # Attestation refusal on a pass-verdict session (attest exists only to
+    # override a failed validation): matching revision, invalid state.
+    ready = make_session_doc(
+        problem["_id"],
+        user_id,
+        status="ready",
+        content_revision=1,
+        candidate=dict(CANDIDATE),
+        validation={"verdict": "pass", "failures": [], "reports": []},
+        validated_revision=1,
+    )
+    await variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS].insert_one(ready)
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{ready['_id']}/attest",
+        json={"expectedRevision": 1},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "INVALID_VARIATION_STATE"
+
+    # All rejected requests preserved their session state.
+    stored = await variants_app.state.fake_database[
+        PROBLEM_VARIANT_SESSIONS
+    ].find_one({"_id": session["_id"]})
+    assert stored["contentRevision"] == 5
+    assert stored["variation"]["status"] == "queued"
+    stored_ready = await variants_app.state.fake_database[
+        PROBLEM_VARIANT_SESSIONS
+    ].find_one({"_id": ready["_id"]})
+    assert stored_ready["variation"]["attestation"] is None
+
+
 async def test_submit_admits_new_problem_with_provenance(
     variants_app: FastAPI, client: AsyncClient
 ) -> None:

@@ -81,6 +81,21 @@ def _raise_variant_conflict(exc: Exception) -> ApiError:
     return ApiError(409, "INVALID_VARIATION_STATE", str(exc))
 
 
+def _classify_variant_conflict(session: Any, expected_revision: int) -> None:
+    """Classify a rejected action and translate its domain errors to API
+    errors, exactly like the PATCH route — expected conflicts must surface
+    as structured 409s, never 500s."""
+    try:
+        classify_session_conflict(session, expected_revision)
+    except (
+        VariationNotFoundError,
+        RevisionMismatchError,
+        GenerationInProgressError,
+        InvalidVariationStateError,
+    ) as exc:
+        raise _raise_variant_conflict(exc) from exc
+
+
 def _require_variant_profiles(settings: Any) -> tuple[Any, Any, Any, Any]:
     """Profile pre-check before any session/work is created (409 when
     unconfigured so unconfigured deployments never create work that can
@@ -346,7 +361,7 @@ async def generate_problem_variant(
         fresh = await find_problem_variant_session(
             database, user["_id"], problem_id, session["_id"]
         )
-        classify_session_conflict(fresh, request.expectedRevision)
+        _classify_variant_conflict(fresh, request.expectedRevision)
     await start_problem_variant_generation(
         database,
         settings,
@@ -390,7 +405,7 @@ async def revalidate_problem_variant(
         fresh = await find_problem_variant_session(
             database, user["_id"], problem_id, session["_id"]
         )
-        classify_session_conflict(fresh, request.expectedRevision)
+        _classify_variant_conflict(fresh, request.expectedRevision)
     await start_problem_variant_generation(
         database,
         settings,
@@ -437,7 +452,7 @@ async def attest_problem_variant(
         fresh = await find_problem_variant_session(
             database, user["_id"], problem_id, session["_id"]
         )
-        classify_session_conflict(fresh, request.expectedRevision)
+        _classify_variant_conflict(fresh, request.expectedRevision)
     fresh = await find_problem_variant_session(
         database, user["_id"], problem_id, session["_id"]
     )
