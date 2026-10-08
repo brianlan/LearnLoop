@@ -521,6 +521,15 @@ export function BulkReviewStep({
                   {variationStatusLabel(variation.status)}
                 </span>
               )}
+            <div
+              data-testid="bulk-review-status-messages"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+                minHeight: "1.4em",
+              }}
+            >
               {hasConflict ? (
                 <span
                   data-testid="bulk-review-save-status"
@@ -568,6 +577,7 @@ export function BulkReviewStep({
                   Attest failed: {attestError}
                 </span>
               )}
+            </div>
             </div>
             <div style={{ display: "flex", gap: "8px" }}>
               {isEditable && batch.ingestionMode !== "original" && (

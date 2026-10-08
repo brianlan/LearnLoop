@@ -862,6 +862,205 @@ describe("BulkReviewStep", () => {
     );
   });
 
+  it("does not show the generate hint for tag-only saves", async () => {
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", {
+              order: 1,
+              draft: { ...makeItem("item-2").draft, tags: ["algebra"] },
+            }),
+          ],
+        })}
+        isLoading={false}
+        tagSuggestions={["algebra"]}
+        {...handlers}
+      />,
+    );
+
+    // Reserved status slot exists (and stays reserved) while empty.
+    const messageSlot = screen.getByTestId("bulk-review-status-messages");
+    expect(messageSlot).toBeEmptyDOMElement();
+
+    // Suggestion-click path: a tag-only save never surfaces the hint.
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "alg" } });
+    fireEvent.click(screen.getByTestId("bulk-review-tags-suggestion-algebra"));
+
+    expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+
+    // ×-remove path: same guarantee.
+    fireEvent.click(screen.getByTestId("bulk-review-tags-remove-algebra"));
+
+    expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bulk-review-status-messages")).toBeInTheDocument();
+  });
+
+  it("shows the generate hint while a content save is pending and hides it on settle", async () => {
+    let resolveSave: () => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "Changed content" },
+    });
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
+      "Generate confirms the reviewed source once its save settles",
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    // Save in flight: hint stays.
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSave();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the generate hint while a content save is in flight after reverting the field", async () => {
+    let resolveSave: () => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({ items: [makeItem("item-1", { order: 0 })] })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    const textField = screen.getByTestId("bulk-review-text");
+    fireEvent.change(textField, { target: { value: "Changed content" } });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    // Reverting to the server value does not cancel the in-flight content
+    // save, and Generate still waits on it, so the hint stays.
+    fireEvent.change(textField, { target: { value: "What is 2+2?" } });
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSave();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-review-generate-hint")).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the generate hint visible when a tag edit stacks on a pending content save", async () => {
+    let resolveSave: () => void = () => undefined;
+    handlers.onUpdateDraft.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [
+            makeItem("item-1", { order: 0 }),
+            makeItem("item-2", {
+              order: 1,
+              draft: { ...makeItem("item-2").draft, tags: ["algebra"] },
+            }),
+          ],
+        })}
+        isLoading={false}
+        tagSuggestions={["algebra"]}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-text"), {
+      target: { value: "Changed content" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    // Tag edit stacked on the pending content save keeps the hint up.
+    const tagInput = screen.getByTestId("bulk-review-tags-field");
+    fireEvent.change(tagInput, { target: { value: "alg" } });
+    fireEvent.click(screen.getByTestId("bulk-review-tags-suggestion-algebra"));
+
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSave();
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    // The queued tag save is still settling; content also differs from the
+    // server draft, so the hint stays true.
+    expect(screen.getByTestId("bulk-review-generate-hint")).toBeInTheDocument();
+  });
+
   it("keeps focused fields enabled while autosaving", async () => {
     let resolveSave: (value: unknown) => void = () => undefined;
     handlers.onUpdateDraft.mockImplementation(
