@@ -34,7 +34,9 @@ interface CreateExamModalProps {
 }
 
 function sortValue(row: SelectionCandidate, sortBy: SelectionCandidateSortBy): string | number {
-  if (sortBy === "addDate") return row.createdAt;
+  // Native timestamp value: the API emits mixed whole/fractional-second ISO
+  // forms, so raw strings sort by spelling instead of chronology (#682).
+  if (sortBy === "addDate") return Date.parse(row.createdAt);
   if (sortBy === "failureCount") return row.failedCount;
   return row[sortBy];
 }
@@ -135,18 +137,18 @@ export function CreateExamModal({
       return;
     }
     if (selected.size === 0) return;
-    // Item order = displayed order at confirm: id tiebreak first, then the
-    // current column/direction, mirroring the backend comparator (#682).
-    const ordered = [...selected.values()]
-      .sort((a, b) => (a.id < b.id ? -1 : 1))
-      .sort((a, b) => {
-        const av = sortValue(a, sortBy);
-        const bv = sortValue(b, sortBy);
-        if (av < bv) return -1;
-        if (av > bv) return 1;
-        return 0;
-      });
-    if (sortOrder === "desc") ordered.reverse();
+    // Item order = displayed order at confirm. Direction applies to the
+    // primary column only; tied ids stay ascending in both directions,
+    // mirroring the backend's stable two-pass sort (#682).
+    const ordered = [...selected.values()].sort((a, b) => {
+      const av = sortValue(a, sortBy);
+      const bv = sortValue(b, sortBy);
+      if (av !== bv) {
+        const compared = av < bv ? -1 : 1;
+        return sortOrder === "desc" ? -compared : compared;
+      }
+      return a.id < b.id ? -1 : 1;
+    });
     onCreate({ mode: "manual", problemIds: ordered.map((row) => row.id) });
   };
 

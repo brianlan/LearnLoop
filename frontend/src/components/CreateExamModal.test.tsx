@@ -50,17 +50,20 @@ function mockCandidatesEndpoint(all: SelectionCandidate[], pageSize = 10) {
     const page = Number(params.get("page") ?? "1");
     const q = (params.get("q") ?? "").toLowerCase();
     const value = (row: SelectionCandidate): string | number => {
-      if (sortBy === "addDate") return row.createdAt;
+      if (sortBy === "addDate") return Date.parse(row.createdAt);
       if (sortBy === "failureCount") return row.failedCount;
       return row[sortBy];
     };
+    // Backend: ascending-id pre-sort, then stable primary sort with the
+    // direction on that key only — ties keep ascending id order either way.
     let rows = [...all].sort((a, b) => (a.id < b.id ? -1 : 1));
     rows.sort((a, b) => {
       const av = value(a);
       const bv = value(b);
-      return av < bv ? -1 : av > bv ? 1 : 0;
+      if (av === bv) return 0;
+      const compared = av < bv ? -1 : 1;
+      return sortOrder === "desc" ? -compared : compared;
     });
-    if (sortOrder === "desc") rows.reverse();
     if (q) rows = rows.filter((row) => row.text.toLowerCase().includes(q));
     const start = (page - 1) * pageSize;
     return jsonResponse({
@@ -211,6 +214,104 @@ describe("CreateExamModal", () => {
       expect(onCreate).toHaveBeenCalledWith({
         mode: "manual",
         problemIds: ["id-a", "id-c", "id-b"],
+      });
+    });
+  });
+
+  it("keeps ascending id order among tied scores in both directions", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([
+      candidate("id-001", { selectionScore: 5 }),
+      candidate("id-002", { selectionScore: 5 }),
+      candidate("id-003", { selectionScore: 5 }),
+    ]);
+    const { onCreate } = renderModal();
+    await openManualPicker(user);
+
+    for (const name of ["Select problem id-001", "Select problem id-002", "Select problem id-003"]) {
+      await user.click(screen.getByRole("checkbox", { name }));
+    }
+
+    // Descending with tied scores: ids stay ascending, not reversed.
+    const descOrder = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
+    expect(descOrder).toEqual([
+      "Select problem id-001",
+      "Select problem id-002",
+      "Select problem id-003",
+    ]);
+    await user.click(screen.getByRole("button", { name: "Create Exam (3 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-001", "id-002", "id-003"],
+      });
+    });
+
+    // Ascending ties look the same and submit the same order.
+    await user.click(screen.getByRole("button", { name: /Score/ }));
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(lastCall).toContain("sortOrder=asc");
+    });
+    const ascOrder = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
+    expect(ascOrder).toEqual(descOrder);
+    await user.click(screen.getByRole("button", { name: "Create Exam (3 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-001", "id-002", "id-003"],
+      });
+    });
+  });
+
+  it("sorts add-date chronologically across whole and fractional second timestamps", async () => {
+    const user = userEvent.setup();
+    // The API emits both timestamp forms; ".001000Z" sorts BEFORE "Z"
+    // lexicographically although it is later in time.
+    mockCandidatesEndpoint([
+      candidate("id-early", { createdAt: "2024-01-01T00:00:00Z" }),
+      candidate("id-late", { createdAt: "2024-01-01T00:00:00.001000Z" }),
+    ]);
+    const { onCreate } = renderModal();
+    await openManualPicker(user);
+
+    for (const name of ["Select problem id-early", "Select problem id-late"]) {
+      await user.click(screen.getByRole("checkbox", { name }));
+    }
+
+    // Switch to the Added column (defaults to descending).
+    await user.click(screen.getByRole("button", { name: /Added/ }));
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(lastCall).toContain("sortBy=addDate");
+      expect(lastCall).toContain("sortOrder=desc");
+    });
+
+    // Descending add-date: the later problem displays and submits first.
+    const descOrder = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
+    expect(descOrder).toEqual(["Select problem id-late", "Select problem id-early"]);
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-late", "id-early"],
+      });
+    });
+
+    // Ascending flips both display and submission.
+    await user.click(screen.getByRole("button", { name: /Added/ }));
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(lastCall).toContain("sortBy=addDate");
+      expect(lastCall).toContain("sortOrder=asc");
+    });
+    const ascOrder = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
+    expect(ascOrder).toEqual(["Select problem id-early", "Select problem id-late"]);
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-early", "id-late"],
       });
     });
   });
