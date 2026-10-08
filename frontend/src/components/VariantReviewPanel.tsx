@@ -184,7 +184,6 @@ export function VariantReviewPanel({
   extraActions,
 }: VariantReviewPanelProps) {
   const {
-    isActionWorking,
     hasSaveFailed,
     hasConflict,
     sourceLocked,
