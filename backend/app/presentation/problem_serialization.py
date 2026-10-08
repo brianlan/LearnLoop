@@ -51,6 +51,9 @@ class ProblemVariationPayload(BaseModel):
     generator: ModelIdentityPayload
     generationCount: int
     validation: ValidationProvenancePayload
+    # Problem-variant provenance link (#685); batch variants are None. The
+    # rest of `original` stays withheld per #660.
+    sourceProblemId: str | None = None
 
 
 class ProblemSummaryPayload(BaseModel):
@@ -253,6 +256,7 @@ def _serialize_problem_variation(
     generator = dict(variation.get("generator") or {})
     validation = dict(variation.get("validation") or {})
     helper_model = validation.get("helperModel") or None
+    original = dict(variation.get("original") or {})
     return ProblemVariationPayload(
         mode=str(variation.get("mode", "")),
         acceptedVariant=_serialize_variation_content(
@@ -263,6 +267,11 @@ def _serialize_problem_variation(
             model=str(generator.get("model", "")),
         ),
         generationCount=int(variation.get("generationCount", 0)),
+        sourceProblemId=(
+            str(original["sourceProblemId"])
+            if original.get("sourceProblemId")
+            else None
+        ),
         validation=ValidationProvenancePayload(
             verdict=str(validation.get("verdict", "")),
             helperModel=ModelIdentityPayload(

@@ -30,6 +30,8 @@ export interface ProblemVariation {
   generator: ModelIdentity;
   generationCount: number;
   validation: VariationValidation;
+  // Problem-variant provenance link (#685); batch-ingested variants are null.
+  sourceProblemId?: string | null;
 }
 
 export interface ProblemDetail {

@@ -400,6 +400,29 @@ def build_variant_helper_vlm_client(
     )
 
 
+def build_variant_clients(
+    settings: Settings,
+) -> tuple[
+    VariantGeneratorVLMClient,
+    VariantValidatorVLMClient | None,
+    VariantValidatorVLMClient | None,
+    VariantHelperVLMClient,
+]:
+    """Public 4-role variant client bundle (issue #685).
+
+    Mirrors the historical private bulk-ingestion builder: an unconfigured
+    mandatory profile raises ``VariantVLMError`` so callers can map it to an
+    explicit 409 before creating work that could never run; the second
+    validator stays optional (``None`` in single-validator mode).
+    """
+    return (
+        build_variant_generator_vlm_client(settings),
+        build_variant_validator_vlm_client(settings),
+        build_variant_validator_vlm_client(settings, second=True),
+        build_variant_helper_vlm_client(settings),
+    )
+
+
 def _problem_context(problem: ProblemContent | VariantCandidate) -> dict[str, Any]:
     """Full task context for helper comparisons (multi-part/diagram-aware)."""
     return {

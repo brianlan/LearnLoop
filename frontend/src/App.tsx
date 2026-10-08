@@ -10,6 +10,7 @@ import { RegisterPage } from "@/pages/RegisterPage";
 import { HomePage } from "@/pages/HomePage";
 import { ProblemsPage } from "@/pages/ProblemsPage";
 import { ProblemDetailPage } from "@/pages/ProblemDetailPage";
+import { ProblemVariantReviewPage } from "@/pages/ProblemVariantReviewPage";
 import { IngestPage } from "@/pages/IngestPage";
 import { ActiveExamPage } from "@/pages/ActiveExamPage";
 import { ExamsPage } from "@/pages/ExamsPage";
@@ -193,6 +194,14 @@ export function AppRoutes() {
         element={
           <ProtectedPage>
             <ProblemDetailPage />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/problems/:id/variant-review"
+        element={
+          <ProtectedPage>
+            <ProblemVariantReviewPage />
           </ProtectedPage>
         }
       />

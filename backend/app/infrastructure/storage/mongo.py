@@ -162,6 +162,30 @@ async def ensure_database_setup(database: AsyncDatabase[Document]) -> None:
             name="user_state_submitted_time",
         )
 
+    # Problem-variant sessions (issue #685): at most one live (non-submitted,
+    # non-discarded) session per (problem, user). The partial filter keeps
+    # history rows free; concurrent second creates hit the unique index and
+    # surface as 409.
+    from app.infrastructure.problem_variants.repository import (
+        PROBLEM_VARIANT_SESSIONS_COLLECTION,
+    )
+
+    if (
+        PROBLEM_VARIANT_SESSIONS_COLLECTION not in existing_collections
+        and hasattr(database, "create_collection")
+    ):
+        await database.create_collection(PROBLEM_VARIANT_SESSIONS_COLLECTION)
+    create_variant_session_index = getattr(
+        database[PROBLEM_VARIANT_SESSIONS_COLLECTION], "create_index", None
+    )
+    if callable(create_variant_session_index):
+        await create_variant_session_index(
+            [("problemId", ASCENDING), ("userId", ASCENDING)],
+            unique=True,
+            name="problem_user_active_session_unique",
+            partialFilterExpression={"submit": None, "discardedAt": None},
+        )
+
     await ensure_batch_indexes(database)
 
 

@@ -45,9 +45,13 @@ class OriginalProvenance(FrozenContentSnapshot):
 
     ``auditImage`` uses the existing SourceImage metadata shape; the object
     lives in a permanent audit namespace and is never an active task image.
+
+    ``sourceProblemId`` links an admitted problem-variant (#685) back to the
+    problem it was derived from; batch-ingested variants leave it ``None``.
     """
 
     auditImage: dict[str, Any]
+    sourceProblemId: str | None = None
 
 
 class ValidationProvenance(BaseModel):

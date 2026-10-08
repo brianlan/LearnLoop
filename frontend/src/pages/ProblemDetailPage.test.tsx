@@ -1315,3 +1315,139 @@ describe("ProblemDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 });
+describe("ProblemDetailPage: create variant (#685)", () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockReset();
+    vi.mocked(api.patch).mockReset();
+    vi.mocked(api.delete).mockReset();
+    vi.mocked(api.verifyTeacherPassword).mockReset();
+    vi.mocked(api.setProblemDisabled).mockReset();
+    vi.mocked(api.getSolutionStatus).mockReset();
+    vi.mocked(api.regenerateSolution).mockReset();
+    vi.mocked(api.getAttemptHistory).mockReset();
+    mockNavigate.mockReset();
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
+    vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
+    vi.mocked(api.getAttemptHistory).mockResolvedValue({ items: [], total: 0, hasMore: false });
+  });
+
+  it("shows the Create variant button for available problems", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-variant-button")).toBeInTheDocument();
+    });
+  });
+
+  it("hides the Create variant button on deleted and disabled problems", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem, isDeleted: true } })
+      .mockResolvedValueOnce(baseTracking);
+    renderProblemDetailPage();
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("create-variant-button")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the variant review route on click", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: { ...baseProblem } })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-variant-button")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("create-variant-button"));
+    expect(mockNavigate).toHaveBeenCalledWith("/problems/abc123/variant-review");
+  });
+});
+
+describe("ProblemDetailPage: Derived from provenance link (#685)", () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockReset();
+    vi.mocked(api.patch).mockReset();
+    vi.mocked(api.delete).mockReset();
+    vi.mocked(api.verifyTeacherPassword).mockReset();
+    vi.mocked(api.setProblemDisabled).mockReset();
+    vi.mocked(api.getSolutionStatus).mockReset();
+    vi.mocked(api.regenerateSolution).mockReset();
+    vi.mocked(api.getAttemptHistory).mockReset();
+    mockNavigate.mockReset();
+    vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
+    vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
+    vi.mocked(api.getAttemptHistory).mockResolvedValue({ items: [], total: 0, hasMore: false });
+  });
+
+  const problemWithSource = {
+    ...variantProblem,
+    variation: {
+      ...variantProblem.variation,
+      sourceProblemId: "source-1",
+    },
+  };
+
+  it("shows a Derived from link to the readable source problem", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get)
+      .mockImplementation(async (path: string) => {
+        if (path === "/problems/abc123") return { problem: problemWithSource };
+        if (path === "/problems/abc123/tracking") return baseTracking;
+        if (path === "/problems/source-1") {
+          return { problem: { ...baseProblem, id: "source-1", text: "The original 2+2 problem" } };
+        }
+        throw new Error(`unexpected get: ${path}`);
+      });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("problem-variation-derived-from")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("problem-variation-derived-link"));
+    expect(mockNavigate).toHaveBeenCalledWith("/problems/source-1");
+  });
+
+  it("suppresses the link when the source is not readable (soft-deleted)", async () => {
+    vi.mocked(api.get)
+      .mockImplementation(async (path: string) => {
+        if (path === "/problems/abc123") return { problem: problemWithSource };
+        if (path === "/problems/abc123/tracking") return baseTracking;
+        if (path === "/problems/source-1") throw new Error("Problem not found");
+        throw new Error(`unexpected get: ${path}`);
+      });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+    // The provenance section stays; only the link is suppressed.
+    expect(screen.getByTestId("problem-variation-provenance")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("problem-variation-derived-from"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows no link for batch-ingested variants without sourceProblemId", async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ problem: variantProblem })
+      .mockResolvedValueOnce(baseTracking);
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("problem-variation-provenance")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("problem-variation-derived-from"),
+    ).not.toBeInTheDocument();
+  });
+});
