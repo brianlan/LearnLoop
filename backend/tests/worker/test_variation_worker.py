@@ -189,12 +189,10 @@ class FakeHelper:
     def __init__(self, *, error: BaseVLMError | None = None) -> None:
         self.identity = {"provider": "fake", "model": "helper-model"}
         self.error = error
-        self.calls: list[dict[str, Any]] = []
 
     async def compare_answer_pairs(
         self, **kwargs: Any
     ) -> tuple[AnswerComparison, AnswerComparison]:
-        self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
         return (
