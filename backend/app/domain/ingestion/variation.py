@@ -35,6 +35,7 @@ __all__ = [
     "ValidationProvenance",
     "ProblemVariation",
     "is_attestable",
+    "is_execution_only_failure",
 ]
 
 Preservation = Literal["preserved", "changed"]
@@ -97,11 +98,14 @@ class ValidatorReport(BaseModel):
     original_solution_summary: str = Field(alias="originalSolutionSummary")
     variant_solution_summary: str = Field(alias="variantSolutionSummary")
     checks: dict[str, Check] = Field(default_factory=dict)
-    answer_comparison_original: AnswerComparison = Field(
-        default_factory=AnswerComparison, alias="answerComparisonOriginal"
+    # None means the helper comparison never ran (helper crash or unsolved
+    # answers); a comparison that ran but found no equivalence keeps its
+    # explicit result (#671).
+    answer_comparison_original: AnswerComparison | None = Field(
+        default=None, alias="answerComparisonOriginal"
     )
-    answer_comparison_variant: AnswerComparison = Field(
-        default_factory=AnswerComparison, alias="answerComparisonVariant"
+    answer_comparison_variant: AnswerComparison | None = Field(
+        default=None, alias="answerComparisonVariant"
     )
 
     model_config = {"populate_by_name": True}
@@ -292,6 +296,10 @@ def _assess_report(
         ("original", report.answer_comparison_original),
         ("variant", report.answer_comparison_variant),
     ):
+        if comparison is None:
+            # Comparison never ran; the path that left it None also
+            # recorded an explicit failure, so nothing is added here.
+            continue
         if comparison.result != "equivalent":
             failures.append(
                 _answer_failure(
@@ -317,7 +325,9 @@ def assess_variant(
     ``content``, validator judgment failures are ``check``, and answer
     correctness failures are ``answer``. Fails closed: missing reports,
     missing categories, uncertain comparisons or a wrong report count
-    block PASS.
+    block PASS. Comparisons that ran and are not equivalent block PASS;
+    comparisons that never ran (None) always accompany a recorded failure
+    on the path that skipped them (#671).
     """
     failures = check_candidate(mode, source, candidate)
     if not reports:
@@ -359,3 +369,28 @@ def is_attestable(validation: Mapping[str, Any] | None) -> bool:
     return bool(failures) and all(
         failure.get("kind") in ("check", "answer") for failure in failures
     )
+
+
+def is_execution_only_failure(validation: Mapping[str, Any] | None) -> bool:
+    """Whether a FAIL verdict carries only model-execution failures (#671).
+
+    True when every failure kind is ``provider``/``invalid-response`` or a
+    raw ``vlm-*`` code: no validator verdict was produced, so a stored
+    candidate may be re-validated instead of regenerated. Fails closed and
+    never raises: kind-less legacy entries, empty failure sets, missing
+    validation and non-fail verdicts all return False.
+    """
+    if not validation:
+        return False
+    if validation.get("verdict") != "fail":
+        return False
+    failures = validation.get("failures") or []
+    if not failures:
+        return False
+    for failure in failures:
+        kind = failure.get("kind") if isinstance(failure, Mapping) else None
+        if not isinstance(kind, str):
+            return False
+        if kind not in ("provider", "invalid-response") and not kind.startswith("vlm-"):
+            return False
+    return True

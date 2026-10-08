@@ -260,6 +260,7 @@ async def _drive_to_pass(
         real_database, batch_id, user_id, item_id,
         token=token, claimed_revision=claimed_revision, verdict="pass",
         validation=dict(PASSING_VALIDATION), now=now,
+        candidate_present=True,
     )
 
 

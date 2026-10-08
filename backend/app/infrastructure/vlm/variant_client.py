@@ -509,14 +509,22 @@ async def generate_and_validate(
         report.answer_comparison_variant = variant_cmp
         reports.append(report)
 
-    assessment = assess_variant(
-        mode=mode, source=source, candidate=candidate, reports=reports
-    )
-    if extra_failures:
-        assessment = VariantAssessment(
-            verdict="fail",
-            failures=assessment.failures + extra_failures,
+    if extra_failures and not reports:
+        # All validators crashed (the only path here with no reports):
+        # skip assess_variant, whose synthesized content failures would
+        # falsely claim "no validator report was produced" as a verdict.
+        # Return the execution failures alone so the run can land
+        # needs-validation and be re-validated (#671).
+        assessment = VariantAssessment(verdict="fail", failures=extra_failures)
+    else:
+        assessment = assess_variant(
+            mode=mode, source=source, candidate=candidate, reports=reports
         )
+        if extra_failures:
+            assessment = VariantAssessment(
+                verdict="fail",
+                failures=assessment.failures + extra_failures,
+            )
     return VariantGenerationResult(
         candidate=candidate, reports=reports, assessment=assessment
     )

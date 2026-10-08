@@ -592,3 +592,94 @@ def test_is_attestable_truth_table() -> None:
     assert is_attestable(
         {"verdict": "fail", "failures": [{"kind": "vlm-timeout", "evidence": "a"}]}
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# Execution-only failures and never-ran comparisons (#671).
+# ---------------------------------------------------------------------------
+
+
+def test_is_execution_only_failure_truth_table() -> None:
+    from app.domain.ingestion.variation import is_execution_only_failure
+
+    # The reported production case: invalid-response with the VLM JSON text.
+    assert is_execution_only_failure(
+        {
+            "verdict": "fail",
+            "failures": [
+                {
+                    "kind": "invalid-response",
+                    "evidence": (
+                        "Model execution failure: validator openai/x failed: "
+                        "VLM provider response content was not valid JSON"
+                    ),
+                }
+            ],
+        }
+    ) is True
+    assert is_execution_only_failure(
+        {"verdict": "fail", "failures": [{"kind": "provider", "evidence": "down"}]}
+    ) is True
+    # Worker raw kinds (exc.code), including the prefix rule.
+    assert is_execution_only_failure(
+        {"verdict": "fail", "failures": [{"kind": "vlm-timeout", "evidence": "a"}]}
+    ) is True
+    assert is_execution_only_failure(
+        {
+            "verdict": "fail",
+            "failures": [{"kind": "vlm-profile-invalid", "evidence": "a"}],
+        }
+    ) is True
+    # Several execution failures are still execution-only.
+    assert is_execution_only_failure(
+        {
+            "verdict": "fail",
+            "failures": [
+                {"kind": "provider", "evidence": "a"},
+                {"kind": "invalid-response", "evidence": "b"},
+            ],
+        }
+    ) is True
+    # Mixed with any judgment/content kind: a verdict exists -> False.
+    for kind in ("check", "answer", "content", "invalid-candidate"):
+        assert is_execution_only_failure(
+            {
+                "verdict": "fail",
+                "failures": [
+                    {"kind": "provider", "evidence": "a"},
+                    {"kind": kind, "evidence": "b"},
+                ],
+            }
+        ) is False
+    # Kind-less legacy entry: fails closed without raising.
+    assert is_execution_only_failure(
+        {"verdict": "fail", "failures": [{"evidence": "legacy"}]}
+    ) is False
+    # Empty failures, missing/non-fail verdict, missing validation.
+    assert is_execution_only_failure({"verdict": "fail", "failures": []}) is False
+    assert is_execution_only_failure({"verdict": "fail"}) is False
+    assert is_execution_only_failure({"verdict": "pass", "failures": []}) is False
+    assert is_execution_only_failure({}) is False
+    assert is_execution_only_failure(None) is False
+
+
+def test_never_ran_comparison_produces_no_synthetic_answer_failure() -> None:
+    """A report whose helper comparisons never ran (None) adds no synthetic
+    uncertain answer failures (#671); the client path that skipped the
+    comparison records its own explicit failure."""
+    report = _report().model_copy(
+        update={"answer_comparison_original": None, "answer_comparison_variant": None}
+    )
+    assessment = _assess([report])
+    assert not any(f.kind == "answer" for f in assessment.failures)
+    assert not any("helper comparison" in f.evidence for f in assessment.failures)
+
+
+def test_ran_uncertain_comparison_still_fails() -> None:
+    """A comparison that ran and is uncertain remains an answer failure."""
+    assessment = _assess([_report(variant_cmp="uncertain")])
+    assert assessment.verdict == "fail"
+    assert any(
+        "helper comparison for variant answer: uncertain" in f.evidence
+        for f in assessment.failures
+    )

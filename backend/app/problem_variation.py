@@ -103,6 +103,9 @@ VARIATION_TRANSITIONS: dict[VariationStatus, list[VariationStatus]] = {
     VariationStatus.VALIDATING: [
         VariationStatus.READY,
         VariationStatus.FAILED,
+        # Validator-execution-only failure with a stored candidate (#671):
+        # no verdict was produced, so the run lands needs-validation.
+        VariationStatus.NEEDS_VALIDATION,
         VariationStatus.NOT_REQUESTED,
     ],
     VariationStatus.READY: [

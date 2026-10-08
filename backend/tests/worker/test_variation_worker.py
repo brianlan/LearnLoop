@@ -15,7 +15,11 @@ from typing import Any
 import pytest
 
 from app.domain.ingestion.variation import (
+    AnswerComparison,
     AssessmentFailure,
+    Check,
+    ModelIdentity,
+    ValidatorReport,
     VariantAssessment,
     VariantCandidate,
     VariantGenerationResult,
@@ -42,6 +46,7 @@ from app.infrastructure.worker.variation_worker import (
 )
 from app.infrastructure.vlm.base_client import BaseVLMError
 from app.problem_variation import IngestionMode, VariationStatus
+from tests.domain.test_variant_validation import PASSING_CATEGORIES
 from tests.test_utils.db_fakes import FakeDatabase
 
 NOW = datetime.now(UTC)  # repo-direct tests only; process_variation writes with real now, so leases it consumes must anchor to datetime.now(UTC)
@@ -154,6 +159,64 @@ class FakeGenerator:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class FakeValidator:
+    """Minimal validator client driving the real generate_and_validate."""
+
+    def __init__(
+        self,
+        *,
+        report: ValidatorReport | None = None,
+        error: BaseVLMError | None = None,
+    ) -> None:
+        self.identity = {"provider": "fake", "model": "val-model"}
+        self.report = report
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    async def produce_report(
+        self, *, mode: str, source: Any, candidate: Any
+    ) -> ValidatorReport:
+        self.calls.append({"mode": mode})
+        if self.error is not None:
+            raise self.error
+        assert self.report is not None
+        return self.report
+
+
+class FakeHelper:
+    def __init__(self, *, error: BaseVLMError | None = None) -> None:
+        self.identity = {"provider": "fake", "model": "helper-model"}
+        self.error = error
+
+    async def compare_answer_pairs(
+        self, **kwargs: Any
+    ) -> tuple[AnswerComparison, AnswerComparison]:
+        if self.error is not None:
+            raise self.error
+        return (
+            AnswerComparison(result="equivalent", evidence="both 60"),
+            AnswerComparison(result="equivalent", evidence="both 60"),
+        )
+
+
+def passing_validator_report() -> ValidatorReport:
+    """A report as produce_report builds it: no helper comparisons yet —
+    comparisons are helper-derived and assigned only after a successful
+    helper call (#671)."""
+    checks = {
+        name: Check(category=category, evidence="clear")
+        for name, category in PASSING_CATEGORIES.items()
+    }
+    return ValidatorReport(
+        validatorModel=ModelIdentity(provider="fake", model="val-model"),
+        originalSolvedAnswer="60",
+        variantSolvedAnswer="60",
+        originalSolutionSummary="distance over time",
+        variantSolutionSummary="distance over time",
+        checks=checks,
+    )
 
 
 def passing_result(candidate: dict[str, Any]) -> VariantGenerationResult:
@@ -399,6 +462,7 @@ async def test_stale_result_rejected_after_semantic_edit() -> None:
         database, batch["_id"], "user-1", item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     )
     assert saved is False
@@ -430,6 +494,7 @@ async def test_delete_cancels_in_flight_and_undo_requeues() -> None:
         database, batch["_id"], "user-1", item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     ) is False
 
@@ -495,6 +560,7 @@ async def test_expired_lease_rejects_renewal_checkpoint_and_result() -> None:
         database, batch["_id"], "user-1", item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=expired,
     ) is False
 
@@ -540,6 +606,7 @@ async def test_expired_batch_rejects_claims_and_results() -> None:
         database, batch["_id"], "user-1", item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     ) is False
 
@@ -563,6 +630,7 @@ async def test_old_candidate_checkpoint_cannot_overwrite_regeneration() -> None:
         database, batch["_id"], "user-1", item_id,
         token=first_token, claimed_revision=1, verdict="fail",
         validation={"verdict": "fail", "failures": [], "reports": []},
+        candidate_present=True,
         now=NOW,
     )
     await request_variation_generation(
@@ -598,9 +666,12 @@ async def test_worker_loop_stops_gracefully(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
-async def test_validation_provider_failure_completes_without_raise(
+async def test_orchestration_provider_failure_lands_needs_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A BaseVLMError from an orchestration step leaves the checkpointed
+    candidate in needs-validation: an execution-only failure set produced no
+    verdict, so Revalidate applies without regenerating (#671)."""
     database = FakeDatabase()
     batch, items = await seed_variant_batch(database)
     item_id = items[0]["itemId"]
@@ -628,10 +699,131 @@ async def test_validation_provider_failure_completes_without_raise(
 
     item = await _load_item(database, batch["_id"], item_id)
     variation = item["variation"]
-    assert variation["status"] == VariationStatus.FAILED.value
+    assert variation["status"] == VariationStatus.NEEDS_VALIDATION.value
+    assert variation["candidate"]["text"] == GENERATED_CANDIDATE["text"]
     failure = variation["validation"]["failures"][0]
     assert failure["kind"] == "vlm-provider-error"
     assert "variation validation" in failure["evidence"]
+
+
+async def test_all_validators_invalid_response_lands_needs_validation() -> None:
+    """BLOCKER regression (#671): a single-validator deployment whose only
+    validator returns unparseable JSON lands needs-validation with an
+    execution-only failure set — no synthesized content failures — and the
+    candidate is preserved for Revalidate."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+    validator = FakeValidator(
+        error=BaseVLMError(
+            "VLM provider response content was not valid JSON",
+            code="vlm-invalid-response",
+            retryable=True,
+        )
+    )
+
+    # The real generate_and_validate runs (no monkeypatch).
+    await process_variation(
+        claimed, batch, database, generator, [validator], FakeHelper(),
+        make_settings(), now=NOW,
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.NEEDS_VALIDATION.value
+    assert variation["candidate"]["text"] == GENERATED_CANDIDATE["text"]
+    failures = variation["validation"]["failures"]
+    assert len(failures) == 1
+    assert failures[0]["kind"] == "invalid-response"
+    assert "not valid JSON" in failures[0]["evidence"]
+    assert validator.calls, "the validator must have been invoked"
+
+
+async def test_helper_crash_lands_needs_validation_with_honest_evidence() -> None:
+    """Helper crash with a clean judge report: needs-validation, the stored
+    report shows absent comparisons and no fabricated 'uncertain' verdicts
+    (#671)."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+    validator = FakeValidator(report=passing_validator_report())
+    helper = FakeHelper(
+        error=BaseVLMError("helper provider down", code="vlm-provider-error", retryable=True)
+    )
+
+    await process_variation(
+        claimed, batch, database, generator, [validator], helper,
+        make_settings(), now=NOW,
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.NEEDS_VALIDATION.value
+    failures = variation["validation"]["failures"]
+    assert [f["kind"] for f in failures] == ["provider"]
+    assert "helper" in failures[0]["evidence"]
+    assert not any("uncertain" in f["evidence"] for f in failures)
+    report = variation["validation"]["reports"][0]
+    assert report["answerComparisonOriginal"] is None
+    assert report["answerComparisonVariant"] is None
+
+
+async def test_mixed_judgment_and_execution_failures_stay_failed() -> None:
+    """A genuine check verdict mixed with an execution failure keeps the
+    item failed with its Generate Again exit (#671 out of scope)."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=SOURCE_SNAPSHOT, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+    generator = FakeGenerator()
+    generator.responses.append(VariantCandidate.model_validate(GENERATED_CANDIDATE))
+    judged_checks = {
+        name: Check(
+            category="materially-easier" if name == "difficultyShift" else category,
+            evidence="too easy" if name == "difficultyShift" else "clear",
+        )
+        for name, category in PASSING_CATEGORIES.items()
+    }
+    judged = passing_validator_report().model_copy(update={"checks": judged_checks})
+    validator = FakeValidator(report=judged)
+    helper = FakeHelper(
+        error=BaseVLMError("helper provider down", code="vlm-provider-error", retryable=True)
+    )
+
+    await process_variation(
+        claimed, batch, database, generator, [validator], helper,
+        make_settings(), now=NOW,
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.FAILED.value
+    kinds = {f["kind"] for f in variation["validation"]["failures"]}
+    assert kinds == {"check", "provider"}
 
 
 async def test_malformed_persisted_candidate_fails_with_evidence() -> None:

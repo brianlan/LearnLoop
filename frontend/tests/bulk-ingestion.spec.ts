@@ -1279,16 +1279,18 @@ test.describe("Variant ingestion E2E", () => {
       session,
       batchId,
       itemId,
-      (variation) => variation?.status === "failed",
-      `variant for ${itemId} fails when validator-2 errors`,
+      (variation) => variation?.status === "needs-validation",
+      `variant for ${itemId} lands needs-validation when validator-2 errors (#671)`,
     );
 
-    // Only validator-1 completed; the transport failure fails the whole run.
+    // Only validator-1 completed; the execution-only failure set still fails
+    // closed (Continue blocked) but keeps the candidate for Revalidate.
     await expect(page.getByTestId("bulk-review-evidence")).toBeVisible();
     await expect(page.getByTestId("bulk-review-evidence-report")).toHaveCount(1);
     await expect(page.getByTestId("bulk-review-evidence-failure").first()).toContainText(
       "validator-2",
     );
+    await expect(page.getByTestId("bulk-review-revalidate")).toBeVisible();
     await expect(page.getByTestId("bulk-review-continue")).toBeDisabled();
 
     const fakeState = await getFakeVariantState(request);

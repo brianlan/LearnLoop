@@ -120,8 +120,10 @@ export interface EvidenceReport {
   originalSolvedAnswer?: string | null;
   variantSolvedAnswer?: string | null;
   checks?: Record<string, EvidenceCheck>;
-  answerComparisonOriginal?: { result?: string; evidence?: string };
-  answerComparisonVariant?: { result?: string; evidence?: string };
+  // null = the helper comparison never ran (#671); absent comparisons
+  // always accompany a recorded failure.
+  answerComparisonOriginal?: { result?: string; evidence?: string } | null;
+  answerComparisonVariant?: { result?: string; evidence?: string } | null;
 }
 
 export interface EvidenceFailure {

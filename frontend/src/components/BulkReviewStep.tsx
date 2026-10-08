@@ -728,10 +728,14 @@ export function BulkReviewStep({
               Revalidate, or keep it if you accept the current version as-is.
             </div>
           )}
+          {/* #671: an execution-only failure keeps its stored fail report
+              visible alongside the Revalidate action. */}
           {(variation?.status === "failed" ||
             failOverrideEligible ||
             stalePassReport ||
-            (variation?.status === "ready" && variation?.attestation)) && (
+            (variation?.status === "ready" && variation?.attestation) ||
+            (variation?.status === "needs-validation" &&
+              variation?.validation?.verdict === "fail")) && (
             <VariationFailureEvidence variation={variation} />
           )}
 

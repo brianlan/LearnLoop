@@ -2534,6 +2534,41 @@ describe("BulkReviewStep variant generate", () => {
     expect(variantComparisons[0]).toHaveTextContent("7 != 6");
     expect(variantComparisons[1]).toHaveTextContent("6.5 != 6");
   });
+
+  it("renders absent helper comparisons as no judgement (#671)", () => {
+    renderReview([
+      makeItem("item-1", {
+        variation: makeVariation({
+          status: "needs-validation",
+          validatedRevision: null,
+          validation: {
+            verdict: "fail",
+            failures: [
+              { kind: "provider", evidence: "helper fake-vlm/helper-1 failed: timeout" },
+            ],
+            reports: [
+              {
+                validatorModel: { provider: "fake-vlm", model: "helper-1" },
+                originalSolvedAnswer: "4",
+                variantSolvedAnswer: "6",
+                answerComparisonOriginal: null,
+                answerComparisonVariant: null,
+                checks: {},
+              },
+            ],
+          },
+        }),
+      }),
+    ]);
+
+    expect(screen.getByTestId("bulk-review-evidence")).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("bulk-review-evidence-helper-original")[0],
+    ).toHaveTextContent("no judgement");
+    expect(
+      screen.getAllByTestId("bulk-review-evidence-helper-variant")[0],
+    ).toHaveTextContent("no judgement");
+  });
 });
 
 describe("BulkReviewStep variant pass gating and revalidation", () => {
@@ -2758,6 +2793,47 @@ describe("BulkReviewStep variant pass gating and revalidation", () => {
 
     expect(screen.getByTestId("bulk-review-continue")).toBeEnabled();
     expect(screen.queryByTestId("bulk-review-revalidate")).not.toBeInTheDocument();
+  });
+
+  it("offers Revalidate with evidence and no override for an execution-only failure (#671)", () => {
+    render(
+      variantReviewUi(
+        passedItem(
+          {},
+          {
+            status: "needs-validation",
+            validatedRevision: null,
+            validation: {
+              verdict: "fail",
+              failures: [
+                {
+                  kind: "invalid-response",
+                  evidence:
+                    "Model execution failure: validator openai/x failed: VLM provider response content was not valid JSON",
+                },
+              ],
+              reports: [],
+            },
+          },
+        ),
+      ),
+    );
+
+    // The execution failure evidence stays visible alongside Revalidate.
+    expect(screen.getByTestId("bulk-review-evidence")).toHaveTextContent(
+      "not valid JSON",
+    );
+    expect(
+      screen.getByTestId("bulk-review-evidence-failure-kind"),
+    ).toHaveTextContent("Model execution failure");
+    expect(screen.getByTestId("bulk-review-revalidate")).toBeInTheDocument();
+    // A non-verdict is not attestable: neither override nor keep-validation.
+    expect(
+      screen.queryByTestId("bulk-review-attest-fail"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("bulk-review-attest")).not.toBeInTheDocument();
+    // Continue stays blocked until the variant is validated.
+    expect(screen.getByTestId("bulk-review-continue")).toBeDisabled();
   });
 
   it("surfaces a failed revalidation and keeps the action available", async () => {

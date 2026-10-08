@@ -8,6 +8,7 @@ from bson import ObjectId
 from pymongo import ASCENDING, ReturnDocument
 
 from app.domain.ingestion import BatchState, ImageState, ItemState
+from app.domain.ingestion.variation import is_execution_only_failure
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.problem_variation import (
@@ -1849,6 +1850,7 @@ async def save_variation_result(
     claimed_revision: int,
     verdict: str,
     validation: dict[str, Any],
+    candidate_present: bool,
     now: datetime,
 ) -> bool:
     """Land a validation verdict only for the current claim.
@@ -1856,14 +1858,23 @@ async def save_variation_result(
     A stale token, a superseded revision (semantic edit invalidated the
     attempt), an expired batch, an expired lease, or a deleted/submitted
     item all reject the write, so no old result can become ready.
+
+    Status mapping (#671): pass lands ``ready``; a fail lands
+    ``needs-validation`` when a candidate is stored and every failure is a
+    model-execution kind (no verdict was produced, so Revalidate applies);
+    every other fail lands ``failed``. This is the single
+    verdict-to-status implementation.
     """
     if verdict not in ("pass", "fail"):
         raise ValueError(f"Invalid variation verdict: {verdict}")
+    if verdict == "pass":
+        status = VariationStatus.READY.value
+    elif candidate_present and is_execution_only_failure(validation):
+        status = VariationStatus.NEEDS_VALIDATION.value
+    else:
+        status = VariationStatus.FAILED.value
     set_fields: dict[str, Any] = {
-        "items.$.variation.status": (
-            VariationStatus.READY.value if verdict == "pass"
-            else VariationStatus.FAILED.value
-        ),
+        "items.$.variation.status": status,
         "items.$.variation.validation": validation,
         "items.$.variation.claimToken": None,
         "items.$.variation.leaseUntil": None,

@@ -2279,6 +2279,7 @@ async def _drive_to_ready_candidate(
         database, batch_object_id, user_id, item_id,
         token=token, claimed_revision=1, verdict="pass",
         validation={"verdict": "pass", "failures": [], "reports": []},
+        candidate_present=True,
         now=now,
     )
 
@@ -2360,6 +2361,7 @@ async def _drive_to_failed_check_only(
             ],
             "reports": [],
         },
+        candidate_present=True,
         now=now,
     )
 
@@ -2790,6 +2792,77 @@ async def test_variant_revalidate_queues_validator_only_run(
         json={"expectedRevision": 2},
     )
     assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_variant_execution_only_failure_lands_needs_validation_and_revalidates(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+) -> None:
+    """#671: a validator-execution-only failure with a stored candidate
+    lands needs-validation (not failed) and the existing validator-only
+    revalidate endpoint accepts it: 202, item queued, candidate preserved."""
+    _enable_variant_profiles(bulk_app)
+    batch_id, _, item_id = await _create_variant_batch(
+        authenticated_bulk_client, bulk_app, helper_vlm
+    )
+    user_id = (await bulk_app.state.fake_database["users"].find_one({"username": "student1"}))["_id"]
+    database = bulk_app.state.fake_database
+    now = datetime.now(UTC)
+    batch_object_id = ObjectId(batch_id)
+    await request_variation_generation(
+        database, batch_object_id, user_id, item_id,
+        original=dict(VARIANT_ORIGINAL), expected_revision=0, now=now,
+    )
+    claimed = await claim_variation_work(
+        database, batch_object_id, user_id, item_id,
+        lease_timeout_seconds=300, now=now,
+    )
+    assert claimed is not None
+    token = claimed["variation"]["claimToken"]
+    assert await save_variation_candidate_checkpoint(
+        database, batch_object_id, user_id, item_id,
+        token=token, claimed_revision=1,
+        candidate=dict(VARIANT_CANDIDATE), now=now,
+    )
+    assert await save_variation_result(
+        database, batch_object_id, user_id, item_id,
+        token=token, claimed_revision=1, verdict="fail",
+        validation={
+            "verdict": "fail",
+            "failures": [
+                {
+                    "kind": "invalid-response",
+                    "evidence": (
+                        "Model execution failure: validator openai/x failed: "
+                        "VLM provider response content was not valid JSON"
+                    ),
+                }
+            ],
+            "reports": [],
+        },
+        candidate_present=True,
+        now=now,
+    )
+
+    stored = await database[INGESTION_BATCHES_COLLECTION].find_one(
+        {"_id": batch_object_id}
+    )
+    stored_item = next(i for i in stored["items"] if i["itemId"] == item_id)
+    variation = stored_item["variation"]
+    assert variation["status"] == "needs-validation"
+    assert variation["candidate"]["text"] == VARIANT_CANDIDATE["text"]
+    assert stored_item["contentRevision"] == 1
+
+    revalidate = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}/variation/revalidate",
+        json={"expectedRevision": 1},
+    )
+    assert revalidate.status_code == 202
+    requeued = _variation_of(revalidate.json(), item_id)["variation"]
+    assert requeued["status"] == "queued"
+    assert requeued["candidate"]["text"] == VARIANT_CANDIDATE["text"]
 
 
 @pytest.mark.asyncio
