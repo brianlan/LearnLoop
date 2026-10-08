@@ -579,6 +579,52 @@ async def test_executor_runs_generate_checkpoint_validate_to_ready(
     variant_executor.cancel_problem_variant_task(session_id)
 
 
+async def test_executor_revalidation_validates_stored_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revalidate queues validator-only work: the stored candidate (possibly
+    user-edited) must be validated, never regenerated (Codex P1 finding)."""
+    database = FakeDatabase()
+    session = make_session(
+        status=VariationStatus.QUEUED.value,
+        content_revision=2,
+        candidate={
+            "text": "user edit",
+            "problemType": "short-answer",
+            "graphDsl": None,
+            "correctAnswer": "11",
+            "subject": "math",
+            "generator": {"provider": "fake", "model": "gen-model"},
+        },
+    )
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    class NoGenerateGenerator(FakeGenerator):
+        async def generate_candidate(self, *, mode: str, source: Any) -> VariantCandidate:
+            raise AssertionError("revalidation must not regenerate")
+
+    async def fake_generate_and_validate(**kwargs: Any) -> Any:
+        assert kwargs["candidate"].correct_answer == "11"
+        return _pass_result()
+
+    monkeypatch.setattr(
+        variant_executor, "generate_and_validate", fake_generate_and_validate
+    )
+    await start_problem_variant_generation(
+        database, settings=None,
+        user_id="user-1", problem_id=PROBLEM_ID, session_id=session_id,
+        clients=(NoGenerateGenerator(), object(), None, object()),
+    )
+    await variant_executor._tasks[str(session_id)]
+
+    stored = get_session(database, session_id)
+    assert stored["variation"]["status"] == VariationStatus.READY.value
+    assert stored["variation"]["candidate"]["correctAnswer"] == "11"
+    assert stored["variation"]["validatedRevision"] == 2
+    variant_executor.cancel_problem_variant_task(session_id)
+
+
 async def test_executor_drops_stale_candidate_after_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

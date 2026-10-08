@@ -106,42 +106,51 @@ async def _run_session_generation(
     mode = canonical_variation_mode(session.get("mode")).value
     source = problem_content_from_snapshot(snapshot)
 
-    identity = (
-        f"generator {generator.identity['provider']}/{generator.identity['model']}"
-    )
+    stored_candidate = variation.get("candidate")
+    if isinstance(stored_candidate, dict):
+        # Validator-only revalidation: the revalidate endpoint keeps the
+        # stored, possibly user-edited candidate, so validate it instead of
+        # regenerating (mirrors variation_worker's persisted-candidate
+        # branch). Generate-override always clears the candidate, so a
+        # present candidate unambiguously means "validate what is stored".
+        candidate_dict = stored_candidate
+    else:
+        identity = (
+            f"generator {generator.identity['provider']}/{generator.identity['model']}"
+        )
 
-    # Step 1: generate and checkpoint before any validator call.
-    try:
-        candidate = await generator.generate_candidate(mode=mode, source=source)
-    except Exception as exc:
-        await save_problem_variant_result(
+        # Step 1: generate and checkpoint before any validator call.
+        try:
+            candidate = await generator.generate_candidate(mode=mode, source=source)
+        except Exception as exc:
+            await save_problem_variant_result(
+                database,
+                user_id,
+                problem_id,
+                session_id,
+                claimed_revision=claimed_revision,
+                verdict="fail",
+                validation=_failed_validation_evidence(identity, exc),
+                candidate_present=False,
+                now=_utc_now(),
+            )
+            return
+        candidate_dict = candidate.model_dump(by_alias=True)
+        checkpointed = await save_problem_variant_checkpoint(
             database,
             user_id,
             problem_id,
             session_id,
             claimed_revision=claimed_revision,
-            verdict="fail",
-            validation=_failed_validation_evidence(identity, exc),
-            candidate_present=False,
+            candidate=candidate_dict,
             now=_utc_now(),
         )
-        return
-    candidate_dict = candidate.model_dump(by_alias=True)
-    checkpointed = await save_problem_variant_checkpoint(
-        database,
-        user_id,
-        problem_id,
-        session_id,
-        claimed_revision=claimed_revision,
-        candidate=candidate_dict,
-        now=_utc_now(),
-    )
-    if not checkpointed:
-        logger.info(
-            "Discarding problem variant candidate for %s: session superseded",
-            session_id,
-        )
-        return
+        if not checkpointed:
+            logger.info(
+                "Discarding problem variant candidate for %s: session superseded",
+                session_id,
+            )
+            return
 
     # Step 2: validate the checkpointed candidate.
     try:

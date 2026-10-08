@@ -28,6 +28,7 @@ import {
   createProblemVariant,
   discardProblemVariant,
   editProblemVariantCandidate,
+  generateProblemVariant,
   getActiveProblemVariantSession,
   submitProblemVariant,
 } from "@/api/problemVariants";
@@ -180,7 +181,10 @@ describe("ProblemVariantReviewPage", () => {
 
   it("enters the existing session when create conflicts (409)", async () => {
     vi.mocked(getActiveProblemVariantSession).mockResolvedValue({ session: null });
-    const conflict = Object.assign(new Error("exists"), { status: 409 });
+    const conflict = Object.assign(new Error("exists"), {
+      status: 409,
+      code: "VARIANT_SESSION_EXISTS",
+    });
     vi.mocked(createProblemVariant).mockRejectedValue(conflict);
     vi.mocked(getActiveProblemVariantSession).mockResolvedValueOnce({
       session: null,
@@ -201,6 +205,58 @@ describe("ProblemVariantReviewPage", () => {
       expect(screen.getByTestId("bulk-review-generate")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("variant-entry-error")).not.toBeInTheDocument();
+  });
+
+  it("shows non-session-exist 409 errors instead of entering a session", async () => {
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({ session: null });
+    const conflict = Object.assign(new Error("No audit image available"), {
+      status: 409,
+      code: "VARIANT_AUDIT_MISSING",
+    });
+    vi.mocked(createProblemVariant).mockRejectedValue(conflict);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("variant-create-start")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("variant-create-start"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("variant-entry-error")).toHaveTextContent(
+        "No audit image available",
+      );
+    });
+    // Entering an existing session is only for the session-exists race.
+    expect(getActiveProblemVariantSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Generate available while a session is in flight (self-heal)", async () => {
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      // A session stranded in generating (e.g. by a server restart) must
+      // stay recoverable through the backend's Generate override.
+      session: queuedSession({
+        variation: {
+          ...queuedSession().variation,
+          status: "generating",
+        },
+      }),
+    });
+    vi.mocked(generateProblemVariant).mockResolvedValue({
+      session: queuedSession({ contentRevision: 1 }),
+    });
+
+    renderPage();
+
+    const generateButton = await screen.findByTestId("bulk-review-generate");
+    await waitFor(() => {
+      expect(generateButton).not.toBeDisabled();
+    });
+    fireEvent.click(generateButton);
+
+    await waitFor(() => {
+      expect(generateProblemVariant).toHaveBeenCalledWith("src-1", "sess-1", 0);
+    });
   });
 
   it("submits a ready variant and navigates to the admitted problem", async () => {

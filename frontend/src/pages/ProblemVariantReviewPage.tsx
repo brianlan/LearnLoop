@@ -24,7 +24,7 @@ import {
   useBulkReviewEditing,
   type EditTarget,
 } from "@/components/BulkReviewStep.editing";
-import { getRequiredFieldGaps } from "@/components/BulkReviewStep.helpers";
+import { getRequiredFieldGaps, isVariantBusy } from "@/components/BulkReviewStep.helpers";
 
 const POLL_INTERVAL_MS = 2000;
 const IN_FLIGHT_STATUSES = new Set(["queued", "generating", "validating"]);
@@ -240,8 +240,7 @@ export function ProblemVariantReviewPage() {
     try {
       applySession(await createProblemVariant(problemId, modeChoice));
     } catch (err) {
-      const status = (err as { status?: number }).status;
-      if (status === 409) {
+      if ((err as { code?: string }).code === "VARIANT_SESSION_EXISTS") {
         // A session already exists (race or stale view): enter it.
         applySession(await getActiveProblemVariantSession(problemId));
         return;
@@ -377,7 +376,14 @@ export function ProblemVariantReviewPage() {
   }
 
   const currentDraft = getDraft(item, activeTarget);
-  const actionState = actionStateFor(item, true, false);
+  const bulkActionState = actionStateFor(item, true, false);
+  // The backend Generate endpoint overrides an in-flight attempt (self-heals
+  // a session stranded by a restart), so the reused bulk-review "still
+  // running" disable must not block the button here.
+  const actionState =
+    item.variation && isVariantBusy(item.variation.status)
+      ? { ...bulkActionState, generateDisabledReason: "" }
+      : bulkActionState;
   const isReady = item.variation?.status === "ready";
   const tagSuggestions = problem?.tags ?? [];
 
