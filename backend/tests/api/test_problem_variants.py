@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from bson import ObjectId
+from bson import CodecOptions, ObjectId, decode, encode
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -603,6 +603,71 @@ async def test_submit_admits_new_problem_with_provenance(
     )
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "VARIANT_ALREADY_SUBMITTED"
+
+
+async def test_submit_survives_production_bson_datetime_decoding(
+    variants_app: FastAPI,
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Submit must admit when datetimes decode the way production Mongo does.
+
+    ``AsyncMongoClient`` decodes BSON datetimes as naive UTC
+    (``tz_aware=False``), so the reservation-expiry comparison in Submit sees
+    a naive ``expiresAt`` against an aware ``now``. Round-trip every session
+    read through the production codec options to reproduce that exactly; a
+    naive/aware ``TypeError`` here breaks all normal admission (R9).
+    """
+    problem = await create_problem(variants_app)
+    session = make_session_doc(
+        problem["_id"],
+        variants_app.state.primary_user["_id"],
+        status="ready",
+        content_revision=2,
+        candidate=dict(CANDIDATE),
+        validation=PASSING_VALIDATION,
+        validated_revision=2,
+    )
+    collection = variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS]
+    await collection.insert_one(session)
+
+    production_codec = CodecOptions(tz_aware=False)
+    # Sanity: the production codec really strips tzinfo on decode.
+    naive_probe = decode(encode({"t": NOW}), codec_options=production_codec)["t"]
+    assert naive_probe.tzinfo is None
+
+    original_find_one = collection.find_one
+
+    async def find_one_bson_decoded(query: Any, **kwargs: Any) -> Any:
+        document = await original_find_one(query, **kwargs)
+        if document is not None:
+            document = decode(encode(document), codec_options=production_codec)
+        return document
+
+    monkeypatch.setattr(collection, "find_one", find_one_bson_decoded)
+
+    source_before = deepcopy(
+        await variants_app.state.fake_database["problems"].find_one(
+            {"_id": problem["_id"]}
+        )
+    )
+    response = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 2},
+    )
+
+    assert response.status_code == 200
+    admitted_id = response.json()["problemId"]
+    database = variants_app.state.fake_database
+    admitted = await database["problems"].find_one({"_id": ObjectId(admitted_id)})
+    assert admitted["text"] == "What is 3+5?"
+    # Source untouched, exactly one solution task enqueued.
+    source_after = await database["problems"].find_one({"_id": problem["_id"]})
+    assert source_after == source_before
+    tasks = await database["solution_generation_tasks"].find(
+        {"problem_id": admitted_id}
+    ).to_list(None)
+    assert len(tasks) == 1
 
 
 async def test_submit_inherits_audit_image_through_variant_chain(

@@ -533,10 +533,18 @@ async def submit_problem_variant(
                 f"session contentRevision {session.get('contentRevision')}",
             )
         reservation = (session.get("variation") or {}).get("submitReservation") or {}
+        reservation_expires_at = reservation.get("expiresAt")
+        if (
+            reservation_expires_at is not None
+            and getattr(reservation_expires_at, "tzinfo", None) is None
+        ):
+            # Mongo round-trips datetimes as naive UTC; normalize before the
+            # aware-now comparison (same discipline as variant_submission).
+            reservation_expires_at = reservation_expires_at.replace(tzinfo=UTC)
         if (
             reservation.get("token") != token
-            or reservation.get("expiresAt") is None
-            or reservation.get("expiresAt") <= now
+            or reservation_expires_at is None
+            or reservation_expires_at <= now
         ):
             raise ApiError(
                 409, "VARIATION_BUSY", "Submit reservation is no longer held"
