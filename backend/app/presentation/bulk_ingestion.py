@@ -57,9 +57,7 @@ from app.infrastructure.storage.mongo import Document
 from app.infrastructure.vlm.base_client import BaseVLMError
 from app.infrastructure.vlm.variant_client import (
     VariantVLMError,
-    build_variant_generator_vlm_client,
-    build_variant_helper_vlm_client,
-    build_variant_validator_vlm_client,
+    build_variant_clients,
 )
 from app.problem_variation import (
     CREATABLE_INGESTION_MODES,
@@ -141,15 +139,11 @@ def _build_variant_clients(settings: Settings):
 
     The second validator is optional: a fully unconfigured
     ``variant_validator2_vlm_*`` profile builds nothing (single-validator mode)
-    instead of blocking the enqueue.
+    instead of blocking the enqueue. Delegates to the public builder
+    (issue #685); only the ApiError mapping stays presentation-local.
     """
     try:
-        return (
-            build_variant_generator_vlm_client(settings),
-            build_variant_validator_vlm_client(settings),
-            build_variant_validator_vlm_client(settings, second=True),
-            build_variant_helper_vlm_client(settings),
-        )
+        return build_variant_clients(settings)
     except VariantVLMError as exc:
         raise ApiError(409, exc.code, str(exc)) from exc
 

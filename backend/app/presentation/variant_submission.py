@@ -129,37 +129,42 @@ def _validated_under_transfer_contract(validation: dict[str, Any]) -> bool:
 
 
 def _build_variation_problem_document(
-    batch: dict[str, Any],
-    item: dict[str, Any],
-    user_id: Any,
-    audit_image: dict[str, Any],
+    *,
+    mode: str,
+    original: dict[str, Any],
+    accepted_variant: dict[str, Any],
+    generator: dict[str, Any],
+    generation_count: int,
+    validation: dict[str, Any],
     tags: list[str],
+    origin: dict[str, Any],
+    audit_image: dict[str, Any],
+    source_problem_id: str | None,
+    attested_by_user: bool,
+    user_id: Any,
     now: datetime,
 ) -> dict[str, Any]:
-    """Assemble the admitted Problem document from fresh item state.
+    """Assemble the admitted Problem document (shared core, issue #685).
 
     Main fields come from the accepted variant; the confirmed original lives
-    only in the provenance (with its audit image). Raises ``ApiError`` when
-    the persisted candidate data is unusable.
+    only in the provenance (with its audit image, plus the ``sourceProblemId``
+    link for problem-derived variants). Raises ``ApiError`` when the
+    persisted candidate data is unusable.
     """
-    variation = item.get("variation") or {}
-    candidate = variation.get("candidate") or {}
-    validation = variation.get("validation") or {}
-    original_snapshot = variation.get("original") or {}
     try:
-        accepted_variant = _frozen_snapshot(
-            candidate.get("text"),
-            candidate.get("problemType"),
-            candidate.get("subject"),
-            candidate.get("graphDsl"),
-            candidate.get("correctAnswer"),
+        accepted_content = _frozen_snapshot(
+            accepted_variant.get("text"),
+            accepted_variant.get("problemType"),
+            accepted_variant.get("subject"),
+            accepted_variant.get("graphDsl"),
+            accepted_variant.get("correctAnswer"),
         )
         original_content = _frozen_snapshot(
-            original_snapshot.get("text"),
-            original_snapshot.get("problemType"),
-            original_snapshot.get("subject"),
-            original_snapshot.get("graphDsl"),
-            original_snapshot.get("correctAnswer"),
+            original.get("text"),
+            original.get("problemType"),
+            original.get("subject"),
+            original.get("graphDsl"),
+            original.get("correctAnswer"),
         )
     except ApiError:
         raise
@@ -174,33 +179,32 @@ def _build_variation_problem_document(
             helper_model = ModelIdentity(
                 provider=first_model["provider"], model=first_model["model"]
             )
-    generator = candidate.get("generator") or {}
     # #648/#658: an attested admission covers the current revision via the
     # user attestation, not a validator run — frozen honestly into
     # provenance, including the REAL verdict (fail for a check-only
     # fail-attest).
-    attested_by_user = (variation.get("attestation") or {}).get(
-        "revision"
-    ) == item.get("contentRevision")
-    batch_mode = batch.get("ingestionMode") or "data-only"
-    provenance_mode = canonical_variation_mode(batch_mode).value
+    provenance_mode = canonical_variation_mode(mode).value
     if (
-        batch_mode == "data-and-wording"
+        mode == "data-and-wording"
         and not _validated_under_transfer_contract(validation)
     ):
         # #656: an old legacy candidate's report predates the
         # surfaceDivergence gate, so it never proved the transfer contract;
         # preserve the historical label instead of relabeling retroactively.
-        provenance_mode = batch_mode
+        provenance_mode = mode
     provenance = ProblemVariation(
         mode=provenance_mode,
-        original=OriginalProvenance(**original_content, auditImage=audit_image),
-        acceptedVariant=FrozenContentSnapshot(**accepted_variant),
+        original=OriginalProvenance(
+            **original_content,
+            auditImage=audit_image,
+            sourceProblemId=source_problem_id,
+        ),
+        acceptedVariant=FrozenContentSnapshot(**accepted_content),
         generator=ModelIdentity(
             provider=str(generator.get("provider") or ""),
             model=str(generator.get("model") or ""),
         ),
-        generationCount=int(variation.get("generationCount") or 0),
+        generationCount=int(generation_count or 0),
         validation=ValidationProvenance(
             # Freeze the real verdict (#658): a fail-attested admission
             # records "fail" + attestedByUser instead of a false "pass".
@@ -215,14 +219,14 @@ def _build_variation_problem_document(
     return {
         "_id": ObjectId(),
         "userId": user_id,
-        "text": accepted_variant["text"],
-        "problemType": accepted_variant["problemType"],
-        "subject": accepted_variant["subject"],
-        "graphDsl": accepted_variant["graphDsl"],
-        "correctAnswer": accepted_variant["correctAnswer"],
+        "text": accepted_content["text"],
+        "problemType": accepted_content["problemType"],
+        "subject": accepted_content["subject"],
+        "graphDsl": accepted_content["graphDsl"],
+        "correctAnswer": accepted_content["correctAnswer"],
         "tags": tags,
         "sourceImage": None,
-        "origin": dict(item.get("origin") or {}),
+        "origin": dict(origin or {}),
         "variation": provenance.model_dump(),
         "tracking": {
             "exposureCount": 0,
@@ -237,6 +241,64 @@ def _build_variation_problem_document(
         "createdAt": now,
         "updatedAt": now,
     }
+
+
+async def admit_variant_problem(
+    database: Any,
+    user_id: Any,
+    *,
+    mode: str,
+    original: dict[str, Any],
+    accepted_variant: dict[str, Any],
+    generator: dict[str, Any],
+    generation_count: int,
+    validation: dict[str, Any],
+    tags: list[str],
+    origin: dict[str, Any],
+    audit_image: dict[str, Any],
+    source_problem_id: str | None,
+    attested_by_user: bool,
+    submit_recorder: Any,
+    now: datetime,
+    session: Any = None,
+) -> dict[str, Any]:
+    """Shared admission core (issue #685): insert the Problem, record the
+    caller's submit and enqueue the solution task on one session.
+
+    Both the batch path (``admit_variant_item``) and the problem-variant path
+    funnel through here so they cannot drift: mode canonicalization, the
+    frozen-snapshot normalization, ``sourceImage: None``, the submit recorder
+    and the idempotent solution-task enqueue are identical. The caller owns
+    its own pre-guards (fresh-state checks) and post-commit tag registration.
+    ``submit_recorder(problem_id, session)`` must return ``False`` when the
+    caller's record no longer admits (aborts via 409).
+    """
+    problem = _build_variation_problem_document(
+        mode=mode,
+        original=original,
+        accepted_variant=accepted_variant,
+        generator=generator,
+        generation_count=generation_count,
+        validation=validation,
+        tags=tags,
+        origin=origin,
+        audit_image=audit_image,
+        source_problem_id=source_problem_id,
+        attested_by_user=attested_by_user,
+        user_id=user_id,
+        now=now,
+    )
+    await database["problems"].insert_one(problem, session=session)
+    recorded = await submit_recorder(problem["_id"], session)
+    if not recorded:
+        # The caller's transaction snapshot already proved an admissible
+        # state, so this can only mean an unexpected conflict; abort and let
+        # the transaction retry re-read fresh state.
+        raise _admission_guard_failure("Source changed during admission")
+    await enqueue_solution_generation_task_for_problem(
+        database, problem, now=now, session=session
+    )
+    return {"problemId": str(problem["_id"]), "alreadySubmitted": False}
 
 
 def _check_admission_guards(
@@ -337,28 +399,41 @@ async def admit_variant_item(
         if already_submitted is not None:
             return already_submitted
 
-        problem = _build_variation_problem_document(
-            batch, item, user_id, audit_image, tags, now
-        )
-        await database["problems"].insert_one(problem, session=session)
-        recorded = await record_variant_item_submission(
+        variation = item.get("variation") or {}
+
+        async def _record_submission(problem_id: Any, txn_session: Any) -> bool:
+            return await record_variant_item_submission(
+                database,
+                batch_id,
+                user_id,
+                item_id,
+                problem_id=problem_id,
+                now=now,
+                session=txn_session,
+            )
+
+        # #648/#658: the attestation must cover the item's current revision.
+        attested_by_user = (variation.get("attestation") or {}).get(
+            "revision"
+        ) == item.get("contentRevision")
+        return await admit_variant_problem(
             database,
-            batch_id,
             user_id,
-            item_id,
-            problem_id=problem["_id"],
+            mode=batch.get("ingestionMode") or "data-only",
+            original=variation.get("original") or {},
+            accepted_variant=variation.get("candidate") or {},
+            generator=(variation.get("candidate") or {}).get("generator") or {},
+            generation_count=variation.get("generationCount") or 0,
+            validation=variation.get("validation") or {},
+            tags=tags,
+            origin=item.get("origin") or {},
+            audit_image=audit_image,
+            source_problem_id=None,
+            attested_by_user=attested_by_user,
+            submit_recorder=_record_submission,
             now=now,
             session=session,
         )
-        if not recorded:
-            # The transaction snapshot already proved the item was READY, so
-            # this can only mean an unexpected conflict; abort and let the
-            # transaction retry re-read fresh state.
-            raise _admission_guard_failure("Item changed during admission")
-        await enqueue_solution_generation_task_for_problem(
-            database, problem, now=now, session=session
-        )
-        return {"problemId": str(problem["_id"]), "alreadySubmitted": False}
 
     async with adapter.start_session() as session:
         return await session.with_transaction(_transaction)

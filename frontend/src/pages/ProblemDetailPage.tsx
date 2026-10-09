@@ -19,6 +19,7 @@ import type {
   VariationContent,
 } from "@/types/problem";
 import { PROBLEM_TYPE_OPTIONS } from "@/constants/problemTypes";
+import { getActiveProblemVariantSession } from "@/api/problemVariants";
 
 interface TrackingData {
   problemId: string;
@@ -331,6 +332,22 @@ function VariationContentSnapshot({
 
 function VariationProvenance({ variation }: { variation: ProblemVariation }) {
   const [expanded, setExpanded] = useState(false);
+  const sourceProblemId = variation.sourceProblemId ?? null;
+  // #685 "Derived from": suppressed when the source is not readable
+  // (e.g. soft-deleted) — the fetch simply fails and the link stays hidden;
+  // provenance on the admitted problem is retained either way.
+  const { data: sourceProblem } = useQuery({
+    queryKey: ["problem", sourceProblemId],
+    queryFn: async () => {
+      const data = await api.get<ProblemResponse>(
+        `/problems/${sourceProblemId}`,
+      );
+      return data.problem;
+    },
+    enabled: !!sourceProblemId,
+    retry: false,
+  });
+  const navigate = useNavigate();
 
   return (
     <div
@@ -338,6 +355,29 @@ function VariationProvenance({ variation }: { variation: ProblemVariation }) {
       data-testid="problem-variation-provenance"
       style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}
     >
+      {sourceProblemId && sourceProblem && (
+        <div data-testid="problem-variation-derived-from" style={{ fontSize: "0.9rem" }}>
+          Derived from{" "}
+          <button
+            type="button"
+            data-testid="problem-variation-derived-link"
+            onClick={() => navigate(`/problems/${sourceProblemId}`)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--color-primary, #2563eb)",
+              cursor: "pointer",
+              textDecoration: "underline",
+              padding: 0,
+              font: "inherit",
+            }}
+          >
+            {sourceProblem.text.length > 80
+              ? `${sourceProblem.text.slice(0, 80)}…`
+              : sourceProblem.text}
+          </button>
+        </div>
+      )}
       <button
         type="button"
         data-testid="problem-variation-provenance-toggle"
@@ -450,6 +490,16 @@ export function ProblemDetailPage() {
       return (status === "pending" || status === "generating") ? 2000 : false;
     },
   });
+
+  // #685 scope item 6: an existing non-terminal variant session turns the
+  // entry button into "View session" — the review page enters it instead of
+  // creating a second one.
+  const { data: activeVariant } = useQuery({
+    queryKey: ["problem-variant-session", problemId],
+    queryFn: () => getActiveProblemVariantSession(problemId),
+    enabled: !!problemId && !problem?.isDeleted && !problem?.isDisabled,
+  });
+  const hasActiveVariantSession = !!activeVariant?.session;
 
   const solutionStatus = solutionStatusData?.status;
 
@@ -706,6 +756,25 @@ export function ProblemDetailPage() {
                 }}
               >
                 {regenerateMutation.isPending ? "Regenerating..." : "Re-generate solution"}
+              </button>
+            )}
+            {/* #685: hidden on deleted/disabled problems. When a variant
+                session already exists the button offers the review page's
+                session entry instead of another create. */}
+            {!problem.isDeleted && !problem.isDisabled && (
+              <button
+                type="button"
+                onClick={() => navigate(`/problems/${problemId}/variant-review`)}
+                data-testid="create-variant-button"
+                className="btn btn-secondary"
+                style={{
+                  padding: "0.4rem 0.75rem",
+                  borderRadius: "var(--radius-md)",
+                  fontSize: "0.8125rem",
+                  fontWeight: 700,
+                }}
+              >
+                {hasActiveVariantSession ? "View session" : "Create variant"}
               </button>
             )}
           </div>

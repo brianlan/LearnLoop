@@ -119,9 +119,20 @@ export interface ReviewEditingCallbacks {
   ) => void | Promise<void>;
 }
 
+export interface ReviewEditingOptions {
+  // Problem sessions allow candidate-from-nothing editing (#665): a failed
+  // session with no stored candidate keeps its provisional candidate buffer
+  // instead of being reconciled away as a removed target, so a delayed or
+  // rejected first save cannot silently discard the user's edits.
+  keepCandidateWithoutServerCandidate?: (item: BulkItem) => boolean;
+}
+
 export function useBulkReviewEditing(
   items: BulkItem[],
   { onUpdateDraft, onGenerate, onRevalidate, onAttest }: ReviewEditingCallbacks,
+  {
+    keepCandidateWithoutServerCandidate,
+  }: ReviewEditingOptions = {},
 ) {
   const [localDrafts, setLocalDrafts] = useState<Record<string, BulkDraft>>({});
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
@@ -411,7 +422,9 @@ export function useBulkReviewEditing(
 
         if (
           item.status === "deleted" ||
-          (target === "candidate" && !item.variation?.candidate)
+          (target === "candidate" &&
+            !item.variation?.candidate &&
+            !(keepCandidateWithoutServerCandidate?.(item) ?? false))
         ) {
           if (hasTargetState(key)) {
             resetKeys.add(key);
@@ -515,7 +528,13 @@ export function useBulkReviewEditing(
       draftRefs.current = nextDrafts;
       setLocalDrafts(nextDrafts);
     }
-  }, [items, savingKeys, cancelPendingGenerate, markConflict]);
+  }, [
+    items,
+    savingKeys,
+    cancelPendingGenerate,
+    markConflict,
+    keepCandidateWithoutServerCandidate,
+  ]);
 
   useEffect(() => {
     const timeoutIds: Record<string, number> = {};

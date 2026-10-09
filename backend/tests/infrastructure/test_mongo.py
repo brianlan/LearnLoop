@@ -11,6 +11,9 @@ from app.infrastructure.ingestion.repository import (
     BATCH_INDEXES,
     INGESTION_BATCHES_COLLECTION,
 )
+from app.infrastructure.problem_variants.repository import (
+    PROBLEM_VARIANT_SESSIONS_COLLECTION,
+)
 from app.infrastructure.storage.mongo import (
     AsyncMongoClientFactory,
     CANONICAL_SOLUTIONS_COLLECTION,
@@ -148,6 +151,7 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
         FOLDERS_COLLECTION,
         INGESTION_BATCHES_COLLECTION,
         EXAM_GRADING_TASKS_COLLECTION,
+        PROBLEM_VARIANT_SESSIONS_COLLECTION,
     ]
     assert database[TAGS_COLLECTION].index_calls == [
         {
@@ -191,5 +195,17 @@ async def test_ensure_database_setup_creates_solution_collections_and_tag_index(
         {
             "keys": [("userId", 1), ("state", 1), ("submittedAt", 1)],
             "kwargs": {"name": "user_state_submitted_time"},
+        }
+    ]
+    # Issue #685: one live (non-submitted, non-discarded) session per
+    # (problem, user); history rows stay free via the partial filter.
+    assert database[PROBLEM_VARIANT_SESSIONS_COLLECTION].index_calls == [
+        {
+            "keys": [("problemId", 1), ("userId", 1)],
+            "kwargs": {
+                "unique": True,
+                "name": "problem_user_active_session_unique",
+                "partialFilterExpression": {"submit": None, "discardedAt": None},
+            },
         }
     ]
