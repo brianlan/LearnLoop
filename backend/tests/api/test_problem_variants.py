@@ -670,6 +670,42 @@ async def test_submit_survives_production_bson_datetime_decoding(
     assert len(tasks) == 1
 
 
+async def test_stale_submit_acquires_no_reservation_and_blocks_nothing(
+    variants_app: FastAPI, client: AsyncClient
+) -> None:
+    """Codex R10: a stale Submit fences at acquisition — no reservation is
+    set, the session is unchanged, and a current-revision Generate is not
+    blocked."""
+    problem = await create_problem(variants_app)
+    session = make_session_doc(
+        problem["_id"],
+        variants_app.state.primary_user["_id"],
+        status="ready",
+        content_revision=2,
+        candidate=dict(CANDIDATE),
+        validation=PASSING_VALIDATION,
+        validated_revision=2,
+    )
+    collection = variants_app.state.fake_database[PROBLEM_VARIANT_SESSIONS]
+    await collection.insert_one(session)
+
+    stale = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+        json={"expectedRevision": 1},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "REVISION_MISMATCH"
+    stored = await collection.find_one({"_id": ObjectId(session["_id"])})
+    assert stored["contentRevision"] == 2
+    assert stored["variation"].get("submitReservation") is None
+
+    generate = await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/generate",
+        json={"expectedRevision": 2},
+    )
+    assert generate.status_code == 202
+
+
 async def test_submit_inherits_audit_image_through_variant_chain(
     variants_app: FastAPI, client: AsyncClient
 ) -> None:

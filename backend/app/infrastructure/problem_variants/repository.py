@@ -568,6 +568,7 @@ async def reserve_problem_variant_for_submit(
     problem_id: str,
     session_id: Any,
     *,
+    expected_revision: int,
     now: datetime,
 ) -> str | None:
     """Atomically reserve a ready, live session for original-submit.
@@ -575,7 +576,9 @@ async def reserve_problem_variant_for_submit(
     Closes the Generate-vs-submit side-effect race: only a ready, live
     session without a live reservation gets one, Generate refuses a
     reserved session, and the admission only lands while this token is
-    held. Reservations expire (crashed submit request) and are then
+    held. The acquisition is fenced on ``contentRevision`` so a stale
+    submit can never hold the reservation against a revision it never
+    saw. Reservations expire (crashed submit request) and are then
     reclaimable. Returns the token, or ``None`` when the session is not
     reservable.
     """
@@ -587,6 +590,7 @@ async def reserve_problem_variant_for_submit(
             "userId": user_id,
             **_LIVE_PREDICATE,
             "variation.status": VariationStatus.READY.value,
+            "contentRevision": expected_revision,
             "$or": [
                 {"variation.submitReservation": {"$in": [None]}},
                 {"variation.submitReservation.expiresAt": {"$lte": now}},

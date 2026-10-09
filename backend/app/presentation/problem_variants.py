@@ -488,7 +488,8 @@ async def submit_problem_variant(
     # Submit-reserve: atomically claim the ready session so a concurrent
     # Generate cannot clear the candidate mid-admission (#685 contract).
     token = await reserve_problem_variant_for_submit(
-        database, user["_id"], problem_id, session_object_id, now=now
+        database, user["_id"], problem_id, session_object_id,
+        expected_revision=request.expectedRevision, now=now,
     )
     if token is None:
         # Not reservable: classify against fresh state (404 / stale revision /

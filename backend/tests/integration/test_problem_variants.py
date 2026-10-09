@@ -191,7 +191,8 @@ async def test_live_submit_reservation_blocks_generate_race(
     await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(doc)
 
     token = await reserve_problem_variant_for_submit(
-        real_database, user_id, problem_id, doc["_id"], now=NOW,
+        real_database, user_id, problem_id, doc["_id"],
+        expected_revision=0, now=NOW,
     )
     assert isinstance(token, str) and token
 
@@ -222,6 +223,36 @@ async def test_live_submit_reservation_blocks_generate_race(
     assert stored["variation"]["submitReservation"] is None
 
 
+async def test_submit_reservation_rejects_stale_revision(
+    real_database: Any,
+) -> None:
+    """Codex R10: the acquisition predicate includes contentRevision on a
+    real server too, so a stale submit leaves the session untouched and
+    does not block a current-revision Generate."""
+    from app.infrastructure.problem_variants.repository import (
+        reserve_problem_variant_for_submit,
+        request_problem_variant_generation,
+    )
+
+    problem_id = str(ObjectId())
+    user_id = ObjectId()
+    doc = _ready_session_document(problem_id, user_id)
+    await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(doc)
+
+    assert await reserve_problem_variant_for_submit(
+        real_database, user_id, problem_id, doc["_id"],
+        expected_revision=1, now=NOW,
+    ) is None
+    stored = await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].find_one(
+        {"_id": doc["_id"]}
+    )
+    assert stored["variation"].get("submitReservation") is None
+    assert await request_problem_variant_generation(
+        real_database, user_id, problem_id, doc["_id"],
+        expected_revision=0, now=NOW,
+    ) is True
+
+
 async def test_concurrent_submit_reserves_are_mutually_exclusive(
     real_database: Any,
 ) -> None:
@@ -237,7 +268,8 @@ async def test_concurrent_submit_reserves_are_mutually_exclusive(
 
     tokens = await asyncio.gather(*[
         reserve_problem_variant_for_submit(
-            real_database, user_id, problem_id, doc["_id"], now=NOW,
+            real_database, user_id, problem_id, doc["_id"],
+            expected_revision=0, now=NOW,
         )
         for _ in range(2)
     ])

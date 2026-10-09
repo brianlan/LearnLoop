@@ -772,7 +772,7 @@ async def test_submit_reservation_blocks_generate_and_owns_recording() -> None:
     session_id = seed_session(database, session)
 
     token = await reserve_problem_variant_for_submit(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id, expected_revision=1, now=NOW,
     )
     assert isinstance(token, str) and token
 
@@ -783,7 +783,7 @@ async def test_submit_reservation_blocks_generate_and_owns_recording() -> None:
     ) is False
     # A second submit cannot double-book the session.
     assert await reserve_problem_variant_for_submit(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id, expected_revision=1, now=NOW,
     ) is None
 
     # Renewal and release are owner-checked.
@@ -816,7 +816,7 @@ async def test_submit_reservation_blocks_generate_and_owns_recording() -> None:
     session["problemId"] = PROBLEM_ID
     session_id = seed_session(database, session)
     token = await reserve_problem_variant_for_submit(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id, expected_revision=1, now=NOW,
     )
     assert await mark_problem_variant_session_submitted(
         database, "user-1", PROBLEM_ID, session_id,
@@ -835,6 +835,38 @@ async def test_submit_reservation_blocks_generate_and_owns_recording() -> None:
     assert stored["variation"]["submitReservation"] is None
 
 
+async def test_submit_reservation_is_revision_fenced() -> None:
+    """Codex R10: the atomic acquisition is fenced on ``contentRevision``,
+    so a stale submit never holds the reservation and never blocks a
+    current-revision Generate."""
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.READY.value, content_revision=2)
+    session["problemId"] = PROBLEM_ID
+    session_id = seed_session(database, session)
+
+    # A stale revision acquires nothing and leaves the session untouched.
+    assert await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=1, now=NOW,
+    ) is None
+    stored = get_session(database, session_id)
+    assert stored["contentRevision"] == 2
+    assert stored["variation"]["status"] == VariationStatus.READY.value
+    assert stored["variation"].get("submitReservation") is None
+
+    # The matching revision reserves and blocks Generate, as before —
+    # fencing only removes the stale path.
+    token = await reserve_problem_variant_for_submit(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=2, now=NOW,
+    )
+    assert isinstance(token, str) and token
+    assert await request_problem_variant_generation(
+        database, "user-1", PROBLEM_ID, session_id,
+        expected_revision=2, now=NOW,
+    ) is False
+
+
 async def test_expired_submit_reservation_does_not_block_generate() -> None:
     """Codex R6: expiry reclaims reservations from crashed submits, and a
     Generate that wins over an expired reservation clears it so the stale
@@ -845,7 +877,7 @@ async def test_expired_submit_reservation_does_not_block_generate() -> None:
     session_id = seed_session(database, session)
 
     token = await reserve_problem_variant_for_submit(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id, expected_revision=1, now=NOW,
     )
     assert token is not None
 
@@ -865,12 +897,12 @@ async def test_expired_submit_reservation_does_not_block_generate() -> None:
     session["problemId"] = PROBLEM_ID
     session_id = seed_session(database, session)
     stale = await reserve_problem_variant_for_submit(
-        database, "user-1", PROBLEM_ID, session_id, now=NOW,
+        database, "user-1", PROBLEM_ID, session_id, expected_revision=1, now=NOW,
     )
     assert stale is not None
     reclaimed = await reserve_problem_variant_for_submit(
         database, "user-1", PROBLEM_ID, session_id,
-        now=NOW + timedelta(minutes=11),
+        expected_revision=1, now=NOW + timedelta(minutes=11),
     )
     assert isinstance(reclaimed, str) and reclaimed != stale
     # The stale owner lost ownership: its recording matches nothing.
