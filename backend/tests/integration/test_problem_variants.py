@@ -25,7 +25,7 @@ from app.infrastructure.problem_variants.repository import (
     build_problem_variant_session_document,
     find_active_problem_variant_session,
 )
-from app.infrastructure.storage.mongo import ensure_database_setup
+from app.infrastructure.storage.mongo import MongoClientAdapter, ensure_database_setup
 
 pytestmark = pytest.mark.real_mongo
 
@@ -275,3 +275,307 @@ async def test_concurrent_submit_reserves_are_mutually_exclusive(
     ])
     won = [t for t in tokens if isinstance(t, str)]
     assert len(won) == 1
+
+
+# --- Route-level Submit admission on a real server (Codex R7 items 1+3) ---
+
+
+def _real_variant_settings() -> Any:
+    from app.infrastructure.config.settings import Settings
+
+    return Settings(
+        mongodb_uri=os.environ["MONGODB_URI"],
+        mongodb_database=validate_real_mongo_database_name(
+            os.environ.get(REAL_MONGO_DATABASE_ENV)
+        ),
+    )
+
+
+def _build_real_variant_app(
+    database: Any,
+    adapter: Any,
+    user_id: ObjectId,
+) -> Any:
+    """The variant routes wired to a real database and real adapter, with
+    the same dependency-override seams the fake-based API tests use."""
+    from app.main import create_app
+    from app.presentation.deps import (
+        get_app_settings,
+        get_current_user,
+        get_database,
+        get_mongo_adapter,
+        get_s3_storage,
+    )
+    from tests.conftest import FakeStorage
+
+    application = create_app()
+    application.dependency_overrides[get_database] = lambda: database
+    application.dependency_overrides[get_current_user] = lambda: {"_id": user_id}
+    application.dependency_overrides[get_app_settings] = _real_variant_settings
+    application.dependency_overrides[get_mongo_adapter] = lambda: adapter
+    application.dependency_overrides[get_s3_storage] = lambda: FakeStorage()
+    return application
+
+
+async def _seed_route_scenario(real_database: Any) -> tuple[Any, Any, ObjectId]:
+    from tests.api.conftest import make_problem
+
+    user_id = ObjectId()
+    problem = make_problem(user_id)
+    # transfer-variant admission archives the source image metadata
+    # (VARIANT_AUDIT_MISSING otherwise).
+    problem["sourceImage"] = {
+        "bucket": "learnloop-media",
+        "objectKey": f"users/{user_id}/images/{ObjectId()}.png",
+        "contentType": "image/png",
+        "sizeBytes": 4,
+        "sha256": "abc",
+        "uploadedAt": NOW,
+    }
+    await real_database["problems"].insert_one(problem)
+    session = _ready_session_document(str(problem["_id"]), user_id)
+    await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(session)
+    return problem, session, user_id
+
+
+async def test_route_submit_admits_in_real_transaction_and_preserves_source(
+    real_database: Any,
+) -> None:
+    """Codex R7: the Submit route's admission runs as one real transaction on
+    a real server — admitted problem, submit record and exactly one solution
+    task land together — and the source problem document is preserved
+    whole-document (R7 item 3)."""
+    from httpx import ASGITransport, AsyncClient
+
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, session, user_id = await _seed_route_scenario(real_database)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+            json={"expectedRevision": 0},
+        )
+
+    assert response.status_code == 200
+    admitted_id = response.json()["problemId"]
+    app_db = adapter.get_database()
+    admitted = await app_db["problems"].find_one({"_id": ObjectId(admitted_id)})
+    assert admitted is not None
+    assert admitted["text"] == "v"
+    # Whole-document source preservation across the admission.
+    source_after = await real_database["problems"].find_one({"_id": problem["_id"]})
+    assert source_after == source_before
+    # Exactly one solution task for the admitted problem.
+    tasks = await app_db["solution_generation_tasks"].find(
+        {"problem_id": admitted_id}
+    ).to_list(None)
+    assert len(tasks) == 1
+    session_after = await real_database[
+        PROBLEM_VARIANT_SESSIONS_COLLECTION
+    ].find_one({"_id": session["_id"]})
+    assert session_after["submit"]["success"] is True
+    assert session_after["submit"]["submittedProblemId"] == admitted_id
+    assert session_after["variation"]["submitReservation"] is None
+
+
+async def test_route_concurrent_submits_admit_exactly_once(
+    real_database: Any,
+) -> None:
+    """Codex R7: two concurrent Submit requests through the real route —
+    exactly one admits, the other gets a structured 409, and nothing is
+    double-created."""
+    from httpx import ASGITransport, AsyncClient
+
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, session, user_id = await _seed_route_scenario(real_database)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        responses = await asyncio.gather(*[
+            client.post(
+                f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+                json={"expectedRevision": 0},
+            )
+            for _ in range(2)
+        ])
+
+    statuses = sorted(response.status_code for response in responses)
+    assert statuses == [200, 409]
+    for response in responses:
+        if response.status_code == 409:
+            # Exact code depends on timing: after the winner committed the
+            # loser sees VARIANT_ALREADY_SUBMITTED; against an in-flight
+            # winner it sees the ready-state conflict.
+            assert response.json()["error"]["code"] in {
+                "VARIANT_ALREADY_SUBMITTED",
+                "INVALID_VARIATION_STATE",
+            }
+    problems = await real_database["problems"].find({}).to_list(None)
+    assert len(problems) == 2  # source + exactly one admitted
+    source_after = await real_database["problems"].find_one({"_id": problem["_id"]})
+    assert source_after == source_before
+    app_db = adapter.get_database()
+    admitted_ids = [
+        str(document["_id"]) for document in problems if document["_id"] != problem["_id"]
+    ]
+    tasks = await app_db["solution_generation_tasks"].find({}).to_list(None)
+    assert len(tasks) == 1
+    assert tasks[0]["problem_id"] in admitted_ids
+
+
+async def test_route_generate_blocked_by_live_reservation_then_proceeds(
+    real_database: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex R7: the Submit-vs-Generate exclusion through the real routes —
+    a live reservation blocks Generate with a structured 409, and after the
+    reservation is released Generate proceeds."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.infrastructure.problem_variants.repository import (
+        release_problem_variant_submit_reservation,
+        reserve_problem_variant_for_submit,
+    )
+
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, session, user_id = await _seed_route_scenario(real_database)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    token = await reserve_problem_variant_for_submit(
+        real_database, user_id, str(problem["_id"]), session["_id"],
+        expected_revision=0, now=NOW,
+    )
+    assert isinstance(token, str)
+    monkeypatch.setattr(
+        "app.presentation.problem_variants._require_variant_profiles",
+        lambda settings: (object(), object(), object(), object()),
+    )
+    started: list[str] = []
+
+    async def _fake_start(*args: Any, **kwargs: Any) -> None:
+        started.append(str(kwargs.get("session_id")))
+
+    monkeypatch.setattr(
+        "app.presentation.problem_variants.start_problem_variant_generation",
+        _fake_start,
+    )
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        blocked = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/generate",
+            json={"expectedRevision": 0},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "INVALID_VARIATION_STATE"
+
+        assert await release_problem_variant_submit_reservation(
+            real_database, user_id, str(problem["_id"]), session["_id"],
+            token=token, now=NOW,
+        )
+
+        generate = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/generate",
+            json={"expectedRevision": 0},
+        )
+
+    assert generate.status_code == 202
+    body = generate.json()["session"]
+    assert body["contentRevision"] == 1
+    assert body["variation"]["status"] == "queued"
+    assert started == [str(session["_id"])]
+
+
+class _FindOneHookCollection:
+    """Pass-through collection wrapper firing a hook after every find_one."""
+
+    def __init__(self, collection: Any, hook: Any) -> None:
+        self._collection = collection
+        self._hook = hook
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._collection, name)
+
+    async def find_one(self, filter: Any, **kwargs: Any) -> Any:  # noqa: A002
+        document = await self._collection.find_one(filter, **kwargs)
+        await self._hook(filter, document)
+        return document
+
+
+class _HookedDatabase:
+    """Database wrapper routing selected collections through hooks, so a
+    test can interleave a concurrent mutation at the exact seam the route
+    reads (no pymongo Collection instance caching — patching an instance
+    would not be seen by the route)."""
+
+    def __init__(self, database: Any, hooks: dict[str, Any]) -> None:
+        self._database = database
+        self._hooks = hooks
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._database, name)
+
+    def __getitem__(self, name: str) -> Any:
+        if name in self._hooks:
+            return _FindOneHookCollection(self._database[name], self._hooks[name])
+        return self._database[name]
+
+
+async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
+    real_database: Any,
+) -> None:
+    """Codex R7: owner-loss mid-admission through the real route — a
+    concurrent revision bump between the transaction's session read and the
+    recorder write invalidates the transaction's snapshot (WriteConflict on
+    the owner-checked recorder update), so ``with_transaction`` re-executes
+    the callback, the fenced in-transaction revision check rejects the
+    retried attempt, the rolled-back attempt leaves no admitted problem and
+    the route releases the reservation."""
+    from httpx import ASGITransport, AsyncClient
+
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, session, user_id = await _seed_route_scenario(real_database)
+    app_db = adapter.get_database()
+
+    async def _bump_revision(filter: Any, document: Any) -> None:
+        if document is not None and document.get("contentRevision") == 0:
+            await app_db[PROBLEM_VARIANT_SESSIONS_COLLECTION].update_one(
+                {"_id": document["_id"]},
+                {"$set": {"contentRevision": 1}},
+            )
+
+    hooked_database = _HookedDatabase(
+        app_db, {PROBLEM_VARIANT_SESSIONS_COLLECTION: _bump_revision}
+    )
+    application = _build_real_variant_app(hooked_database, adapter, user_id)
+    source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/submit",
+            json={"expectedRevision": 0},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "REVISION_MISMATCH"
+    # The admitted problem and its solution task were rolled back.
+    problems = await real_database["problems"].find({}).to_list(None)
+    assert len(problems) == 1
+    assert problems[0]["_id"] == problem["_id"]
+    source_after = await real_database["problems"].find_one({"_id": problem["_id"]})
+    assert source_after == source_before
+    tasks = await real_database["solution_generation_tasks"].find({}).to_list(None)
+    assert tasks == []
+    # The reservation was released; the session shows the concurrent bump.
+    session_after = await real_database[
+        PROBLEM_VARIANT_SESSIONS_COLLECTION
+    ].find_one({"_id": session["_id"]})
+    assert session_after["contentRevision"] == 1
+    assert session_after["submit"] is None
+    assert session_after["variation"]["submitReservation"] is None
+    assert session_after["variation"]["status"] == "ready"
