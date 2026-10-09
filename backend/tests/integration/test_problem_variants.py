@@ -70,6 +70,16 @@ async def real_database() -> Any:
             await client.close()
 
 
+@pytest_asyncio.fixture(loop_scope="function")
+async def real_adapter(real_database: Any) -> Any:
+    """Route-level adapter owning its own client, closed after the test."""
+    adapter = MongoClientAdapter(_real_variant_settings())
+    try:
+        yield adapter
+    finally:
+        await adapter.aclose()
+
+
 async def test_active_session_partial_unique_index(real_database: Any) -> None:
     collection = real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION]
     index_info = await collection.index_information()
@@ -345,6 +355,7 @@ async def _seed_route_scenario(real_database: Any) -> tuple[Any, Any, ObjectId]:
 
 async def test_route_submit_admits_in_real_transaction_and_preserves_source(
     real_database: Any,
+    real_adapter: Any,
 ) -> None:
     """Codex R7: the Submit route's admission runs as one real transaction on
     a real server — admitted problem, submit record and exactly one solution
@@ -352,9 +363,10 @@ async def test_route_submit_admits_in_real_transaction_and_preserves_source(
     whole-document (R7 item 3)."""
     from httpx import ASGITransport, AsyncClient
 
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, session, user_id = await _seed_route_scenario(real_database)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -366,7 +378,7 @@ async def test_route_submit_admits_in_real_transaction_and_preserves_source(
 
     assert response.status_code == 200
     admitted_id = response.json()["problemId"]
-    app_db = adapter.get_database()
+    app_db = real_adapter.get_database()
     admitted = await app_db["problems"].find_one({"_id": ObjectId(admitted_id)})
     assert admitted is not None
     assert admitted["text"] == "v"
@@ -388,15 +400,17 @@ async def test_route_submit_admits_in_real_transaction_and_preserves_source(
 
 async def test_route_concurrent_submits_admit_exactly_once(
     real_database: Any,
+    real_adapter: Any,
 ) -> None:
     """Codex R7: two concurrent Submit requests through the real route —
     exactly one admits, the other gets a structured 409, and nothing is
     double-created."""
     from httpx import ASGITransport, AsyncClient
 
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, session, user_id = await _seed_route_scenario(real_database)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -424,7 +438,7 @@ async def test_route_concurrent_submits_admit_exactly_once(
     assert len(problems) == 2  # source + exactly one admitted
     source_after = await real_database["problems"].find_one({"_id": problem["_id"]})
     assert source_after == source_before
-    app_db = adapter.get_database()
+    app_db = real_adapter.get_database()
     admitted_ids = [
         str(document["_id"]) for document in problems if document["_id"] != problem["_id"]
     ]
@@ -435,6 +449,7 @@ async def test_route_concurrent_submits_admit_exactly_once(
 
 async def test_route_generate_blocked_by_live_reservation_then_proceeds(
     real_database: Any,
+    real_adapter: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex R7: the Submit-vs-Generate exclusion through the real routes —
@@ -447,9 +462,10 @@ async def test_route_generate_blocked_by_live_reservation_then_proceeds(
         reserve_problem_variant_for_submit,
     )
 
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, session, user_id = await _seed_route_scenario(real_database)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     token = await reserve_problem_variant_for_submit(
         real_database, user_id, str(problem["_id"]), session["_id"],
         expected_revision=0, now=NOW,
@@ -532,6 +548,7 @@ class _HookedDatabase:
 
 async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
     real_database: Any,
+    real_adapter: Any,
 ) -> None:
     """Codex R7: owner-loss mid-admission through the real route — a
     concurrent revision bump between the transaction's session read and the
@@ -542,9 +559,8 @@ async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
     the route releases the reservation."""
     from httpx import ASGITransport, AsyncClient
 
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, session, user_id = await _seed_route_scenario(real_database)
-    app_db = adapter.get_database()
+    app_db = real_adapter.get_database()
 
     async def _bump_revision(filter: Any, document: Any) -> None:
         if document is not None and document.get("contentRevision") == 0:
@@ -556,7 +572,7 @@ async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
     hooked_database = _HookedDatabase(
         app_db, {PROBLEM_VARIANT_SESSIONS_COLLECTION: _bump_revision}
     )
-    application = _build_real_variant_app(hooked_database, adapter, user_id)
+    application = _build_real_variant_app(hooked_database, real_adapter, user_id)
     source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -568,7 +584,8 @@ async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "REVISION_MISMATCH"
-    # The admitted problem and its solution task were rolled back.
+    # The admitted problem insert rolled back and no solution task
+    # committed (the conflict fires before the task enqueue).
     problems = await real_database["problems"].find({}).to_list(None)
     assert len(problems) == 1
     assert problems[0]["_id"] == problem["_id"]
@@ -590,14 +607,21 @@ async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
 
 
 def _install_connected_executor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Real create/retry routes and real in-process executor; only the
-    provider clients are faked."""
+    """Real create/retry routes, the real in-process executor and the real
+    ``generate_and_validate`` orchestrator; only the provider clients are
+    faked, with structured reports/comparisons that satisfy the mode gates
+    (Codex R7)."""
     from app.domain.ingestion.variation import (
-        VariantAssessment,
+        AnswerComparison,
+        Check,
+        ModelIdentity,
+        ValidatorReport,
         VariantCandidate,
-        VariantGenerationResult,
     )
-    from app.infrastructure.problem_variants import executor as variant_executor
+    from tests.domain.test_variant_validation import (
+        DEEP_PASSING_CATEGORIES,
+        PASSING_CATEGORIES,
+    )
 
     class FakeGenerator:
         identity = {"provider": "fake", "model": "gen-model"}
@@ -614,18 +638,48 @@ def _install_connected_executor(monkeypatch: pytest.MonkeyPatch) -> None:
                 generator={"provider": "fake", "model": "gen-model"},
             )
 
-    async def fake_generate_and_validate(**kwargs: Any) -> Any:
-        return VariantGenerationResult(
-            assessment=VariantAssessment(verdict="pass", failures=[]),
-            reports=[],
-        )
+    class FakeValidator:
+        """Protocol-compatible validator client: a mode-appropriate passing
+        report, as ``produce_report`` builds it — helper comparisons are
+        assigned by the orchestrator only after a successful helper call
+        (#671)."""
+
+        identity = {"provider": "fake", "model": "val-model"}
+
+        async def produce_report(
+            self, *, mode: str, source: Any, candidate: Any
+        ) -> ValidatorReport:
+            categories = (
+                DEEP_PASSING_CATEGORIES
+                if mode == "transfer-variant"
+                else PASSING_CATEGORIES
+            )
+            return ValidatorReport(
+                validatorModel=ModelIdentity(provider="fake", model="val-model"),
+                originalSolvedAnswer=source.correct_answer,
+                variantSolvedAnswer=candidate.correct_answer,
+                originalSolutionSummary="solved",
+                variantSolutionSummary="solved",
+                checks={
+                    name: Check(category=category, evidence="clear")
+                    for name, category in categories.items()
+                },
+            )
+
+    class FakeHelper:
+        identity = {"provider": "fake", "model": "helper-model"}
+
+        async def compare_answer_pairs(
+            self, **kwargs: Any
+        ) -> tuple[AnswerComparison, AnswerComparison]:
+            return (
+                AnswerComparison(result="equivalent", evidence="both match"),
+                AnswerComparison(result="equivalent", evidence="both match"),
+            )
 
     monkeypatch.setattr(
-        variant_executor, "generate_and_validate", fake_generate_and_validate
-    )
-    monkeypatch.setattr(
         "app.presentation.problem_variants._require_variant_profiles",
-        lambda settings: (FakeGenerator(), object(), None, object()),
+        lambda settings: (FakeGenerator(), FakeValidator(), None, FakeHelper()),
     )
 
 
@@ -649,6 +703,7 @@ async def _submit_connected(
 
 async def test_connected_data_only_create_completes_and_admits(
     real_database: Any,
+    real_adapter: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex R7: real creation -> real executor completion -> Submit
@@ -656,9 +711,10 @@ async def test_connected_data_only_create_completes_and_admits(
     from httpx import ASGITransport, AsyncClient
 
     _install_connected_executor(monkeypatch)
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, user_id = await _seed_route_problem(real_database)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -681,13 +737,27 @@ async def test_connected_data_only_create_completes_and_admits(
         assert stored["variation"]["candidate"]["correctAnswer"] == "8"
         assert stored["variation"]["validation"]["verdict"] == "pass"
         assert stored["variation"]["validatedRevision"] == 0
+        # The real orchestrator's completed report is persisted on the
+        # session: structured checks plus the helper comparisons.
+        report = stored["variation"]["validation"]["reports"][0]
+        assert report["checks"]["dataChange"]["category"] == "changed"
+        assert report["answerComparisonOriginal"]["result"] == "equivalent"
+        assert report["answerComparisonVariant"]["result"] == "equivalent"
 
         admitted = await _submit_connected(client, problem, session_id, 0)
 
     assert admitted.status_code == 200
     admitted_id = admitted.json()["problemId"]
-    app_db = adapter.get_database()
-    assert await app_db["problems"].find_one({"_id": ObjectId(admitted_id)})
+    app_db = real_adapter.get_database()
+    admitted_problem = await app_db["problems"].find_one(
+        {"_id": ObjectId(admitted_id)}
+    )
+    assert admitted_problem is not None
+    # The completed report survives into the admitted provenance.
+    assert (
+        admitted_problem["variation"]["validation"]["reports"]
+        == stored["variation"]["validation"]["reports"]
+    )
     assert await real_database["problems"].find_one(
         {"_id": problem["_id"]}
     ) == source_before
@@ -704,6 +774,7 @@ async def test_connected_data_only_create_completes_and_admits(
 
 async def test_connected_transfer_variant_create_completes_and_admits(
     real_database: Any,
+    real_adapter: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex R7: same connected flow for transfer-variant — creation through
@@ -712,9 +783,10 @@ async def test_connected_transfer_variant_create_completes_and_admits(
     from httpx import ASGITransport, AsyncClient
 
     _install_connected_executor(monkeypatch)
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, user_id = await _seed_route_problem(real_database)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -728,14 +800,34 @@ async def test_connected_transfer_variant_create_completes_and_admits(
 
         await _await_connected_generation(session_id)
 
+        stored = await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].find_one(
+            {"_id": ObjectId(session_id)}
+        )
+        assert stored["variation"]["status"] == "ready"
+        # The transfer contract's extra gate is crossed by the real
+        # orchestrator, and the completed report carries its comparisons.
+        report = stored["variation"]["validation"]["reports"][0]
+        assert report["checks"]["surfaceDivergence"]["category"] == "substantial"
+        assert report["answerComparisonOriginal"]["result"] == "equivalent"
+        assert report["answerComparisonVariant"]["result"] == "equivalent"
+
         admitted = await _submit_connected(client, problem, session_id, 0)
 
     assert admitted.status_code == 200
     admitted_id = admitted.json()["problemId"]
+    admitted_problem = await real_adapter.get_database()["problems"].find_one(
+        {"_id": ObjectId(admitted_id)}
+    )
+    assert admitted_problem is not None
+    # The completed report survives into the admitted provenance.
+    assert (
+        admitted_problem["variation"]["validation"]["reports"]
+        == stored["variation"]["validation"]["reports"]
+    )
     assert await real_database["problems"].find_one(
         {"_id": problem["_id"]}
     ) == source_before
-    tasks = await adapter.get_database()["solution_generation_tasks"].find(
+    tasks = await real_adapter.get_database()["solution_generation_tasks"].find(
         {"problem_id": admitted_id}
     ).to_list(None)
     assert len(tasks) == 1
@@ -743,6 +835,7 @@ async def test_connected_transfer_variant_create_completes_and_admits(
 
 async def test_connected_retry_after_persisted_interruption_completes_and_admits(
     real_database: Any,
+    real_adapter: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex R7: a session persisted mid-flight (checkpoint lost when the
@@ -756,7 +849,6 @@ async def test_connected_retry_after_persisted_interruption_completes_and_admits
     )
 
     _install_connected_executor(monkeypatch)
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, user_id = await _seed_route_problem(real_database)
     session = build_problem_variant_session_document(
         problem_id=str(problem["_id"]),
@@ -784,7 +876,9 @@ async def test_connected_retry_after_persisted_interruption_completes_and_admits
         "generator": {"provider": "fake", "model": "gen-model"},
     }
     await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(session)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -814,7 +908,7 @@ async def test_connected_retry_after_persisted_interruption_completes_and_admits
     assert await real_database["problems"].find_one(
         {"_id": problem["_id"]}
     ) == source_before
-    tasks = await adapter.get_database()["solution_generation_tasks"].find(
+    tasks = await real_adapter.get_database()["solution_generation_tasks"].find(
         {"problem_id": admitted_id}
     ).to_list(None)
     assert len(tasks) == 1
@@ -822,6 +916,7 @@ async def test_connected_retry_after_persisted_interruption_completes_and_admits
 
 async def test_connected_chain_preserves_each_source_whole_document(
     real_database: Any,
+    real_adapter: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex R7: a two-hop connected chain — P0 admits P1, P1 admits P2 —
@@ -830,9 +925,10 @@ async def test_connected_chain_preserves_each_source_whole_document(
     from httpx import ASGITransport, AsyncClient
 
     _install_connected_executor(monkeypatch)
-    adapter = MongoClientAdapter(_real_variant_settings())
     problem, user_id = await _seed_route_problem(real_database)
-    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
     p0_before = await real_database["problems"].find_one({"_id": problem["_id"]})
 
     transport = ASGITransport(app=application)
@@ -872,7 +968,7 @@ async def test_connected_chain_preserves_each_source_whole_document(
         {"_id": problem["_id"]}
     ) == p0_before
     assert await real_database["problems"].find_one({"_id": p1_id}) == p1_before
-    app_db = adapter.get_database()
+    app_db = real_adapter.get_database()
     for admitted_problem_id in (str(p1_id), str(p2_id)):
         tasks = await app_db["solution_generation_tasks"].find(
             {"problem_id": admitted_problem_id}
