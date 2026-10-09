@@ -82,6 +82,16 @@ class _ProbeHarness:
             # A bare exception (not a BaseVLMError): e.g. a factory/probe bug
             # or an unexpected SDK error type (#689).
             raise ValueError("probe crashed")
+        if behavior in ("leak", "crash_leak"):
+            # A provider/SDK diagnostic that echoes the configured credential
+            # back, past the old 300-char head-only cut (#689).
+            key = kwargs["api_key"]
+            detail = "x" * 350 + " credential=" + key + " diagnostic-tail"
+            if behavior == "leak":
+                raise BaseVLMError(
+                    detail, code="vlm-network-error", retryable=False
+                )
+            raise ValueError(detail)
         raise BaseVLMError(
             "x" * 500 if behavior == "long" else f"provider down ({behavior})",
             code="vlm-network-error",
@@ -339,6 +349,46 @@ async def test_probe_snapshot_never_contains_api_keys() -> None:
                 _walk(item)
 
     _walk(snap)
+
+
+@pytest.mark.asyncio
+async def test_probe_reasons_redact_configured_api_key_on_both_branches() -> None:
+    """#689 acceptance: full detail kept, configured credential removed.
+
+    ``GET /settings/vlm-health`` has no auth dependency, so a provider or SDK
+    diagnostic that echoes the configured key must not reach the snapshot.
+    Covers both the ``BaseVLMError`` branch and the bare-exception branch,
+    with the credential past character 300 (where the old cut would have
+    hidden it) and the diagnostic tail after it.
+    """
+    settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
+    harness = _ProbeHarness(behaviors=["leak", "crash_leak"])
+
+    snap = await health.run_probe(
+        settings=settings,
+        client_factory=harness.factory,
+        sleep=harness._sleep,
+    )
+
+    serialized = json.dumps(snap)
+    for prefix in ("helper_vlm", "math_ingestion_vlm"):
+        key = getattr(settings, f"{prefix}_api_key")
+        assert key not in serialized, key
+        assert f"canary-{prefix}-key" not in serialized
+
+    assert "[redacted-api-key]" in serialized
+    # Full detail survives: the tail the 300-char head-only cut used to lose.
+    assert serialized.count("diagnostic-tail") == 2
+    assert snap["profiles"]["helper_vlm"]["code"] == "vlm-network-error"
+    assert len(snap["profiles"]["helper_vlm"]["reason"]) > 300
+    assert len(snap["profiles"]["math_ingestion_vlm"]["reason"]) > 300
+
+    # One poisoned profile must not disturb the others.
+    for prefix in VLM_PROFILE_PREFIXES:
+        if prefix in ("helper_vlm", "math_ingestion_vlm", "variant_validator2_vlm"):
+            continue
+        assert snap["profiles"][prefix]["status"] == "ok", prefix
+    assert snap["finished_at"]
 
 
 def test_snapshot_idle_shape() -> None:
