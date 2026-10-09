@@ -534,35 +534,29 @@ def _build_real_client(
 
 
 @pytest.mark.asyncio
-async def test_real_sdk_unknown_alias_effort_still_fails_closed(capture_server) -> None:
-    """Pins litellm's current client-side rejection for unknown aliases (#689).
+async def test_real_sdk_unknown_alias_effort_reaches_wire(capture_server) -> None:
+    """#689 acceptance criterion 1, end to end through the real SDK.
 
     Upstream BerriAI/litellm#39065 ("forward reasoning_effort for unknown model
-    aliases instead of failing closed") is merged into
-    ``litellm_internal_staging`` but is NOT in any PyPI release: 1.104.2, the
-    latest at implementation time, still raises ``UnsupportedParamsError`` for
-    ``openai/<custom-alias>`` + ``reasoning_effort`` before any HTTP request.
-    Verified against the installed SDK source (``OpenAIUnknownModelConfig``
-    does not exist) and against the wire below.
+    aliases instead of failing closed") ships in 1.104.2 via
+    ``OpenAIUnknownModelConfig``, so an ``openai/<custom-alias>`` profile with a
+    non-``none`` effort reaches the wire with the parameter preserved instead of
+    raising ``UnsupportedParamsError`` before any HTTP request.
 
-    No allowlist and no drop_params here on purpose: those would mask whether a
-    future upgrade alone fixes the bug. Until a release carries the fix, the
-    classification added in #689 is what keeps this legible — a local config
-    error, not a remote 400. Flip these assertions when the fix ships.
+    No allowlist and no drop_params here on purpose: those would mask a
+    regression if the forward-compatibility path is ever removed again.
     """
     client = _build_real_client(capture_server, reasoning_effort="high")
 
-    with pytest.raises(BaseVLMError) as exc_info:
-        await client._send_chat_completion(
-            {"model": "demo", "messages": [{"role": "user", "content": "hi"}]}
-        )
+    await client._send_chat_completion(
+        {"model": "demo", "messages": [{"role": "user", "content": "hi"}]}
+    )
 
-    assert exc_info.value.code == FAILURE_CODE_INVALID_CONFIG
-    assert exc_info.value.retryable is False
-    assert exc_info.value.status_code is None
-    assert "rejected request with status" not in str(exc_info.value)
-    # Zero requests left the process: the failure is SDK-local, not remote.
-    assert capture_server.requests == []
+    assert len(capture_server.requests) == 1
+    path, body = capture_server.requests[0]
+    assert path == "/chat/completions"
+    assert body["model"] == "deepseek-v4.1-flash"
+    assert body["reasoning_effort"] == "high"
 
 
 @pytest.mark.asyncio
@@ -589,11 +583,10 @@ async def test_real_sdk_effort_none_omits_reasoning_on_both_paths(
 async def test_real_sdk_preserves_image_block_and_responses_input(
     capture_server,
 ) -> None:
-    # effort="none" on the chat path: litellm still rejects reasoning_effort for
-    # unknown aliases (see test_real_sdk_unknown_alias_effort_still_fails_closed),
-    # and message passthrough is what this test is about.
+    # effort="high" here on purpose: the unknown-alias forward path must not
+    # disturb message passthrough.
     image_url = "https://example.test/problem.png"
-    chat_client = _build_real_client(capture_server, reasoning_effort="none")
+    chat_client = _build_real_client(capture_server, reasoning_effort="high")
     await chat_client._send_chat_completion(
         {
             "model": "demo",
@@ -632,8 +625,9 @@ async def test_real_sdk_responses_output_text_round_trip(capture_server) -> None
 async def test_real_sdk_remote_400_maps_to_provider_rejected(capture_server) -> None:
     """A genuine remote 400 stays distinct from the local branch (#689)."""
     capture_server.status = 400
-    # effort="none" so the request reaches the wire (see the fails-closed test).
-    client = _build_real_client(capture_server, reasoning_effort="none")
+    # effort="high": the request must still reach the wire and the remote 400
+    # must not be mistaken for an SDK-local validation failure.
+    client = _build_real_client(capture_server, reasoning_effort="high")
 
     with pytest.raises(BaseVLMError) as exc_info:
         await client._send_chat_completion(
