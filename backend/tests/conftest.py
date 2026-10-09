@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
+
+# litellm >=1.101.0 fetches a remote model cost map on first call and retries
+# for ~25s on restricted networks before falling back to the bundled copy; the
+# bundled copy is authoritative for tests. Must precede any app.* import.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import pytest
 import pytest_asyncio

@@ -1,6 +1,7 @@
 """VLM infrastructure namespace."""
 
 from app.infrastructure.vlm.base_client import (
+    FAILURE_CODE_INVALID_CONFIG,
     FAILURE_CODE_INVALID_RESPONSE,
     FAILURE_CODE_NETWORK,
     FAILURE_CODE_PROVIDER,
@@ -29,6 +30,7 @@ from app.infrastructure.vlm.solution_coaching_client import (
 )
 
 __all__ = [
+    "FAILURE_CODE_INVALID_CONFIG",
     "FAILURE_CODE_INVALID_RESPONSE",
     "FAILURE_CODE_NETWORK",
     "FAILURE_CODE_PROVIDER",

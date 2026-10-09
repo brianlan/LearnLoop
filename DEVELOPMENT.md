@@ -356,6 +356,7 @@ The canonical template lives in `.env.example`.
 | `PROBLEM_SELECTION_FAILURE_RATE_WEIGHT` | Weight for problems with high failure rates | `1.0` |
 | `PROBLEM_SELECTION_RECENCY_WEIGHT` | Weight for recently tested problems | `1.0` |
 | `PROBLEM_SELECTION_MIN_AGE_DAYS` | Minimum age (days) before a problem appears in practice or exams | `3` |
+| `LITELLM_LOCAL_MODEL_COST_MAP` | Skip LiteLLM's remote model-cost-map fetch and use the bundled copy | `True` in tests |
 
 ### AI tutoring VLM notes
 
@@ -364,6 +365,7 @@ The canonical template lives in `.env.example`.
   - `chat` (default): Uses LiteLLM's `acompletion()` with OpenAI Chat Completions payload (`messages`, `image_url` content parts).
   - `responses`: Uses LiteLLM's `aresponses()` with native Responses API payload (`instructions`, `input` with `input_text`/`input_image`, structured-output schema).
 - The `*_ENDPOINT` variable is forwarded as LiteLLM's `api_base`. For the default `openai` provider it must be an OpenAI-compatible base URL.
+- LiteLLM fetches a remote model cost map on first use; on restricted networks that costs ~25s of retries before it falls back to the bundled copy. Set `LITELLM_LOCAL_MODEL_COST_MAP=True` to skip it. In the full compose deployment the `app` service reads `./backend/.env`, so place the variable there for the Docker path.
 - Helper VLM classifies uploaded images as math or English and routes to the matching ingestion VLM.
 - Math and English ingestion VLMs handle subject-specific image extraction and problem structuring.
 - Grading VLM is used for short-answer correctness judgement in practice and exams (generic, not subject-specific).
