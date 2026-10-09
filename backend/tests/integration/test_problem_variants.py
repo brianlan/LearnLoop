@@ -317,13 +317,13 @@ def _build_real_variant_app(
     return application
 
 
-async def _seed_route_scenario(real_database: Any) -> tuple[Any, Any, ObjectId]:
+async def _seed_route_problem(real_database: Any) -> tuple[Any, ObjectId]:
     from tests.api.conftest import make_problem
 
     user_id = ObjectId()
     problem = make_problem(user_id)
     # transfer-variant admission archives the source image metadata
-    # (VARIANT_AUDIT_MISSING otherwise).
+    # (VARIANT_AUDIT_MISSING otherwise); create requires it too.
     problem["sourceImage"] = {
         "bucket": "learnloop-media",
         "objectKey": f"users/{user_id}/images/{ObjectId()}.png",
@@ -333,6 +333,11 @@ async def _seed_route_scenario(real_database: Any) -> tuple[Any, Any, ObjectId]:
         "uploadedAt": NOW,
     }
     await real_database["problems"].insert_one(problem)
+    return problem, user_id
+
+
+async def _seed_route_scenario(real_database: Any) -> tuple[Any, Any, ObjectId]:
+    problem, user_id = await _seed_route_problem(real_database)
     session = _ready_session_document(str(problem["_id"]), user_id)
     await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(session)
     return problem, session, user_id
@@ -579,3 +584,297 @@ async def test_route_submit_rolls_back_owner_lost_admission_and_releases(
     assert session_after["submit"] is None
     assert session_after["variation"]["submitReservation"] is None
     assert session_after["variation"]["status"] == "ready"
+
+
+# --- Connected flows: create/retry -> executor -> Submit (Codex R7 item 2) ---
+
+
+def _install_connected_executor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real create/retry routes and real in-process executor; only the
+    provider clients are faked."""
+    from app.domain.ingestion.variation import (
+        VariantAssessment,
+        VariantCandidate,
+        VariantGenerationResult,
+    )
+    from app.infrastructure.problem_variants import executor as variant_executor
+
+    class FakeGenerator:
+        identity = {"provider": "fake", "model": "gen-model"}
+
+        async def generate_candidate(
+            self, *, mode: str, source: Any
+        ) -> VariantCandidate:
+            return VariantCandidate(
+                text="What is 3+5?",
+                problem_type=source.problem_type,
+                subject=source.subject,
+                graph_dsl=source.graph_dsl,
+                correct_answer="8",
+                generator={"provider": "fake", "model": "gen-model"},
+            )
+
+    async def fake_generate_and_validate(**kwargs: Any) -> Any:
+        return VariantGenerationResult(
+            assessment=VariantAssessment(verdict="pass", failures=[]),
+            reports=[],
+        )
+
+    monkeypatch.setattr(
+        variant_executor, "generate_and_validate", fake_generate_and_validate
+    )
+    monkeypatch.setattr(
+        "app.presentation.problem_variants._require_variant_profiles",
+        lambda settings: (FakeGenerator(), object(), None, object()),
+    )
+
+
+async def _await_connected_generation(session_id: Any) -> None:
+    from app.infrastructure.problem_variants import executor as variant_executor
+
+    task = variant_executor._tasks.get(str(session_id))
+    if task is not None:
+        await task
+    variant_executor.cancel_problem_variant_task(session_id)
+
+
+async def _submit_connected(
+    client: Any, problem: Any, session_id: str, expected_revision: int
+) -> Any:
+    return await client.post(
+        f"/api/v1/problems/{problem['_id']}/variants/{session_id}/submit",
+        json={"expectedRevision": expected_revision},
+    )
+
+
+async def test_connected_data_only_create_completes_and_admits(
+    real_database: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex R7: real creation -> real executor completion -> Submit
+    admission for data-only, with whole-document source preservation."""
+    from httpx import ASGITransport, AsyncClient
+
+    _install_connected_executor(monkeypatch)
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, user_id = await _seed_route_problem(real_database)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants",
+            json={"mode": "data-only"},
+        )
+        assert created.status_code == 202
+        session_view = created.json()["session"]
+        session_id = session_view["sessionId"]
+        assert session_view["variation"]["status"] == "queued"
+
+        await _await_connected_generation(session_id)
+
+        stored = await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].find_one(
+            {"_id": ObjectId(session_id)}
+        )
+        assert stored["variation"]["status"] == "ready"
+        assert stored["variation"]["candidate"]["correctAnswer"] == "8"
+        assert stored["variation"]["validation"]["verdict"] == "pass"
+        assert stored["variation"]["validatedRevision"] == 0
+
+        admitted = await _submit_connected(client, problem, session_id, 0)
+
+    assert admitted.status_code == 200
+    admitted_id = admitted.json()["problemId"]
+    app_db = adapter.get_database()
+    assert await app_db["problems"].find_one({"_id": ObjectId(admitted_id)})
+    assert await real_database["problems"].find_one(
+        {"_id": problem["_id"]}
+    ) == source_before
+    tasks = await app_db["solution_generation_tasks"].find(
+        {"problem_id": admitted_id}
+    ).to_list(None)
+    assert len(tasks) == 1
+    stored_after = await real_database[
+        PROBLEM_VARIANT_SESSIONS_COLLECTION
+    ].find_one({"_id": ObjectId(session_id)})
+    assert stored_after["submit"]["success"] is True
+    assert stored_after["variation"]["submitReservation"] is None
+
+
+async def test_connected_transfer_variant_create_completes_and_admits(
+    real_database: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex R7: same connected flow for transfer-variant — creation through
+    the real route, executor completion on the real session, admission via
+    the real Submit transaction."""
+    from httpx import ASGITransport, AsyncClient
+
+    _install_connected_executor(monkeypatch)
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, user_id = await _seed_route_problem(real_database)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants",
+            json={"mode": "transfer-variant"},
+        )
+        assert created.status_code == 202
+        session_id = created.json()["session"]["sessionId"]
+
+        await _await_connected_generation(session_id)
+
+        admitted = await _submit_connected(client, problem, session_id, 0)
+
+    assert admitted.status_code == 200
+    admitted_id = admitted.json()["problemId"]
+    assert await real_database["problems"].find_one(
+        {"_id": problem["_id"]}
+    ) == source_before
+    tasks = await adapter.get_database()["solution_generation_tasks"].find(
+        {"problem_id": admitted_id}
+    ).to_list(None)
+    assert len(tasks) == 1
+
+
+async def test_connected_retry_after_persisted_interruption_completes_and_admits(
+    real_database: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex R7: a session persisted mid-flight (checkpoint lost when the
+    process died) is healed by a real Generate Retry: the override bumps the
+    revision, the real executor re-runs, and the completed candidate admits
+    through the real Submit transaction."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.infrastructure.problem_variants.repository import (
+        build_problem_variant_session_document,
+    )
+
+    _install_connected_executor(monkeypatch)
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, user_id = await _seed_route_problem(real_database)
+    session = build_problem_variant_session_document(
+        problem_id=str(problem["_id"]),
+        user_id=user_id,
+        mode="data-only",
+        original={
+            "text": "What is 2+2?",
+            "problemType": "short-answer",
+            "graphDsl": None,
+            "correctAnswer": "4",
+            "subject": "math",
+        },
+        tags=[],
+        now=NOW,
+    )
+    # Persisted in-flight: the process died during validation.
+    session["contentRevision"] = 2
+    session["variation"]["status"] = "validating"
+    session["variation"]["candidate"] = {
+        "text": "partial checkpoint",
+        "problemType": "short-answer",
+        "graphDsl": None,
+        "correctAnswer": "8",
+        "subject": "math",
+        "generator": {"provider": "fake", "model": "gen-model"},
+    }
+    await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(session)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    source_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        retry = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants/{session['_id']}/generate",
+            json={"expectedRevision": 2},
+        )
+        assert retry.status_code == 202
+        body = retry.json()["session"]
+        assert body["contentRevision"] == 3
+        assert body["variation"]["status"] == "queued"
+        assert body["variation"]["candidate"] is None
+
+        await _await_connected_generation(session["_id"])
+
+        stored = await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].find_one(
+            {"_id": session["_id"]}
+        )
+        assert stored["variation"]["status"] == "ready"
+        assert stored["variation"]["validatedRevision"] == 3
+
+        admitted = await _submit_connected(client, problem, session["_id"], 3)
+
+    assert admitted.status_code == 200
+    admitted_id = admitted.json()["problemId"]
+    assert await real_database["problems"].find_one(
+        {"_id": problem["_id"]}
+    ) == source_before
+    tasks = await adapter.get_database()["solution_generation_tasks"].find(
+        {"problem_id": admitted_id}
+    ).to_list(None)
+    assert len(tasks) == 1
+
+
+async def test_connected_chain_preserves_each_source_whole_document(
+    real_database: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex R7: a two-hop connected chain — P0 admits P1, P1 admits P2 —
+    preserves every complete source document around each admission,
+    including the intermediate variant source."""
+    from httpx import ASGITransport, AsyncClient
+
+    _install_connected_executor(monkeypatch)
+    adapter = MongoClientAdapter(_real_variant_settings())
+    problem, user_id = await _seed_route_problem(real_database)
+    application = _build_real_variant_app(adapter.get_database(), adapter, user_id)
+    p0_before = await real_database["problems"].find_one({"_id": problem["_id"]})
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Hop 1: P0 -> P1.
+        created = await client.post(
+            f"/api/v1/problems/{problem['_id']}/variants",
+            json={"mode": "transfer-variant"},
+        )
+        assert created.status_code == 202
+        session_id = created.json()["session"]["sessionId"]
+        await _await_connected_generation(session_id)
+        admitted = await _submit_connected(client, problem, session_id, 0)
+        assert admitted.status_code == 200
+        p1_id = ObjectId(admitted.json()["problemId"])
+        p1_before = await real_database["problems"].find_one({"_id": p1_id})
+        assert p1_before is not None
+        assert await real_database["problems"].find_one(
+            {"_id": problem["_id"]}
+        ) == p0_before
+
+        # Hop 2: P1 (a variant problem) -> P2.
+        created2 = await client.post(
+            f"/api/v1/problems/{p1_id}/variants",
+            json={"mode": "transfer-variant"},
+        )
+        assert created2.status_code == 202
+        session2_id = created2.json()["session"]["sessionId"]
+        await _await_connected_generation(session2_id)
+        admitted2 = await _submit_connected(client, {"_id": p1_id}, session2_id, 0)
+        assert admitted2.status_code == 200
+        p2_id = ObjectId(admitted2.json()["problemId"])
+        assert await real_database["problems"].find_one({"_id": p2_id})
+
+    # Both sources are preserved whole-document around each admission.
+    assert await real_database["problems"].find_one(
+        {"_id": problem["_id"]}
+    ) == p0_before
+    assert await real_database["problems"].find_one({"_id": p1_id}) == p1_before
+    app_db = adapter.get_database()
+    for admitted_problem_id in (str(p1_id), str(p2_id)):
+        tasks = await app_db["solution_generation_tasks"].find(
+            {"problem_id": admitted_problem_id}
+        ).to_list(None)
+        assert len(tasks) == 1
