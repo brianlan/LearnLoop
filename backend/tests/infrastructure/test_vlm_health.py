@@ -6,6 +6,7 @@ injected ``sleep`` — no network, no real backoff waits.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -77,6 +78,10 @@ class _ProbeHarness:
         behavior = self._next_behavior()
         if behavior == "ok":
             return _ok_response()
+        if behavior == "crash":
+            # A bare exception (not a BaseVLMError): e.g. a factory/probe bug
+            # or an unexpected SDK error type (#689).
+            raise ValueError("probe crashed")
         raise BaseVLMError(
             "x" * 500 if behavior == "long" else f"provider down ({behavior})",
             code="vlm-network-error",
@@ -204,7 +209,7 @@ async def test_non_retryable_after_retryable_records_real_attempts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exhausted_retries_report_unavailable_with_truncated_reason() -> None:
+async def test_exhausted_retries_report_unavailable_with_full_reason() -> None:
     settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
     harness = _ProbeHarness(behaviors=["long", "long", "long"])
 
@@ -217,8 +222,79 @@ async def test_exhausted_retries_report_unavailable_with_truncated_reason() -> N
     entry = snap["profiles"]["helper_vlm"]
     assert entry["status"] == "unavailable"
     assert entry["attempts"] == 3
-    assert len(entry["reason"]) == 300
+    # No truncation: the diagnostic tail of a provider error must survive (#689).
+    assert len(entry["reason"]) == 500
     assert harness.sleeps == [2, 4]
+
+
+@pytest.mark.asyncio
+async def test_factory_crash_isolated_to_single_profile() -> None:
+    """One profile whose client factory raises must not abort the run (#689)."""
+    settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
+    harness = _ProbeHarness()
+
+    def exploding_factory(**client_kwargs) -> BaseVLMClient:
+        if client_kwargs["endpoint"] == "https://helper_vlm.example/api":
+            raise ValueError("bad client config")
+        return harness.factory(**client_kwargs)
+
+    snap = await health.run_probe(
+        settings=settings,
+        client_factory=exploding_factory,
+        sleep=harness._sleep,
+    )
+
+    entry = snap["profiles"]["helper_vlm"]
+    assert entry["status"] == "unavailable"
+    assert "bad client config" in entry["reason"]
+    assert entry["attempts"] == 1
+    # Every other configured profile was still probed in this same run.
+    assert snap["profiles"]["math_ingestion_vlm"]["status"] == "ok"
+    assert snap["finished_at"]
+
+
+@pytest.mark.asyncio
+async def test_probe_bare_exception_isolated_to_single_profile() -> None:
+    """A bare exception from the probe must not wipe the whole snapshot (#689)."""
+    settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
+    harness = _ProbeHarness(behaviors=["crash"])
+
+    snap = await health.run_probe(
+        settings=settings,
+        client_factory=harness.factory,
+        sleep=harness._sleep,
+    )
+
+    entry = snap["profiles"]["helper_vlm"]
+    assert entry["status"] == "unavailable"
+    assert "probe crashed" in entry["reason"]
+    assert entry["attempts"] == 1
+    assert snap["profiles"]["math_ingestion_vlm"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_run_stored_probe_propagates_cancellation() -> None:
+    """``except Exception`` must not swallow cancellation (#689)."""
+    settings = _build_settings(**UNCONFIGURED_VALIDATOR2)
+    started = asyncio.Event()
+
+    async def hanging_completion(**kwargs):
+        started.set()
+        await asyncio.Event().wait()  # never completes
+        raise AssertionError("unreachable")
+
+    def hanging_factory(**client_kwargs) -> BaseVLMClient:
+        return BaseVLMClient(completion_fn=hanging_completion, **client_kwargs)
+
+    task = asyncio.create_task(
+        health.run_stored_probe(settings, client_factory=hanging_factory)
+    )
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert health._running is False
 
 
 @pytest.mark.asyncio

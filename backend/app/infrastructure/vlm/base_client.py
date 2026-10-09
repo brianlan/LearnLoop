@@ -7,7 +7,7 @@ from typing import Any, Callable, Literal
 import litellm
 import openai
 from litellm.exceptions import APIError as LiteLLMAPIError
-from litellm.exceptions import APIConnectionError, Timeout
+from litellm.exceptions import APIConnectionError, Timeout, UnsupportedParamsError
 from pydantic import ValidationError
 
 from app.infrastructure.vlm._models import _ChatCompletionResponse
@@ -16,6 +16,7 @@ FAILURE_CODE_TIMEOUT = "vlm-timeout"
 FAILURE_CODE_NETWORK = "vlm-network-error"
 FAILURE_CODE_PROVIDER = "vlm-provider-error"
 FAILURE_CODE_PROVIDER_REJECTED = "vlm-provider-rejected"
+FAILURE_CODE_INVALID_CONFIG = "vlm-invalid-config"
 FAILURE_CODE_INVALID_RESPONSE = "vlm-invalid-response"
 
 
@@ -95,6 +96,8 @@ class BaseVLMClient:
                 code=FAILURE_CODE_NETWORK,
                 retryable=True,
             ) from exc
+        except UnsupportedParamsError as exc:
+            raise self._translate_local_validation_error(exc) from exc
         except (LiteLLMAPIError, openai.APIError) as exc:
             raise self._translate_provider_error(exc) from exc
 
@@ -128,10 +131,27 @@ class BaseVLMClient:
                 code=FAILURE_CODE_NETWORK,
                 retryable=True,
             ) from exc
+        except UnsupportedParamsError as exc:
+            raise self._translate_local_validation_error(exc) from exc
         except (LiteLLMAPIError, openai.APIError) as exc:
             raise self._translate_provider_error(exc) from exc
 
         return self._responses_to_dict(response)
+
+    def _translate_local_validation_error(self, exc: Exception) -> BaseException:
+        """Translate an SDK-local parameter-validation failure (#689).
+
+        litellm raises these before any HTTP call (e.g. ``UnsupportedParamsError``
+        when a provider does not accept ``reasoning_effort``) and stamps a
+        synthetic ``status_code`` on them, so reporting them as a remote
+        rejection would misattribute a local config error to the gateway.
+        """
+        detail = getattr(exc, "message", None) or str(exc)
+        return self._make_error(
+            f"VLM local parameter validation failed before the request was sent: {detail}",
+            code=FAILURE_CODE_INVALID_CONFIG,
+            retryable=False,
+        )
 
     def _translate_provider_error(self, exc: Exception) -> BaseException:
         """Translate a provider API error into a BaseVLMError.

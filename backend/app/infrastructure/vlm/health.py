@@ -33,8 +33,6 @@ VLM_HEALTH_ATTEMPTS = 3
 VLM_HEALTH_TIMEOUT_S = 20
 VLM_HEALTH_BACKOFF_S = (2, 4)
 
-_REASON_MAX_CHARS = 300
-
 VLM_HEALTH_OK = "ok"
 VLM_HEALTH_UNAVAILABLE = "unavailable"
 
@@ -113,16 +111,17 @@ async def run_probe(
         status = profile_status(endpoint=endpoint, model=model, api_key=api_key)
         entry: dict[str, Any] = {"status": status, "checked_at": _utcnow()}
         if status == PROFILE_STATUS_CONFIGURED:
-            client = client_factory(
-                endpoint=endpoint,
-                model=model,
-                api_key=api_key,
-                provider=provider,
-                api_mode=api_mode,
-                reasoning_effort=reasoning_effort,
-                timeout_seconds=timeout_s,
-            )
+            client: BaseVLMClient | None = None
             try:
+                client = client_factory(
+                    endpoint=endpoint,
+                    model=model,
+                    api_key=api_key,
+                    provider=provider,
+                    api_mode=api_mode,
+                    reasoning_effort=reasoning_effort,
+                    timeout_seconds=timeout_s,
+                )
                 used = await _probe_with_retries(
                     client, attempts=attempts, backoff=VLM_HEALTH_BACKOFF_S, sleep=sleep
                 )
@@ -130,11 +129,18 @@ async def run_probe(
                 entry["attempts"] = used
             except BaseVLMError as exc:
                 entry["status"] = VLM_HEALTH_UNAVAILABLE
-                entry["reason"] = str(exc)[:_REASON_MAX_CHARS]
+                entry["reason"] = str(exc)
                 entry["code"] = exc.code
                 entry["attempts"] = getattr(exc, "attempt", 1)
+            except Exception as exc:
+                # One misconfigured/crashing profile must not abort the run and
+                # wipe the snapshot for every other profile (#689).
+                entry["status"] = VLM_HEALTH_UNAVAILABLE
+                entry["reason"] = str(exc)
+                entry["attempts"] = 1
             finally:
-                await client.aclose()
+                if client is not None:
+                    await client.aclose()
         profiles[prefix] = entry
     return {"started_at": started_at, "finished_at": _utcnow(), "profiles": profiles}
 
