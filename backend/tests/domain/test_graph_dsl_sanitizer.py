@@ -199,6 +199,17 @@ class TestIsAllowedGraphDsl:
     def test_allows_empty_dsl(self) -> None:
         assert _is_allowed_graph_dsl("") is True
 
+    def test_allows_borders_nested_option(self) -> None:
+        dsl = (
+            "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], "
+            "{fillColor:'#a8d4f050', borders:{strokeColor:'#000000', strokeWidth:1}});"
+        )
+        assert _is_allowed_graph_dsl(dsl) is True
+
+    def test_rejects_unknown_key_inside_borders(self) -> None:
+        dsl = "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], {borders:{evil:1}});"
+        assert _is_allowed_graph_dsl(dsl) is False
+
 
 class TestSanitizeWhiteboardDsl:
     def test_returns_none_for_none(self) -> None:
@@ -248,3 +259,41 @@ class TestSanitizeWhiteboardDsl:
     def test_strips_initboard_with_extra_whitespace(self) -> None:
         raw = "var  board  =  JXG.JSXGraph.initBoard(  'box'  )  ;  var p = board.create('point', [0, 0]);"
         assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+
+    def test_stores_borders_dsl_unchanged(self) -> None:
+        dsl = (
+            "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], "
+            "{fillColor:'#a8d4f050', borders:{strokeColor:'#000000', strokeWidth:1}});"
+        )
+        assert sanitize_whiteboard_dsl(dsl) == dsl
+
+    def test_strips_line_comment_statement(self) -> None:
+        raw = "var p = board.create('point', [0, 0]); // draw a new triangle"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+
+    def test_strips_block_comment_statement(self) -> None:
+        raw = "/* draw a new triangle */ var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+
+    def test_strips_orphaned_comment_left_by_initboard_removal(self) -> None:
+        raw = (
+            "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+            "// draw a new triangle\n"
+            "var p = board.create('point', [0, 0]);"
+        )
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+
+    def test_preserves_double_slash_inside_string_literal(self) -> None:
+        dsl = "board.create('text', [0, 0, 'https://example.com/a//b']);"
+        assert sanitize_whiteboard_dsl(dsl) == dsl
+
+    def test_sanitize_is_idempotent_with_comments_and_borders(self) -> None:
+        raw = (
+            "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+            "// draw a new triangle\n"
+            "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], "
+            "{fillColor:'#a8d4f050', borders:{strokeColor:'#000000', strokeWidth:1}});"
+        )
+        once = sanitize_whiteboard_dsl(raw)
+        assert once is not None
+        assert sanitize_whiteboard_dsl(once) == once

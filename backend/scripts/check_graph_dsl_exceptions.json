@@ -1,0 +1,8 @@
+{
+  "exceptions": [
+    {
+      "id": "46f7d5ed",
+      "reason": "Truncated graphDsl fragment from the graphDsl incident (dev batch 6acc7432, item 46f7d5ed). Correctly rejected by the sanitizer; the problem self-heals when its DSL is rewritten."
+    }
+  ]
+}
