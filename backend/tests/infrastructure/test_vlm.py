@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import json
+import re
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -14,6 +15,10 @@ from litellm.exceptions import (
     Timeout,
 )
 
+from app.domain.whiteboard.graph_dsl import (
+    _ALLOWED_DSL_ELEMENT_TYPES,
+    _ALLOWED_DSL_OPTION_KEYS,
+)
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm.client import (
     FAILURE_CODE_INVALID_RESPONSE,
@@ -40,6 +45,7 @@ from app.infrastructure.vlm.prompts import (
 from app.infrastructure.vlm.problem_format_rules import (
     GRAPH_DSL_AUTHORING_RULES,
     PROBLEM_TEXT_FORMAT_RULES,
+    _ELEMENT_TYPE_PARENT_EXAMPLES,
 )
 from app.infrastructure.vlm.variant_prompts import (
     VARIANT_GENERATOR_SYSTEM_PROMPT,
@@ -858,6 +864,53 @@ def test_format_rules_exclude_extraction_only_cleanup_contract() -> None:
     assert "Do not solve the problem" not in PROBLEM_TEXT_FORMAT_RULES
     assert "Do not solve the problem" not in GRAPH_DSL_AUTHORING_RULES
     assert "Do not solve the problem" in MATH_EXTRACTION_SYSTEM_PROMPT
+
+
+def _authoring_rules_block(prompt: str) -> str:
+    start = prompt.index("## Available JSXGraph element types")
+    end = prompt.index("## Geometry diagram construction workflow")
+    return prompt[start:end]
+
+
+def _enumerated_element_types(block: str) -> set[str]:
+    return set(re.findall(r"^- (\w+):", block, re.MULTILINE))
+
+
+def _enumerated_option_keys(block: str) -> set[str]:
+    header = "The complete allowed option key set is:"
+    lines = block.splitlines()
+    keys_line = lines[lines.index(header) + 1]
+    return set(re.findall(r"`(\w+)`", keys_line))
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [MATH_EXTRACTION_SYSTEM_PROMPT, VARIANT_GENERATOR_SYSTEM_PROMPT],
+)
+def test_authoring_rules_enumerate_exactly_the_sanitizer_whitelists(prompt: str) -> None:
+    """Drift guard (issue #693): the enumerations rendered into each embedded
+    prompt are set-equal to the sanitizer whitelists, and the hand-maintained
+    parent-example map cannot drift from the element-type whitelist."""
+    block = _authoring_rules_block(prompt)
+    assert _enumerated_element_types(block) == set(_ALLOWED_DSL_ELEMENT_TYPES)
+    assert _enumerated_option_keys(block) == set(_ALLOWED_DSL_OPTION_KEYS)
+    assert set(_ELEMENT_TYPE_PARENT_EXAMPLES) == set(_ALLOWED_DSL_ELEMENT_TYPES)
+
+
+def test_authoring_rules_examples_never_name_rejected_keys() -> None:
+    """The incident class, mechanically prevented: removing a key or element
+    type from a sanitizer whitelist turns this red while any prompt example
+    still teaches it."""
+    rules = GRAPH_DSL_AUTHORING_RULES
+    created_types = set(re.findall(r"board\.create\('(\w+)'", rules))
+    assert created_types <= set(_ALLOWED_DSL_ELEMENT_TYPES)
+    option_keys = set(re.findall(r"[\{,]\s*([A-Za-z_]\w*)\s*:", rules))
+    assert option_keys <= set(_ALLOWED_DSL_OPTION_KEYS)
+
+
+def test_authoring_rules_keep_borders_shaded_polygon_example() -> None:
+    """The #691 fix stays locked into the prompt documentation."""
+    assert "borders:{strokeColor:'#000000'}" in GRAPH_DSL_AUTHORING_RULES
 
 
 def test_english_extraction_prompt_instructs_options_on_own_line() -> None:

@@ -8,6 +8,13 @@ both roles. Extraction-only framing (faithful extraction, no-solve cleanup,
 problem-type classification) stays in the extraction prompt itself.
 """
 
+from collections.abc import Iterable
+
+from app.domain.whiteboard.graph_dsl import (
+    _ALLOWED_DSL_ELEMENT_TYPES,
+    _ALLOWED_DSL_OPTION_KEYS,
+)
+
 PROBLEM_TEXT_FORMAT_RULES = r"""## Text formatting principles
 
 Use minimal LaTeX:
@@ -100,7 +107,41 @@ Bad:
 `A. $12$`
 `$B$. $x+1$`"""
 
-GRAPH_DSL_AUTHORING_RULES = r"""## JSXGraph DSL purpose
+# Parent-shape examples for the element-type enumeration. The rendered bullets
+# iterate the sanitizer whitelist, and the drift test binds this map to it
+# (issue #693): a whitelist edit without a matching edit here fails the tests.
+_ELEMENT_TYPE_PARENT_EXAMPLES: dict[str, str] = {
+    "point": "board.create('point', [x, y], {name:'A'})",
+    "segment": "board.create('segment', [p1, p2])",
+    "line": "board.create('line', [p1, p2])",
+    "arrow": "board.create('arrow', [p1, p2])",
+    "circle": "board.create('circle', [center, radius])",
+    "angle": "board.create('angle', [p3, vertex, p1], {radius:1, fillColor:'#ff000050'})",
+    "polygon": "board.create('polygon', [p1, p2, p3], {fillColor:'#cccccc30'})",
+    "text": "board.create('text', [x, y, 'label'])",
+    "glider": "board.create('glider', [x, y, lineOrCircle], {name:'G'})",
+    "intersection": "board.create('intersection', [line1, line2, 0], {name:'O'})",
+    "midpoint": "board.create('midpoint', [p1, p2], {name:'M'})",
+    "perpendicular": "board.create('perpendicular', [point, line])",
+}
+
+
+def _backticked_list(values: Iterable[str]) -> str:
+    return ", ".join(f"`{value}`" for value in sorted(values))
+
+
+_ELEMENT_TYPE_BULLETS = "\n".join(
+    f"- {element_type}:".ljust(18)
+    + (
+        f"`{_ELEMENT_TYPE_PARENT_EXAMPLES[element_type]}`"
+        if element_type in _ELEMENT_TYPE_PARENT_EXAMPLES
+        else ""
+    )
+    for element_type in sorted(_ALLOWED_DSL_ELEMENT_TYPES)
+)
+_ALLOWED_OPTION_KEYS_LINE = _backticked_list(_ALLOWED_DSL_OPTION_KEYS)
+
+_GRAPH_DSL_RULES_HEAD = r"""## JSXGraph DSL purpose
 
 Use `graphDsl` only when a visual figure is needed to solve or understand the problem.
 
@@ -139,20 +180,9 @@ Escape newlines and quotes as required by JSON.
 ## Available JSXGraph element types
 
 Allowed element types and their parents:
-- point:          `board.create('point', [x, y], {name:'A'})`
-- segment:        `board.create('segment', [p1, p2])`
-- line:           `board.create('line', [p1, p2])`
-- arrow:          `board.create('arrow', [p1, p2])`
-- circle:         `board.create('circle', [center, radius])`
-- angle:          `board.create('angle', [p3, vertex, p1], {radius:1, fillColor:'#ff000050'})`
-- polygon:        `board.create('polygon', [p1, p2, p3], {fillColor:'#cccccc30'})`
-- text:           `board.create('text', [x, y, 'label'])`
-- glider:         `board.create('glider', [x, y, lineOrCircle], {name:'G'})`
-- intersection:   `board.create('intersection', [line1, line2, 0], {name:'O'})`
-- midpoint:       `board.create('midpoint', [p1, p2], {name:'M'})`
-- perpendicular:  `board.create('perpendicular', [point, line])`
+"""
 
-Common useful options:
+_GRAPH_DSL_RULES_EXAMPLES = r"""Common useful options:
 - Named visible point: `{name:'A'}`
 - Unnamed visible point: `{name:'', withLabel:false}`
 - Hidden helper point: `{name:'', withLabel:false, visible:false}`
@@ -160,8 +190,9 @@ Common useful options:
 - Thin helper segment: `{strokeWidth:1}`
 - Shaded polygon: `{fillColor:'#cccccc50', borders:{strokeColor:'#000000'}}`
 - Text label: `board.create('text', [x, y, '5 cm'])`
+"""
 
-## Geometry diagram construction workflow
+_GRAPH_DSL_RULES_TAIL = r"""## Geometry diagram construction workflow
 
 Before writing `graphDsl`, internally analyze the diagram in this order.
 Do not include this analysis in the output.
@@ -306,3 +337,15 @@ board.create('segment', [C, A]);
 board.create('segment', [C, D], {dash:2});
 board.create('angle', [B, A, C], {radius:0.8, fillColor:'#ff000030'});
 board.create('text', [2, -0.3, '6 cm']);`"""
+
+
+GRAPH_DSL_AUTHORING_RULES = (
+    _GRAPH_DSL_RULES_HEAD
+    + _ELEMENT_TYPE_BULLETS
+    + "\n\n"
+    + _GRAPH_DSL_RULES_EXAMPLES
+    + "\nThe complete allowed option key set is:\n"
+    + _ALLOWED_OPTION_KEYS_LINE
+    + "\n\n"
+    + _GRAPH_DSL_RULES_TAIL
+)
