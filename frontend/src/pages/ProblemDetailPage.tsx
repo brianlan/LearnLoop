@@ -915,6 +915,19 @@ export function ProblemDetailPage() {
                 ))}
               </ul>
             )}
+            {isEditing && graphDslIssues.isUnavailable && (
+              <div
+                data-testid="problem-graphdsl-validation-unavailable"
+                style={{
+                  color: "var(--color-error, #dc2626)",
+                  fontSize: "0.85rem",
+                  marginTop: "6px",
+                }}
+              >
+                Graph DSL validation is unavailable. Saving stays disabled until
+                validation succeeds.
+              </div>
+            )}
           </div>
         )}
 
@@ -1004,7 +1017,7 @@ export function ProblemDetailPage() {
                 onClick={handleSave}
                 disabled={
                   updateMutation.isPending ||
-                  graphDslIssues.issues.length > 0 ||
+                  !graphDslIssues.isValid ||
                   graphDslIssues.isValidating
                 }
                 className="btn btn-primary"

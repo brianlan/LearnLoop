@@ -23,7 +23,12 @@ describe("useGraphDslValidation", () => {
     });
 
     expect(validate).not.toHaveBeenCalled();
-    expect(result.current).toEqual({ issues: [], isValidating: false });
+    expect(result.current).toEqual({
+      issues: [],
+      isValidating: false,
+      isValid: true,
+      isUnavailable: false,
+    });
   });
 
   it("debounces validation and returns the backend issues", async () => {
@@ -47,6 +52,30 @@ describe("useGraphDslValidation", () => {
     );
     expect(result.current.issues).toEqual(["disallowed element type"]);
     expect(result.current.isValidating).toBe(false);
+    expect(result.current.isValid).toBe(false);
+    expect(result.current.isUnavailable).toBe(false);
+  });
+
+  it("marks compliant DSL as valid", async () => {
+    vi.spyOn(api, "validateGraphDsl").mockResolvedValue({
+      valid: true,
+      issues: [],
+    });
+
+    const { result } = renderHook(() =>
+      useGraphDslValidation("board.create('point', [0, 0]);"),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(result.current).toEqual({
+      issues: [],
+      isValidating: false,
+      isValid: true,
+      isUnavailable: false,
+    });
   });
 
   it("aborts a stale in-flight request when the DSL changes again", async () => {
@@ -76,6 +105,7 @@ describe("useGraphDslValidation", () => {
       vi.advanceTimersByTime(500);
     });
     expect(result.current.issues).toEqual(["second issue"]);
+    expect(result.current.isValid).toBe(false);
   });
 
   it("clears issues when the DSL becomes empty", async () => {
@@ -95,6 +125,26 @@ describe("useGraphDslValidation", () => {
 
     rerender({ dsl: "" });
     expect(result.current.issues).toEqual([]);
+    expect(result.current.isValid).toBe(true);
     expect(validate).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a rejected validation request as unavailable, not valid", async () => {
+    vi.spyOn(api, "validateGraphDsl").mockRejectedValue(new Error("503"));
+
+    const { result } = renderHook(() =>
+      useGraphDslValidation("board.create('rectangle', [0, 0, 1, 1]);"),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(result.current).toEqual({
+      issues: [],
+      isValidating: false,
+      isValid: false,
+      isUnavailable: true,
+    });
   });
 });

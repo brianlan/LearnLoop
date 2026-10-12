@@ -271,6 +271,64 @@ describe("ProblemDetailPage", () => {
     });
   });
 
+  it("keeps Save disabled when DSL validation is unavailable", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.validateGraphDsl)
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValue({ valid: true, issues: [] });
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/problems/abc123") {
+        return {
+          problem: {
+            ...baseProblem,
+            graphDsl: "board.create('rectangle', [0, 0, 1, 1]);",
+          },
+        };
+      }
+      if (path === "/problems/abc123/tracking") return baseTracking;
+      if (path === "/problems/abc123/variants/active") return { session: null };
+      throw new Error(`unexpected get: ${path}`);
+    });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('rectangle', [0, 0, 1, 1]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    expect(saveButton).toBeDisabled();
+    expect(
+      screen.getByTestId("problem-graphdsl-validation-unavailable"),
+    ).toBeInTheDocument();
+
+    await user.click(saveButton);
+    expect(api.patch).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByTestId("edit-graphdsl-input"), {
+      target: { value: "board.create('point', [0, 0]);" },
+    });
+
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('point', [0, 0]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+    await waitFor(() => {
+      expect(saveButton).not.toBeDisabled();
+    });
+  });
+
   it("reveals answer input after teacher password verification in edit mode", async () => {
     const user = userEvent.setup();
     vi.mocked(api.get)

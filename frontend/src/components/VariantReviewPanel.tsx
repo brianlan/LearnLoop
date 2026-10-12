@@ -598,6 +598,19 @@ export function VariantReviewPanel({
               ))}
             </ul>
           )}
+          {graphDslIssues.isUnavailable && (
+            <div
+              data-testid="bulk-review-graphdsl-validation-unavailable"
+              style={{
+                color: "var(--color-error, #dc2626)",
+                fontSize: "0.85em",
+                marginTop: "6px",
+              }}
+            >
+              Graph DSL validation is unavailable. Saving stays disabled until
+              validation succeeds.
+            </div>
+          )}
         </label>
 
         {draft.graphDsl?.trim() && (

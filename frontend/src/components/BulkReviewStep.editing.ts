@@ -4,6 +4,7 @@ import type {
   BulkItem,
   VariationOriginalPayload,
 } from "@/types/bulkIngestion";
+import { api } from "@/api/client";
 import { getRequiredFieldGaps, isVariantBusy } from "./BulkReviewStep.helpers";
 
 // Source draft and variant candidate are separate editing targets with
@@ -139,6 +140,14 @@ export function useBulkReviewEditing(
   const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
   const [saveFailures, setSaveFailures] = useState<Record<string, number>>({});
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
+  // graphDsl validation gate (#695): a buffer stays dirty but unsaved until a
+  // successful validation of the exact outgoing DSL. `validationErrors` holds
+  // sanitizer reasons; request failures use the retryable save-failure path.
+  const [validatingKeys, setValidatingKeys] = useState<Set<string>>(new Set());
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const validationErrorsRef = useRef<Record<string, string>>({});
   const draftRefs = useRef<Record<string, BulkDraft>>({});
   const dirtyRefs = useRef<Set<string>>(new Set());
   // A tag edit belongs to the item, even when only one editor needs saving.
@@ -194,6 +203,19 @@ export function useBulkReviewEditing(
     },
     [localDrafts],
   );
+
+  const clearValidationError = useCallback((key: string) => {
+    if (validationErrorsRef.current[key] === undefined) return;
+    const next = { ...validationErrorsRef.current };
+    delete next[key];
+    validationErrorsRef.current = next;
+    setValidationErrors(next);
+  }, []);
+
+  const setValidationError = useCallback((key: string, message: string) => {
+    validationErrorsRef.current = { ...validationErrorsRef.current, [key]: message };
+    setValidationErrors(validationErrorsRef.current);
+  }, []);
 
   const cancelPendingGenerate = useCallback((key: string) => {
     if (!pendingGenerateRef.current.delete(key)) return;
@@ -349,6 +371,9 @@ export function useBulkReviewEditing(
         draftBaseRefs.current[key] = stampRefs.current[key] ?? targetStamp(item, saveTarget);
       }
       const editedKey = bufferKey(item.itemId, target);
+      if (next.graphDsl !== undefined) {
+        clearValidationError(editedKey);
+      }
       const merged = {
         ...draftRefs.current,
         [editedKey]: { ...(draftRefs.current[editedKey] ?? targetDraft(item, target)), ...next },
@@ -370,7 +395,7 @@ export function useBulkReviewEditing(
       dirtyRefs.current = nextDirty;
       setDirtyKeys(nextDirty);
     },
-    [],
+    [clearValidationError],
   );
 
   useEffect(() => {
@@ -487,6 +512,7 @@ export function useBulkReviewEditing(
         inFlightRefs.current[key] = undefined;
         delete draftBaseRefs.current[key];
         delete acknowledgedDraftRefs.current[key];
+        clearValidationError(key);
         cancelPendingGenerate(key);
       }
       setDirtyKeys((prev) => {
@@ -515,6 +541,7 @@ export function useBulkReviewEditing(
       for (const key of droppedKeys) {
         delete nextDrafts[key];
         delete serverDraftRefs.current[key];
+        clearValidationError(key);
       }
     }
 
@@ -534,6 +561,7 @@ export function useBulkReviewEditing(
     cancelPendingGenerate,
     markConflict,
     keepCandidateWithoutServerCandidate,
+    clearValidationError,
   ]);
 
   useEffect(() => {
@@ -696,36 +724,82 @@ export function useBulkReviewEditing(
         if (!draft) return;
         const sentDraft = JSON.parse(JSON.stringify(draft)) as BulkDraft;
         const sentSerialized = JSON.stringify(sentDraft);
-        const base = draftBaseRefs.current[key] ?? stampRefs.current[key];
-        const seq = (saveSeqRef.current += 1);
-        inFlightRefs.current[key] = {
-          seq,
-          revision: base?.revision ?? 0,
-          generation: base?.generation ?? 0,
-          siblingDraft: serverDraftRefs.current[otherBufferKey(key)],
-          sentSerialized,
+
+        const dispatch = () => {
+          if (!dirtyRefs.current.has(key) || conflictRefs.current.has(key)) return;
+          if (inFlightRefs.current[key] || inFlightRefs.current[otherBufferKey(key)]) return;
+          if (JSON.stringify(draftRefs.current[key]) !== sentSerialized) return;
+          const base = draftBaseRefs.current[key] ?? stampRefs.current[key];
+          const seq = (saveSeqRef.current += 1);
+          inFlightRefs.current[key] = {
+            seq,
+            revision: base?.revision ?? 0,
+            generation: base?.generation ?? 0,
+            siblingDraft: serverDraftRefs.current[otherBufferKey(key)],
+            sentSerialized,
+          };
+          setSavingKeys((prev) => {
+            const next = new Set(prev);
+            next.add(key);
+            return next;
+          });
+          const [itemId, target] = key.split("::") as [string, EditTarget];
+          Promise.resolve(
+            onUpdateDraft(itemId, sentDraft, {
+              target,
+              expectedRevision: base?.revision ?? 0,
+            }),
+          )
+            .then((result) => finishSave(key, seq, "success", sentSerialized, result))
+            .catch((error: unknown) =>
+              finishSave(key, seq, "failure", sentSerialized, undefined, error),
+            );
         };
-        setSavingKeys((prev) => {
-          const next = new Set(prev);
-          next.add(key);
-          return next;
-        });
-        const [itemId, target] = key.split("::") as [string, EditTarget];
-        Promise.resolve(
-          onUpdateDraft(itemId, sentDraft, {
-            target,
-            expectedRevision: base?.revision ?? 0,
-          }),
-        )
-          .then((result) => finishSave(key, seq, "success", sentSerialized, result))
-          .catch((error: unknown) =>
-            finishSave(key, seq, "failure", sentSerialized, undefined, error),
-          );
+
+        // #695: no save until the exact outgoing DSL passes validation. Empty
+        // DSL is optional and needs no request.
+        if (!sentDraft.graphDsl || !sentDraft.graphDsl.trim()) {
+          clearValidationError(key);
+          dispatch();
+          return;
+        }
+
+        setValidatingKeys((prev) => new Set(prev).add(key));
+        api
+          .validateGraphDsl(sentDraft.graphDsl)
+          .then((result) => {
+            if (result.valid) {
+              clearValidationError(key);
+              dispatch();
+              return;
+            }
+            setValidationError(key, result.issues.join("; "));
+          })
+          .catch(() => {
+            // Validation unavailability is retryable, but never a pass.
+            setSaveFailures((prev) => {
+              const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
+              saveFailuresRef.current = next;
+              return next;
+            });
+          })
+          .finally(() => {
+            setValidatingKeys((prev) => {
+              const next = new Set(prev);
+              next.delete(key);
+              return next;
+            });
+          });
       }, Math.min(500 * 2 ** failures, 4000));
     };
 
     dirtyKeys.forEach((key) => {
-      if (!savingKeys.has(key) && !conflictKeys.has(key)) {
+      if (
+        !savingKeys.has(key) &&
+        !conflictKeys.has(key) &&
+        !validatingKeys.has(key) &&
+        validationErrorsRef.current[key] === undefined
+      ) {
         scheduleSave(key);
       }
     });
@@ -737,10 +811,14 @@ export function useBulkReviewEditing(
     dirtyKeys,
     savingKeys,
     conflictKeys,
+    validatingKeys,
+    validationErrors,
     firePendingGenerate,
     cancelPendingGenerate,
     markConflict,
     onUpdateDraft,
+    clearValidationError,
+    setValidationError,
   ]);
 
   function actionStateFor(item: BulkItem, isEditable: boolean, isLoading: boolean) {
@@ -752,6 +830,11 @@ export function useBulkReviewEditing(
       key.startsWith(itemPrefix) && !conflictKeys.has(key),
     );
     const hasConflict = [...conflictKeys].some((key) => key.startsWith(itemPrefix));
+    const hasValidationIssue = Object.keys(validationErrors).some((key) =>
+      key.startsWith(itemPrefix),
+    );
+    const sourceValidationIssue = validationErrors[sourceKey] !== undefined;
+    const candidateValidationIssue = validationErrors[candidateKey] !== undefined;
     const sourceGaps = getRequiredFieldGaps(getDraft(item, "source"));
     const sourceSaveFailed = saveFailures[sourceKey] !== undefined;
     const sourceConflict = conflictKeys.has(sourceKey);
@@ -773,6 +856,8 @@ export function useBulkReviewEditing(
       generateDisabledReason = "Source changed elsewhere; copy your edits and reload";
     } else if (sourceSaveFailed) {
       generateDisabledReason = "Draft save failed, retrying";
+    } else if (sourceValidationIssue) {
+      generateDisabledReason = "Graph DSL is invalid; fix it to save";
     } else if (generating) {
       generateDisabledReason = "Generating...";
     } else if (item.variation && isVariantBusy(item.variation.status)) {
@@ -809,25 +894,30 @@ export function useBulkReviewEditing(
         ? "Item is not editable"
         : candidateConflict
           ? "Candidate changed elsewhere; copy your edits and reload"
+          : candidateValidationIssue
+            ? "Candidate graph DSL is invalid; fix it to save"
+            : isActionWorking
+              ? "Draft save is still settling"
+              : candidateSavePending
+                ? "Candidate changes are still saving"
+                : "";
+    const attestDisabledReason = !isEditable
+      ? "Item is not editable"
+      : candidateConflict
+        ? "Candidate changed elsewhere; copy your edits and reload"
+        : candidateValidationIssue
+          ? "Candidate graph DSL is invalid; fix it to save"
           : isActionWorking
             ? "Draft save is still settling"
             : candidateSavePending
               ? "Candidate changes are still saving"
               : "";
-    const attestDisabledReason = !isEditable
-      ? "Item is not editable"
-      : candidateConflict
-        ? "Candidate changed elsewhere; copy your edits and reload"
-        : isActionWorking
-          ? "Draft save is still settling"
-          : candidateSavePending
-            ? "Candidate changes are still saving"
-            : "";
 
     return {
       isActionWorking,
       hasSaveFailed,
       hasConflict,
+      hasValidationIssue,
       sourceLocked: generating,
       generateDisabledReason,
       generateHint,

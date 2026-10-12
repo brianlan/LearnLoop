@@ -8,6 +8,14 @@ import type {
   BulkItemVariation,
 } from "@/types/bulkIngestion";
 
+vi.mock("@/api/client", () => ({
+  api: {
+    validateGraphDsl: vi.fn(),
+  },
+}));
+
+import { api } from "@/api/client";
+
 function makeItem(itemId: string, overrides: Partial<BulkItem> = {}): BulkItem {
   return {
     itemId,
@@ -84,10 +92,13 @@ describe("BulkReviewStep", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     Object.values(handlers).forEach((fn) => fn.mockReset());
+    vi.mocked(api.validateGraphDsl).mockReset();
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({ valid: true, issues: [] });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("renders the review queue and crop preview", () => {
@@ -755,7 +766,7 @@ describe("BulkReviewStep", () => {
       target: { value: "B" },
     });
     fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
-      target: { value: "y = x" },
+      target: { value: "board.create('point', [0, 0]);" },
     });
 
     const tagInput = screen.getByTestId("bulk-review-tags-field");
@@ -777,11 +788,65 @@ describe("BulkReviewStep", () => {
         problemType: "single-choice",
         subject: "english",
         correctAnswer: "B",
-        graphDsl: "y = x",
+        graphDsl: "board.create('point', [0, 0]);",
         tags: ["math", "geometry"],
       }),
       expect.objectContaining({ target: "source", expectedRevision: 0 }),
     );
+  });
+
+  it("does not autosave invalid graphDsl until validation passes", async () => {
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: false,
+      issues: ["disallowed element type 'rectangle'"],
+    });
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('rectangle', [0, 0, 1, 1]);" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('rectangle', [0, 0, 1, 1]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+    expect(handlers.onUpdateDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-graphdsl-issues")).toBeInTheDocument();
+
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: true,
+      issues: [],
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('point', [0, 0]);" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ graphDsl: "board.create('point', [0, 0]);" }),
+        expect.objectContaining({ target: "source", expectedRevision: 0 }),
+      );
+    });
   });
 
   it("debounces draft updates and sends the latest value", async () => {

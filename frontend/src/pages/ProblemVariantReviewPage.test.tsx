@@ -10,6 +10,7 @@ import type { ProblemVariantSessionResponse } from "@/api/problemVariants";
 vi.mock("@/api/client", () => ({
   api: {
     get: vi.fn(),
+    validateGraphDsl: vi.fn(),
   },
 }));
 
@@ -143,6 +144,8 @@ function readySession() {
 describe("ProblemVariantReviewPage", () => {
   beforeEach(() => {
     vi.mocked(api.get).mockReset();
+    vi.mocked(api.validateGraphDsl).mockReset();
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({ valid: true, issues: [] });
     for (const fn of [
       createProblemVariant,
       getActiveProblemVariantSession,
@@ -348,6 +351,65 @@ describe("ProblemVariantReviewPage", () => {
         "needs validation",
       );
     });
+  });
+
+  it("does not save an invalid candidate graphDsl until validation passes", async () => {
+    vi.mocked(getActiveProblemVariantSession).mockResolvedValue({
+      session: readySession(),
+    });
+    vi.mocked(editProblemVariantCandidate).mockImplementation(async (_p, _s, body) => {
+      const current = readySession();
+      return {
+        session: {
+          ...current,
+          contentRevision: (body as { expectedRevision: number }).expectedRevision + 1,
+          variation: {
+            ...current.variation,
+            status: "needs-validation",
+            candidate: {
+              ...current.variation?.candidate,
+              graphDsl: (body as { graphDsl?: string | null }).graphDsl ?? null,
+            },
+          },
+        } as ProblemVariantSession,
+      };
+    });
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: false,
+      issues: ["disallowed element type 'rectangle'"],
+    });
+
+    renderPage();
+
+    const graphDsl = await screen.findByTestId("bulk-review-graphdsl");
+    fireEvent.change(graphDsl, {
+      target: { value: "board.create('rectangle', [0, 0, 1, 1]);" },
+    });
+
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('rectangle', [0, 0, 1, 1]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+    expect(editProblemVariantCandidate).not.toHaveBeenCalled();
+
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: true,
+      issues: [],
+    });
+    fireEvent.change(graphDsl, {
+      target: { value: "board.create('point', [0, 0]);" },
+    });
+
+    await waitFor(() => {
+      expect(editProblemVariantCandidate).toHaveBeenCalled();
+    });
+    const body = vi.mocked(editProblemVariantCandidate).mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(body["graphDsl"]).toBe("board.create('point', [0, 0]);");
   });
 
   it("blocks submit while candidate edits are still saving", async () => {
