@@ -1898,15 +1898,21 @@ async def test_submit_batch_rejects_noncompliant_draft_graph_dsl(
     helper_vlm: FakeHelperVLMClient,
     math_ingestion_vlm: FakeIngestionVLMClient,
 ) -> None:
-    batch_id, _image_id, item_id = await create_ready_item_with_draft(
+    batch_id, item_ids = await create_two_ready_items(
         authenticated_bulk_client,
         bulk_app,
         helper_vlm,
         math_ingestion_vlm,
     )
+    for item_id in item_ids:
+        answer_response = await authenticated_bulk_client.patch(
+            f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+            json={"correctAnswer": "4"},
+        )
+        assert answer_response.status_code == 200
 
     patch_response = await authenticated_bulk_client.patch(
-        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_ids[0]}",
         json={"graphDsl": "board.create('rectangle', [0, 0, 1, 1]);"},
     )
     assert patch_response.status_code == 200
@@ -1915,16 +1921,24 @@ async def test_submit_batch_rejects_noncompliant_draft_graph_dsl(
         f"/api/v1/ingestion-batches/{batch_id}/submit"
     )
 
-    assert response.status_code == 200
-    summary = response.json()["submitSummary"]
-    assert summary["status"] == "active"
-    assert summary["items"][0]["itemId"] == item_id
-    assert summary["items"][0]["status"] == "submit-failed"
-    assert summary["items"][0]["failureCode"] == "GRAPH_DSL_INVALID"
-    assert "rectangle" in summary["items"][0]["failureMessage"]
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "GRAPH_DSL_INVALID"
+    assert "rectangle" in response.json()["error"]["message"]
 
     database: FakeDatabase = bulk_app.state.fake_database
     assert len(database["problems"]._documents) == 0
+
+    detail_response = await authenticated_bulk_client.get(
+        f"/api/v1/ingestion-batches/{batch_id}"
+    )
+    assert detail_response.status_code == 200
+    items = {item["itemId"]: item for item in detail_response.json()["batch"]["items"]}
+    assert items[item_ids[0]]["status"] == "submit-failed"
+    assert items[item_ids[0]]["submit"]["failureCode"] == "GRAPH_DSL_INVALID"
+    assert "rectangle" in items[item_ids[0]]["submit"]["failureMessage"]
+    # All-or-nothing graphDsl validation: the valid sibling is not committed.
+    assert items[item_ids[1]]["status"] == "ready"
+    assert items[item_ids[1]]["submit"].get("submittedProblemId") is None
 
 
 @pytest.mark.asyncio
