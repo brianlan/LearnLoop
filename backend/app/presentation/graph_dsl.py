@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.domain.whiteboard import MAX_DSL_LENGTH, explain_graph_dsl
+from app.domain.whiteboard import explain_graph_dsl
 from app.presentation.deps import CurrentUserDependency
 
 router = APIRouter(prefix="/graph-dsl", tags=["graph-dsl"])
@@ -27,12 +27,12 @@ async def validate_graph_dsl(
 ) -> GraphDslValidationResponse:
     """Return the sanitizer's reasons for the submitted DSL.
 
-    Empty DSL is valid because a graph is optional. Oversized input is capped
-    before explanation, mirroring the domain's ``MAX_DSL_LENGTH`` contract.
+    Empty DSL is valid because a graph is optional. The size cap is applied by
+    ``explain_graph_dsl`` after the same preprocessing the sanitizer uses, so
+    removable comments/fences/initBoard boilerplate cannot make an otherwise
+    compliant DSL fail validation.
     """
-    if len(payload.graphDsl) > MAX_DSL_LENGTH:
-        issues = [f"exceeds the maximum DSL length of {MAX_DSL_LENGTH} characters"]
-    elif not payload.graphDsl.strip():
+    if not payload.graphDsl.strip():
         issues = []
     else:
         issues = explain_graph_dsl(payload.graphDsl)

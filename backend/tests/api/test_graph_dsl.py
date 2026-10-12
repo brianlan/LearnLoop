@@ -77,6 +77,24 @@ async def test_validate_graph_dsl_enforces_the_size_cap(client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
+async def test_validate_graph_dsl_applies_size_cap_after_preprocessing(
+    client: AsyncClient,
+) -> None:
+    statement = "var p = board.create('point', [0, 0]);"
+    comment_padding = "\n".join(f"// {'x' * 120}" for _ in range(200))
+    raw = f"```js\n{statement}\n{comment_padding}\n```"
+    assert len(raw) > MAX_DSL_LENGTH
+
+    response = await client.post(
+        "/api/v1/graph-dsl/validate",
+        json={"graphDsl": raw},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"valid": True, "issues": []}
+
+
+@pytest.mark.asyncio
 async def test_validate_graph_dsl_requires_authentication() -> None:
     application = create_app()
     transport = ASGITransport(app=application)

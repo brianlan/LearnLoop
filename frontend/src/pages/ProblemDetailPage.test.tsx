@@ -20,6 +20,7 @@ vi.mock("@/api/client", () => ({
     getSolutionStatus: vi.fn(),
     regenerateSolution: vi.fn(),
     getAttemptHistory: vi.fn(),
+    validateGraphDsl: vi.fn(),
   },
 }));
 
@@ -130,6 +131,7 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.getSolutionStatus).mockReset();
     vi.mocked(api.regenerateSolution).mockReset();
     vi.mocked(api.getAttemptHistory).mockReset();
+    vi.mocked(api.validateGraphDsl).mockReset();
     mockNavigate.mockReset();
 
     // Default: no solution status
@@ -137,6 +139,8 @@ describe("ProblemDetailPage", () => {
     vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
     // Default: empty attempt history so existing tests are unaffected.
     vi.mocked(api.getAttemptHistory).mockResolvedValue({ items: [], total: 0, hasMore: false });
+    // Default: DSL validation succeeds so edit-mode tests are unaffected.
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({ valid: true, issues: [] });
   });
 
   it("renders problem details", async () => {
@@ -215,6 +219,56 @@ describe("ProblemDetailPage", () => {
     expect(screen.queryByTestId("edit-answer-input")).not.toBeInTheDocument();
     // "Edit Answer" button is visible
     expect(screen.getByTestId("edit-answer-button")).toBeInTheDocument();
+  });
+
+  it("disables Save while graphDsl validation is pending", async () => {
+    const user = userEvent.setup();
+    const pendingResolvers: Array<(value: { valid: boolean; issues: string[] }) => void> = [];
+    vi.mocked(api.validateGraphDsl).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pendingResolvers.push(resolve);
+        }),
+    );
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/problems/abc123") {
+        return { problem: { ...baseProblem, graphDsl: "board.create('point', [0, 0]);" } };
+      }
+      if (path === "/problems/abc123/tracking") return baseTracking;
+      if (path === "/problems/abc123/variants/active") return { session: null };
+      throw new Error(`unexpected get: ${path}`);
+    });
+
+    renderProblemDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(screen.getByTestId("edit-graphdsl-input"), {
+      target: { value: "board.create('rectangle', [0, 0, 1, 1]);" },
+    });
+    expect(saveButton).toBeDisabled();
+
+    await user.click(saveButton);
+    expect(api.patch).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('rectangle', [0, 0, 1, 1]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+    pendingResolvers.forEach((resolve) => resolve({ valid: true, issues: [] }));
+
+    await waitFor(() => {
+      expect(saveButton).not.toBeDisabled();
+    });
   });
 
   it("reveals answer input after teacher password verification in edit mode", async () => {
@@ -1332,10 +1386,12 @@ describe("ProblemDetailPage: create variant (#685)", () => {
     vi.mocked(api.getSolutionStatus).mockReset();
     vi.mocked(api.regenerateSolution).mockReset();
     vi.mocked(api.getAttemptHistory).mockReset();
+    vi.mocked(api.validateGraphDsl).mockReset();
     mockNavigate.mockReset();
     vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
     vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
     vi.mocked(api.getAttemptHistory).mockResolvedValue({ items: [], total: 0, hasMore: false });
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({ valid: true, issues: [] });
   });
 
   it("shows the Create variant button for available problems", async () => {
@@ -1438,10 +1494,12 @@ describe("ProblemDetailPage: Derived from provenance link (#685)", () => {
     vi.mocked(api.getSolutionStatus).mockReset();
     vi.mocked(api.regenerateSolution).mockReset();
     vi.mocked(api.getAttemptHistory).mockReset();
+    vi.mocked(api.validateGraphDsl).mockReset();
     mockNavigate.mockReset();
     vi.mocked(api.getSolutionStatus).mockResolvedValue({ status: "none" });
     vi.mocked(api.regenerateSolution).mockResolvedValue({ status: "pending" });
     vi.mocked(api.getAttemptHistory).mockResolvedValue({ items: [], total: 0, hasMore: false });
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({ valid: true, issues: [] });
   });
 
   const problemWithSource = {

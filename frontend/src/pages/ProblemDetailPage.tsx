@@ -1002,7 +1002,11 @@ export function ProblemDetailPage() {
             <>
               <button
                 onClick={handleSave}
-                disabled={updateMutation.isPending || graphDslIssues.issues.length > 0}
+                disabled={
+                  updateMutation.isPending ||
+                  graphDslIssues.issues.length > 0 ||
+                  graphDslIssues.isValidating
+                }
                 className="btn btn-primary"
                 style={{ padding: "0.5rem 1.25rem", borderRadius: "var(--radius-md)", fontSize: "0.875rem" }}
               >
