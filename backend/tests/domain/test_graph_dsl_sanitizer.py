@@ -365,6 +365,25 @@ class TestExplainGraphDsl:
         reasons = explain_graph_dsl("fetch('http://evil');")
         assert "disallowed token 'fetch'" in reasons
 
+    def test_mixed_blocked_tokens_reasons_are_deterministically_ordered(self) -> None:
+        """Issue #692: _BLOCKED_DSL_TOKENS is a set — the returned order must
+        not depend on the process hash seed (single-token membership cannot
+        catch this). Exact order is sorted(_BLOCKED_DSL_TOKENS); statement
+        diagnostics stay in source order."""
+        reasons = explain_graph_dsl("eval(1); fetch(2); window; document;")
+        assert [r for r in reasons if r.startswith("disallowed token")] == [
+            "disallowed token 'document'",
+            "disallowed token 'eval'",
+            "disallowed token 'fetch'",
+            "disallowed token 'window'",
+        ]
+        assert [r for r in reasons if r.startswith("rejected statement")] == [
+            "rejected statement 'eval(1)': statement is not an allowed declaration or board.create call",
+            "rejected statement 'fetch(2)': statement is not an allowed declaration or board.create call",
+            "rejected statement 'window': statement is not an allowed declaration or board.create call",
+            "rejected statement 'document': statement is not an allowed declaration or board.create call",
+        ]
+
     def test_undeclared_name_named(self) -> None:
         reasons = explain_graph_dsl("board.create('segment', [A, B]);")
         assert reasons == [

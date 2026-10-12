@@ -99,6 +99,27 @@ def _strip_comments(value: str) -> str:
     )
 
 
+def _preprocess_graph_dsl_source(stripped: str) -> str:
+    """Shared preprocessing for the sanitizer and the explainer (issue #692).
+
+    Fences, then initBoard boilerplate, then comments — one implementation so
+    the two public functions cannot drift. ``stripped`` must already be
+    outer-stripped and non-empty; each public function keeps its own
+    missing/empty response.
+    """
+    # Remove markdown code fences: ```js ... ``` or ``` ... ```
+    fence_match = re.match(r"^```(?:\w*)\n?(.*?)\n?```$", stripped, re.DOTALL)
+    if fence_match:
+        stripped = fence_match.group(1).strip()
+
+    # Strip initBoard calls — board already exists in the sandbox
+    stripped = re.sub(r"var\s+\w+\s*=\s*JXG\.JSXGraph\.initBoard\([^)]*\)\s*;?", "", stripped)
+
+    # Strip comments before the token scan so orphaned `//` debris left behind
+    # by initBoard removal cannot fail the blocked-pattern scan.
+    return _strip_comments(stripped).strip()
+
+
 def _split_top_level(value: str, delimiter: str) -> list[str] | None:
     parts: list[str] = []
     start = 0
@@ -285,9 +306,11 @@ def _explain_graph_dsl_body(stripped: str) -> list[str]:
     reasons: list[str] = []
     unquoted = _strip_quoted_strings(stripped)
     for pattern, label in _DANGEROUS_PATTERNS:
-        if re.search(re.escape(pattern), unquoted):
+        if pattern in unquoted:
             reasons.append(f"disallowed syntax: {label}")
-    for token in _BLOCKED_DSL_TOKENS:
+    # ponytail: sorted — _BLOCKED_DSL_TOKENS is a set, and the reason order
+    # must not depend on the process hash seed (issue #692).
+    for token in sorted(_BLOCKED_DSL_TOKENS):
         if re.search(rf"\b{re.escape(token)}\b", unquoted, re.IGNORECASE):
             reasons.append(f"disallowed token '{token}'")
 
@@ -323,18 +346,7 @@ def explain_graph_dsl(dsl: str | None) -> list[str]:
     if not stripped:
         return ["graphDsl is empty"]
 
-    # Remove markdown code fences: ```js ... ``` or ``` ... ```
-    fence_match = re.match(r"^```(?:\w*)\n?(.*?)\n?```$", stripped, re.DOTALL)
-    if fence_match:
-        stripped = fence_match.group(1).strip()
-
-    # Strip initBoard calls — board already exists in the sandbox
-    stripped = re.sub(r"var\s+\w+\s*=\s*JXG\.JSXGraph\.initBoard\([^)]*\)\s*;?", "", stripped)
-
-    # Strip comments before the token scan so orphaned `//` debris left behind
-    # by initBoard removal cannot fail the blocked-pattern scan.
-    stripped = _strip_comments(stripped).strip()
-
+    stripped = _preprocess_graph_dsl_source(stripped)
     if not stripped:
         return ["no DSL statements remain after comment and fence stripping"]
 
@@ -352,24 +364,11 @@ def sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
     if dsl is None:
         return None
 
-    stripped = dsl.strip()
+    stripped = _preprocess_graph_dsl_source(dsl.strip())
     if not stripped:
         return None
 
-    # Remove markdown code fences: ```js ... ``` or ``` ... ```
-    fence_match = re.match(r"^```(?:\w*)\n?(.*?)\n?```$", stripped, re.DOTALL)
-    if fence_match:
-        stripped = fence_match.group(1).strip()
-
-    # Strip initBoard calls — board already exists in the sandbox
-    stripped = re.sub(r"var\s+\w+\s*=\s*JXG\.JSXGraph\.initBoard\([^)]*\)\s*;?", "", stripped)
-    stripped = stripped.strip()
-
-    # Strip comments before the token scan so orphaned `//` debris left behind
-    # by initBoard removal cannot fail the blocked-pattern scan.
-    stripped = _strip_comments(stripped).strip()
-
-    if stripped and not _is_allowed_graph_dsl(stripped):
+    if not _is_allowed_graph_dsl(stripped):
         return None
 
-    return stripped if stripped else None
+    return stripped
