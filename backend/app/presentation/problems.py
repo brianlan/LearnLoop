@@ -332,15 +332,19 @@ async def update_problem(
     if "graphDsl" in payload.model_fields_set:
         # Issue #694: human-review strategy — the teacher is present, so a
         # non-compliant DSL is rejected with the sanitizer's reasons instead
-        # of stored. A compliant value is stored exactly as submitted.
-        _, graph_dsl_reasons = sanitize_graph_dsl_for_storage(payload.graphDsl)
+        # of stored. A compliant value is stored as the canonical form that
+        # was actually validated, so fenced/initBoard/comment residue can
+        # never persist into the sandbox-executed string.
+        canonical_graph_dsl, graph_dsl_reasons = sanitize_graph_dsl_for_storage(
+            payload.graphDsl
+        )
         if graph_dsl_reasons:
             raise ApiError(
                 400,
                 "GRAPH_DSL_INVALID",
                 "; ".join(graph_dsl_reasons),
             )
-        updates["graphDsl"] = payload.graphDsl
+        updates["graphDsl"] = canonical_graph_dsl
     if "tags" in payload.model_fields_set and payload.tags is not None:
         updates["tags"] = normalize_tags(payload.tags)
         await _register_tags(database, current_user["_id"], payload.tags)

@@ -204,7 +204,7 @@ async def test_wf_problem_4_edit_rejects_non_compliant_graph_dsl_with_reasons(
 ) -> None:
     """Issue #694: the human-review PATCH path rejects a non-compliant
     graphDsl with the sanitizer's reasons and writes nothing; a compliant
-    value is stored exactly as submitted."""
+    value is stored as the canonical form that was validated."""
     user = await register_and_login(client, username="wf-problem-4")
 
     problem = await create_problem_via_api(
@@ -229,14 +229,20 @@ async def test_wf_problem_4_edit_rejects_non_compliant_graph_dsl_with_reasons(
     assert unchanged.status_code == 200
     assert unchanged.json()["problem"]["graphDsl"] is None
 
-    submitted = "board.create('point', [0, 0]); // hand-entered"
+    submitted = """```js
+var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]}); var p = board.create('point', [0, 0]); // hand-entered
+```"""
     accepted = await client.patch(
         f"/api/v1/problems/{problem['id']}",
         json={"graphDsl": submitted},
     )
     assert accepted.status_code == 200
     detail = await client.get(f"/api/v1/problems/{problem['id']}")
-    assert detail.json()["problem"]["graphDsl"] == submitted
+    stored = detail.json()["problem"]["graphDsl"]
+    assert stored == "var p = board.create('point', [0, 0]);"
+    assert "initBoard" not in stored
+    assert "//" not in stored
+    assert "```" not in stored
 
     # Clearing the graph stays allowed.
     cleared = await client.patch(
