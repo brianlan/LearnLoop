@@ -103,7 +103,7 @@ async def test_wf_problem_2_edit_problem_keeps_submitted_exam_history_unchanged(
         json={
             "text": "Updated prompt",
             "problemType": "multi-choice",
-            "graphDsl": "graph TD; A-->B",
+            "graphDsl": "board.create('point', [0, 0], {name: 'A'});",
             "correctAnswer": "B, A",
             "tags": ["updated", "chapter-2"],
         },
@@ -194,3 +194,55 @@ async def test_wf_problem_3_soft_delete_hides_problem_but_keeps_history(
     history_exam = history_detail_response.json()["exam"]
     assert history_exam["items"][0]["problem"]["text"] == "Delete me later"
     assert history_exam["items"][0]["problemId"] == problem["id"]
+
+
+@pytest.mark.asyncio
+async def test_wf_problem_4_edit_rejects_non_compliant_graph_dsl_with_reasons(
+    client: AsyncClient,
+    register_and_login,
+    create_problem_via_api,
+) -> None:
+    """Issue #694: the human-review PATCH path rejects a non-compliant
+    graphDsl with the sanitizer's reasons and writes nothing; a compliant
+    value is stored exactly as submitted."""
+    user = await register_and_login(client, username="wf-problem-4")
+
+    problem = await create_problem_via_api(
+        client,
+        user_id=user["_id"],
+        text="Original prompt",
+        problem_type="short-answer",
+        correct_answer="4",
+        tags=[],
+    )
+
+    rejected = await client.patch(
+        f"/api/v1/problems/{problem['id']}",
+        json={"graphDsl": "board.create('rectangle', [0, 0, 1, 1]);"},
+    )
+    assert rejected.status_code == 400
+    error = rejected.json()["error"]
+    assert error["code"] == "GRAPH_DSL_INVALID"
+    assert "rectangle" in error["message"]
+
+    unchanged = await client.get(f"/api/v1/problems/{problem['id']}")
+    assert unchanged.status_code == 200
+    assert unchanged.json()["problem"]["graphDsl"] is None
+
+    submitted = "board.create('point', [0, 0]); // hand-entered"
+    accepted = await client.patch(
+        f"/api/v1/problems/{problem['id']}",
+        json={"graphDsl": submitted},
+    )
+    assert accepted.status_code == 200
+    detail = await client.get(f"/api/v1/problems/{problem['id']}")
+    assert detail.json()["problem"]["graphDsl"] == submitted
+
+    # Clearing the graph stays allowed.
+    cleared = await client.patch(
+        f"/api/v1/problems/{problem['id']}",
+        json={"graphDsl": None},
+    )
+    assert cleared.status_code == 200
+    detail_after_clear = await client.get(f"/api/v1/problems/{problem['id']}")
+    assert detail_after_clear.json()["problem"]["graphDsl"] is None

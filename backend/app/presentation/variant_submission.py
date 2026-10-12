@@ -34,6 +34,7 @@ from app.domain.ingestion.variation import (
     ProblemVariation,
     ValidationProvenance,
 )
+from app.domain.whiteboard.graph_dsl import sanitize_graph_dsl_for_storage
 from app.infrastructure.ingestion.documents import build_audit_image_key
 from app.infrastructure.ingestion.repository import (
     INGESTION_BATCHES_COLLECTION,
@@ -273,6 +274,22 @@ async def admit_variant_problem(
     ``submit_recorder(problem_id, session)`` must return ``False`` when the
     caller's record no longer admits (aborts via 409).
     """
+    # Issue #694: the last gate. Both submit paths funnel through here with
+    # the fresh, possibly teacher-edited candidate, so a non-compliant
+    # graphDsl can no longer be frozen into a problem by trusting the stored
+    # verdict. Human-review strategy: reject with the sanitizer's reasons.
+    # Compliant DSL is frozen in canonical form.
+    accepted_variant = dict(accepted_variant)
+    canonical_graph_dsl, graph_dsl_reasons = sanitize_graph_dsl_for_storage(
+        accepted_variant.get("graphDsl")
+    )
+    if graph_dsl_reasons:
+        raise ApiError(
+            400,
+            "VARIANT_GRAPH_DSL_INVALID",
+            "; ".join(graph_dsl_reasons),
+        )
+    accepted_variant["graphDsl"] = canonical_graph_dsl
     problem = _build_variation_problem_document(
         mode=mode,
         original=original,

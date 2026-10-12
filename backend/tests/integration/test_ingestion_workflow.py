@@ -214,3 +214,99 @@ async def test_wf_ing_2_retry_failed_extraction_transitions_preview_to_ready(
     refreshed_preview = await database["ingestion_previews"].find_one({"_id": stored_preview["_id"]})
     assert refreshed_preview is not None
     assert refreshed_preview["status"] == "ready"
+
+
+CANONICAL_IN_DSL = (
+    "var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+    "board.create('point', [0, 0], {name: 'A'}); // origin"
+)
+CANONICAL_OUT_DSL = "board.create('point', [0, 0], {name: 'A'});"
+NON_COMPLIANT_DSL = "board.create('rectangle', [0, 0, 1, 1]);"
+
+
+@pytest.mark.asyncio
+async def test_wf_ing_3_extraction_stores_canonical_graph_dsl(
+    app: FastAPI,
+    client: AsyncClient,
+    database: Any,
+    helper_vlm_client: Any,
+    math_ingestion_vlm_client: Any,
+    png_bytes: bytes,
+) -> None:
+    """Issue #694: a compliant extraction result is stored as the canonical
+    value; rawGraphDsl keeps the unmodified VLM output."""
+    await register_and_login(client, username="student3")
+    app.state.sync_wait_seconds = 1.0
+    helper_vlm_client.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="math",
+            confidence=0.95,
+            reason="Contains math notation",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    math_ingestion_vlm_client.responses = [
+        make_extraction_result(
+            text="Graph problem",
+            problem_type="short-answer",
+            graph_dsl=CANONICAL_IN_DSL,
+        )
+    ]
+
+    create_response = await client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("clipboard.png", png_bytes, "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    create_body = create_response.json()["preview"]
+    assert create_body["draft"]["graphDsl"] == CANONICAL_OUT_DSL
+    assert create_body["extraction"]["rawGraphDsl"] == CANONICAL_IN_DSL
+    assert create_body["extraction"]["failureMessage"] is None
+
+
+@pytest.mark.asyncio
+async def test_wf_ing_4_extraction_drops_non_compliant_graph_dsl_with_message(
+    app: FastAPI,
+    client: AsyncClient,
+    database: Any,
+    helper_vlm_client: Any,
+    math_ingestion_vlm_client: Any,
+    png_bytes: bytes,
+) -> None:
+    """Issue #694: a non-compliant extraction result stores null plus the
+    sanitizer's reasons; rawGraphDsl keeps the unmodified VLM output."""
+    await register_and_login(client, username="student4")
+    app.state.sync_wait_seconds = 1.0
+    helper_vlm_client.responses = [
+        ClassificationResult(
+            request_type="subject-classification",
+            model="gpt-4.1-mini",
+            subject="math",
+            confidence=0.95,
+            reason="Contains math notation",
+            provider_metadata={},
+            raw_provider_response={},
+        )
+    ]
+    math_ingestion_vlm_client.responses = [
+        make_extraction_result(
+            text="Graph problem",
+            problem_type="short-answer",
+            graph_dsl=NON_COMPLIANT_DSL,
+        )
+    ]
+
+    create_response = await client.post(
+        "/api/v1/ingestion-previews",
+        files={"image": ("clipboard.png", png_bytes, "image/png")},
+    )
+
+    assert create_response.status_code == 201
+    create_body = create_response.json()["preview"]
+    assert create_body["draft"]["graphDsl"] is None
+    assert create_body["extraction"]["rawGraphDsl"] == NON_COMPLIANT_DSL
+    assert "rectangle" in create_body["extraction"]["failureMessage"]

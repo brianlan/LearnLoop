@@ -567,3 +567,86 @@ async def test_cleanup_protects_referenced_audit_copy_and_removes_pending(
     crop_key = f"users/{user_id}/ingestion/crops/item-1.png"
     assert crop_key in storage.deleted
     assert f"users/{user_id}/ingestion/crops/item-pending.png" in storage.deleted
+
+
+NON_COMPLIANT_DSL = "board.create('rectangle', [0, 0, 1, 1]);"
+CANDIDATE_WITH_COMMENT_DSL = "board.create('point', [0, 0]); // hand-entered"
+CANONICAL_OUT_DSL = "board.create('point', [0, 0]);"
+
+
+@pytest.mark.asyncio
+async def test_admission_rejects_post_validation_edited_non_compliant_graph_dsl(
+    real_database: Any,
+    real_adapter: MongoClientAdapter,
+    user_id: Any,
+    settings: Settings,
+    storage: FakeStorage,
+) -> None:
+    """Issue #694: admission is the last gate. A teacher-edited non-compliant
+    candidate graphDsl can no longer be frozen into a problem by trusting the
+    stored verdict — the admission fails closed with the sanitizer's reasons."""
+    batch_id = await _seed_ready_variant_item(real_database, user_id, settings)
+    # The teacher's post-validation edit (edit_variation_candidate): the
+    # candidate changed after the stored verdict was recorded.
+    await real_database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": "item-1"},
+        {"$set": {"items.$.variation.candidate.graphDsl": NON_COMPLIANT_DSL}},
+    )
+    audit_image = _audit_copy(storage, user_id, batch_id, "item-1")
+
+    with pytest.raises(ApiError) as excinfo:
+        await admit_variant_item(
+            real_database,
+            real_adapter,
+            user_id,
+            batch_id,
+            "item-1",
+            audit_image=audit_image,
+            tags=["algebra"],
+            now=datetime.now(UTC),
+        )
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.code == "VARIANT_GRAPH_DSL_INVALID"
+    assert "rectangle" in excinfo.value.message
+    assert await real_database["problems"].count_documents({}) == 0
+    stored_item = (
+        await real_database[INGESTION_BATCHES_COLLECTION].find_one({"_id": batch_id})
+    )["items"][0]
+    assert stored_item["status"] != "submitted"
+
+
+@pytest.mark.asyncio
+async def test_admission_freezes_canonical_graph_dsl(
+    real_database: Any,
+    real_adapter: MongoClientAdapter,
+    user_id: Any,
+    settings: Settings,
+    storage: FakeStorage,
+) -> None:
+    """Issue #694: FrozenContentSnapshot inputs are always canonical — a
+    compliant candidate carrying comment residue is frozen comment-free."""
+    batch_id = await _seed_ready_variant_item(real_database, user_id, settings)
+    await real_database[INGESTION_BATCHES_COLLECTION].update_one(
+        {"_id": batch_id, "items.itemId": "item-1"},
+        {"$set": {"items.$.variation.candidate.graphDsl": CANDIDATE_WITH_COMMENT_DSL}},
+    )
+    audit_image = _audit_copy(storage, user_id, batch_id, "item-1")
+
+    outcome = await admit_variant_item(
+        real_database,
+        real_adapter,
+        user_id,
+        batch_id,
+        "item-1",
+        audit_image=audit_image,
+        tags=["algebra"],
+        now=datetime.now(UTC),
+    )
+
+    problem = await real_database["problems"].find_one(
+        {"_id": ObjectId(outcome["problemId"])}
+    )
+    assert problem is not None
+    assert problem["graphDsl"] == CANONICAL_OUT_DSL
+    assert problem["variation"]["acceptedVariant"]["graphDsl"] == CANONICAL_OUT_DSL

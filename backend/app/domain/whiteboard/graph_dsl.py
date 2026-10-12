@@ -372,3 +372,19 @@ def sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
         return None
 
     return stripped
+
+
+def sanitize_graph_dsl_for_storage(dsl: str | None) -> tuple[str | None, list[str]]:
+    """Write-path seam (issue #694): one sanitize decision for every writer.
+
+    Storage strategy: returns ``(canonical, [])`` when the DSL is absent or
+    compliant, and ``(None, reasons)`` when it is present but non-compliant.
+    Absent input (``None`` or blank) is not a failure. Human-review call
+    sites reject on a non-empty reason list instead of storing ``None``.
+    """
+    if dsl is None or not dsl.strip():
+        return None, []
+    canonical = sanitize_whiteboard_dsl(dsl)
+    if canonical is None:
+        return None, explain_graph_dsl(dsl)
+    return canonical, []
