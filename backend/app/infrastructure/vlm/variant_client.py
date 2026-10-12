@@ -34,6 +34,7 @@ from app.domain.ingestion.variation import (
     assess_variant,
     check_candidate,
 )
+from app.domain.whiteboard import explain_graph_dsl, sanitize_whiteboard_dsl
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm._models import _ChatCompletionRequest, _ChatMessage
 from app.infrastructure.vlm.base_client import (
@@ -448,10 +449,32 @@ async def generate_and_validate(
     the deterministic assessment, so approval provenance stays inspectable
     even on failure. Fails closed: generator/validator/helper provider or
     invalid-response failures become non-content failures and the verdict is
-    FAIL. Conclusively invalid candidates short-circuit before validator
+    FAIL.     Conclusively invalid candidates short-circuit before validator
     calls. A pre-built ``candidate`` skips generation entirely; this exists
     for the deterministic gate samples in scripts/check_variant_models.py.
     """
+    # Pre-flight (issue #692): a non-compliant source graphDsl can only yield
+    # candidates the cheap gate rejects, so fail before any provider call.
+    # One guard at this single convergence point covers every caller.
+    source_graph = (source.graph_dsl or "").strip()
+    if source_graph and sanitize_whiteboard_dsl(source.graph_dsl) is None:
+        return VariantGenerationResult(
+            candidate=candidate,
+            reports=[],
+            assessment=VariantAssessment(
+                verdict="fail",
+                failures=[
+                    AssessmentFailure(
+                        kind="content",
+                        evidence=(
+                            "source graphDsl failed the safety check and was rejected before "
+                            "generation: " + "; ".join(explain_graph_dsl(source.graph_dsl))
+                        ),
+                    )
+                ],
+            ),
+        )
+
     if candidate is None:
         try:
             candidate = await generator.generate_candidate(mode=mode, source=source)

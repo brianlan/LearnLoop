@@ -1,6 +1,7 @@
 import pytest
 
 from app.domain.whiteboard.graph_dsl import (
+    explain_graph_dsl,
     sanitize_whiteboard_dsl,
     _is_allowed_graph_dsl,
     _split_top_level,
@@ -65,26 +66,44 @@ class TestSplitTopLevel:
 
 
 class TestValidateDslCreateCall:
+    # The validator returns the rejection reason (None when valid) so the
+    # sanitizer and explain_graph_dsl share one grammar (issue #692).
     def test_valid_point_creation(self) -> None:
-        assert _validate_dsl_create_call("board.create('point', [0, 0])", set()) is True
+        assert _validate_dsl_create_call("board.create('point', [0, 0])", set()) is None
 
     def test_valid_segment_with_options(self) -> None:
-        assert _validate_dsl_create_call("board.create('segment', [A, B], {strokeWidth: 2})", {"A", "B"}) is True
+        assert (
+            _validate_dsl_create_call(
+                "board.create('segment', [A, B], {strokeWidth: 2})", {"A", "B"}
+            )
+            is None
+        )
 
     def test_rejects_invalid_element_type(self) -> None:
-        assert _validate_dsl_create_call("board.create('invalid', [0, 0])", set()) is False
+        reason = _validate_dsl_create_call("board.create('invalid', [0, 0])", set())
+        assert reason == "disallowed element type 'invalid'"
 
     def test_rejects_too_few_args(self) -> None:
-        assert _validate_dsl_create_call("board.create('point')", set()) is False
+        assert _validate_dsl_create_call("board.create('point')", set()) is not None
 
     def test_rejects_too_many_args(self) -> None:
-        assert _validate_dsl_create_call("board.create('point', [0, 0], {}, extra)", set()) is False
+        assert _validate_dsl_create_call("board.create('point', [0, 0], {}, extra)", set()) is not None
 
     def test_rejects_non_string_element_type(self) -> None:
-        assert _validate_dsl_create_call("board.create(point, [0, 0])", set()) is False
+        assert _validate_dsl_create_call("board.create(point, [0, 0])", set()) is not None
 
     def test_rejects_missing_board_prefix(self) -> None:
-        assert _validate_dsl_create_call("create('point', [0, 0])", set()) is False
+        assert _validate_dsl_create_call("create('point', [0, 0])", set()) is not None
+
+    def test_rejects_unknown_option_key(self) -> None:
+        reason = _validate_dsl_create_call(
+            "board.create('polygon', [0, 0, 1, 0], {borders: {evil: 1}})", set()
+        )
+        assert reason == "unknown option key 'evil'"
+
+    def test_rejects_undeclared_name(self) -> None:
+        reason = _validate_dsl_create_call("board.create('segment', [A, B])", set())
+        assert reason == "undeclared name 'A'"
 
 
 class TestIsAllowedGraphDsl:
@@ -314,3 +333,82 @@ class TestSanitizeWhiteboardDsl:
         once = sanitize_whiteboard_dsl(raw)
         assert once is not None
         assert sanitize_whiteboard_dsl(once) == once
+
+
+BORDERS_DSL = (
+    "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], "
+    "{fillColor:'#a8d4f050', borders:{strokeColor:'#000000', strokeWidth:1}});"
+)
+
+
+class TestExplainGraphDsl:
+    """explain_graph_dsl mirrors the sanitizer verdict with named reasons."""
+
+    def test_compliant_dsl_has_no_reasons(self) -> None:
+        assert explain_graph_dsl(BORDERS_DSL) == []
+
+    def test_unknown_option_key_named(self) -> None:
+        reasons = explain_graph_dsl("board.create('polygon', [0,0,1,0], {borders:{evil:1}});")
+        assert reasons == [
+            "rejected statement 'board.create('polygon', [0,0,1,0], {borders:{evil:1}})': "
+            "unknown option key 'evil'"
+        ]
+
+    def test_disallowed_element_type_named(self) -> None:
+        reasons = explain_graph_dsl("board.create('rectangle', [0, 0, 1, 1]);")
+        assert reasons == [
+            "rejected statement 'board.create('rectangle', [0, 0, 1, 1])': "
+            "disallowed element type 'rectangle'"
+        ]
+
+    def test_blocked_token_named(self) -> None:
+        reasons = explain_graph_dsl("fetch('http://evil');")
+        assert "disallowed token 'fetch'" in reasons
+
+    def test_undeclared_name_named(self) -> None:
+        reasons = explain_graph_dsl("board.create('segment', [A, B]);")
+        assert reasons == [
+            "rejected statement 'board.create('segment', [A, B])': undeclared name 'A'"
+        ]
+
+    def test_unrecognized_statement_named_with_statement_text(self) -> None:
+        reasons = explain_graph_dsl("board.create('point', [0, 0]); garbage statement")
+        assert reasons == [
+            "rejected statement 'garbage statement': "
+            "statement is not an allowed declaration or board.create call"
+        ]
+
+    def test_unbalanced_input_rejected_without_statement_split(self) -> None:
+        reasons = explain_graph_dsl("var p = board.create('point', [0, 0]")
+        assert reasons == ["unbalanced brackets or an unterminated string literal"]
+
+    def test_missing_and_empty_input(self) -> None:
+        assert explain_graph_dsl(None) == ["graphDsl is missing"]
+        assert explain_graph_dsl("   ") == ["graphDsl is empty"]
+
+    def test_comment_only_input_has_no_statements_left(self) -> None:
+        assert explain_graph_dsl("// draw a new triangle") == [
+            "no DSL statements remain after comment and fence stripping"
+        ]
+
+    @pytest.mark.parametrize(
+        "dsl",
+        [
+            None,
+            "",
+            "   ",
+            "board.create('point', [0, 0]);",
+            BORDERS_DSL,
+            "board.create('polygon', [0,0,1,0], {borders:{evil:1}});",
+            "board.create('rectangle', [0, 0, 1, 1]);",
+            "fetch('http://evil');",
+            "board.create('segment', [A, B]);",
+            "var p = board.create('point', [0, 0]",
+            "// only a comment",
+            "board.setBoundingBox([-1, 7, 11, -1], true);",
+            "board.create('point', [0, 0]);\n// draw a new triangle\nvar p = board.create('point', [1, 1]);",
+        ],
+    )
+    def test_explanation_agrees_with_sanitizer_verdict(self, dsl: str | None) -> None:
+        # Drift guard: empty explanation <=> sanitizer accepts.
+        assert bool(explain_graph_dsl(dsl)) == (sanitize_whiteboard_dsl(dsl) is None)

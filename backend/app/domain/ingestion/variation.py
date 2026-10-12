@@ -11,7 +11,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
-from app.domain.whiteboard import sanitize_whiteboard_dsl
+from app.domain.whiteboard import explain_graph_dsl, sanitize_whiteboard_dsl
 
 from app.domain.variation_provenance import (
     FrozenContentSnapshot,
@@ -218,7 +218,10 @@ def check_candidate(mode: VariantMode, source: ProblemContent, candidate: Varian
         cleaned = sanitize_whiteboard_dsl(candidate.graph_dsl)
         if cleaned is None:
             failures.append(
-                _content_failure("candidate graphDsl failed the safety check and was not accepted")
+                _content_failure(
+                    "candidate graphDsl failed the safety check and was not accepted: "
+                    + "; ".join(explain_graph_dsl(candidate.graph_dsl))
+                )
             )
     if mode == "data-only" and candidate.text.strip() == source.text.strip():
         failures.append(_content_failure("dataChange: candidate data is unchanged from the source"))

@@ -1,9 +1,12 @@
 """Graph/whiteboard DSL sanitizer policy.
 
 This module owns the complete existing sanitizer policy that was previously
-embedded in the VLM coaching client. It exposes a single public function,
-``sanitize_whiteboard_dsl``, which validates and cleans a raw whiteboard DSL
-string so it can safely be executed as JSXGraph DSL inside the browser sandbox.
+embedded in the VLM coaching client. It exposes ``sanitize_whiteboard_dsl``,
+which validates and cleans a raw whiteboard DSL string so it can safely be
+executed as JSXGraph DSL inside the browser sandbox, and
+``explain_graph_dsl``, which returns the per-statement reasons a DSL would be
+rejected. Both share the same preprocessing and validators, so they cannot
+drift: an empty explanation means the sanitizer accepts the input.
 """
 
 from __future__ import annotations
@@ -137,127 +140,205 @@ def _is_js_string_literal(value: str) -> bool:
     return bool(re.fullmatch(r"""'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"""", value))
 
 
-def _validate_dsl_object(value: str, declared_names: set[str]) -> bool:
+def _validate_dsl_object(value: str, declared_names: set[str]) -> str | None:
     if not value.startswith("{") or not value.endswith("}"):
-        return False
+        return "expected an object literal"
     inner = value[1:-1].strip()
     if not inner:
-        return True
+        return None
     entries = _split_top_level(inner, ",")
     if entries is None:
-        return False
+        return "malformed object literal"
     for entry in entries:
         pair = _split_top_level(entry, ":")
         if pair is None or len(pair) != 2:
-            return False
+            return "malformed object entry"
         key = pair[0].strip().strip("'\"")
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or key not in _ALLOWED_DSL_OPTION_KEYS:
-            return False
-        if not _validate_dsl_value(pair[1], declared_names):
-            return False
-    return True
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            return f"malformed option key '{key}'"
+        if key not in _ALLOWED_DSL_OPTION_KEYS:
+            return f"unknown option key '{key}'"
+        reason = _validate_dsl_value(pair[1], declared_names)
+        if reason:
+            return reason
+    return None
 
 
-def _validate_dsl_value(value: str, declared_names: set[str]) -> bool:
+def _validate_dsl_value(value: str, declared_names: set[str]) -> str | None:
     stripped = value.strip()
     if not stripped:
-        return False
+        return "empty value"
     if re.fullmatch(r"-?\d+(?:\.\d+)?", stripped):
-        return True
+        return None
     if _is_js_string_literal(stripped):
-        return True
+        return None
     if stripped in {"true", "false", "null"}:
-        return True
+        return None
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", stripped):
-        return stripped in declared_names
+        if stripped not in declared_names:
+            return f"undeclared name '{stripped}'"
+        return None
     if stripped.startswith("[") and stripped.endswith("]"):
         inner = stripped[1:-1].strip()
         if not inner:
-            return True
+            return None
         items = _split_top_level(inner, ",")
-        return items is not None and all(_validate_dsl_value(item, declared_names) for item in items)
+        if items is None:
+            return "malformed array literal"
+        for item in items:
+            reason = _validate_dsl_value(item, declared_names)
+            if reason:
+                return reason
+        return None
     if stripped.startswith("{") and stripped.endswith("}"):
         return _validate_dsl_object(stripped, declared_names)
-    return False
+    return "malformed value"
 
 
-def _validate_dsl_create_call(call: str, declared_names: set[str]) -> bool:
+def _validate_dsl_create_call(call: str, declared_names: set[str]) -> str | None:
     if not call.startswith("board.create(") or not call.endswith(")"):
-        return False
+        return "malformed board.create call"
     args = _split_top_level(call[len("board.create(") : -1], ",")
-    if args is None or len(args) < 2 or len(args) > 3:
-        return False
+    if args is None:
+        return "malformed board.create arguments"
+    if len(args) < 2 or len(args) > 3:
+        return "board.create expects 2 or 3 arguments"
     element_type_arg = args[0].strip()
     if not _is_js_string_literal(element_type_arg):
-        return False
+        return "element type must be a string literal"
     element_type = element_type_arg[1:-1]
     if element_type not in _ALLOWED_DSL_ELEMENT_TYPES:
-        return False
-    if not _validate_dsl_value(args[1], declared_names):
-        return False
-    if len(args) == 3 and not _validate_dsl_object(args[2].strip(), declared_names):
-        return False
-    return True
+        return f"disallowed element type '{element_type}'"
+    reason = _validate_dsl_value(args[1], declared_names)
+    if reason:
+        return reason
+    if len(args) == 3:
+        reason = _validate_dsl_object(args[2].strip(), declared_names)
+        if reason:
+            return reason
+    return None
 
 
-def _is_allowed_graph_dsl(dsl: str) -> bool:
-    if len(dsl) > _MAX_DSL_LENGTH:
-        return False
-    unquoted = _strip_quoted_strings(dsl)
-    if re.search(r"=>|`|//|/\*|\*/|\+\+|--", unquoted):
-        return False
+_DANGEROUS_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("=>", "arrow function syntax '=>'"),
+    ("`", "template literal backtick"),
+    ("//", "line comment '//'"),
+    ("/*", "block comment start '/*'"),
+    ("*/", "block comment end '*/'"),
+    ("++", "increment operator '++'"),
+    ("--", "decrement operator '--'"),
+)
+
+
+def _statement_label(statement: str) -> str:
+    # ponytail: bound stored failure evidence; DSL statements are rarely longer.
+    return statement if len(statement) <= 120 else f"{statement[:117]}..."
+
+
+def _explain_statement(statement: str, declared_names: set[str]) -> str | None:
+    bbox_match = re.fullmatch(r"board\.setBoundingBox\((.*)\)", statement)
+    if bbox_match:
+        value = bbox_match.group(1).strip()
+        parts = _split_top_level(value, ",")
+        if (
+            parts is None
+            or len(parts) not in (1, 2)
+            or not (parts[0].startswith("[") and parts[0].endswith("]"))
+        ):
+            return "malformed board.setBoundingBox call"
+        numbers = _split_top_level(parts[0][1:-1], ",")
+        if (
+            numbers is None
+            or len(numbers) != 4
+            or not all(re.fullmatch(r"-?\d+(?:\.\d+)?", part.strip()) for part in numbers)
+        ):
+            return "malformed board.setBoundingBox call"
+        if len(parts) == 2 and parts[1] not in {"true", "false"}:
+            return "malformed board.setBoundingBox call"
+        return None
+
+    declaration_match = re.fullmatch(
+        r"var\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(board\.create\(.*\))",
+        statement,
+    )
+    if declaration_match:
+        name = declaration_match.group(1)
+        if name in declared_names:
+            return f"name '{name}' is declared more than once"
+        reason = _validate_dsl_create_call(declaration_match.group(2), declared_names)
+        if reason:
+            return reason
+        declared_names.add(name)
+        return None
+
+    if statement.startswith("board.create("):
+        return _validate_dsl_create_call(statement, declared_names)
+
+    return "statement is not an allowed declaration or board.create call"
+
+
+def _explain_graph_dsl_body(stripped: str) -> list[str]:
+    """Rejection reasons for already-preprocessed DSL; empty means compliant."""
+    if len(stripped) > _MAX_DSL_LENGTH:
+        return [f"exceeds the maximum DSL length of {_MAX_DSL_LENGTH} characters"]
+
+    reasons: list[str] = []
+    unquoted = _strip_quoted_strings(stripped)
+    for pattern, label in _DANGEROUS_PATTERNS:
+        if re.search(re.escape(pattern), unquoted):
+            reasons.append(f"disallowed syntax: {label}")
     for token in _BLOCKED_DSL_TOKENS:
         if re.search(rf"\b{re.escape(token)}\b", unquoted, re.IGNORECASE):
-            return False
+            reasons.append(f"disallowed token '{token}'")
 
-    statements = _split_top_level(dsl, ";")
+    statements = _split_top_level(stripped, ";")
     if statements is None:
-        return False
+        reasons.append("unbalanced brackets or an unterminated string literal")
+        return reasons
 
     declared_names: set[str] = set()
     for statement in [part for part in statements if part]:
-        bbox_match = re.fullmatch(r"board\.setBoundingBox\((.*)\)", statement)
-        if bbox_match:
-            value = bbox_match.group(1).strip()
-            parts = _split_top_level(value, ",")
-            if (
-                parts is None
-                or len(parts) not in (1, 2)
-                or not (parts[0].startswith("[") and parts[0].endswith("]"))
-            ):
-                return False
-            numbers = _split_top_level(parts[0][1:-1], ",")
-            if (
-                numbers is None
-                or len(numbers) != 4
-                or not all(re.fullmatch(r"-?\d+(?:\.\d+)?", part.strip()) for part in numbers)
-            ):
-                return False
-            if len(parts) == 2 and parts[1] not in {"true", "false"}:
-                return False
-            continue
+        reason = _explain_statement(statement, declared_names)
+        if reason:
+            reasons.append(f"rejected statement '{_statement_label(statement)}': {reason}")
+    return reasons
 
-        declaration_match = re.fullmatch(
-            r"var\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(board\.create\(.*\))",
-            statement,
-        )
-        if declaration_match:
-            name = declaration_match.group(1)
-            if name in declared_names:
-                return False
-            if not _validate_dsl_create_call(declaration_match.group(2), declared_names):
-                return False
-            declared_names.add(name)
-            continue
 
-        if statement.startswith("board.create("):
-            if not _validate_dsl_create_call(statement, declared_names):
-                return False
-            continue
+def _is_allowed_graph_dsl(dsl: str) -> bool:
+    return not _explain_graph_dsl_body(dsl)
 
-        return False
 
-    return True
+def explain_graph_dsl(dsl: str | None) -> list[str]:
+    """Return per-statement reasons why ``dsl`` would be rejected.
+
+    Runs the same preprocessing as ``sanitize_whiteboard_dsl`` and shares its
+    validators, so the two cannot drift: an empty list means the sanitizer
+    accepts the input. Reasons name the offending statement, option key,
+    element type, or token so failures stay explainable (issue #692).
+    """
+    if dsl is None:
+        return ["graphDsl is missing"]
+
+    stripped = dsl.strip()
+    if not stripped:
+        return ["graphDsl is empty"]
+
+    # Remove markdown code fences: ```js ... ``` or ``` ... ```
+    fence_match = re.match(r"^```(?:\w*)\n?(.*?)\n?```$", stripped, re.DOTALL)
+    if fence_match:
+        stripped = fence_match.group(1).strip()
+
+    # Strip initBoard calls — board already exists in the sandbox
+    stripped = re.sub(r"var\s+\w+\s*=\s*JXG\.JSXGraph\.initBoard\([^)]*\)\s*;?", "", stripped)
+
+    # Strip comments before the token scan so orphaned `//` debris left behind
+    # by initBoard removal cannot fail the blocked-pattern scan.
+    stripped = _strip_comments(stripped).strip()
+
+    if not stripped:
+        return ["no DSL statements remain after comment and fence stripping"]
+
+    return _explain_graph_dsl_body(stripped)
 
 
 def sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
