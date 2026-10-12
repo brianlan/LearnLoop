@@ -32,6 +32,51 @@ def _make_draft(
 
 
 @pytest.mark.asyncio
+async def test_create_problem_rejects_noncompliant_graph_dsl() -> None:
+    database = FakeDatabase()
+    user_id = ObjectId()
+    draft = _make_draft(graph_dsl="board.create('rectangle', [0, 0, 1, 1]);")
+
+    with pytest.raises(ApiError) as exc_info:
+        await create_problem_from_draft(
+            database,
+            user_id,
+            draft=draft,
+            source_image=None,
+            origin={"previewId": "prev-graph-invalid"},
+        )
+
+    assert exc_info.value.code == "GRAPH_DSL_INVALID"
+    assert "rectangle" in exc_info.value.message
+    assert len(database["problems"]._documents) == 0
+    assert len(database["solution_generation_tasks"]._documents) == 0
+
+
+@pytest.mark.asyncio
+async def test_create_problem_stores_canonical_graph_dsl() -> None:
+    database = FakeDatabase()
+    user_id = ObjectId()
+    draft = _make_draft(
+        graph_dsl=(
+            "```js\n"
+            "var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+            "var p = board.create('point', [0, 0]); // hand-entered\n"
+            "```"
+        )
+    )
+
+    problem = await create_problem_from_draft(
+        database,
+        user_id,
+        draft=draft,
+        source_image=None,
+        origin={"previewId": "prev-graph-canonical"},
+    )
+
+    assert problem["graphDsl"] == "var p = board.create('point', [0, 0]);"
+
+
+@pytest.mark.asyncio
 async def test_create_problem_rejects_missing_required_fields() -> None:
     database = FakeDatabase()
     with pytest.raises(ApiError) as exc_info:

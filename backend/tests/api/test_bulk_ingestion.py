@@ -1892,6 +1892,84 @@ async def test_submit_batch_gate_blocks_missing_fields(
 
 
 @pytest.mark.asyncio
+async def test_submit_batch_rejects_noncompliant_draft_graph_dsl(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item_with_draft(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={"graphDsl": "board.create('rectangle', [0, 0, 1, 1]);"},
+    )
+    assert patch_response.status_code == 200
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["status"] == "active"
+    assert summary["items"][0]["itemId"] == item_id
+    assert summary["items"][0]["status"] == "submit-failed"
+    assert summary["items"][0]["failureCode"] == "GRAPH_DSL_INVALID"
+    assert "rectangle" in summary["items"][0]["failureMessage"]
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    assert len(database["problems"]._documents) == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_batch_stores_canonical_draft_graph_dsl(
+    authenticated_bulk_client: AsyncClient,
+    bulk_app: FastAPI,
+    helper_vlm: FakeHelperVLMClient,
+    math_ingestion_vlm: FakeIngestionVLMClient,
+) -> None:
+    batch_id, _image_id, item_id = await create_ready_item_with_draft(
+        authenticated_bulk_client,
+        bulk_app,
+        helper_vlm,
+        math_ingestion_vlm,
+    )
+
+    patch_response = await authenticated_bulk_client.patch(
+        f"/api/v1/ingestion-batches/{batch_id}/items/{item_id}",
+        json={
+            "graphDsl": (
+                "```js\n"
+                "var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+                "var p = board.create('point', [0, 0]); // hand-entered\n"
+                "```"
+            )
+        },
+    )
+    assert patch_response.status_code == 200
+
+    response = await authenticated_bulk_client.post(
+        f"/api/v1/ingestion-batches/{batch_id}/submit"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["submitSummary"]
+    assert summary["items"][0]["status"] == "submitted"
+    assert summary["items"][0]["failureCode"] is None
+
+    database: FakeDatabase = bulk_app.state.fake_database
+    problems = database["problems"]._documents
+    assert len(problems) == 1
+    assert problems[0]["graphDsl"] == "var p = board.create('point', [0, 0]);"
+
+
+@pytest.mark.asyncio
 async def test_submit_batch_gate_skips_non_ready_items(
     authenticated_bulk_client: AsyncClient,
     bulk_app: FastAPI,

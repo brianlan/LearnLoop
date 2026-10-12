@@ -10,6 +10,7 @@ from bson import ObjectId
 logger = logging.getLogger(__name__)
 
 from app.domain import ProblemSubject, ProblemType, normalize_answer
+from app.domain.whiteboard.graph_dsl import sanitize_graph_dsl_for_storage
 from app.presentation.errors import ApiError
 from app.presentation.helpers import normalize_tags
 from app.solution_generation import enqueue_solution_generation_task_for_problem
@@ -41,6 +42,20 @@ async def create_problem_from_draft(
     """
     current = now or datetime.now(UTC)
     draft_dict = dict(draft or {})
+
+    # Issue #699: human-review strategy at the single draft->problem funnel.
+    # The teacher confirmed/submitted the draft, so non-compliant graphDsl is
+    # rejected with the sanitizer's reasons instead of written. Compliant DSL
+    # is stored as the canonical value that was actually validated.
+    canonical_graph_dsl, graph_dsl_reasons = sanitize_graph_dsl_for_storage(
+        draft_dict.get("graphDsl")
+    )
+    if graph_dsl_reasons:
+        raise ApiError(
+            400,
+            "GRAPH_DSL_INVALID",
+            "; ".join(graph_dsl_reasons),
+        )
 
     text = (draft_dict.get("text") or "").strip() or None
     problem_type_value = draft_dict.get("problemType")
@@ -92,7 +107,7 @@ async def create_problem_from_draft(
         "text": text,
         "problemType": problem_type.value,
         "subject": str(subject_value),
-        "graphDsl": draft_dict.get("graphDsl"),
+        "graphDsl": canonical_graph_dsl,
         "correctAnswer": normalized_answer.model_dump(),
         "tags": tags,
         "sourceImage": dict(source_image) if source_image else None,
