@@ -764,19 +764,37 @@ export function useBulkReviewEditing(
           return;
         }
 
+        // A delayed response belongs to the snapshot it validated. If the
+        // buffer changed, was reset, or was dropped while the request was in
+        // flight, discard its invalid/error result instead of stranding the
+        // current draft behind a stale rejection.
+        const isCurrentSnapshot = () => {
+          const currentDraft = draftRefs.current[key];
+          return (
+            currentDraft !== undefined &&
+            JSON.stringify(currentDraft) === sentSerialized
+          );
+        };
+
         setValidatingKeys((prev) => new Set(prev).add(key));
         api
           .validateGraphDsl(sentDraft.graphDsl)
           .then((result) => {
             if (result.valid) {
+              if (!isCurrentSnapshot()) return;
               clearValidationError(key);
               dispatch();
               return;
             }
+            if (!isCurrentSnapshot()) return;
             setValidationError(key, result.issues.join("; "));
+            // A rejected source must not keep a queued Generate locked; the
+            // teacher needs the editable draft and its inline evidence back.
+            cancelPendingGenerate(key);
           })
           .catch(() => {
             // Validation unavailability is retryable, but never a pass.
+            if (!isCurrentSnapshot()) return;
             setSaveFailures((prev) => {
               const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
               saveFailuresRef.current = next;
@@ -830,9 +848,6 @@ export function useBulkReviewEditing(
       key.startsWith(itemPrefix) && !conflictKeys.has(key),
     );
     const hasConflict = [...conflictKeys].some((key) => key.startsWith(itemPrefix));
-    const hasValidationIssue = Object.keys(validationErrors).some((key) =>
-      key.startsWith(itemPrefix),
-    );
     const sourceValidationIssue = validationErrors[sourceKey] !== undefined;
     const candidateValidationIssue = validationErrors[candidateKey] !== undefined;
     const sourceGaps = getRequiredFieldGaps(getDraft(item, "source"));
@@ -917,7 +932,6 @@ export function useBulkReviewEditing(
       isActionWorking,
       hasSaveFailed,
       hasConflict,
-      hasValidationIssue,
       sourceLocked: generating,
       generateDisabledReason,
       generateHint,

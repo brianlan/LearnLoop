@@ -849,6 +849,66 @@ describe("BulkReviewStep", () => {
     });
   });
 
+  it("ignores a stale invalid autosave validation response after the DSL is corrected", async () => {
+    let resolveInvalid: (value: { valid: boolean; issues: string[] }) => void = () => undefined;
+    vi.mocked(api.validateGraphDsl).mockImplementation((dsl: string) =>
+      dsl.includes("rectangle")
+        ? new Promise((resolve) => {
+            resolveInvalid = resolve;
+          })
+        : Promise.resolve({ valid: true, issues: [] }),
+    );
+
+    render(
+      <BulkReviewStep
+        batch={makeBatch({
+          items: [makeItem("item-1", { order: 0 })],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('rectangle', [0, 0, 1, 1]);" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('rectangle', [0, 0, 1, 1]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('point', [0, 0]);" },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(api.validateGraphDsl).toHaveBeenCalledWith(
+        "board.create('point', [0, 0]);",
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    });
+
+    await act(async () => {
+      resolveInvalid({ valid: false, issues: ["disallowed element type 'rectangle'"] });
+    });
+
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ graphDsl: "board.create('point', [0, 0]);" }),
+        expect.objectContaining({ target: "source", expectedRevision: 0 }),
+      );
+    });
+    expect(screen.queryByText("disallowed element type 'rectangle'")).not.toBeInTheDocument();
+  });
+
   it("debounces draft updates and sends the latest value", async () => {
     render(
       <BulkReviewStep
@@ -2172,6 +2232,93 @@ describe("BulkReviewStep variant generate", () => {
     expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
       "Draft save failed",
     );
+  });
+
+  it("cancels a queued Generate when source graphDsl validation rejects", async () => {
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: false,
+      issues: ["disallowed element type 'rectangle'"],
+    });
+    handlers.onUpdateDraft.mockResolvedValue({
+      item: makeItem("item-1", {
+        contentRevision: 3,
+        updatedAt: "2026-07-03T00:00:01Z",
+        draft: {
+          ...makeItem("item-1").draft,
+          graphDsl: "board.create('point', [0, 0]);",
+        },
+      }),
+    });
+    const { rerender } = renderReview([makeItem("item-1", { contentRevision: 2 })]);
+
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('rectangle', [0, 0, 1, 1]);" },
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-answer")).toBeDisabled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+    expect(handlers.onUpdateDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-answer")).toBeEnabled();
+    expect(screen.getByTestId("bulk-review-graphdsl")).toBeEnabled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(screen.getByTestId("bulk-review-graphdsl-issues")).toBeInTheDocument();
+
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: true,
+      issues: [],
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('point', [0, 0]);" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ graphDsl: "board.create('point', [0, 0]);" }),
+        expect.objectContaining({ target: "source", expectedRevision: 2 }),
+      );
+    });
+
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          ingestionMode: "transfer-variant",
+          items: [
+            makeItem("item-1", {
+              contentRevision: 3,
+              updatedAt: "2026-07-03T00:00:01Z",
+              draft: {
+                ...makeItem("item-1").draft,
+                graphDsl: "board.create('point', [0, 0]);",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    await waitFor(() => {
+      expect(handlers.onGenerate).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ graphDsl: "board.create('point', [0, 0]);" }),
+        3,
+      );
+    });
   });
 
   it("explains why Generate is disabled when the source is unprepared", () => {

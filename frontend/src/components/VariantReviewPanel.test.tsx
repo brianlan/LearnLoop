@@ -12,7 +12,6 @@ function makeActionState(
     isActionWorking: false,
     hasSaveFailed: false,
     hasConflict: false,
-    hasValidationIssue: false,
     sourceLocked: false,
     generateDisabledReason: "",
     generateHint: "",
