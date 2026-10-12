@@ -974,3 +974,58 @@ async def test_connected_chain_preserves_each_source_whole_document(
             {"problem_id": admitted_problem_id}
         ).to_list(None)
         assert len(tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_rejects_post_validation_edited_non_compliant_graph_dsl(
+    real_database: Any,
+    real_adapter: Any,
+) -> None:
+    """Issue #694: the problem-variant submit path is covered by the same
+    admission gate — a teacher-edited non-compliant candidate graphDsl fails
+    closed with the sanitizer's reasons and admits nothing."""
+    from httpx import ASGITransport, AsyncClient
+
+    problem, user_id = await _seed_route_problem(real_database)
+    session = build_problem_variant_session_document(
+        problem_id=str(problem["_id"]),
+        user_id=user_id,
+        mode="data-only",
+        original={
+            "text": "What is 2+2?",
+            "problemType": "short-answer",
+            "graphDsl": None,
+            "correctAnswer": "4",
+            "subject": "math",
+        },
+        tags=[],
+        now=NOW,
+    )
+    # The teacher's post-validation edit: the stored verdict says pass, the
+    # candidate's graphDsl was edited afterwards.
+    session["contentRevision"] = 1
+    session["variation"]["status"] = "ready"
+    session["variation"]["validatedRevision"] = 1
+    session["variation"]["validation"] = {"verdict": "pass", "reports": []}
+    session["variation"]["candidate"] = {
+        "text": "What is 3+5?",
+        "problemType": "short-answer",
+        "graphDsl": "board.create('rectangle', [0, 0, 1, 1]);",
+        "correctAnswer": "8",
+        "subject": "math",
+        "generator": {"provider": "fake", "model": "gen-model"},
+    }
+    await real_database[PROBLEM_VARIANT_SESSIONS_COLLECTION].insert_one(session)
+    application = _build_real_variant_app(
+        real_adapter.get_database(), real_adapter, user_id
+    )
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await _submit_connected(client, problem, session["_id"], 1)
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "VARIANT_GRAPH_DSL_INVALID"
+    assert "rectangle" in error["message"]
+    assert await real_database["problems"].count_documents({}) == 1  # only the source

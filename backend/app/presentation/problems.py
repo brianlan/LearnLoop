@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from app.domain.models import ExamState, ProblemType
 from app.domain.normalization import normalize_answer
 from app.domain.practice_selection import compute_problem_weight_breakdown
+from app.domain.whiteboard.graph_dsl import sanitize_graph_dsl_for_storage
 from app.infrastructure.auth.password import verify_password
 from app.infrastructure.config.settings import Settings, get_settings
 from app.presentation.selection_config import practice_selection_config_from_settings
@@ -329,7 +330,21 @@ async def update_problem(
     if payload.problemType is not None:
         updates["problemType"] = payload.problemType.value
     if "graphDsl" in payload.model_fields_set:
-        updates["graphDsl"] = payload.graphDsl
+        # Issue #694: human-review strategy — the teacher is present, so a
+        # non-compliant DSL is rejected with the sanitizer's reasons instead
+        # of stored. A compliant value is stored as the canonical form that
+        # was actually validated, so fenced/initBoard/comment residue can
+        # never persist into the sandbox-executed string.
+        canonical_graph_dsl, graph_dsl_reasons = sanitize_graph_dsl_for_storage(
+            payload.graphDsl
+        )
+        if graph_dsl_reasons:
+            raise ApiError(
+                400,
+                "GRAPH_DSL_INVALID",
+                "; ".join(graph_dsl_reasons),
+            )
+        updates["graphDsl"] = canonical_graph_dsl
     if "tags" in payload.model_fields_set and payload.tags is not None:
         updates["tags"] = normalize_tags(payload.tags)
         await _register_tags(database, current_user["_id"], payload.tags)

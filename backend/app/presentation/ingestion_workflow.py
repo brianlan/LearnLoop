@@ -13,6 +13,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.domain import IngestionPreviewStatus, recover_stale_preview, transition_preview_state
 from app.domain.normalization import normalize_extracted_problem_text
+from app.domain.whiteboard.graph_dsl import sanitize_graph_dsl_for_storage
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.storage.mongo import Document
 from app.infrastructure.storage.s3 import S3StorageAdapter, StorageObjectNotFoundError
@@ -172,11 +173,17 @@ async def _run_extraction_task(
 
         finished_at = utc_now()
         normalized_text = normalize_extracted_problem_text(result.text)
+        # Issue #694: storage strategy — compliant DSL is stored as the
+        # canonical value; non-compliant DSL drops to null plus a
+        # failureMessage. rawGraphDsl below keeps the unmodified VLM output.
+        canonical_graph_dsl, graph_dsl_reasons = sanitize_graph_dsl_for_storage(
+            result.graph_dsl
+        )
         draft = _merge_draft_with_extraction(
             preview.get("editableDraft"),
             text=normalized_text,
             problem_type=result.problem_type,
-            graph_dsl=result.graph_dsl,
+            graph_dsl=canonical_graph_dsl,
         )
         await database["ingestion_previews"].update_one(
             {"_id": preview_id},
@@ -198,7 +205,7 @@ async def _run_extraction_task(
                         "rawGraphDsl": result.graph_dsl,
                         "rawProviderResponse": result.raw_provider_response,
                         "failureCode": None,
-                        "failureMessage": None,
+                        "failureMessage": "; ".join(graph_dsl_reasons) or None,
                     },
                 }
             },

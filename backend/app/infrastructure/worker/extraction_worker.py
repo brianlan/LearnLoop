@@ -8,6 +8,7 @@ from typing import Any
 
 from app.domain.ingestion import BatchState, ItemState
 from app.domain.normalization import normalize_extracted_problem_text
+from app.domain.whiteboard.graph_dsl import sanitize_graph_dsl_for_storage
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.crop import crop_image_to_box
 from app.infrastructure.ingestion.documents import build_crop_image
@@ -295,6 +296,12 @@ async def process_item(
 
     finished_at = _utc_now()
     normalized_text = normalize_extracted_problem_text(result.text)
+    # Issue #694: storage strategy — compliant DSL is stored as the canonical
+    # (comment/initBoard-free) value; non-compliant DSL drops to null plus a
+    # failureMessage. rawGraphDsl below keeps the unmodified VLM output.
+    canonical_graph_dsl, graph_dsl_reasons = sanitize_graph_dsl_for_storage(
+        result.graph_dsl
+    )
     saved = await save_item_extraction_success(
         database,
         batch_id,
@@ -304,7 +311,7 @@ async def process_item(
         draft={
             "text": normalized_text,
             "problemType": result.problem_type,
-            "graphDsl": result.graph_dsl,
+            "graphDsl": canonical_graph_dsl,
             "correctAnswer": result.correct_answer,
             "tags": [],
             "subject": subject,
@@ -317,7 +324,7 @@ async def process_item(
             "rawGraphDsl": result.graph_dsl,
             "rawProviderResponse": result.raw_provider_response,
             "failureCode": None,
-            "failureMessage": None,
+            "failureMessage": "; ".join(graph_dsl_reasons) or None,
             "requestStartedAt": current,
             "requestFinishedAt": finished_at,
         },

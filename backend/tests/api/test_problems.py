@@ -333,7 +333,7 @@ async def test_list_detail_update_delete_tags_and_tracking(
         json={
             "text": "Updated text",
             "problemType": "multi-choice",
-            "graphDsl": "graph LR; X-->Y",
+            "graphDsl": "board.create('point', [0, 0]);",
             "correctAnswer": " B, A ,B ",
             "tags": ["logic", " logic ", "sets"],
         },
@@ -342,7 +342,7 @@ async def test_list_detail_update_delete_tags_and_tracking(
     updated_body = update_response.json()["problem"]
     assert updated_body["text"] == "Updated text"
     assert updated_body["problemType"] == "multi-choice"
-    assert updated_body["graphDsl"] == "graph LR; X-->Y"
+    assert updated_body["graphDsl"] == "board.create('point', [0, 0]);"
     assert updated_body["correctAnswer"] == {
         "display": " B, A ,B ",
         "normalizedText": "a,b",
@@ -2149,7 +2149,7 @@ async def test_variant_problem_patch_edits_leave_variation_unchanged_and_skip_va
     edits = [
         ({"text": "What is 7+9?"}, "text", "What is 7+9?"),
         ({"problemType": "fill-in-the-blank"}, "problemType", "fill-in-the-blank"),
-        ({"graphDsl": "graph { x -- y }"}, "graphDsl", "graph { x -- y }"),
+        ({"graphDsl": "board.create('point', [1, 1]);"}, "graphDsl", "board.create('point', [1, 1]);"),
         ({"correctAnswer": "16"}, "correctAnswer", "16"),
         ({"tags": ["edited"]}, "tags", ["edited"]),
     ]

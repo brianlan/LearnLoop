@@ -2,6 +2,7 @@ import pytest
 
 from app.domain.whiteboard.graph_dsl import (
     explain_graph_dsl,
+    sanitize_graph_dsl_for_storage,
     sanitize_whiteboard_dsl,
     _is_allowed_graph_dsl,
     _split_top_level,
@@ -431,3 +432,41 @@ class TestExplainGraphDsl:
     def test_explanation_agrees_with_sanitizer_verdict(self, dsl: str | None) -> None:
         # Drift guard: empty explanation <=> sanitizer accepts.
         assert bool(explain_graph_dsl(dsl)) == (sanitize_whiteboard_dsl(dsl) is None)
+
+
+class TestSanitizeGraphDslForStorage:
+    """Write-path seam (issue #694): canonical-or-null plus reasons."""
+
+    def test_absent_input_is_not_a_failure(self) -> None:
+        assert sanitize_graph_dsl_for_storage(None) == (None, [])
+        assert sanitize_graph_dsl_for_storage("") == (None, [])
+        assert sanitize_graph_dsl_for_storage("   \n ") == (None, [])
+
+    def test_compliant_input_returns_canonical_value(self) -> None:
+        dsl = (
+            "var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+            "board.create('point', [0, 0], {name: 'A'}); // origin"
+        )
+        canonical, reasons = sanitize_graph_dsl_for_storage(dsl)
+        assert reasons == []
+        assert canonical == sanitize_whiteboard_dsl(dsl)
+        assert canonical is not None
+        assert "initBoard" not in canonical and "//" not in canonical
+
+    def test_canonical_value_is_idempotent(self) -> None:
+        dsl = "board.create('point', [0, 0]); /* note */"
+        canonical, _ = sanitize_graph_dsl_for_storage(dsl)
+        assert canonical is not None
+        assert sanitize_graph_dsl_for_storage(canonical) == (canonical, [])
+
+    def test_non_compliant_input_returns_explain_reasons(self) -> None:
+        dsl = "fetch('http://evil'); graph TD; A-->B"
+        canonical, reasons = sanitize_graph_dsl_for_storage(dsl)
+        assert canonical is None
+        assert reasons == explain_graph_dsl(dsl)
+        assert reasons
+
+    def test_borders_style_incident_dsl_is_stored_canonically(self) -> None:
+        canonical, reasons = sanitize_graph_dsl_for_storage(BORDERS_DSL)
+        assert reasons == []
+        assert canonical == sanitize_whiteboard_dsl(BORDERS_DSL)

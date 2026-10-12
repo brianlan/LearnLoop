@@ -8,6 +8,7 @@ import pytest
 from bson import ObjectId
 
 from app.domain.ingestion import ImageState, ItemState
+from app.domain.whiteboard.graph_dsl import explain_graph_dsl, sanitize_whiteboard_dsl
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.documents import (
     build_batch_document,
@@ -313,6 +314,126 @@ async def test_process_item_success_math(
     assert stored_item["extraction"]["model"] == "math-model"
     assert stored_item["crop"] is not None
     assert stored_item["leaseUntil"] is None
+
+
+BORDERS_STYLE_DSL = (
+    "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], "
+    "{fillColor:'#a8d4f050', borders:{strokeColor:'#000000', strokeWidth:1}});"
+)
+CANONICAL_IN_DSL = (
+    "var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+    "board.create('point', [0, 0], {name: 'A'}); // origin"
+)
+CANONICAL_OUT_DSL = "board.create('point', [0, 0], {name: 'A'});"
+NON_COMPLIANT_DSL = "board.create('rectangle', [0, 0, 1, 1]);"
+
+
+@pytest.mark.asyncio
+async def test_process_item_stores_canonical_graph_dsl_and_keeps_raw(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    settings: Settings,
+) -> None:
+    """Issue #694: a compliant extraction result is stored as the canonical
+    (initBoard/comment-free) value; rawGraphDsl keeps the VLM output."""
+    batch_id, user_id, _image_id, item_id = _seed_batch_with_committed_item(
+        database,
+        storage,
+        subject="math",
+        box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    batch = await get_batch(database, batch_id, user_id)
+    item = batch["items"][0]
+
+    math_client = FakeIngestionVLMClient(model="math-model")
+    english_client = FakeIngestionVLMClient(model="english-model")
+    math_client.responses.append(
+        make_extraction_result(
+            text="graph problem", graph_dsl=CANONICAL_IN_DSL, model="math-model"
+        )
+    )
+
+    await process_item(item, batch, database, storage, math_client, english_client, settings)
+
+    stored_item = (await get_batch(database, batch_id, batch["userId"]))["items"][0]
+    assert stored_item["draft"]["graphDsl"] == CANONICAL_OUT_DSL
+    assert stored_item["extraction"]["rawGraphDsl"] == CANONICAL_IN_DSL
+    assert stored_item["extraction"]["failureMessage"] is None
+
+
+@pytest.mark.asyncio
+async def test_process_item_stores_borders_style_dsl_canonically(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    settings: Settings,
+) -> None:
+    """Issue #694 regression: the incident's borders-style DSL passes the
+    post-#691 whitelist and must be stored canonically, not dropped."""
+    batch_id, user_id, _image_id, item_id = _seed_batch_with_committed_item(
+        database,
+        storage,
+        subject="math",
+        box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    batch = await get_batch(database, batch_id, user_id)
+    item = batch["items"][0]
+
+    math_client = FakeIngestionVLMClient(model="math-model")
+    english_client = FakeIngestionVLMClient(model="english-model")
+    math_client.responses.append(
+        make_extraction_result(
+            text="graph problem", graph_dsl=BORDERS_STYLE_DSL, model="math-model"
+        )
+    )
+
+    await process_item(item, batch, database, storage, math_client, english_client, settings)
+
+    stored_item = (await get_batch(database, batch_id, batch["userId"]))["items"][0]
+    assert stored_item["draft"]["graphDsl"] == sanitize_whiteboard_dsl(BORDERS_STYLE_DSL)
+    assert stored_item["extraction"]["rawGraphDsl"] == BORDERS_STYLE_DSL
+    assert stored_item["extraction"]["failureMessage"] is None
+
+
+@pytest.mark.asyncio
+async def test_process_item_drops_non_compliant_graph_dsl_with_failure_message(
+    database: FakeDatabase,
+    storage: FakeStorage,
+    settings: Settings,
+) -> None:
+    """Issue #694: a non-compliant extraction result stores null plus the
+    sanitizer's reasons; rawGraphDsl keeps the VLM output."""
+    batch_id, user_id, _image_id, item_id = _seed_batch_with_committed_item(
+        database,
+        storage,
+        subject="math",
+        box={"x": 0, "y": 0, "width": 1, "height": 1},
+        item_status=ItemState.EXTRACTING.value,
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    batch = await get_batch(database, batch_id, user_id)
+    item = batch["items"][0]
+
+    math_client = FakeIngestionVLMClient(model="math-model")
+    english_client = FakeIngestionVLMClient(model="english-model")
+    math_client.responses.append(
+        make_extraction_result(
+            text="graph problem", graph_dsl=NON_COMPLIANT_DSL, model="math-model"
+        )
+    )
+
+    await process_item(item, batch, database, storage, math_client, english_client, settings)
+
+    stored_item = (await get_batch(database, batch_id, batch["userId"]))["items"][0]
+    assert stored_item["draft"]["graphDsl"] is None
+    assert stored_item["extraction"]["rawGraphDsl"] == NON_COMPLIANT_DSL
+    assert stored_item["extraction"]["failureMessage"] == "; ".join(
+        explain_graph_dsl(NON_COMPLIANT_DSL)
+    )
+    assert "rectangle" in stored_item["extraction"]["failureMessage"]
 
 
 @pytest.mark.asyncio
