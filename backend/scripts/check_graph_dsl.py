@@ -1,9 +1,10 @@
 """Stored-DSL rejection sentinel for the graphDsl sanitizer (issue #691).
 
 Scans every stored ``problems.graphDsl`` and every active ingestion-batch
-candidate draft through ``sanitize_whiteboard_dsl`` and exits nonzero when a
-rejection appears that is not on the known-exceptions list. Run from the repo
-root inside the dev/agent environment:
+item's source draft and persisted variation candidate through
+``sanitize_whiteboard_dsl`` and exits nonzero when a rejection appears that is
+not on the known-exceptions list. Run from the repo root inside the dev/agent
+environment:
 
     python backend/scripts/check_graph_dsl.py [--exceptions PATH]
 
@@ -67,10 +68,10 @@ async def _scan(exceptions: dict[str, str]) -> int:
     expected: list[tuple[str, str, str]] = []
     unexpected: list[tuple[str, str, str]] = []
 
-    def _record(collection: str, document_id: str, dsl: str) -> None:
+    def _record(location: str, document_id: str, dsl: str) -> None:
         reason = _expected_reason(document_id, exceptions)
         target = expected if reason is not None else unexpected
-        target.append((f"{collection} {document_id}", dsl, reason or ""))
+        target.append((f"{location} {document_id}", dsl, reason or ""))
 
     problems = await database["problems"].find(
         {"graphDsl": {"$nin": [None, ""]}}
@@ -88,13 +89,20 @@ async def _scan(exceptions: dict[str, str]) -> int:
     )
     for batch in batches:
         for item in batch.get("items", []):
-            draft = item.get("draft") or {}
-            dsl = draft.get("graphDsl")
-            if not isinstance(dsl, str) or not dsl.strip():
-                continue
-            scanned += 1
-            if sanitize_whiteboard_dsl(dsl) is None:
-                _record("ingestion_batches", str(item.get("itemId")), dsl)
+            document_id = str(item.get("itemId"))
+            # Admission copies the candidate DSL into the problem, so both the
+            # source draft and the persisted candidate must pass the sanitizer.
+            variation = item.get("variation") or {}
+            candidates = {
+                "draft": (item.get("draft") or {}).get("graphDsl"),
+                "candidate": (variation.get("candidate") or {}).get("graphDsl"),
+            }
+            for source, dsl in candidates.items():
+                if not isinstance(dsl, str) or not dsl.strip():
+                    continue
+                scanned += 1
+                if sanitize_whiteboard_dsl(dsl) is None:
+                    _record(f"ingestion_batches {source}", document_id, dsl)
 
     print(f"Scanned {scanned} stored graphDsl value(s) through the sanitizer.")
     for location, dsl, reason in expected:
