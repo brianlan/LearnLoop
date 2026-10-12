@@ -82,16 +82,16 @@ def _strip_quoted_strings(value: str) -> str:
 
 
 # ponytail: one regex alternation — string literals first so '//' inside quotes
-# survives; comment branches drop their match.
+# survives; comments are replaced by a space so token boundaries are preserved.
 _STRING_OR_COMMENT = re.compile(
-    r"""'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|//[^\n]*|/\*.*?\*/""",
+    r"""'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|//[^\r\n\u2028\u2029]*|/\*.*?\*/""",
     re.DOTALL,
 )
 
 
 def _strip_comments(value: str) -> str:
     return _STRING_OR_COMMENT.sub(
-        lambda match: match.group(0) if match.group(0)[0] in {"'", '"'} else "",
+        lambda match: match.group(0) if match.group(0)[0] in {"'", '"'} else " ",
         value,
     )
 

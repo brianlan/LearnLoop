@@ -287,6 +287,23 @@ class TestSanitizeWhiteboardDsl:
         dsl = "board.create('text', [0, 0, 'https://example.com/a//b']);"
         assert sanitize_whiteboard_dsl(dsl) == dsl
 
+    def test_block_comment_preserves_token_separation(self) -> None:
+        raw = "var/**/p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+
+    def test_rejects_numbers_joined_across_block_comment(self) -> None:
+        raw = "board.create('point', [1/**/2, 0]);"
+        assert sanitize_whiteboard_dsl(raw) is None
+
+    @pytest.mark.parametrize("terminator", ["\r", "\n", "\r\n", "\u2028", "\u2029"])
+    def test_strips_line_comment_at_every_js_terminator(self, terminator: str) -> None:
+        raw = f"// draw a new triangle{terminator}var p = board.create('point', [0, 0]);"
+        assert sanitize_whiteboard_dsl(raw) == "var p = board.create('point', [0, 0]);"
+
+    def test_rejects_unterminated_block_comment(self) -> None:
+        raw = "var p = board.create('point', [0, 0]); /* unterminated"
+        assert sanitize_whiteboard_dsl(raw) is None
+
     def test_sanitize_is_idempotent_with_comments_and_borders(self) -> None:
         raw = (
             "var board = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
