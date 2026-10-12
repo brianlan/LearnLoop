@@ -2321,6 +2321,91 @@ describe("BulkReviewStep variant generate", () => {
     });
   });
 
+  it("cancels a queued Generate when source graphDsl validation is unavailable", async () => {
+    vi.mocked(api.validateGraphDsl).mockRejectedValue(
+      new Error("Validation unavailable"),
+    );
+    handlers.onUpdateDraft.mockResolvedValue({
+      item: makeItem("item-1", {
+        contentRevision: 3,
+        updatedAt: "2026-07-03T00:00:01Z",
+        draft: {
+          ...makeItem("item-1").draft,
+          graphDsl: "board.create('point', [0, 0]);",
+        },
+      }),
+    });
+    const { rerender } = renderReview([makeItem("item-1", { contentRevision: 2 })]);
+
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('rectangle', [0, 0, 1, 1]);" },
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-answer")).toBeDisabled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+    expect(handlers.onUpdateDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bulk-review-answer")).toBeEnabled();
+    expect(screen.getByTestId("bulk-review-graphdsl")).toBeEnabled();
+    expect(screen.getByTestId("bulk-review-generate-hint")).toHaveTextContent(
+      "Draft save failed, retrying",
+    );
+
+    vi.mocked(api.validateGraphDsl).mockResolvedValue({
+      valid: true,
+      issues: [],
+    });
+    fireEvent.change(screen.getByTestId("bulk-review-graphdsl"), {
+      target: { value: "board.create('point', [0, 0]);" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => {
+      expect(handlers.onUpdateDraft).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ graphDsl: "board.create('point', [0, 0]);" }),
+        expect.objectContaining({ target: "source", expectedRevision: 2 }),
+      );
+    });
+    expect(handlers.onGenerate).not.toHaveBeenCalled();
+
+    rerender(
+      <BulkReviewStep
+        batch={makeBatch({
+          ingestionMode: "transfer-variant",
+          items: [
+            makeItem("item-1", {
+              contentRevision: 3,
+              updatedAt: "2026-07-03T00:00:01Z",
+              draft: {
+                ...makeItem("item-1").draft,
+                graphDsl: "board.create('point', [0, 0]);",
+              },
+            }),
+          ],
+        })}
+        isLoading={false}
+        {...handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-review-generate"));
+    await waitFor(() => {
+      expect(handlers.onGenerate).toHaveBeenCalledWith(
+        "item-1",
+        expect.objectContaining({ graphDsl: "board.create('point', [0, 0]);" }),
+        3,
+      );
+    });
+  });
+
   it("explains why Generate is disabled when the source is unprepared", () => {
     renderReview([makeItem("item-1")]);
 

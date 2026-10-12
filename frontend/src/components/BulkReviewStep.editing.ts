@@ -795,6 +795,9 @@ export function useBulkReviewEditing(
           .catch(() => {
             // Validation unavailability is retryable, but never a pass.
             if (!isCurrentSnapshot()) return;
+            // A failed current-source validation must not keep a queued
+            // Generate locked; the teacher needs the editable draft back.
+            cancelPendingGenerate(key);
             setSaveFailures((prev) => {
               const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
               saveFailuresRef.current = next;
