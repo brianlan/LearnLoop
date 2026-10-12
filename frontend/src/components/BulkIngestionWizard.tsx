@@ -39,12 +39,22 @@ export type { BulkWizardStep };
 
 const BATCH_EXPIRED_STATUS = 409;
 const BATCH_EXPIRED_CODE = "BATCH_EXPIRED";
+const GRAPH_DSL_INVALID_STATUS = 400;
+const GRAPH_DSL_INVALID_CODE = "GRAPH_DSL_INVALID";
 
 function isBatchExpiredError(err: unknown): err is ApiError {
   return (
     err instanceof ApiError &&
     err.status === BATCH_EXPIRED_STATUS &&
     err.code === BATCH_EXPIRED_CODE
+  );
+}
+
+function isGraphDslInvalidError(err: unknown): err is ApiError {
+  return (
+    err instanceof ApiError &&
+    err.status === GRAPH_DSL_INVALID_STATUS &&
+    err.code === GRAPH_DSL_INVALID_CODE
   );
 }
 
@@ -530,7 +540,7 @@ export function BulkIngestionWizard({
       try {
         await submitBatch(batchId);
       } catch (err) {
-        if (isBatchExpiredError(err)) {
+        if (isBatchExpiredError(err) || isGraphDslInvalidError(err)) {
           const response = await getBatch(batchId);
           setBatchAndStep(response.batch);
           return;

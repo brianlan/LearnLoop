@@ -566,13 +566,13 @@ async def test_confirm_preview_creates_problem_from_confirmed_draft(
     preview["editableDraft"] = {
         "text": "Choose all correct letters",
         "problemType": "multi-choice",
-        "graphDsl": "graph LR; A-->B",
+        "graphDsl": "board.create('point', [0, 0]);",
         "correctAnswer": " C, A ,C ",
         "tags": ["geometry", " geometry ", "chapter-3"],
     }
     preview["extraction"]["rawText"] = "raw extracted text"
     preview["extraction"]["rawProblemType"] = "multi-choice"
-    preview["extraction"]["rawGraphDsl"] = "graph LR; A-->B"
+    preview["extraction"]["rawGraphDsl"] = "board.create('point', [0, 0]);"
     database["ingestion_previews"].seed(preview)
 
     response = await authenticated_client.post(
@@ -599,7 +599,7 @@ async def test_confirm_preview_creates_problem_from_confirmed_draft(
         "vlmModel": "gpt-4.1-mini",
         "rawExtractedText": "raw extracted text",
         "rawExtractedProblemType": "multi-choice",
-        "rawExtractedGraphDsl": "graph LR; A-->B",
+        "rawExtractedGraphDsl": "board.create('point', [0, 0]);",
     }
 
     updated_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
@@ -644,6 +644,74 @@ async def test_confirm_preview_persists_english_subject_from_draft(
     stored_problem = await database["problems"].find_one({"_id": ObjectId(body["id"])})
     assert stored_problem is not None
     assert stored_problem["subject"] == "english"
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_rejects_noncompliant_graph_dsl(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    preview["editableDraft"] = {
+        "text": "Draw the shape",
+        "problemType": "short-answer",
+        "graphDsl": "board.create('rectangle', [0, 0, 1, 1]);",
+        "correctAnswer": "42",
+        "tags": [],
+    }
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "GRAPH_DSL_INVALID"
+    assert "rectangle" in response.json()["error"]["message"]
+
+    stored_problem = await database["problems"].find_one({"userId": owner["_id"]})
+    assert stored_problem is None
+
+    stored_preview = await database["ingestion_previews"].find_one({"_id": preview["_id"]})
+    assert stored_preview is not None
+    assert stored_preview["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_confirm_preview_stores_canonical_graph_dsl(
+    ingestion_app: FastAPI,
+    authenticated_client: AsyncClient,
+) -> None:
+    database: FakeDatabase = ingestion_app.state.fake_database
+    owner = await database["users"].find_one({"username": "student1"})
+    assert owner is not None
+    preview = make_preview(owner["_id"], status="ready")
+    preview["editableDraft"] = {
+        "text": "Draw the point",
+        "problemType": "short-answer",
+        "graphDsl": (
+            "```js\n"
+            "var b = JXG.JSXGraph.initBoard('box', {boundingbox: [-5, 5, 5, -5]});\n"
+            "var p = board.create('point', [0, 0]); // hand-entered\n"
+            "```"
+        ),
+        "correctAnswer": "42",
+        "tags": [],
+    }
+    database["ingestion_previews"].seed(preview)
+
+    response = await authenticated_client.post(
+        f"/api/v1/ingestion-previews/{preview['_id']}/confirm"
+    )
+
+    assert response.status_code == 201
+    problem_id = ObjectId(response.json()["problem"]["id"])
+    stored_problem = await database["problems"].find_one({"_id": problem_id})
+    assert stored_problem is not None
+    assert stored_problem["graphDsl"] == "var p = board.create('point', [0, 0]);"
 
 
 @pytest.mark.asyncio

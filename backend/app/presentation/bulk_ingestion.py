@@ -23,6 +23,7 @@ from app.domain.ingestion import (
 )
 
 from app.domain.models import ProblemSubject, ProblemType
+from app.domain.whiteboard.graph_dsl import sanitize_graph_dsl_for_storage
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.ingestion.documents import build_source_image
 from app.infrastructure.ingestion.image_size import get_image_size
@@ -1090,6 +1091,42 @@ async def submit_batch(
     reserved_items = [
         item for item in batch.get("items", []) if item["itemId"] in set(reserved_ids)
     ]
+
+    # #699 bulk acceptance contract: a submit containing non-compliant draft
+    # graphDsl returns HTTP 400 with the sanitizer reasons and creates no
+    # problem. Validate the reserved drafts before any creation side effect so
+    # a mixed batch cannot commit valid siblings before an invalid item fails.
+    graph_dsl_failures: list[dict[str, Any]] = []
+    graph_dsl_reasons: list[str] = []
+    for item in reserved_items:
+        _, reasons = sanitize_graph_dsl_for_storage(
+            (item.get("draft") or {}).get("graphDsl")
+        )
+        if reasons:
+            graph_dsl_failures.append(
+                _submit_item_failure(
+                    item["itemId"],
+                    "GRAPH_DSL_INVALID",
+                    "; ".join(reasons),
+                )
+            )
+            graph_dsl_reasons.extend(reasons)
+    if graph_dsl_failures:
+        # Record the per-item failure and release this submit's reservations
+        # before failing the request; valid items stay ready for retry.
+        await submit_items_and_complete_batch(
+            database,
+            batch_id,
+            user["_id"],
+            item_results=graph_dsl_failures,
+            reservation_token=reservation_token,
+            now=now,
+        )
+        raise ApiError(
+            400,
+            "GRAPH_DSL_INVALID",
+            "; ".join(dict.fromkeys(graph_dsl_reasons)),
+        )
 
     item_results: list[dict[str, Any]] = []
     for item in reserved_items:

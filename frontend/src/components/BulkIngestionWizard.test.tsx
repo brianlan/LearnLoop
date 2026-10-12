@@ -1635,6 +1635,71 @@ describe("BulkIngestionWizard", () => {
     ).toBeInTheDocument();
   });
 
+  it("refreshes submit results when graphDsl validation rejects the batch", async () => {
+    const initialItems = [
+      readyItem({ itemId: "item-1" }),
+      readyItem({
+        itemId: "item-2",
+        order: 1,
+        draft: {
+          text: "What is 3+3?",
+          problemType: "short-answer",
+          correctAnswer: "6",
+        },
+      }),
+    ];
+    mocks.getActiveBatch.mockResolvedValue({
+      batch: makeBatch({ images: [committedImage()], items: initialItems }),
+    });
+    mocks.submitBatch.mockRejectedValue(
+      new ApiError("disallowed element type 'rectangle'", 400, "GRAPH_DSL_INVALID"),
+    );
+    mocks.getBatch.mockResolvedValue({
+      batch: makeBatch({
+        images: [committedImage()],
+        items: [
+          readyItem({
+            itemId: "item-1",
+            status: "submit-failed",
+            submit: {
+              failureCode: "GRAPH_DSL_INVALID",
+              failureMessage: "disallowed element type 'rectangle'",
+            },
+          }),
+          readyItem({
+            itemId: "item-2",
+            order: 1,
+            draft: {
+              text: "What is 3+3?",
+              problemType: "short-answer",
+              correctAnswer: "6",
+            },
+          }),
+        ],
+      }),
+    });
+
+    render(<BulkIngestionWizard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-review-step")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("bulk-review-continue"));
+    await waitFor(() => {
+      expect(screen.getByTestId("bulk-wizard-submit-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("bulk-submit-button"));
+
+    await waitFor(() => {
+      expect(mocks.getBatch).toHaveBeenCalledWith("batch-1");
+    });
+    expect(screen.queryByTestId("bulk-submit-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bulk-submit-retry-item-1")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("bulk-submit-item-failure-item-1"),
+    ).toHaveTextContent("rectangle");
+  });
+
   it("resumes an unexpired batch at the review step via initialBatchId", async () => {
     mocks.getBatch.mockResolvedValue({
       batch: makeBatch({
