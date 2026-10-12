@@ -32,6 +32,7 @@ from app.infrastructure.vlm.variant_client import (
     VariantCandidate,
     VariantGenerationResult,
     generate_and_validate,
+    source_graph_dsl_preflight,
 )
 from app.problem_variation import (
     VARIANT_INGESTION_MODES,
@@ -216,6 +217,30 @@ async def process_variation(
     candidate_dict: dict[str, Any] | None = variation.get("candidate")
 
     if status == VariationStatus.GENERATING.value:
+        # Pre-flight before the generator call (issue #692): a non-compliant
+        # source can only produce candidates the cheap gate rejects, and the
+        # worker generates before reaching generate_and_validate.
+        preflight = source_graph_dsl_preflight(source)
+        if preflight is not None:
+            saved = await save_variation_result(
+                database,
+                batch_id,
+                user_id,
+                item_id,
+                token=token,
+                claimed_revision=claimed_revision,
+                verdict="fail",
+                validation=serialize_generation_result(preflight),
+                # Generation never ran: nothing to re-validate (#671).
+                candidate_present=False,
+                now=_utc_now(),
+            )
+            if not saved:
+                logger.info(
+                    "Discarding variation failure for %s: claim no longer owned",
+                    item_id,
+                )
+            return
         try:
             candidate = await _run_with_lease_heartbeat(
                 lambda: generator.generate_candidate(mode=mode, source=source),

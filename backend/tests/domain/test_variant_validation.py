@@ -229,7 +229,18 @@ def test_incomplete_candidate_rejected_before_validators() -> None:
 def test_unsafe_graph_dsl_rejected() -> None:
     unsafe = CANDIDATE.model_copy(update={"graph_dsl": "fetch('http://evil');"})
     failures = check_candidate("data-only", SOURCE, unsafe)
-    assert any("graphDsl failed the safety check" in f.evidence for f in failures)
+    graph_failures = [f for f in failures if "graphDsl failed the safety check" in f.evidence]
+    assert graph_failures
+    # The generic message never ships without a reason suffix (issue #692).
+    assert "disallowed token 'fetch'" in graph_failures[0].evidence
+
+
+def test_unsafe_graph_dsl_rejection_names_the_offending_key() -> None:
+    candidate = CANDIDATE.model_copy(
+        update={"graph_dsl": "board.create('polygon', [0,0,1,0], {borders:{evil:1}});"}
+    )
+    failures = check_candidate("data-only", SOURCE, candidate)
+    assert any("unknown option key 'evil'" in f.evidence for f in failures)
 
 
 def test_two_argument_bounding_box_dsl_passes_safety_check() -> None:

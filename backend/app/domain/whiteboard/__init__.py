@@ -1,5 +1,5 @@
 """Whiteboard domain package."""
 
-from .graph_dsl import sanitize_whiteboard_dsl
+from .graph_dsl import explain_graph_dsl, sanitize_whiteboard_dsl
 
-__all__ = ["sanitize_whiteboard_dsl"]
+__all__ = ["explain_graph_dsl", "sanitize_whiteboard_dsl"]

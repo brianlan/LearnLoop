@@ -34,6 +34,7 @@ from app.domain.ingestion.variation import (
     assess_variant,
     check_candidate,
 )
+from app.domain.whiteboard import explain_graph_dsl, sanitize_whiteboard_dsl
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.vlm._models import _ChatCompletionRequest, _ChatMessage
 from app.infrastructure.vlm.base_client import (
@@ -432,6 +433,38 @@ def _problem_context(problem: ProblemContent | VariantCandidate) -> dict[str, An
     }
 
 
+def source_graph_dsl_preflight(
+    source: ProblemContent, candidate: VariantCandidate | None = None
+) -> VariantGenerationResult | None:
+    """Pre-flight (issue #692): fail-fast result for a non-compliant source.
+
+    A source graphDsl that fails the sanitizer can only yield candidates the
+    cheap gate rejects, so no provider call may run. Production callers
+    generate (and checkpoint) before reaching ``generate_and_validate``, so
+    they invoke this first; one implementation keeps the message and the
+    explain output identical at every call site.
+    """
+    source_graph = (source.graph_dsl or "").strip()
+    if not source_graph or sanitize_whiteboard_dsl(source.graph_dsl) is not None:
+        return None
+    return VariantGenerationResult(
+        candidate=candidate,
+        reports=[],
+        assessment=VariantAssessment(
+            verdict="fail",
+            failures=[
+                AssessmentFailure(
+                    kind="content",
+                    evidence=(
+                        "source graphDsl failed the safety check and was rejected before "
+                        "generation: " + "; ".join(explain_graph_dsl(source.graph_dsl))
+                    ),
+                )
+            ],
+        ),
+    )
+
+
 async def generate_and_validate(
     *,
     mode: VariantMode,
@@ -448,10 +481,18 @@ async def generate_and_validate(
     the deterministic assessment, so approval provenance stays inspectable
     even on failure. Fails closed: generator/validator/helper provider or
     invalid-response failures become non-content failures and the verdict is
-    FAIL. Conclusively invalid candidates short-circuit before validator
+    FAIL.     Conclusively invalid candidates short-circuit before validator
     calls. A pre-built ``candidate`` skips generation entirely; this exists
     for the deterministic gate samples in scripts/check_variant_models.py.
     """
+    # Pre-flight (issue #692): a non-compliant source graphDsl can only yield
+    # candidates the cheap gate rejects, so fail before any provider call.
+    # Callers that generate before reaching this seam run the same check via
+    # source_graph_dsl_preflight.
+    preflight = source_graph_dsl_preflight(source, candidate)
+    if preflight is not None:
+        return preflight
+
     if candidate is None:
         try:
             candidate = await generator.generate_candidate(mode=mode, source=source)

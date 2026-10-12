@@ -377,6 +377,90 @@ async def test_incomplete_candidate_short_circuits_before_validators() -> None:
     assert helper_recorder.payloads == []
 
 
+BORDERS_GRAPH_DSL = (
+    "var A = board.create('polygon', [0, 0, 5, 0, 2.5, 4], "
+    "{fillColor:'#a8d4f050', borders:{strokeColor:'#000000', strokeWidth:1}});"
+)
+NON_COMPLIANT_GRAPH_DSL = "board.create('rectangle', [0, 0, 1, 1]);"
+
+
+@pytest.mark.asyncio
+async def test_non_compliant_source_fails_fast_before_any_provider_call() -> None:
+    """Issue #692 fixture (b): a non-compliant source graphDsl fails with a
+    named reason before the generator is ever called."""
+    source = SOURCE.model_copy(update={"graph_dsl": NON_COMPLIANT_GRAPH_DSL})
+    generator_recorder = _Recorder([])
+    validator_recorder = _Recorder([])
+    helper_recorder = _Recorder([])
+
+    result = await generate_and_validate(
+        mode="data-only",
+        source=source,
+        generator=_generator_client(generator_recorder),
+        validators=[_validator_client(validator_recorder)],
+        helper=_helper_client(helper_recorder),
+    )
+
+    assessment = result.assessment
+    assert assessment.verdict == "fail"
+    assert result.candidate is None
+    assert result.reports == []
+    failure = assessment.failures[0]
+    assert failure.kind == "content"
+    assert "source graphDsl" in failure.evidence
+    assert "disallowed element type 'rectangle'" in failure.evidence
+    # Zero provider I/O: an empty _Recorder raises on pop, so untouched
+    # payload lists prove the generator/validators/helper were never called.
+    assert generator_recorder.payloads == []
+    assert validator_recorder.payloads == []
+    assert helper_recorder.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_non_compliant_source_fails_fast_even_with_prebuilt_candidate() -> None:
+    """The guard covers the pre-built-candidate (revalidation) branch too."""
+    source = SOURCE.model_copy(update={"graph_dsl": NON_COMPLIANT_GRAPH_DSL})
+    prebuilt = CANDIDATE.model_copy(update={"graph_dsl": "board.create('point', [0, 0]);"})
+    validator_recorder = _Recorder([])
+    helper_recorder = _Recorder([])
+
+    result = await generate_and_validate(
+        mode="data-only",
+        source=source,
+        generator=_generator_client(_Recorder([])),
+        validators=[_validator_client(validator_recorder)],
+        helper=_helper_client(helper_recorder),
+        candidate=prebuilt,
+    )
+
+    assert result.assessment.verdict == "fail"
+    assert result.candidate is prebuilt
+    assert result.reports == []
+    assert validator_recorder.payloads == []
+    assert helper_recorder.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_borders_styled_source_passes_preflight_and_pipeline() -> None:
+    """Issue #692 fixture (a): the #691 whitelist widening is not a pre-flight
+    false positive — a compliant borders-styled source runs the full flow."""
+    source = SOURCE.model_copy(update={"graph_dsl": BORDERS_GRAPH_DSL})
+
+    result = await generate_and_validate(
+        mode="data-only",
+        source=source,
+        generator=_generator_client(_Recorder([_generator_json(graph_dsl=BORDERS_GRAPH_DSL)])),
+        validators=[_validator_client(_Recorder([_validator_json(graph_consistency="consistent")]))],
+        helper=_helper_client(_Recorder([_helper_json()])),
+    )
+
+    assessment = result.assessment
+    assert assessment.verdict == "pass"
+    assert assessment.failures == []
+    assert result.candidate is not None
+    assert result.candidate.graph_dsl == BORDERS_GRAPH_DSL
+
+
 @pytest.mark.asyncio
 async def test_generator_provider_failure_fails_closed() -> None:
     generator_recorder = _Recorder(

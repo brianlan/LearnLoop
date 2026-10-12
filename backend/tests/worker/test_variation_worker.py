@@ -385,6 +385,43 @@ async def test_generation_provider_failure_lands_failed_with_evidence() -> None:
     assert variation["generationCount"] == 1
 
 
+async def test_non_compliant_source_graph_dsl_fails_before_generation() -> None:
+    """Issue #692: the worker pre-flights the source graphDsl before its
+    generator call — the worker generates before reaching
+    generate_and_validate, so the seam guard alone would still burn a call."""
+    database = FakeDatabase()
+    batch, items = await seed_variant_batch(database)
+    item_id = items[0]["itemId"]
+    non_compliant = {
+        **SOURCE_SNAPSHOT,
+        "graphDsl": "board.create('rectangle', [0, 0, 1, 1]);",
+    }
+    await request_variation_generation(
+        database, batch["_id"], "user-1", item_id,
+        original=non_compliant, expected_revision=0, now=NOW,
+    )
+    claimed = await claim_variation_work(
+        database, batch["_id"], "user-1", item_id, lease_timeout_seconds=300, now=datetime.now(UTC)
+    )
+
+    # No responses queued: any generate_candidate call pops from an empty list.
+    generator = FakeGenerator()
+    await process_variation(
+        claimed, batch, database, generator, [], None, make_settings(), now=NOW
+    )
+
+    item = await _load_item(database, batch["_id"], item_id)
+    variation = item["variation"]
+    assert variation["status"] == VariationStatus.FAILED.value
+    assert variation["candidate"] is None
+    assert variation["validation"]["verdict"] == "fail"
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "content"
+    assert "source graphDsl" in failure["evidence"]
+    assert "disallowed element type 'rectangle'" in failure["evidence"]
+    assert generator.calls == []
+
+
 async def test_resume_with_persisted_candidate_skips_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     database = FakeDatabase()
     batch, items = await seed_variant_batch(database)
