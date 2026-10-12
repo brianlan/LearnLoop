@@ -33,6 +33,7 @@ from app.presentation.auth import router as auth_router
 from app.presentation.exams import router as exams_router
 from app.presentation.errors import ApiError, api_error_handler, validation_error_handler
 from app.presentation.folders import router as folders_router
+from app.presentation.graph_dsl import router as graph_dsl_router
 from app.presentation.bulk_ingestion import router as bulk_ingestion_router
 from app.presentation.ingestion import router as ingestion_router
 from app.presentation.media import router as media_router
@@ -210,6 +211,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(media_router)
     api_v1_router.include_router(tags_router)
     api_v1_router.include_router(folders_router)
+    api_v1_router.include_router(graph_dsl_router)
     api_v1_router.include_router(practice_router)
     api_v1_router.include_router(settings_router)
     api_v1_router.include_router(teacher_password_router)

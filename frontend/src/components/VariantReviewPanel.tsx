@@ -6,6 +6,7 @@ import type {
 import { TagInput } from "./TagInput";
 import { GraphSandbox } from "./GraphSandbox";
 import { LatexText } from "./LatexText";
+import { useGraphDslValidation } from "@/hooks/useGraphDslValidation";
 import {
   canAttestVariant,
   evidenceChecks,
@@ -207,6 +208,9 @@ export function VariantReviewPanel({
 
   const currentTagSet = new Set(draft.tags ?? []);
   const visibleRecentTags = recentTags.filter((tag) => !currentTagSet.has(tag));
+  const graphDslIssues = useGraphDslValidation(
+    isSemanticFieldDisabled ? "" : draft.graphDsl,
+  );
 
   const handleRecentTagClick = (tag: string) => {
     if (isFieldDisabled) return;
@@ -566,6 +570,7 @@ export function VariantReviewPanel({
             onChange={(event) => onUpdateDraft({ graphDsl: event.target.value })}
             disabled={isSemanticFieldDisabled}
             rows={10}
+            aria-invalid={graphDslIssues.issues.length > 0}
             style={{
               width: "100%",
               minHeight: "180px",
@@ -573,8 +578,39 @@ export function VariantReviewPanel({
               fontFamily: "monospace",
               fontSize: "0.9em",
               lineHeight: 1.4,
+              border: graphDslIssues.issues.length > 0 ? ACTION_REQUIRED_BORDER : undefined,
             }}
           />
+          {graphDslIssues.issues.length > 0 && (
+            <ul
+              data-testid="bulk-review-graphdsl-issues"
+              style={{
+                color: "var(--color-error, #dc2626)",
+                fontSize: "0.85em",
+                margin: "6px 0 0",
+                paddingLeft: "18px",
+              }}
+            >
+              {graphDslIssues.issues.map((issue, index) => (
+                <li key={index} data-testid="bulk-review-graphdsl-issue">
+                  {issue}
+                </li>
+              ))}
+            </ul>
+          )}
+          {graphDslIssues.isUnavailable && (
+            <div
+              data-testid="bulk-review-graphdsl-validation-unavailable"
+              style={{
+                color: "var(--color-error, #dc2626)",
+                fontSize: "0.85em",
+                marginTop: "6px",
+              }}
+            >
+              Graph DSL validation is unavailable. Saving stays disabled until
+              validation succeeds.
+            </div>
+          )}
         </label>
 
         {draft.graphDsl?.trim() && (

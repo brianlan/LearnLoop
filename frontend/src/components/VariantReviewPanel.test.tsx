@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import { VariantReviewPanel } from "./VariantReviewPanel";
 import type { VariantReviewActionState } from "./VariantReviewPanel";
 import type { BulkDraft, BulkItemVariation } from "@/types/bulkIngestion";
+import { api } from "@/api/client";
 
 function makeActionState(
   overrides: Partial<VariantReviewActionState> = {},
@@ -101,6 +102,10 @@ function renderPanel(
 }
 
 describe("VariantReviewPanel", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("shows the stale-pass keep-validation action for needs-validation with a pass verdict", () => {
     renderPanel({
       variation: makeVariation({
@@ -199,5 +204,28 @@ describe("VariantReviewPanel", () => {
       extraActions: <button type="button" data-testid="panel-extra-action">Submit</button>,
     });
     expect(screen.getByTestId("panel-extra-action")).toBeInTheDocument();
+  });
+
+  it("shows pre-save graphDsl issues from the validation endpoint", async () => {
+    vi.spyOn(api, "validateGraphDsl").mockResolvedValue({
+      valid: false,
+      issues: ["disallowed element type 'rectangle'"],
+    });
+
+    renderPanel({
+      draft: makeDraft({
+        graphDsl: "board.create('rectangle', [0, 0, 1, 1]);",
+      }),
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId("bulk-review-graphdsl-issues")).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+    expect(screen.getByTestId("bulk-review-graphdsl-issue")).toHaveTextContent(
+      "disallowed element type 'rectangle'",
+    );
   });
 });

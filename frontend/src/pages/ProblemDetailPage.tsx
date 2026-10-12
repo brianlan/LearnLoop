@@ -10,6 +10,7 @@ import { TagInput } from "@/components/TagInput";
 import { TagList } from "@/components/TagPill";
 import { TeacherPasswordModal } from "@/components/TeacherPasswordModal";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import { useGraphDslValidation } from "@/hooks/useGraphDslValidation";
 import type {
   ProblemDetail,
   ProblemResponse,
@@ -458,6 +459,9 @@ export function ProblemDetailPage() {
   const [editForm, setEditForm] = useState<UpdateProblemInput>({});
   const [error, setError] = useState<string | null>(null);
   const tagSuggestions = useTagSuggestions();
+  const graphDslIssues = useGraphDslValidation(
+    isEditing ? editForm.graphDsl : "",
+  );
 
   const {
     data: problem,
@@ -886,10 +890,42 @@ export function ProblemDetailPage() {
                   setEditForm((prev) => ({ ...prev, graphDsl: e.target.value }))
                 }
                 style={{ width: "100%", minHeight: "100px", marginTop: "0.25rem", fontFamily: "monospace", fontSize: "0.875rem" }}
+                data-testid="edit-graphdsl-input"
+                aria-invalid={graphDslIssues.issues.length > 0}
               />
             ) : (
               <div style={{ marginTop: "0.5rem" }}>
                 <GraphSandbox dsl={problem.graphDsl ?? ""} height={300} />
+              </div>
+            )}
+            {isEditing && graphDslIssues.issues.length > 0 && (
+              <ul
+                data-testid="problem-graphdsl-issues"
+                style={{
+                  color: "var(--color-error, #dc2626)",
+                  fontSize: "0.85rem",
+                  margin: "6px 0 0",
+                  paddingLeft: "18px",
+                }}
+              >
+                {graphDslIssues.issues.map((issue, index) => (
+                  <li key={index} data-testid="problem-graphdsl-issue">
+                    {issue}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {isEditing && graphDslIssues.isUnavailable && (
+              <div
+                data-testid="problem-graphdsl-validation-unavailable"
+                style={{
+                  color: "var(--color-error, #dc2626)",
+                  fontSize: "0.85rem",
+                  marginTop: "6px",
+                }}
+              >
+                Graph DSL validation is unavailable. Saving stays disabled until
+                validation succeeds.
               </div>
             )}
           </div>
@@ -979,7 +1015,11 @@ export function ProblemDetailPage() {
             <>
               <button
                 onClick={handleSave}
-                disabled={updateMutation.isPending}
+                disabled={
+                  updateMutation.isPending ||
+                  !graphDslIssues.isValid ||
+                  graphDslIssues.isValidating
+                }
                 className="btn btn-primary"
                 style={{ padding: "0.5rem 1.25rem", borderRadius: "var(--radius-md)", fontSize: "0.875rem" }}
               >
