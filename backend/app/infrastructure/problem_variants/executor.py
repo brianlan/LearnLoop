@@ -28,6 +28,7 @@ from app.infrastructure.problem_variants.repository import (
 from app.infrastructure.vlm.variant_client import (
     VariantCandidate,
     generate_and_validate,
+    source_graph_dsl_preflight,
 )
 from app.problem_variation import (
     VariationStatus,
@@ -127,6 +128,24 @@ async def _run_session_generation(
         identity = (
             f"generator {generator.identity['provider']}/{generator.identity['model']}"
         )
+
+        # Pre-flight before the generator call (issue #692): a non-compliant
+        # source can only produce candidates the cheap gate rejects, and this
+        # executor generates before reaching generate_and_validate.
+        preflight = source_graph_dsl_preflight(source)
+        if preflight is not None:
+            await save_problem_variant_result(
+                database,
+                user_id,
+                problem_id,
+                session_id,
+                claimed_revision=claimed_revision,
+                verdict="fail",
+                validation=serialize_generation_result(preflight),
+                candidate_present=False,
+                now=_utc_now(),
+            )
+            return
 
         # Step 1: generate and checkpoint before any validator call.
         try:

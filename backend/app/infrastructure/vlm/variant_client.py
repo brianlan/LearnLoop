@@ -433,6 +433,38 @@ def _problem_context(problem: ProblemContent | VariantCandidate) -> dict[str, An
     }
 
 
+def source_graph_dsl_preflight(
+    source: ProblemContent, candidate: VariantCandidate | None = None
+) -> VariantGenerationResult | None:
+    """Pre-flight (issue #692): fail-fast result for a non-compliant source.
+
+    A source graphDsl that fails the sanitizer can only yield candidates the
+    cheap gate rejects, so no provider call may run. Production callers
+    generate (and checkpoint) before reaching ``generate_and_validate``, so
+    they invoke this first; one implementation keeps the message and the
+    explain output identical at every call site.
+    """
+    source_graph = (source.graph_dsl or "").strip()
+    if not source_graph or sanitize_whiteboard_dsl(source.graph_dsl) is not None:
+        return None
+    return VariantGenerationResult(
+        candidate=candidate,
+        reports=[],
+        assessment=VariantAssessment(
+            verdict="fail",
+            failures=[
+                AssessmentFailure(
+                    kind="content",
+                    evidence=(
+                        "source graphDsl failed the safety check and was rejected before "
+                        "generation: " + "; ".join(explain_graph_dsl(source.graph_dsl))
+                    ),
+                )
+            ],
+        ),
+    )
+
+
 async def generate_and_validate(
     *,
     mode: VariantMode,
@@ -455,25 +487,11 @@ async def generate_and_validate(
     """
     # Pre-flight (issue #692): a non-compliant source graphDsl can only yield
     # candidates the cheap gate rejects, so fail before any provider call.
-    # One guard at this single convergence point covers every caller.
-    source_graph = (source.graph_dsl or "").strip()
-    if source_graph and sanitize_whiteboard_dsl(source.graph_dsl) is None:
-        return VariantGenerationResult(
-            candidate=candidate,
-            reports=[],
-            assessment=VariantAssessment(
-                verdict="fail",
-                failures=[
-                    AssessmentFailure(
-                        kind="content",
-                        evidence=(
-                            "source graphDsl failed the safety check and was rejected before "
-                            "generation: " + "; ".join(explain_graph_dsl(source.graph_dsl))
-                        ),
-                    )
-                ],
-            ),
-        )
+    # Callers that generate before reaching this seam run the same check via
+    # source_graph_dsl_preflight.
+    preflight = source_graph_dsl_preflight(source, candidate)
+    if preflight is not None:
+        return preflight
 
     if candidate is None:
         try:

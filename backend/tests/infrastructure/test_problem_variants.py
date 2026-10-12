@@ -622,6 +622,48 @@ async def test_executor_runs_generate_checkpoint_validate_to_ready(
     variant_executor.cancel_problem_variant_task(session_id)
 
 
+async def test_executor_preflight_fails_non_compliant_source_before_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #692: the executor pre-flights the source graphDsl before its
+    generator call — it generates (and checkpoints) before reaching
+    generate_and_validate, so the seam guard alone would still burn a call."""
+    database = FakeDatabase()
+    session = make_session(status=VariationStatus.QUEUED.value, content_revision=1)
+    session["problemId"] = PROBLEM_ID
+    session["variation"]["original"]["graphDsl"] = (
+        "board.create('rectangle', [0, 0, 1, 1]);"
+    )
+    session_id = seed_session(database, session)
+
+    class NoGenerateGenerator(FakeGenerator):
+        async def generate_candidate(self, *, mode: str, source: Any) -> VariantCandidate:
+            raise AssertionError("preflight must fail before the generator call")
+
+    async def fake_generate_and_validate(**kwargs: Any) -> Any:
+        raise AssertionError("preflight must fail before generate_and_validate")
+
+    monkeypatch.setattr(
+        variant_executor, "generate_and_validate", fake_generate_and_validate
+    )
+    await start_problem_variant_generation(
+        database, settings=None,
+        user_id="user-1", problem_id=PROBLEM_ID, session_id=session_id,
+        clients=(NoGenerateGenerator(), object(), None, object()),
+    )
+    await variant_executor._tasks[str(session_id)]
+
+    stored = get_session(database, session_id)
+    variation = stored["variation"]
+    assert variation["status"] == VariationStatus.FAILED.value
+    assert variation["candidate"] is None
+    failure = variation["validation"]["failures"][0]
+    assert failure["kind"] == "content"
+    assert "source graphDsl" in failure["evidence"]
+    assert "disallowed element type 'rectangle'" in failure["evidence"]
+    variant_executor.cancel_problem_variant_task(session_id)
+
+
 async def test_executor_revalidation_validates_stored_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
