@@ -28,6 +28,7 @@ _ALLOWED_DSL_ELEMENT_TYPES = {
 _ALLOWED_DSL_OPTION_KEYS = {
     "anchorX",
     "anchorY",
+    "borders",
     "color",
     "dash",
     "face",
@@ -78,6 +79,21 @@ _MAX_DSL_LENGTH = 16384
 
 def _strip_quoted_strings(value: str) -> str:
     return re.sub(r"""'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"""", "", value)
+
+
+# ponytail: one regex alternation — string literals first so '//' inside quotes
+# survives; comments are replaced by a space so token boundaries are preserved.
+_STRING_OR_COMMENT = re.compile(
+    r"""'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|//[^\r\n\u2028\u2029]*|/\*.*?\*/""",
+    re.DOTALL,
+)
+
+
+def _strip_comments(value: str) -> str:
+    return _STRING_OR_COMMENT.sub(
+        lambda match: match.group(0) if match.group(0)[0] in {"'", '"'} else " ",
+        value,
+    )
 
 
 def _split_top_level(value: str, delimiter: str) -> list[str] | None:
@@ -248,8 +264,9 @@ def sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
     """Return cleaned DSL or None if the input is unsafe, empty, or malformed.
 
     The policy strips markdown code fences, removes ``JXG.JSXGraph.initBoard``
-    boilerplate, then validates the remaining DSL against the allowed grammar,
-    element types, option keys, and blocked-token list.
+    boilerplate, strips string-literal-aware comments, then validates the
+    remaining DSL against the allowed grammar, element types, option keys,
+    and blocked-token list.
     """
     if dsl is None:
         return None
@@ -266,6 +283,10 @@ def sanitize_whiteboard_dsl(dsl: str | None) -> str | None:
     # Strip initBoard calls — board already exists in the sandbox
     stripped = re.sub(r"var\s+\w+\s*=\s*JXG\.JSXGraph\.initBoard\([^)]*\)\s*;?", "", stripped)
     stripped = stripped.strip()
+
+    # Strip comments before the token scan so orphaned `//` debris left behind
+    # by initBoard removal cannot fail the blocked-pattern scan.
+    stripped = _strip_comments(stripped).strip()
 
     if stripped and not _is_allowed_graph_dsl(stripped):
         return None
