@@ -897,11 +897,7 @@ def test_authoring_rules_enumerate_exactly_the_sanitizer_whitelists(prompt: str)
     assert set(_ELEMENT_TYPE_PARENT_EXAMPLES) == set(_ALLOWED_DSL_ELEMENT_TYPES)
 
 
-@pytest.mark.parametrize(
-    "prompt",
-    [MATH_EXTRACTION_SYSTEM_PROMPT, VARIANT_GENERATOR_SYSTEM_PROMPT],
-)
-def test_authoring_rules_examples_never_name_rejected_keys(prompt: str) -> None:
+def test_authoring_rules_examples_never_name_rejected_keys() -> None:
     """The incident class, mechanically prevented: removing a key or element
     type from a sanitizer whitelist turns this red while any prompt example
     still teaches it."""
