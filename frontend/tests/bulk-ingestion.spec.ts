@@ -323,6 +323,42 @@ test.describe("Bulk ingestion E2E", () => {
     await expect(tagInput).toHaveValue("second-tag");
   });
 
+  test("shows pre-save graphDsl issues on the bulk review surface", async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(60000);
+
+    const session = await createSession(request);
+    await addAuthenticatedSession(page, session);
+
+    await uploadImages(page, ["problem-a.png"]);
+    await detectAndCommitAll(page);
+
+    const batchId = await getActiveBatchId(request, session);
+    await waitForAllItemsReady(request, session, batchId);
+
+    await page.reload();
+    await waitForStep(page, "review");
+
+    const graphDslInput = page.getByTestId("bulk-review-graphdsl");
+    const validationResponse = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" &&
+        r.url().includes("/graph-dsl/validate"),
+    );
+    await graphDslInput.fill("board.create('rectangle', [0, 0, 1, 1]);");
+    await validationResponse;
+
+    await expect(page.getByTestId("bulk-review-graphdsl-issues")).toBeVisible();
+    await expect(page.getByTestId("bulk-review-graphdsl-issue")).toContainText(
+      "disallowed element type 'rectangle'",
+    );
+
+    await graphDslInput.fill("board.create('point', [0, 0]);");
+    await expect(page.getByTestId("bulk-review-graphdsl-issues")).toHaveCount(0);
+  });
+
   test("recovers from detection failure after retry", async ({
     page,
     request,

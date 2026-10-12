@@ -77,7 +77,7 @@ _BLOCKED_DSL_TOKENS = {
     "__proto__",
 }
 
-_MAX_DSL_LENGTH = 16384
+MAX_DSL_LENGTH = 16384
 
 
 def _strip_quoted_strings(value: str) -> str:
@@ -300,8 +300,8 @@ def _explain_statement(statement: str, declared_names: set[str]) -> str | None:
 
 def _explain_graph_dsl_body(stripped: str) -> list[str]:
     """Rejection reasons for already-preprocessed DSL; empty means compliant."""
-    if len(stripped) > _MAX_DSL_LENGTH:
-        return [f"exceeds the maximum DSL length of {_MAX_DSL_LENGTH} characters"]
+    if len(stripped) > MAX_DSL_LENGTH:
+        return [f"exceeds the maximum DSL length of {MAX_DSL_LENGTH} characters"]
 
     reasons: list[str] = []
     unquoted = _strip_quoted_strings(stripped)

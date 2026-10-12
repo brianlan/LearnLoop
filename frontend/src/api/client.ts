@@ -39,6 +39,11 @@ export interface MeResponse {
   user?: User;
 }
 
+export interface GraphDslValidationResponse {
+  valid: boolean;
+  issues: string[];
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const rawData = await response.json().catch(() => ({}));
@@ -102,6 +107,21 @@ export const api = {
     return this.post<{ ok: boolean }>("/teacher-password/verify", { password });
   },
 
+  /**
+   * Pre-save graphDsl validation (issue #695): returns the backend sanitizer's
+   * per-statement reasons so every DSL editor can show them before saving.
+   */
+  async validateGraphDsl(
+    dsl: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<GraphDslValidationResponse> {
+    return this.post<GraphDslValidationResponse>(
+      "/graph-dsl/validate",
+      { graphDsl: dsl },
+      options,
+    );
+  },
+
   async changeTeacherPassword(
     currentPassword: string,
     newPassword: string,
@@ -162,7 +182,7 @@ export const api = {
     return handleResponse<T>(response);
   },
 
-  async post<T>(path: string, body: unknown): Promise<T> {
+  async post<T>(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       headers: {
@@ -170,6 +190,7 @@ export const api = {
       },
       credentials: "include",
       body: JSON.stringify(body),
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
     return handleResponse<T>(response);
   },
