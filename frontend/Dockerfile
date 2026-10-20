@@ -5,7 +5,7 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 
 WORKDIR /app
 
-RUN sed -i "s|http://dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories \
+RUN sed -i "s|https\?://dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories \
     && apk update
 
 COPY package.json package-lock.json ./
