@@ -461,11 +461,23 @@ async def test_probe_photonmark_profile_recovers_envelope_through_shared_path() 
     server.content_type = "text/event-stream"
     server.start()
     try:
+        # Only the profile under test is configured; every other profile is
+        # left at its placeholder so run_probe makes no real network attempts
+        # for it (#704 N1).
+        unconfigured: dict = {}
+        for prefix in VLM_PROFILE_PREFIXES:
+            if prefix == "math_ingestion_vlm":
+                continue
+            unconfigured[f"{prefix}_endpoint"] = (
+                f"https://example-{prefix}-provider.invalid/api"
+            )
+            unconfigured[f"{prefix}_model"] = "replace-me"
+            unconfigured[f"{prefix}_api_key"] = "replace-me"
         settings = _build_settings(
             math_ingestion_vlm_provider="photonmark",
             math_ingestion_vlm_api_mode="responses",
             math_ingestion_vlm_endpoint=server.url,
-            **UNCONFIGURED_VALIDATOR2,
+            **unconfigured,
         )
 
         snap = await health.run_probe(settings=settings, attempts=1)

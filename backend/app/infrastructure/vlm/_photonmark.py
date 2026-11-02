@@ -21,6 +21,7 @@ import json
 from typing import Any
 
 from litellm.types.llms.openai import ResponsesAPIResponse
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 from pydantic import ValidationError
 
 # The exact message wrapper litellm 1.104.2 puts in front of the raw response
@@ -87,6 +88,27 @@ def parse_keepalive_envelope(raw: str) -> dict[str, Any] | None:
     return final if isinstance(final, dict) else None
 
 
+def _extract_output_text(response: ResponsesAPIResponse) -> str | None:
+    """Strictly validate output items, then extract the output text.
+
+    ``ResponsesAPIResponse.output`` falls back to raw dicts for entries the
+    SDK cannot fully type (wrong-role or field-missing messages, non-string
+    text, non-list content) and its ``output_text`` accessor then either
+    silently accepts them or raises ``TypeError`` outside any validation
+    catch (#704 B1). So: untyped dict entries refuse recovery; text comes
+    only from properly typed assistant messages' ``output_text`` parts.
+    """
+    texts: list[str] = []
+    for item in response.output:
+        if isinstance(item, dict):
+            return None
+        if isinstance(item, ResponseOutputMessage):
+            texts.extend(
+                part.text for part in item.content if isinstance(part, ResponseOutputText)
+            )
+    return "".join(texts) or None
+
+
 def recover_responses_payload(exc: BaseException) -> dict[str, Any] | None:
     """Return the recovered ``{"output_text": ...}`` payload, or None.
 
@@ -112,6 +134,7 @@ def recover_responses_payload(exc: BaseException) -> dict[str, Any] | None:
         response = ResponsesAPIResponse.model_validate(final)
     except ValidationError:
         return None
-    if not response.output_text:
+    output_text = _extract_output_text(response)
+    if output_text is None:
         return None
-    return {"output_text": response.output_text}
+    return {"output_text": output_text}

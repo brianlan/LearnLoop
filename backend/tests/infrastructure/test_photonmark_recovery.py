@@ -156,6 +156,54 @@ class TestRecoverResponsesPayload:
             {"object": "other.object"},
             {"output": []},
             {"output": ["garbage"]},
+            # Untyped dict entries (the SDK model's dict fallback keeps them).
+            {"output": [{"type": "weird_thing", "foo": "bar"}]},
+            # Message-shaped dicts the SDK cannot fully type (B1 repros).
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "output_text", "text": "x", "annotations": []}
+                        ],
+                    }
+                ]
+            },
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": "x", "annotations": []}
+                        ],
+                    }
+                ]
+            },
+            {
+                "output": [
+                    {
+                        "id": "m",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": 123, "annotations": []}
+                        ],
+                    }
+                ]
+            },
+            {
+                "output": [
+                    {
+                        "id": "m",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": "not-a-list",
+                    }
+                ]
+            },
         ],
     )
     def test_invalid_terminal_objects_fail_closed(self, final_override: dict[str, Any]) -> None:
@@ -168,6 +216,16 @@ class TestRecoverResponsesPayload:
         }
         body = _FRAME + json.dumps(final)
         assert recover_responses_payload(_wrapped(body)) is None
+
+    def test_typed_reasoning_item_does_not_block_recovery(self) -> None:
+        final = _FINAL | {
+            "output": [
+                {"id": "r", "type": "reasoning", "summary": []},
+                *_FINAL["output"],
+            ],
+        }
+        body = _FRAME + json.dumps(final)
+        assert recover_responses_payload(_wrapped(body)) == {"output_text": "out"}
 
     def test_unparseable_body_falls_back_to_none(self) -> None:
         assert recover_responses_payload(_wrapped("total nonsense")) is None

@@ -685,6 +685,17 @@ def _photonmark_final_payload(text: str, *, with_output_text_field: bool = False
     return payload
 
 
+def _photonmark_envelope_with_output_message(output_item: dict) -> bytes:
+    """Envelope whose terminal object carries a raw (untyped) output item.
+
+    The litellm response model's dict fallback keeps such items unparsed, so
+    recovery itself must validate and refuse them (#704 B1).
+    """
+    payload = _photonmark_final_payload("x")
+    payload["output"] = [output_item]
+    return (_PHOTONMARK_KEEPALIVE_FRAME + json.dumps(payload) + "\n").encode()
+
+
 def _mixed_envelope(
     final: dict,
     *,
@@ -772,6 +783,84 @@ async def test_real_sdk_photonmark_recovers_repeated_frames_crlf_and_plain_outpu
 
 
 @pytest.mark.asyncio
+async def test_real_sdk_photonmark_recovers_output_text_convenience_field(
+    capture_server,
+) -> None:
+    """A gateway object that also carries the nonstandard top-level
+    `output_text` field still recovers (#704 B2 missing case)."""
+    _serve_envelope(
+        capture_server,
+        _mixed_envelope(
+            _photonmark_final_payload(_RESPONSES_TEXT, with_output_text_field=True)
+        ),
+    )
+    client = _build_real_client(capture_server, api_mode="responses", provider="photonmark")
+
+    result = await client._send_responses_request({"input": "Return your answer as JSON."})
+
+    assert result == {"output_text": _RESPONSES_TEXT}
+    assert len(capture_server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_photonmark_recovers_with_typed_reasoning_item(
+    capture_server,
+) -> None:
+    """A typed non-message item (reasoning) must not block recovery; the
+    untyped-dict refusal covers only entries the SDK cannot type (B1)."""
+    final = _photonmark_final_payload(_RESPONSES_TEXT)
+    final["output"] = [
+        {"id": "r-1", "type": "reasoning", "summary": []},
+        *final["output"],
+    ]
+    _serve_envelope(capture_server, _mixed_envelope(final))
+    client = _build_real_client(capture_server, api_mode="responses", provider="photonmark")
+
+    result = await client._send_responses_request({"input": "Return your answer as JSON."})
+
+    assert result == {"output_text": _RESPONSES_TEXT}
+    assert len(capture_server.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "recovered_output_text",
+    [
+        "not json at all",
+        # Valid JSON but failing the extraction schema (missing problemType).
+        json.dumps({"text": "synthetic problem text"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_real_sdk_photonmark_recovered_invalid_extraction_fails_schema(
+    capture_server, recovered_output_text: str
+) -> None:
+    """Recovery reuses the existing business validation: invalid extraction
+    payloads never become apparent successes (#704 B2/AC6)."""
+    from app.infrastructure.vlm.client import VLMClient, VLMError
+
+    _serve_envelope(
+        capture_server,
+        _mixed_envelope(_photonmark_final_payload(recovered_output_text)),
+    )
+    client = VLMClient(
+        endpoint=capture_server.url,
+        model="deepseek-v4.1-flash",
+        api_key="capture-key",
+        timeout_seconds=30,
+        provider="photonmark",
+        api_mode="responses",
+        reasoning_effort="high",
+    )
+
+    with pytest.raises(VLMError) as exc_info:
+        await client.extract(image_base64="c3ludGhldGlj")
+
+    assert exc_info.value.code == FAILURE_CODE_INVALID_RESPONSE
+    assert exc_info.value.retryable is False
+    assert len(capture_server.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_real_sdk_photonmark_standard_json_response_unaffected(capture_server) -> None:
     """A normal Responses JSON still works for the photonmark selection."""
     client = _build_real_client(capture_server, api_mode="responses", provider="photonmark")
@@ -818,12 +907,13 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
 
 
 @pytest.mark.parametrize(
-    "envelope_body",
+    "case_name,envelope_body",
     [
         # Heartbeats without a terminal result.
-        (_PHOTONMARK_KEEPALIVE_FRAME.encode(),),
+        ("heartbeat-only", _PHOTONMARK_KEEPALIVE_FRAME.encode()),
         # Unknown response id in the frame.
         (
+            "unknown-response-id",
             (
                 "event: response.in_progress\n"
                 'data: {"type":"response.in_progress","response":{"id":"resp_other",'
@@ -834,6 +924,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Unknown event name.
         (
+            "unknown-event",
             (
                 "event: response.created\n"
                 'data: {"type":"response.in_progress","response":{"id":"resp_photonmark_keepalive",'
@@ -844,6 +935,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Malformed heartbeat data line.
         (
+            "malformed-heartbeat",
             (
                 "event: response.in_progress\ndata: {not-json}\n\n"
                 + json.dumps(_photonmark_final_payload("x"))
@@ -852,10 +944,12 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Malformed/truncated final JSON.
         (
+            "truncated-final-json",
             (_PHOTONMARK_KEEPALIVE_FRAME + '{"id": "resp-x", "object": "resp').encode(),
         ),
         # More than one final object (trailing junk).
         (
+            "two-final-objects",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x"))
@@ -866,6 +960,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Trailing non-whitespace junk after the final object.
         (
+            "trailing-junk",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x"))
@@ -874,6 +969,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Wrong terminal object shape: missing output (SDK model rejects).
         (
+            "missing-output",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(
@@ -888,14 +984,77 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Invalid output entries (SDK model rejects).
         (
+            "garbage-output",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x") | {"output": ["garbage"]})
                 + "\n"
             ).encode(),
         ),
+        # Untyped dict output entries: the SDK model's dict fallback keeps them,
+        # so recovery itself must refuse them (#704 B1).
+        (
+            "untyped-output-dict",
+            (
+                _PHOTONMARK_KEEPALIVE_FRAME
+                + json.dumps(
+                    _photonmark_final_payload("x")
+                    | {"output": [{"type": "weird_thing", "foo": "bar"}]}
+                )
+                + "\n"
+            ).encode(),
+        ),
+        # Message item with the wrong role (untyped fallback dict).
+        (
+            "wrong-role-message",
+            _photonmark_envelope_with_output_message(
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "output_text", "text": "x", "annotations": []}],
+                }
+            ),
+        ),
+        # Message item missing required fields (id/status).
+        (
+            "message-missing-required-fields",
+            _photonmark_envelope_with_output_message(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "x", "annotations": []}],
+                }
+            ),
+        ),
+        # Non-string output text (accessor raises TypeError -> must fail closed).
+        (
+            "non-string-text",
+            _photonmark_envelope_with_output_message(
+                {
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": 123, "annotations": []}],
+                }
+            ),
+        ),
+        # Non-list content.
+        (
+            "non-list-content",
+            _photonmark_envelope_with_output_message(
+                {
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": "not-a-list",
+                }
+            ),
+        ),
         # Empty output: nothing usable even though structurally valid.
         (
+            "empty-output",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x") | {"output": []})
@@ -904,6 +1063,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # `failed` terminal status.
         (
+            "failed-status",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x") | {"status": "failed"})
@@ -912,6 +1072,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # `incomplete` terminal status.
         (
+            "incomplete-status",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x") | {"status": "incomplete"})
@@ -920,6 +1081,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Non-null provider error.
         (
+            "provider-error",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(
@@ -931,6 +1093,7 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
         ),
         # Wrong top-level object type.
         (
+            "wrong-object-type",
             (
                 _PHOTONMARK_KEEPALIVE_FRAME
                 + json.dumps(_photonmark_final_payload("x") | {"object": "chat.completion"})
@@ -941,9 +1104,10 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
 )
 @pytest.mark.asyncio
 async def test_real_sdk_photonmark_negative_envelopes_fail_closed(
-    capture_server, envelope_body: bytes
+    capture_server, case_name: str, envelope_body: bytes
 ) -> None:
     """#704 AC6: every unrecognized/failing envelope keeps the existing failure."""
+    assert isinstance(envelope_body, bytes)
     _serve_envelope(capture_server, envelope_body)
     client = _build_real_client(capture_server, api_mode="responses", provider="photonmark")
 
@@ -952,11 +1116,14 @@ async def test_real_sdk_photonmark_negative_envelopes_fail_closed(
 
     assert exc_info.value.code == FAILURE_CODE_PROVIDER
     assert exc_info.value.retryable is True
+    # The failure came from the real HTTP-200 parse path, not a connection
+    # error: the translated error's cause is the SDK's status-200 APIError.
+    assert getattr(exc_info.value.__cause__, "status_code", None) == 200
     # No compatibility retry: the recovery never sends a second request.
     assert len(capture_server.requests) == 1
 
 
-@pytest.mark.parametrize("status_code", [400, 401, 500])
+@pytest.mark.parametrize("status_code", [400, 401, 429, 500])
 @pytest.mark.asyncio
 async def test_real_sdk_photonmark_genuine_http_errors_keep_existing_paths(
     capture_server, status_code: int
