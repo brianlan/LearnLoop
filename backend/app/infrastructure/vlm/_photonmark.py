@@ -73,7 +73,10 @@ def parse_keepalive_envelope(raw: str) -> dict[str, Any] | None:
             return None
         try:
             data = json.loads(lines[i][len("data:") :].strip())
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
+            # JSONDecodeError is a ValueError; deep nesting raises
+            # RecursionError and oversized integer literals raise plain
+            # ValueError. All decoder failures fail closed (#704 B4).
             return None
         if not _is_recognized_keepalive_frame(event_field, data):
             return None
@@ -83,7 +86,7 @@ def parse_keepalive_envelope(raw: str) -> dict[str, Any] | None:
         i += 1
     try:
         final = json.loads("\n".join(lines[i:]))
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None
     return final if isinstance(final, dict) else None
 

@@ -104,6 +104,12 @@ class TestParseKeepaliveEnvelope:
             + json.dumps(_FINAL),
             # Malformed heartbeat JSON.
             "event: response.in_progress\ndata: {oops}\n\n" + json.dumps(_FINAL),
+            # Decoder-limit failures in the heartbeat data line (#704 B4):
+            # excessive nesting raises RecursionError, oversized integer
+            # literals raise plain ValueError.
+            "event: response.in_progress\ndata: " + '{"a":' * 1200 + "\n\n" + json.dumps(_FINAL),
+            "event: response.in_progress\ndata: " + '{"counter":' + "1" * 5000 + "}\n\n"
+            + json.dumps(_FINAL),
             # Missing blank separator after the frame.
             _FRAME.rstrip("\n") + json.dumps(_FINAL),
             # Missing event line before data.
@@ -116,6 +122,9 @@ class TestParseKeepaliveEnvelope:
             _FRAME + json.dumps(_FINAL) + "\nEND\n",
             # Final body is not an object.
             _FRAME + "[1, 2, 3]",
+            # Decoder-limit failures in the final JSON position (#704 B4).
+            _FRAME + '{"output":' + "[" * 1200,
+            _FRAME + '{"counter":' + "1" * 5000 + "}",
         ],
     )
     def test_rejected_bodies_return_none(self, body: str) -> None:

@@ -1100,6 +1100,34 @@ async def test_real_sdk_photonmark_chat_mode_gets_no_recovery(capture_server) ->
                 + "\n"
             ).encode(),
         ),
+        # JSON decoder limit failures fail closed like any other decoder
+        # error: excessive nesting (RecursionError) and oversized integer
+        # literals (plain ValueError) in the terminal object (#704 B4).
+        (
+            "nested-final-json",
+            (_PHOTONMARK_KEEPALIVE_FRAME + '{"output":' + "[" * 1200).encode(),
+        ),
+        (
+            "oversized-int-final-json",
+            (_PHOTONMARK_KEEPALIVE_FRAME + '{"counter":' + "1" * 5000 + "}").encode(),
+        ),
+        # ...and in a heartbeat data line, the earlier decoder call (#704 B4).
+        (
+            "nested-heartbeat-json",
+            (
+                "event: response.in_progress\ndata: " + '{"a":' * 1200 + "\n\n"
+                + json.dumps(_photonmark_final_payload("x"))
+                + "\n"
+            ).encode(),
+        ),
+        (
+            "oversized-int-heartbeat-json",
+            (
+                "event: response.in_progress\ndata: " + '{"counter":' + "1" * 5000 + "}\n\n"
+                + json.dumps(_photonmark_final_payload("x"))
+                + "\n"
+            ).encode(),
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -1121,6 +1149,34 @@ async def test_real_sdk_photonmark_negative_envelopes_fail_closed(
     assert getattr(exc_info.value.__cause__, "status_code", None) == 200
     # No compatibility retry: the recovery never sends a second request.
     assert len(capture_server.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_photonmark_decoder_limit_errors_stay_fail_closed(
+    capture_server,
+) -> None:
+    """#704 B4/AC9: decoder limit failures (RecursionError / plain ValueError)
+    refuse recovery and never surface the raw response body."""
+    canary = "canary-decoder-b4-marker"
+    nested_body = _PHOTONMARK_KEEPALIVE_FRAME + '{"output":' + "[" * 1200 + canary
+    oversized_body = (
+        _PHOTONMARK_KEEPALIVE_FRAME + '{"counter":' + "1" * 5000 + canary + "}"
+    )
+    client = _build_real_client(capture_server, api_mode="responses", provider="photonmark")
+
+    for body in (nested_body, oversized_body):
+        _serve_envelope(capture_server, body.encode())
+        capture_server.requests.clear()
+
+        with pytest.raises(BaseVLMError) as exc_info:
+            await client._send_responses_request({"input": "Return your answer as JSON."})
+
+        assert exc_info.value.code == FAILURE_CODE_PROVIDER
+        assert exc_info.value.retryable is True
+        assert getattr(exc_info.value.__cause__, "status_code", None) == 200
+        # The raw response body (canary inside) never reaches the surfaced error.
+        assert canary not in str(exc_info.value)
+        assert len(capture_server.requests) == 1
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 429, 500])
