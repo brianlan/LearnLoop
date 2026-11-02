@@ -444,3 +444,34 @@ async def test_probe_request_carries_configured_reasoning_effort() -> None:
         if c["api_base"] == "https://math_ingestion_vlm.example/api"
     )
     assert other_call["reasoning_effort"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_probe_photonmark_profile_recovers_envelope_through_shared_path() -> None:
+    """#704 AC8: a photonmark profile probes through the same shared client
+    path; the keepalive envelope is recovered like any business request."""
+    from tests.infrastructure.test_base_vlm_client import (
+        _mixed_envelope,
+        _photonmark_final_payload,
+        _CaptureServer,
+    )
+
+    server = _CaptureServer()
+    server.raw_body = _mixed_envelope(_photonmark_final_payload("OK"))
+    server.content_type = "text/event-stream"
+    server.start()
+    try:
+        settings = _build_settings(
+            math_ingestion_vlm_provider="photonmark",
+            math_ingestion_vlm_api_mode="responses",
+            math_ingestion_vlm_endpoint=server.url,
+            **UNCONFIGURED_VALIDATOR2,
+        )
+
+        snap = await health.run_probe(settings=settings, attempts=1)
+    finally:
+        server.stop()
+
+    assert snap["profiles"]["math_ingestion_vlm"]["status"] == "ok"
+    # Recovery reused the single already-received response: no extra HTTP call.
+    assert len(server.requests) == 1

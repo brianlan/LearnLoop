@@ -150,6 +150,26 @@ async def test_settings_info_exposes_configured_reasoning_effort(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_settings_info_exposes_photonmark_provider_identity(monkeypatch) -> None:
+    """#704 AC2: settings output reports the configured provider string
+    (`photonmark`), not the internal SDK routing prefix."""
+    settings = _build_settings()
+    for prefix in ("math_ingestion_vlm", "variant_generator_vlm"):
+        setattr(settings, f"{prefix}_provider", "photonmark")
+    monkeypatch.setattr(settings_presentation, "get_settings", lambda: settings)
+
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["math_ingestion_vlm"]["provider"] == "photonmark"
+    assert payload["variant_generator_vlm"]["provider"] == "photonmark"
+    assert payload["helper_vlm"]["provider"] == "openai"
+
+
+@pytest.mark.asyncio
 async def test_settings_payload_leaks_no_api_key(client: AsyncClient) -> None:
     response = await client.get("/api/v1/settings")
 

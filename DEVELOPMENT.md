@@ -360,7 +360,7 @@ The canonical template lives in `.env.example`.
 
 ### AI tutoring VLM notes
 
-- All VLM requests go through LiteLLM. Each role's `*_VLM_PROVIDER` setting selects the LiteLLM provider prefix; the effective model sent to LiteLLM is `<provider>/<model>`.
+- All VLM requests go through LiteLLM. Each role's `*_VLM_PROVIDER` setting selects the LiteLLM provider prefix; the effective model sent to LiteLLM is `<provider>/<model>`. One exception: the LearnLoop `photonmark` adapter value routes through LiteLLM's `openai` implementation while keeping the configured identity (see below).
 - Each role's `*_VLM_API_MODE` setting independently selects the API contract:
   - `chat` (default): Uses LiteLLM's `acompletion()` with OpenAI Chat Completions payload (`messages`, `image_url` content parts).
   - `responses`: Uses LiteLLM's `aresponses()` with native Responses API payload (`instructions`, `input` with `input_text`/`input_image`, structured-output schema).
@@ -382,6 +382,41 @@ GRADING_VLM_MODEL=gpt-5.6-luna
 GRADING_VLM_API_KEY=your-key
 GRADING_VLM_PROVIDER=openai
 GRADING_VLM_API_MODE=responses
+```
+
+#### Photonmark adapter (`*_VLM_PROVIDER=photonmark`, issue #704)
+
+`photonmark` is a LearnLoop provider adapter, not a LiteLLM provider. Photonmark's
+gateway answers non-streaming Responses requests with HTTP 200, a
+`text/event-stream` body containing a synthetic `response.in_progress` keepalive
+frame, and then a bare complete Responses JSON object — a shape the LiteLLM SDK
+cannot parse on its own. The adapter sends requests through LiteLLM's OpenAI
+implementation and recovers that already-received successful result without a
+second HTTP request. Settings output and variant provenance keep the configured
+`photonmark` identity.
+
+- Explicit per-role opt-in only: set `*_VLM_PROVIDER=photonmark` on the relevant
+  profile. There is no hostname- or model-based detection, and `provider=openai`
+  never gains Photonmark recovery.
+- Protocol independence: `*_VLM_API_MODE` stays independent. The keepalive
+  recovery applies to Responses calls; Photonmark chat mode uses the OpenAI chat
+  route with normal error handling (its gateway rejects chat image content).
+- Rollout order: deploy the adapter code BEFORE opting a profile in — an older
+  deployment fails `photonmark` profiles at the SDK layer before any request.
+- Known limitation: only the observed keepalive-plus-final-JSON envelope is
+  recovered. Any other body (heartbeats without a terminal result, malformed or
+  multiple JSON objects, failed/incomplete results, provider errors) keeps the
+  normal failure path; genuine HTTP errors are never retried by the recovery.
+
+Example:
+
+```bash
+MATH_INGESTION_VLM_ENDPOINT=https://codex.photonmark.com/openai/v1
+MATH_INGESTION_VLM_MODEL=gpt-5.6-luna
+MATH_INGESTION_VLM_API_KEY=your-key
+MATH_INGESTION_VLM_PROVIDER=photonmark
+MATH_INGESTION_VLM_API_MODE=responses
+MATH_INGESTION_VLM_REASONING_EFFORT=high
 ```
 
 #### Chat API example (default)
