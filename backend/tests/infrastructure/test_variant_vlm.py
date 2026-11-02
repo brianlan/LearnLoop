@@ -229,6 +229,27 @@ async def test_generator_responses_request_is_text_only() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generator_photonmark_provenance_keeps_configured_identity() -> None:
+    """#704 AC2: new variant provenance records the configured provider
+    (`photonmark`), not the internal `openai` SDK routing prefix."""
+    recorder = _ResponsesRecorder([_generator_json()])
+    client = VariantGeneratorVLMClient(
+        endpoint="https://gen.example/api",
+        model="gen-model",
+        api_key="key",
+        timeout_seconds=30,
+        provider="photonmark",
+        api_mode="responses",
+        responses_fn=recorder,
+        error_factory=VariantVLMError,
+    )
+
+    candidate = await client.generate_candidate(mode="data-only", source=SOURCE)
+
+    assert candidate.generator == ModelIdentity(provider="photonmark", model="gen-model")
+
+
+@pytest.mark.asyncio
 async def test_validator_payload_never_contains_expected_answers_or_images() -> None:
     candidate = await _generator_client(_Recorder([_generator_json()])).generate_candidate(
         mode="data-only", source=SOURCE

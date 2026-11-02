@@ -217,3 +217,14 @@ async def test_build_grading_vlm_client_produces_closable_client() -> None:
 
     assert closed == [True]
     monkeypatch.undo()
+
+
+def test_build_math_ingestion_vlm_client_photonmark_provider_kept_as_identity() -> None:
+    """#704: the configured provider passes through unchanged; only the
+    shared base client derives the `openai` SDK routing prefix from it."""
+    settings = _settings(math_ingestion_vlm_provider="photonmark")
+
+    client = build_math_ingestion_vlm_client(settings)
+
+    assert client._provider == "photonmark"
+    assert client._effective_model == "openai/math-model"

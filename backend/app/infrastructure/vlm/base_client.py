@@ -11,6 +11,7 @@ from litellm.exceptions import APIConnectionError, Timeout, UnsupportedParamsErr
 from pydantic import ValidationError
 
 from app.infrastructure.vlm._models import _ChatCompletionResponse
+from app.infrastructure.vlm._photonmark import recover_responses_payload
 
 FAILURE_CODE_TIMEOUT = "vlm-timeout"
 FAILURE_CODE_NETWORK = "vlm-network-error"
@@ -61,7 +62,12 @@ class BaseVLMClient:
         self._provider = provider
         self._api_mode = api_mode
         self._reasoning_effort = reasoning_effort
-        self._effective_model = f"{provider}/{model}"
+        # Configured provider stays the identity (settings output, provenance);
+        # only the SDK routing prefix is derived (#704). LiteLLM has no
+        # `photonmark` route, so the explicit Photonmark adapter rides the
+        # OpenAI route with the configured wire model alias.
+        sdk_provider = "openai" if provider == "photonmark" else provider
+        self._effective_model = f"{sdk_provider}/{model}"
         self._completion_fn = completion_fn or litellm.acompletion
         self._responses_fn = responses_fn or litellm.aresponses
         self._error_factory = error_factory or BaseVLMError
@@ -134,6 +140,14 @@ class BaseVLMClient:
         except UnsupportedParamsError as exc:
             raise self._translate_local_validation_error(exc) from exc
         except (LiteLLMAPIError, openai.APIError) as exc:
+            # Explicit Photonmark opt-in only (#704), Responses-only: recover
+            # the observed keepalive-plus-final-JSON envelope from the already
+            # received HTTP-200 body. Any other provider, mode, or shape keeps
+            # the existing translation below.
+            if self._provider == "photonmark":
+                recovered = recover_responses_payload(exc)
+                if recovered is not None:
+                    return recovered
             raise self._translate_provider_error(exc) from exc
 
         return self._responses_to_dict(response)

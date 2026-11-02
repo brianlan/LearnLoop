@@ -144,6 +144,22 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.bulk_ingestion_item_lease_timeout_seconds == 60
 
 
+def test_settings_accept_photonmark_provider_opt_in(monkeypatch) -> None:
+    """#704 AC1: `photonmark` is a valid per-role provider selection and
+    existing defaults remain unchanged."""
+    monkeypatch.setenv("MATH_INGESTION_VLM_PROVIDER", "photonmark")
+    monkeypatch.setenv("VARIANT_GENERATOR_VLM_PROVIDER", "photonmark")
+    monkeypatch.setenv("VARIANT_GENERATOR_VLM_API_MODE", "responses")
+
+    settings = _IsolatedSettings()
+
+    assert settings.math_ingestion_vlm_provider == "photonmark"
+    assert settings.variant_generator_vlm_provider == "photonmark"
+    # Unselected profiles keep the default provider.
+    assert settings.helper_vlm_provider == "openai"
+    assert settings.grading_vlm_provider == "openai"
+
+
 def test_settings_defaults_when_environment_missing(monkeypatch) -> None:
     for key in [
         "APP_ENV",
