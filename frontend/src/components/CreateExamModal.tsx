@@ -3,7 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Modal } from "@/components/Modal";
 import Pagination from "@/components/Pagination";
+import { api } from "@/api/client";
 import { getSelectionCandidates } from "@/api/exams";
+import { flattenFolders } from "@/pages/ProblemsPage.folderHelpers";
+import type { FolderTreeResponse } from "@/types/folder";
+import type { TagsResponse } from "@/types/tag";
 import type {
   CreateExamRequest,
   SelectionCandidate,
@@ -35,6 +39,7 @@ interface CreateExamModalProps {
   /** Ids reported by a 422 INELIGIBLE_PROBLEMS rejection, marked in the picker (#682). */
   staleProblemIds?: string[];
   ineligibleMessage?: string | null;
+  createError?: (Error & { code?: string }) | null;
 }
 
 function sortValue(row: SelectionCandidate, field: SelectionCandidateSortBy): number | null {
@@ -73,9 +78,13 @@ export function CreateExamModal({
   onCreate,
   staleProblemIds = [],
   ineligibleMessage = null,
+  createError = null,
 }: CreateExamModalProps) {
   const [mode, setMode] = useState<"random" | "manual">("random");
   const [problemCountInput, setProblemCountInput] = useState(String(EXAM_PROBLEM_COUNT_DEFAULT));
+  const [folderIds, setFolderIds] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagSearch, setTagSearch] = useState("");
   const [keyword, setKeyword] = useState("");
   const [sortCriteria, setSortCriteria] = useState<SelectionCandidateSortCriterion[]>([]);
   const [page, setPage] = useState(1);
@@ -85,12 +94,42 @@ export function CreateExamModal({
     if (isOpen) {
       setMode("random");
       setProblemCountInput(String(EXAM_PROBLEM_COUNT_DEFAULT));
+      setFolderIds([]);
+      setTags([]);
+      setTagSearch("");
       setKeyword("");
       setSortCriteria([]);
       setPage(1);
       setSelected(new Map());
     }
   }, [isOpen]);
+
+  const foldersQuery = useQuery({
+    queryKey: ["folders"],
+    queryFn: () => api.get<FolderTreeResponse>("/folders"),
+    enabled: isOpen && mode === "random",
+  });
+  const tagsQuery = useQuery({
+    queryKey: ["tagSuggestions"],
+    queryFn: async () => {
+      const response = await api.get<TagsResponse>("/tags");
+      return response.items.map((item) => item.name);
+    },
+    enabled: isOpen && mode === "random",
+    staleTime: 30_000,
+  });
+  const folderLabels = useMemo(() => {
+    const labels = new Map<string, string>([["unfiled", "Unfiled"]]);
+    for (const folder of flattenFolders(foldersQuery.data?.items ?? [])) {
+      labels.set(folder.id, folder.parentId
+        ? `${labels.get(folder.parentId)} / ${folder.name}`
+        : folder.name);
+    }
+    return labels;
+  }, [foldersQuery.data]);
+  const matchingTags = (tagsQuery.data ?? []).filter((name) =>
+    name.toLowerCase().includes(tagSearch.trim().toLowerCase()),
+  );
 
   // Empty custom criteria IS the default Score-descending state (#708); the
   // effective list drives both the request and the confirm-time ordering.
@@ -169,7 +208,11 @@ export function CreateExamModal({
     if (isCreating) return;
     if (mode === "random") {
       if (validProblemCount === null) return;
-      onCreate({ mode: "random", maxProblemCount: validProblemCount });
+      onCreate({
+        mode: "random", maxProblemCount: validProblemCount,
+        ...(folderIds.length > 0 ? { folderIds } : {}),
+        ...(tags.length > 0 ? { tags } : {}),
+      });
       return;
     }
     if (selected.size === 0) return;
@@ -249,7 +292,8 @@ export function CreateExamModal({
           {mode === "random" ? (
             <>
               <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.9rem", fontWeight: 500 }}>
-                Choose how many problems to include.
+                Up to {validProblemCount ?? EXAM_PROBLEM_COUNT_DEFAULT} problems. Fewer will be created
+                if there are fewer eligible matches; filters are never widened to fill the exam.
               </p>
               <div>
                 <label
@@ -344,6 +388,130 @@ export function CreateExamModal({
                 >
                   {problemCountError}
                 </div>
+              )}
+              <fieldset
+                disabled={isCreating}
+                aria-describedby="exam-folder-help"
+                style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "0.75rem" }}
+              >
+                <legend style={{ fontWeight: 700 }}>Folders</legend>
+                <p id="exam-folder-help" style={{ margin: "0 0 0.5rem", fontSize: "0.8125rem", color: "var(--color-text-muted)" }}>
+                  Match any selected folder, including its descendants. None selected means all folders, including Unfiled.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.5rem" }}>
+                  {folderIds.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="btn btn-secondary"
+                      aria-label={`Remove folder ${folderLabels.get(id) ?? id}`}
+                      onClick={() => setFolderIds(folderIds.filter((value) => value !== id))}
+                    >
+                      {folderLabels.get(id) ?? id} ×
+                    </button>
+                  ))}
+                </div>
+                {foldersQuery.isLoading && <p role="status">Loading folders...</p>}
+                {foldersQuery.isError && (
+                  <p role="alert">
+                    Could not load folders. Your selections are unchanged.{" "}
+                    <button type="button" className="btn btn-secondary" onClick={() => void foldersQuery.refetch()}>Retry folders</button>
+                  </p>
+                )}
+                <div style={{ maxHeight: "144px", overflowY: "auto" }}>
+                  {[...folderLabels].map(([id, label]) => (
+                    <label key={id} style={{ display: "flex", gap: "0.5rem", padding: "0.25rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={folderIds.includes(id)}
+                        onChange={() => setFolderIds((previous) => previous.includes(id)
+                          ? previous.filter((value) => value !== id)
+                          : [...previous, id])}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset
+                disabled={isCreating}
+                aria-describedby="exam-tag-help"
+                style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "0.75rem" }}
+              >
+                <legend style={{ fontWeight: 700 }}>Tags</legend>
+                <p id="exam-tag-help" style={{ margin: "0 0 0.5rem", fontSize: "0.8125rem", color: "var(--color-text-muted)" }}>
+                  Match all selected tags exactly. None selected means no tag restriction. Folder and tag groups must both match.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.5rem" }}>
+                  {tags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="btn btn-secondary"
+                      aria-label={`Remove tag ${tag}`}
+                      onClick={() => setTags(tags.filter((value) => value !== tag))}
+                    >
+                      {tag} ×
+                    </button>
+                  ))}
+                </div>
+                <label htmlFor="exam-tag-search">Search existing tags</label>
+                <input
+                  id="exam-tag-search"
+                  type="search"
+                  value={tagSearch}
+                  onChange={(event) => setTagSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.preventDefault();
+                  }}
+                  style={{
+                    display: "block", width: "100%", boxSizing: "border-box",
+                    margin: "0.5rem 0", padding: "0.5rem",
+                    backgroundColor: "var(--color-bg)", color: "var(--color-text)",
+                    border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)",
+                  }}
+                />
+                {tagsQuery.isLoading && <p role="status">Loading tags...</p>}
+                {tagsQuery.isError && (
+                  <p role="alert">
+                    Could not load tags. Your selections are unchanged.{" "}
+                    <button type="button" className="btn btn-secondary" onClick={() => void tagsQuery.refetch()}>Retry tags</button>
+                  </p>
+                )}
+                <div style={{ maxHeight: "144px", overflowY: "auto" }}>
+                  {matchingTags.map((tag) => (
+                    <label key={tag} style={{ display: "flex", gap: "0.5rem", padding: "0.25rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={tags.includes(tag)}
+                        onChange={() => setTags((previous) => previous.includes(tag)
+                          ? previous.filter((value) => value !== tag)
+                          : [...previous, tag])}
+                      />
+                      {tag}
+                    </label>
+                  ))}
+                </div>
+                {tagsQuery.isSuccess && matchingTags.length === 0 && <p>No existing tags match.</p>}
+              </fieldset>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={isCreating || (folderIds.length === 0 && tags.length === 0)}
+                onClick={() => {
+                  setFolderIds([]);
+                  setTags([]);
+                  setTagSearch("");
+                }}
+              >
+                Clear filters
+              </button>
+              {createError && (
+                <p role="alert" style={{ color: "var(--color-text-danger)", margin: 0 }}>
+                  {createError.code === "NO_ELIGIBLE_PROBLEMS"
+                    ? "No eligible problems match. Try adjusting or clearing the filters; cooldown and minimum age still apply."
+                    : createError.message}
+                </p>
               )}
             </>
           ) : (

@@ -40,6 +40,7 @@ from app.presentation.deps import (
     StorageDependency,
 )
 from app.presentation.errors import ApiError
+from app.presentation.helpers import get_all_descendant_folder_ids, get_owned_folder, normalize_tags
 from app.presentation.exam_serialization import (
     CreateExamRequest,
     CreateExamResponse,
@@ -188,12 +189,27 @@ async def create_exam(
             selected_documents = [document_by_id[pid] for pid in problem_ids]
             max_problem_count = len(problem_ids)
         else:
+            candidate_query: dict[str, Any] = {
+                "userId": current_user["_id"],
+                "isDeleted": False,
+                "isDisabled": {"$ne": True},
+            }
+            if payload.folderIds:
+                folder_ids: set[str | None] = set()
+                for folder_id in set(payload.folderIds):
+                    if folder_id == "unfiled":
+                        folder_ids.add(None)
+                    else:
+                        folder = await get_owned_folder(database, folder_id, current_user["_id"])
+                        descendants = await get_all_descendant_folder_ids(database, folder["_id"])
+                        folder_ids.update(str(fid) for fid in descendants | {folder["_id"]})
+                # Mongo's null match includes missing folderId (Unfiled).
+                candidate_query["folderId"] = {"$in": list(folder_ids)}
+            tags = normalize_tags(payload.tags)
+            if tags:
+                candidate_query["tags"] = {"$all": tags}
             problem_documents = await database["problems"].find(
-                {
-                    "userId": current_user["_id"],
-                    "isDeleted": False,
-                    "isDisabled": {"$ne": True},
-                },
+                candidate_query,
                 session=session,
             ).to_list(length=None)
             eligible_documents = [

@@ -136,6 +136,7 @@ export function ExamsPage() {
   });
 
   const handleOpenCreateExamModal = () => {
+    createExamMutation.reset();
     setStaleProblemIds([]);
     setIneligibleMessage(null);
     setShowCreateExamModal(true);
@@ -206,6 +207,7 @@ export function ExamsPage() {
           onCreate={(request) => void handleCreateExam(request)}
           staleProblemIds={staleProblemIds}
           ineligibleMessage={ineligibleMessage}
+          createError={createExamMutation.error}
         />
 
         {showActiveExamPrompt && (

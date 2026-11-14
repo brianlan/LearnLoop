@@ -7,7 +7,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ExamsPage } from "./ExamsPage";
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const mockChoiceFetch = vi.fn();
+global.fetch = (input, init) =>
+  ["/api/v1/folders", "/api/v1/tags"].includes(String(input))
+    ? mockChoiceFetch(input, init)
+    : mockFetch(input, init);
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -81,6 +85,13 @@ function createExamResponse() {
 describe("ExamsPage", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockChoiceFetch.mockReset();
+    mockChoiceFetch.mockImplementation(async (input: unknown) => ({
+      ok: true,
+      json: async () => ({ items: String(input).endsWith("/folders")
+        ? [{ id: "parent", name: "Math", parentId: null, children: [] }]
+        : [{ name: "review" }] }),
+    }));
     mockNavigate.mockReset();
   });
 
@@ -211,6 +222,9 @@ describe("ExamsPage", () => {
 
     await user.clear(input);
     await user.type(input, "8");
+    await user.click(await screen.findByRole("checkbox", { name: "Math" }));
+    await user.click(screen.getByRole("checkbox", { name: "Unfiled" }));
+    await user.click(screen.getByRole("checkbox", { name: "review" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create Exam" }));
 
@@ -219,10 +233,36 @@ describe("ExamsPage", () => {
         expect.stringContaining("/api/v1/exams"),
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ mode: "random", maxProblemCount: 8 }),
+          body: JSON.stringify({ mode: "random", maxProblemCount: 8, folderIds: ["parent", "unfiled"], tags: ["review"] }),
         }),
       );
     });
+  });
+
+  it.each([
+    { status: 422, code: "NO_ELIGIBLE_PROBLEMS", message: "No eligible problems available", feedback: "Try adjusting or clearing the filters" },
+    { status: 404, code: "NOT_FOUND", message: "Folder not found", feedback: "Folder not found" },
+  ])("shows $code feedback inside the modal without clearing the requested filters", async ({ status, code, message, feedback }) => {
+    const user = userEvent.setup();
+    await renderLoadedExamsPage();
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status,
+      json: async () => ({ error: { code, message } }),
+    });
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Math" }));
+    await user.click(screen.getByRole("checkbox", { name: "review" }));
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(feedback);
+    expect(screen.getByRole("checkbox", { name: "Math" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "review" })).toBeChecked();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockNavigate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Start New Exam" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("closes without creating an exam when canceled and resets on reopen", async () => {

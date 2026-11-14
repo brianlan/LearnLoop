@@ -267,7 +267,10 @@ async def test_create_exam_rejects_problem_count_outside_product_limit(
 
 
 @pytest.mark.asyncio
-async def test_create_exam_rejects_when_active_exam_exists(exams_app: FastAPI, client: AsyncClient) -> None:
+@pytest.mark.parametrize("filters", [{}, {"folderIds": ["unfiled"], "tags": ["math"]}])
+async def test_create_exam_rejects_when_active_exam_exists(
+    exams_app: FastAPI, client: AsyncClient, filters: dict[str, Any]
+) -> None:
     database: FakeDatabase = exams_app.state.fake_database
     user_id = exams_app.state.primary_user["_id"]
     database["problems"].seed(make_problem(user_id, text="2+2?", problem_type="fill-in-the-blank", correct_answer="4"))
@@ -286,7 +289,7 @@ async def test_create_exam_rejects_when_active_exam_exists(exams_app: FastAPI, c
         }
     )
 
-    response = await client.post("/api/v1/exams", json={"maxProblemCount": 1})
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": 1, **filters})
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "ACTIVE_EXAM_EXISTS"
@@ -371,6 +374,187 @@ async def test_create_exam_returns_validation_error_for_malformed_problem_answer
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INVALID_PROBLEM_DATA"
     assert response.json()["error"]["details"]["problemId"] == str(malformed_problem["_id"])
+
+
+def _seed_random_filter_scope(
+    exams_app: FastAPI,
+) -> tuple[dict[str, ObjectId], dict[str, dict[str, Any]]]:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    folders = {name: ObjectId() for name in ("parent", "child", "grandchild", "other", "empty")}
+    database["folders"].seed(*[
+        {"_id": folder_id, "userId": user_id,
+         "parentId": folders["parent"] if name == "child" else folders["child"] if name == "grandchild" else None}
+        for name, folder_id in folders.items()
+    ])
+    problems = {}
+    for name, folder, tags in [
+        ("parent", "parent", ["algebra", "review"]),
+        ("child", "child", ["algebra", "review"]),
+        ("grandchild", "grandchild", ["algebra", "review"]),
+        ("other", "other", ["algebra", "review"]),
+        ("one-tag", "child", ["algebra"]),
+        ("other-tag", "parent", ["review"]),
+        ("case", "parent", ["Algebra", "review"]),
+        ("null", None, ["algebra", "review"]),
+        ("missing", None, ["algebra", "review"]),
+        ("no-tags", "parent", None),
+    ]:
+        problem = make_problem(user_id, text=name, problem_type="fill-in-the-blank", correct_answer="4")
+        if folder is not None:
+            problem["folderId"] = str(folders[folder])
+        elif name == "null":
+            problem["folderId"] = None
+        if tags is None:
+            problem.pop("tags")
+        else:
+            problem["tags"] = tags
+        problems[name] = problem
+    foreign = deepcopy(problems["child"])
+    foreign.update({"_id": ObjectId(), "userId": ObjectId(), "text": "foreign"})
+    database["problems"].seed(*problems.values(), foreign)
+    return folders, problems
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("folder_names", "tags", "expected_names"),
+    [
+        (None, None, None),
+        ([], [], None),
+        ([], [" ", ""], None),
+        (["parent"], None, ["parent", "child", "grandchild", "one-tag", "other-tag", "case", "no-tags"]),
+        (["parent", "other"], [], ["parent", "child", "grandchild", "other", "one-tag", "other-tag", "case", "no-tags"]),
+        (["parent", "child", "parent"], ["algebra", "review"], ["parent", "child", "grandchild"]),
+        (["unfiled"], [], ["null", "missing"]),
+        (["unfiled", "other"], [], ["null", "missing", "other"]),
+        ([], ["algebra", "review"], ["parent", "child", "grandchild", "other", "null", "missing"]),
+        ([], ["Algebra", "review"], ["case"]),
+        (["parent", "unfiled"], [" algebra ", "review", "algebra", " "], ["parent", "child", "grandchild", "null", "missing"]),
+        (["empty"], [], []),
+        ([], ["nonexistent"], []),
+        (["other"], ["Algebra"], []),
+    ],
+)
+async def test_random_exam_filter_membership_and_shortfalls(
+    exams_app: FastAPI,
+    client: AsyncClient,
+    folder_names: list[str] | None,
+    tags: list[str] | None,
+    expected_names: list[str] | None,
+) -> None:
+    folders, problems = _seed_random_filter_scope(exams_app)
+    payload: dict[str, Any] = {"mode": "random", "maxProblemCount": 30}
+    if folder_names is not None:
+        payload["folderIds"] = [str(folders[name]) if name != "unfiled" else name for name in folder_names]
+    if tags is not None:
+        payload["tags"] = tags
+
+    response = await client.post("/api/v1/exams", json=payload)
+
+    database: FakeDatabase = exams_app.state.fake_database
+    if expected_names == []:
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "NO_ELIGIBLE_PROBLEMS"
+        assert database["exams"]._documents == []
+        return
+    assert response.status_code == 201
+    exam = response.json()["exam"]
+    expected_ids = sorted(str(problems[name]["_id"]) for name in (expected_names or problems))
+    # N exceeds the whole pool: exact membership also catches overlap duplicates,
+    # lost candidates, foreign rows, and out-of-scope shortfall filling.
+    assert sorted(item["problemId"] for item in exam["items"]) == expected_ids
+    assert exam["summary"]["totalProblems"] == len(expected_ids) < 30
+    stored = database["exams"]._documents[0]
+    assert set(exam["configSnapshot"]) == set(stored["configSnapshot"]) == {
+        "maxProblemCount", "selectionPolicy", "generatedAt", "mode",
+    }
+    assert set(stored) == {
+        "_id", "userId", "state", "configSnapshot", "items", "summary",
+        "createdAt", "startedAt", "submittedAt", "updatedAt",
+    }
+    assert all(set(item["problemSnapshot"]) == {
+        "text", "problemType", "subject", "graphDsl", "correctAnswer", "sourceImage",
+    } for item in stored["items"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("kind", "status", "code"), [
+    ("invalid", 404, "NOT_FOUND"), ("missing", 404, "NOT_FOUND"), ("foreign", 403, "FORBIDDEN"),
+])
+async def test_random_exam_rejects_invalid_folder_without_broadening(
+    exams_app: FastAPI, client: AsyncClient, kind: str, status: int, code: str,
+) -> None:
+    folders, _ = _seed_random_filter_scope(exams_app)
+    database: FakeDatabase = exams_app.state.fake_database
+    bad_id = "invalid" if kind == "invalid" else str(ObjectId())
+    if kind == "foreign":
+        database["folders"].seed({"_id": ObjectId(bad_id), "userId": ObjectId(), "parentId": None})
+
+    response = await client.post("/api/v1/exams", json={
+        "maxProblemCount": 30,
+        "folderIds": ["unfiled", str(folders["parent"]), bad_id],
+    })
+
+    assert response.status_code == status
+    assert response.json()["error"]["code"] == code
+    assert database["exams"]._documents == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_positive", [True, False])
+async def test_random_filters_preserve_eligibility_and_positive_weights(
+    exams_app: FastAPI, client: AsyncClient, include_positive: bool,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    exams_app.dependency_overrides[get_app_settings] = lambda: Settings(
+        problem_selection_min_age_days=3, problem_selection_cooldown_days=7,
+    )
+    now = datetime.now(UTC)
+    problems = {}
+    for name in ("positive", "disabled", "deleted", "blank-answer", "missing-answer", "no-normalized-answer", "cooldown", "too-new", "zero-weight", "outside"):
+        problem = make_problem(user_id, text=name, problem_type="fill-in-the-blank", correct_answer="4")
+        problem["createdAt"] = now - timedelta(days=30)
+        problem["tags"] = ["match"] if name != "outside" else ["other"]
+        problems[name] = problem
+    problems["disabled"]["isDisabled"] = True
+    problems["deleted"]["isDeleted"] = True
+    problems["blank-answer"]["correctAnswer"]["display"] = " "
+    problems["missing-answer"]["correctAnswer"] = None
+    problems["no-normalized-answer"]["correctAnswer"]["normalizedText"] = ""
+    problems["cooldown"]["tracking"]["lastTestedAt"] = now - timedelta(days=1)
+    problems["too-new"]["createdAt"] = now
+    problems["zero-weight"]["tracking"].update({
+        "lastTestedAt": now - timedelta(days=10), "lastAttemptCorrect": True,
+        "exposureCount": 100, "correctCount": 100,
+    })
+    if not include_positive:
+        del problems["positive"]
+    database["problems"].seed(*problems.values())
+
+    response = await client.post("/api/v1/exams", json={
+        "maxProblemCount": 30, "folderIds": ["unfiled"], "tags": ["match"],
+    })
+
+    if include_positive:
+        assert response.status_code == 201
+        assert [item["problemId"] for item in response.json()["exam"]["items"]] == [str(problems["positive"]["_id"])]
+    else:
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "NO_ELIGIBLE_PROBLEMS"
+        assert database["exams"]._documents == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["folderIds", "tags"])
+@pytest.mark.parametrize("value", [None, "not-a-list", [123]])
+async def test_random_filter_fields_require_string_lists(
+    client: AsyncClient, field: str, value: Any,
+) -> None:
+    response = await client.post("/api/v1/exams", json={"maxProblemCount": 5, field: value})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 @pytest.mark.asyncio
@@ -1479,7 +1663,8 @@ async def test_manual_create_exam_items_follow_problem_ids_order(
 
     response = await client.post(
         "/api/v1/exams",
-        json={"mode": "manual", "problemIds": ordered_ids},
+        json={"mode": "manual", "problemIds": ordered_ids,
+              "folderIds": ["invalid-folder"], "tags": ["nonexistent"]},
     )
 
     assert response.status_code == 201

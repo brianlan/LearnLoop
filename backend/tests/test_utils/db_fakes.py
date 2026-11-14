@@ -512,6 +512,12 @@ def _operators_match(candidates: list[Any], value: dict[str, Any]) -> bool:
                         break
             if not matched:
                 return False
+        elif op == "$all":
+            if not op_val or not all(
+                any(item in c if isinstance(c, list) else item == c for c in candidates)
+                for item in op_val
+            ):
+                return False
         elif op == "$nin":
             for c in candidates:
                 if isinstance(c, list):

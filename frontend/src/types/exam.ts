@@ -114,7 +114,7 @@ export interface ExamHistoryItem {
 }
 
 export type CreateExamRequest =
-  | { mode: "random"; maxProblemCount: number }
+  | { mode: "random"; maxProblemCount: number; folderIds?: string[]; tags?: string[] }
   | { mode: "manual"; problemIds: string[] };
 
 export type SelectionCandidateSortBy =

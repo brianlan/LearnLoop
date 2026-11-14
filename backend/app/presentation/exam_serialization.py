@@ -19,6 +19,8 @@ class CreateExamRequest(BaseModel):
     mode: Literal["random", "manual"] = "random"
     maxProblemCount: int | None = Field(default=None, ge=1, le=30)
     problemIds: list[str] | None = None
+    folderIds: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _require_max_problem_count_for_random(self) -> "CreateExamRequest":

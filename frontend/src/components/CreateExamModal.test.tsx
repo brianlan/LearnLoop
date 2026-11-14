@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -10,7 +10,29 @@ import type {
 } from "@/types/exam";
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const mockChoiceFetch = vi.fn();
+global.fetch = (input, init) =>
+  ["/api/v1/folders", "/api/v1/tags"].includes(String(input))
+    ? mockChoiceFetch(input, init)
+    : mockFetch(input, init);
+
+const foldersResponse = {
+  allProblemsCount: 999,
+  unfiledCount: 99,
+  items: [
+    { id: "parent", name: "Math", parentId: null, children: [
+      { id: "child", name: "Basics", parentId: "parent", children: [] },
+    ] },
+    { id: "other", name: "Science", parentId: null, children: [
+      { id: "other-child", name: "Basics", parentId: "other", children: [] },
+    ] },
+  ],
+};
+const tagsResponse = { items: [{ name: "Algebra", problemCount: 999 }, { name: "algebra" }, { name: "review" }] };
+
+function choiceResponse(input: unknown) {
+  return jsonResponse(String(input).endsWith("/folders") ? foldersResponse : tagsResponse);
+}
 
 function createQueryClient() {
   return new QueryClient({
@@ -96,12 +118,13 @@ function renderModal(
   props: { staleProblemIds?: string[]; ineligibleMessage?: string | null } = {},
 ) {
   const onCreate = vi.fn();
+  const queryClient = createQueryClient();
   render(
-    <QueryClientProvider client={createQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <CreateExamModal isOpen isCreating={false} onClose={vi.fn()} onCreate={onCreate} {...props} />
     </QueryClientProvider>,
   );
-  return { onCreate };
+  return { onCreate, queryClient };
 }
 
 async function openManualPicker(user: ReturnType<typeof userEvent.setup>) {
@@ -112,6 +135,9 @@ async function openManualPicker(user: ReturnType<typeof userEvent.setup>) {
 describe("CreateExamModal", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockFetch.mockResolvedValue(jsonResponse({ items: [], total: 0 }));
+    mockChoiceFetch.mockReset();
+    mockChoiceFetch.mockImplementation(async (input: unknown) => choiceResponse(input));
   });
 
   it("switches between random and manual modes", async () => {
@@ -121,6 +147,8 @@ describe("CreateExamModal", () => {
     expect(screen.getByLabelText("Problem count")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockChoiceFetch).toHaveBeenCalledWith("/api/v1/folders", { credentials: "include" });
+    expect(mockChoiceFetch).toHaveBeenCalledWith("/api/v1/tags", { credentials: "include" });
 
     await user.click(screen.getByRole("radio", { name: "Manual" }));
 
@@ -132,6 +160,158 @@ describe("CreateExamModal", () => {
 
     expect(screen.getByLabelText("Problem count")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("selects folder subtrees and existing exact tags, without creating free-form tags or showing library counts", async () => {
+    const user = userEvent.setup();
+    const { onCreate } = renderModal();
+    await user.click(await screen.findByRole("checkbox", { name: "Math" }));
+    await user.click(screen.getByRole("checkbox", { name: "Math / Basics" }));
+    await user.click(screen.getByRole("checkbox", { name: "Unfiled" }));
+    expect(screen.getByRole("checkbox", { name: "Science / Basics" })).not.toBeChecked();
+    expect(screen.getByText(/Match any selected folder/)).toBeInTheDocument();
+    expect(screen.getByText(/Match all selected tags exactly/)).toBeInTheDocument();
+    expect(screen.getByText(/Up to 5 problems/)).toBeInTheDocument();
+    expect(screen.queryByText(/999|99 available|eligible count/i)).not.toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", { name: "Search existing tags" });
+    await user.type(search, "ALG");
+    expect(screen.queryByRole("checkbox", { name: "review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Algebra" }));
+    expect(screen.getByRole("checkbox", { name: "algebra" })).not.toBeChecked();
+    await user.clear(search);
+    await user.type(search, "rev");
+    await user.click(screen.getByRole("checkbox", { name: "review" }));
+    await user.clear(search);
+    await user.type(search, "new tag{Enter}");
+    expect(screen.getByText("No existing tags match.")).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+    expect(mockChoiceFetch.mock.calls.every(([, init]) => !init.method)).toBe(true);
+
+    await user.clear(screen.getByLabelText("Problem count"));
+    await user.type(screen.getByLabelText("Problem count"), "12");
+    expect(screen.getByText(/Up to 12 problems/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+    expect(onCreate).toHaveBeenCalledWith({
+      mode: "random", maxProblemCount: 12,
+      folderIds: ["parent", "child", "unfiled"], tags: ["Algebra", "review"],
+    });
+  });
+
+  it("removes individual constraints and clears both groups without changing the requested maximum", async () => {
+    const user = userEvent.setup();
+    const { onCreate } = renderModal();
+    await user.click(await screen.findByRole("checkbox", { name: "Math" }));
+    await user.click(screen.getByRole("checkbox", { name: "Unfiled" }));
+    await user.click(screen.getByRole("checkbox", { name: "Algebra" }));
+    await user.click(screen.getByRole("checkbox", { name: "review" }));
+    await user.clear(screen.getByLabelText("Problem count"));
+    await user.type(screen.getByLabelText("Problem count"), "9");
+
+    await user.click(screen.getByRole("button", { name: "Remove folder Math" }));
+    await user.click(screen.getByRole("button", { name: "Remove tag Algebra" }));
+    expect(screen.getByRole("checkbox", { name: "Math" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Algebra" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Unfiled" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "review" })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(true);
+    expect(screen.getByLabelText("Problem count")).toHaveValue(9);
+    expect(screen.getByLabelText("Problem count slider")).toHaveValue("9");
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+    expect(onCreate).toHaveBeenCalledWith({ mode: "random", maxProblemCount: 9 });
+  });
+
+  it("preserves Random filters across mode switches, isolates Manual requests, and resets on reopening", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    const queryClient = createQueryClient();
+    const onCreate = vi.fn();
+    const ui = (isOpen: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <CreateExamModal isOpen={isOpen} isCreating={false} onClose={vi.fn()} onCreate={onCreate} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui(true));
+    await user.click(await screen.findByRole("checkbox", { name: "Math" }));
+    await user.click(screen.getByRole("checkbox", { name: "review" }));
+    await user.clear(screen.getByLabelText("Problem count"));
+    await user.type(screen.getByLabelText("Problem count"), "8");
+    await openManualPicker(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Select problem id-1" }));
+    expect(mockFetch.mock.calls.every(([url]) => !String(url).includes("folder") && !String(url).includes("tags="))).toBe(true);
+    await user.click(screen.getByRole("radio", { name: "Random" }));
+    expect(screen.getByRole("checkbox", { name: "Math" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "review" })).toBeChecked();
+    expect(screen.getByLabelText("Problem count")).toHaveValue(8);
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ mode: "random", maxProblemCount: 8, folderIds: ["parent"], tags: ["review"] });
+    await openManualPicker(user);
+    expect(screen.getByRole("checkbox", { name: "Select problem id-1" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Create Exam (1 selected)" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ mode: "manual", problemIds: ["id-1"] });
+
+    rerender(ui(false));
+    rerender(ui(true));
+    expect(screen.getByRole("radio", { name: "Random" })).toBeChecked();
+    expect(screen.getByLabelText("Problem count")).toHaveValue(5);
+    expect(screen.getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(true);
+    expect(screen.getByRole("searchbox", { name: "Search existing tags" })).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ mode: "random", maxProblemCount: 5 });
+  });
+
+  it("supports keyboard folder selection and searching then selecting existing tags", async () => {
+    const user = userEvent.setup();
+    const { onCreate } = renderModal();
+    const folder = await screen.findByRole("checkbox", { name: "Math / Basics" });
+    folder.focus();
+    await user.keyboard(" ");
+    expect(folder).toBeChecked();
+    const search = screen.getByRole("searchbox", { name: "Search existing tags" });
+    search.focus();
+    await user.keyboard("rev");
+    await user.tab();
+    const tag = screen.getByRole("checkbox", { name: "review" });
+    expect(tag).toHaveFocus();
+    await user.keyboard(" ");
+    expect(tag).toBeChecked();
+    screen.getByRole("button", { name: "Create Exam" }).focus();
+    await user.keyboard("{Enter}");
+    expect(onCreate).toHaveBeenCalledWith({ mode: "random", maxProblemCount: 5, folderIds: ["child"], tags: ["review"] });
+  });
+
+  it("shows choice loading states without fetching Manual candidates", async () => {
+    mockChoiceFetch.mockImplementation(() => new Promise(() => {}));
+    renderModal();
+    expect(screen.getByText("Loading folders...")).toHaveAttribute("role", "status");
+    expect(screen.getByText("Loading tags...")).toHaveAttribute("role", "status");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps selected constraints during choice-load errors and supports retry without broadening requests", async () => {
+    const user = userEvent.setup();
+    const { onCreate, queryClient } = renderModal();
+    await user.click(await screen.findByRole("checkbox", { name: "Math" }));
+    await user.click(screen.getByRole("checkbox", { name: "review" }));
+    mockChoiceFetch.mockRejectedValue(new Error("offline"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["folders"] });
+      await queryClient.invalidateQueries({ queryKey: ["tagSuggestions"] });
+    });
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Remove folder Math" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove tag review" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create Exam" }));
+    expect(onCreate).toHaveBeenCalledWith({ mode: "random", maxProblemCount: 5, folderIds: ["parent"], tags: ["review"] });
+
+    mockChoiceFetch.mockImplementation(async (input: unknown) => choiceResponse(input));
+    await user.click(screen.getByRole("button", { name: "Retry folders" }));
+    await user.click(screen.getByRole("button", { name: "Retry tags" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: "Math" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "review" })).toBeChecked();
   });
 
   it("builds the expected query from the filter input", async () => {
