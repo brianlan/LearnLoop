@@ -10,7 +10,9 @@ from app.presentation.helpers import build_problem_image_url
 from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload, UTCDatetime
 
 
-SelectionCandidateSortBy = Literal["selectionScore", "addDate", "correctStreak", "failureCount"]
+SelectionCandidateSortBy = Literal[
+    "selectionScore", "addDate", "correctStreak", "successCount", "failureCount"
+]
 
 
 class CreateExamRequest(BaseModel):

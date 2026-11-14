@@ -192,7 +192,13 @@ def select_problems(
     return _weighted_sample_without_replacement(weighted, count, rng)
 
 
-RANK_SORT_FIELDS = ("selectionScore", "addDate", "correctStreak", "failureCount")
+RANK_SORT_FIELDS = (
+    "selectionScore",
+    "addDate",
+    "correctStreak",
+    "successCount",
+    "failureCount",
+)
 
 # Ordered sort criteria: (field, direction) pairs, first pair = highest
 # priority. The canonical sorting interface for the exam picker (#708).
@@ -262,6 +268,9 @@ def sort_scored_problems(
                 return problem.createdAt
             if _field == "correctStreak":
                 return None if streaks is None else streaks.get(str(problem.id))
+            if _field == "successCount":
+                # Legacy #680 column: cumulative correctCount, not streak (#708).
+                return problem.tracking.correctCount
             return problem.tracking.failedCount
 
         known = [item for item in items if _sort_value(item) is not None]
@@ -269,26 +278,3 @@ def sort_scored_problems(
         known.sort(key=_sort_value, reverse=(direction == "desc"))
         items = known + unknown
     return items
-
-
-def rank_eligible_problems(
-    problems: List[Problem],
-    config: ProblemSelectionConfig,
-    now: datetime,
-    *,
-    q: str | None = None,
-    sort_criteria: list[SortCriterion] | None = None,
-    streaks: dict[str, int | None] | None = None,
-) -> list[tuple[Problem, float]]:
-    """Exam-picker candidate rows: keyword filter, eligibility, score, sort (#680).
-
-    Pure helper — no I/O. ``sort_criteria`` defaults to Score descending;
-    ``streaks`` maps problem id -> correct streak for the ``correctStreak``
-    criterion (absent ids sort as unknown). Callers that load history between
-    scoring and sorting use ``filter_and_score_problems`` +
-    ``sort_scored_problems`` directly.
-    """
-    scored = filter_and_score_problems(problems, config, now, q=q)
-    return sort_scored_problems(
-        scored, criteria=sort_criteria or DEFAULT_SORT_CRITERIA, streaks=streaks
-    )

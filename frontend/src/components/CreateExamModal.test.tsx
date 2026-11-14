@@ -162,14 +162,25 @@ describe("CreateExamModal", () => {
     renderModal();
     await openManualPicker(user);
 
-    // Default state is visibly indicated, headers inactive.
+    const sortedHeader = (label: RegExp) =>
+      screen.getByRole("button", { name: label }).closest("th") as HTMLElement;
+
+    // Default state is visibly indicated, headers inactive; exactly ONE
+    // sorted header (the default Score, #708 B4).
     expect(screen.getByRole("status")).toHaveTextContent("Default: Score ↓");
+    expect(sortedHeader(/Score, default order descending/)).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
     const streakHeader = screen.getByRole("button", { name: /Correct streak, not sorted/ });
     expect(streakHeader).toHaveAttribute("aria-label", "Correct streak, not sorted. Activate to sort descending.");
+    expect(sortedHeader(/Correct streak, not sorted/)).toHaveAttribute("aria-sort", "none");
 
-    // Inactive -> descending (priority 1).
+    // Inactive -> descending (priority 1); the sorted header moves with it.
     await user.click(streakHeader);
     expect(await screen.findByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
+    expect(sortedHeader(/Correct streak, descending, priority 1/)).toHaveAttribute("aria-sort", "descending");
+    expect(sortedHeader(/^Score,/)).toHaveAttribute("aria-sort", "none");
     expect(screen.queryByRole("status")).not.toBeInTheDocument(); // default indicator gone
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
@@ -179,14 +190,17 @@ describe("CreateExamModal", () => {
     // Descending -> ascending, priority kept.
     await user.click(screen.getByRole("button", { name: /Correct streak, descending/ }));
     expect(await screen.findByRole("button", { name: /Correct streak, ascending, priority 1/ })).toBeInTheDocument();
+    expect(sortedHeader(/Correct streak, ascending, priority 1/)).toHaveAttribute("aria-sort", "ascending");
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:asc");
     });
 
-    // Ascending -> inactive: back to the default state.
+    // Ascending -> inactive: back to the default state and default header.
     await user.click(screen.getByRole("button", { name: /Correct streak, ascending/ }));
     expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+    expect(sortedHeader(/^Score,/)).toHaveAttribute("aria-sort", "descending");
+    expect(sortedHeader(/Correct streak, not sorted/)).toHaveAttribute("aria-sort", "none");
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:desc");
@@ -205,6 +219,9 @@ describe("CreateExamModal", () => {
     // Joining order establishes priority: streak 1, added 2.
     expect(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Added, descending, priority 2/ })).toBeInTheDocument();
+    // Exactly one sorted header: the primary criterion only (#708 B4).
+    expect(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ }).closest("th")).toHaveAttribute("aria-sort", "descending");
+    expect(screen.getByRole("button", { name: /Added, descending, priority 2/ }).closest("th")).toHaveAttribute("aria-sort", "none");
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:desc,addDate:desc");
@@ -214,11 +231,13 @@ describe("CreateExamModal", () => {
     await user.click(screen.getByRole("button", { name: /Added, descending, priority 2/ }));
     expect(screen.getByRole("button", { name: /Added, ascending, priority 2/ })).toBeInTheDocument();
 
-    // Cancelling the first criterion: desc -> asc -> inactive, then the
-    // remaining one renumbers to priority 1.
+    // Cancelling the first criterion: desc -> asc -> inactive; the remaining
+    // one renumbers to priority 1 and becomes the single sorted header.
     await user.click(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ }));
     await user.click(screen.getByRole("button", { name: /Correct streak, ascending, priority 1/ }));
     expect(screen.getByRole("button", { name: /Added, ascending, priority 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Added, ascending, priority 1/ }).closest("th")).toHaveAttribute("aria-sort", "ascending");
+    expect(screen.getByRole("button", { name: /Correct streak, not sorted/ }).closest("th")).toHaveAttribute("aria-sort", "none");
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(decodeURIComponent(lastCall)).toContain("sort=addDate:asc");
@@ -232,14 +251,15 @@ describe("CreateExamModal", () => {
     await openManualPicker(user);
 
     // First click on Score from no-custom-criteria: explicit Score descending.
-    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Score, default order descending/ }));
     expect(screen.getByRole("button", { name: /Score, descending, priority 1/ })).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    // Reset sorting restores the default indicator and request.
+    // Reset sorting restores the default indicator, request, and header.
     await user.click(screen.getByRole("button", { name: "Reset sorting" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
-    expect(screen.getByRole("button", { name: /Score, not sorted/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Score, default order descending/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Score, default order descending/ }).closest("th")).toHaveAttribute("aria-sort", "descending");
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:desc");
@@ -250,6 +270,89 @@ describe("CreateExamModal", () => {
     await user.click(screen.getByRole("button", { name: /Failure, descending, priority 1/ }));
     await user.click(screen.getByRole("button", { name: /Failure, ascending, priority 1/ }));
     expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+  });
+
+  it("re-appends a cancelled criterion at the lowest priority", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    renderModal();
+    await openManualPicker(user);
+
+    await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Added, not sorted/ }));
+    expect(screen.getByRole("button", { name: /Added, descending, priority 2/ })).toBeInTheDocument();
+
+    // Cancel the streak criterion (desc -> asc -> inactive)... Added keeps
+    // its direction and renumbers to priority 1.
+    await user.click(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ }));
+    await user.click(screen.getByRole("button", { name: /Correct streak, ascending, priority 1/ }));
+    expect(screen.getByRole("button", { name: /Added, descending, priority 1/ })).toBeInTheDocument();
+
+    // ...and re-add it: it joins at the END (lowest priority), keeping Added first.
+    await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
+    expect(screen.getByRole("button", { name: /Added, descending, priority 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Correct streak, descending, priority 2/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=addDate:desc,correctStreak:desc");
+    });
+  });
+
+  it("resets sorting from the keyboard", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    renderModal();
+    await openManualPicker(user);
+
+    await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
+    expect(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
+
+    const reset = screen.getByRole("button", { name: "Reset sorting" });
+    reset.focus();
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+    expect(screen.getByRole("button", { name: /Correct streak, not sorted/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:desc");
+    });
+  });
+
+  it("retains cross-page selections through Reset sorting and confirms in default order", async () => {
+    const user = userEvent.setup();
+    const all = Array.from({ length: 12 }, (_, index) =>
+      candidate(`id-${String(index + 1).padStart(2, "0")}`, {
+        selectionScore: index === 11 ? 9 : index === 1 ? 6 : 5,
+      }),
+    );
+    mockCandidatesEndpoint(all);
+    const { onCreate } = renderModal();
+    await openManualPicker(user);
+
+    // Custom criterion first (Failure ties everywhere -> id-asc order).
+    await user.click(screen.getByRole("button", { name: /Failure, not sorted/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Select problem id-02" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select problem id-12" }));
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+    // Reset returns to page 1 under default Score descending and keeps both.
+    await user.click(screen.getByRole("button", { name: "Reset sorting" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select problem id-12" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select problem id-02" })).toBeChecked();
+
+    // Confirmation applies the DEFAULT criteria (Score descending: id-12=9
+    // before id-02=6), not the cancelled Failure criterion.
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-12", "id-02"],
+      });
+    });
   });
 
   it("operates header sorting from the keyboard", async () => {
@@ -330,7 +433,7 @@ describe("CreateExamModal", () => {
       await user.click(screen.getByRole("checkbox", { name }));
     }
     // Two clicks: explicit descending, then ascending (#708 cycle).
-    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Score, default order descending/ }));
     await user.click(screen.getByRole("button", { name: /Score, descending, priority 1/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
@@ -378,7 +481,7 @@ describe("CreateExamModal", () => {
 
     // Ascending ties look the same and submit the same order (two clicks:
     // explicit descending, then ascending).
-    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Score, default order descending/ }));
     await user.click(screen.getByRole("button", { name: /Score, descending, priority 1/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
@@ -465,7 +568,7 @@ describe("CreateExamModal", () => {
 
     // Streak ascending, then Score descending.
     await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
-    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /^Score,/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:desc,selectionScore:desc");

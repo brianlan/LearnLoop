@@ -8,13 +8,13 @@ from app.domain import (
     ProblemType,
 )
 from app.domain.selection import (
+    DEFAULT_SORT_CRITERIA,
     ProblemSelectionConfig,
     ScoreBreakdown,
     compute_score_breakdown,
     ensure_utc,
     filter_and_score_problems,
     get_eligible_problems,
-    rank_eligible_problems,
     select_problems,
     sort_scored_problems,
 )
@@ -739,7 +739,13 @@ def _picker_problem(
 def _rank(problems, **kwargs):
     config = ProblemSelectionConfig(recency_weight=1.0, failure_rate_weight=1.0, last_wrong_weight=1.0)
     now = kwargs.pop("now", datetime.now(timezone.utc))
-    return [p.id for p, _ in rank_eligible_problems(problems, config, now, **kwargs)]
+    streaks = kwargs.pop("streaks", None)
+    criteria = kwargs.pop("sort_criteria", None) or DEFAULT_SORT_CRITERIA
+    # Compose the production helpers directly — the endpoint's real workflow
+    # (filter/score, then sort) with no test-only facade (#708).
+    scored = filter_and_score_problems(problems, config, now, **kwargs)
+    ranked = sort_scored_problems(scored, criteria=criteria, streaks=streaks)
+    return [p.id for p, _ in ranked]
 
 
 def test_rank_keyword_filters_text_and_tags_case_insensitive():
@@ -786,6 +792,10 @@ def test_rank_sorts_by_all_columns_both_directions_with_id_tiebreak():
     assert _rank(problems, now=now, sort_criteria=[("correctStreak", "asc")], streaks={"a": 2, "b": 2, "c": 5}) == ["a", "b", "c"]
     assert _rank(problems, now=now, sort_criteria=[("addDate", "desc")]) == ["a", "c", "b"]
     assert _rank(problems, now=now, sort_criteria=[("addDate", "asc")]) == ["b", "c", "a"]
+    # Legacy cumulative-success sorting kept for existing requests (#708 B1):
+    # correctCounts are 3, 3, 9 — desc ties a/b fall back to id ascending.
+    assert _rank(problems, now=now, sort_criteria=[("successCount", "desc")]) == ["c", "a", "b"]
+    assert _rank(problems, now=now, sort_criteria=[("successCount", "asc")]) == ["a", "b", "c"]
     # All four columns × both directions (#680): score order is monotonic in
     # age here (identical failure/last-wrong components), so the ranking is
     # b (200d) > c (150d) > a (100d).

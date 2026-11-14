@@ -1835,6 +1835,37 @@ async def test_selection_candidates_keyword_sort_and_pagination(
     )
     assert failures_asc.json()["items"][-1]["id"] == str(algebra_two["_id"])
 
+    # Legacy #680 contract kept (#708 B1): cumulative-success sorting still
+    # works via sortBy even though the picker UI no longer offers the column.
+    success_desc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "successCount", "sortOrder": "desc"},
+    )
+    assert success_desc.status_code == 200
+    assert [item["id"] for item in success_desc.json()["items"]] == [
+        str(algebra_one["_id"]),
+        str(algebra_two["_id"]),
+        str(geography["_id"]),
+    ]
+    success_asc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "successCount", "sortOrder": "asc"},
+    )
+    assert success_asc.status_code == 200
+    assert [item["id"] for item in success_asc.json()["items"]] == [
+        str(geography["_id"]),
+        str(algebra_one["_id"]),
+        str(algebra_two["_id"]),
+    ]
+    # The ordered wire format accepts the same legacy field with cumulative
+    # semantics (NOT streak values).
+    success_wire = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "successCount:desc"},
+    )
+    assert success_wire.status_code == 200
+    assert [item["successCount"] for item in success_wire.json()["items"]] == [3, 3, 0]
+
     add_date_asc = await client.get(
         "/api/v1/exams/selection-candidates",
         params={"sortBy": "addDate", "sortOrder": "asc"},
@@ -1897,46 +1928,21 @@ def _make_submitted_exam(
     submitted_at: datetime,
     items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Minimal submitted exam for streak-history seeding (#708)."""
-    now = datetime.now(UTC)
+    """Submitted-exam fixture trimmed to what streak loading consumes (#708)."""
     return {
         "_id": ObjectId(),
         "userId": user_id,
         "state": "submitted",
-        "configSnapshot": {
-            "maxProblemCount": len(items),
-            "selectionPolicy": {},
-            "generatedAt": now,
-            "mode": "manual",
-        },
-        "items": items,
-        "summary": {"totalProblems": 0, "answeredProblems": 0, "gradedProblems": 0, "pendingProblems": 0, "correctProblems": 0, "failedProblems": 0, "score": None},
-        "createdAt": now,
-        "startedAt": now,
         "submittedAt": submitted_at,
-        "updatedAt": submitted_at,
+        "items": items,
     }
 
 
 def _make_exam_item(problem_oid: ObjectId, status: str) -> dict[str, Any]:
     return {
         "itemId": str(ObjectId()),
-        "order": 1,
         "problemId": problem_oid,
-        "problemSnapshot": {},
-        "answer": {"raw": "a", "savedAt": None},
-        "grading": {
-            "status": status,
-            "method": "vlm",
-            "isCorrect": status == "correct",
-            "score": 1.0 if status == "correct" else 0.0,
-            "feedback": None,
-            "providerModel": None,
-            "rawProviderResponse": None,
-            "gradedAt": None,
-            "retryCount": 0,
-            "selfReportedCorrect": None,
-        },
+        "grading": {"status": status},
     }
 
 
@@ -1951,10 +1957,8 @@ def _make_practice_attempt(
         "_id": ObjectId(),
         "userId": user_id,
         "problemId": problem_oid,
-        "submittedAnswer": "a",
-        "gradingStatus": grading_status,
-        "gradingMethod": "vlm",
         "createdAt": created_at,
+        "gradingStatus": grading_status,
     }
 
 
@@ -2125,6 +2129,24 @@ async def test_selection_candidates_ordered_sort_criteria_and_validation(
         item["id"] for item in explicit_default.json()["items"]
     ]
 
+    # Legacy #680 behavior kept (#708 B2): a bare sortOrder applies to the
+    # default selectionScore field instead of being ignored.
+    order_only_asc = await client.get(
+        "/api/v1/exams/selection-candidates", params={"sortOrder": "asc"}
+    )
+    assert order_only_asc.status_code == 200
+    scores_only = [item["selectionScore"] for item in order_only_asc.json()["items"]]
+    assert scores_only == sorted(scores_only)
+    order_only_desc = await client.get(
+        "/api/v1/exams/selection-candidates", params={"sortOrder": "desc"}
+    )
+    assert order_only_desc.status_code == 200
+    scores_only_desc = [
+        item["selectionScore"] for item in order_only_desc.json()["items"]
+    ]
+    assert scores_only_desc == sorted(scores_only_desc, reverse=True)
+    assert scores_only_desc[0] == scores_only[-1]
+
     # Legacy single-column params normalize to one criterion.
     legacy = await client.get(
         "/api/v1/exams/selection-candidates",
@@ -2134,12 +2156,20 @@ async def test_selection_candidates_ordered_sort_criteria_and_validation(
     failed_counts = [item["failedCount"] for item in legacy.json()["items"]]
     assert failed_counts == sorted(failed_counts)
 
-    # Malformed sort values reject with the validation convention.
+    # Malformed sort values reject with the validation convention, including
+    # empty list members (#708 B3): trailing/doubled separators and empty
+    # values are malformed lists, not defaults.
     for bad in (
         {"sort": "bogus:asc"},
         {"sort": "addDate:sideways"},
         {"sort": "addDate:asc,addDate:desc"},
         {"sort": "addDate"},
+        {"sort": ",addDate:asc"},
+        {"sort": "addDate:asc,"},
+        {"sort": "addDate:asc,,correctStreak:desc"},
+        {"sort": ",,,"},
+        {"sort": ""},
+        {"sort": " "},
     ):
         response = await client.get("/api/v1/exams/selection-candidates", params=bad)
         assert response.status_code == 422, bad

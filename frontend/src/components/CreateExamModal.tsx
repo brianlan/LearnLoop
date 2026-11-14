@@ -449,19 +449,28 @@ export function CreateExamModal({
                           (criterion) => criterion.field === column.key,
                         );
                         const active = priority !== -1;
+                        const isDefaultPrimary =
+                          !active && column.key === effectiveSort[0].field;
                         const direction = active ? sortCriteria[priority].direction : null;
                         const arrow = direction === "asc" ? "↑" : "↓";
-                        const ariaLabel = !active
-                          ? `${column.label}, not sorted. Activate to sort descending.`
-                          : direction === "desc"
+                        // Only the primary criterion gets aria-sort; buttons describe secondary priorities.
+                        const ariaSort =
+                          column.key === effectiveSort[0].field
+                            ? effectiveSort[0].direction === "asc"
+                              ? "ascending"
+                              : "descending"
+                            : "none";
+                        const ariaLabel = active
+                          ? direction === "desc"
                             ? `${column.label}, descending, priority ${priority + 1}. Activate to switch to ascending.`
-                            : `${column.label}, ascending, priority ${priority + 1}. Activate to remove this sort.`;
+                            : `${column.label}, ascending, priority ${priority + 1}. Activate to remove this sort.`
+                          : isDefaultPrimary
+                            ? `${column.label}, default order ${effectiveSort[0].direction === "asc" ? "ascending" : "descending"}. Activate to sort by ${column.label} explicitly (descending, priority 1).`
+                            : `${column.label}, not sorted. Activate to sort descending.`;
                         return (
                           <th
                             key={column.key}
-                            aria-sort={
-                              active ? (direction === "asc" ? "ascending" : "descending") : "none"
-                            }
+                            aria-sort={ariaSort}
                             style={{ padding: "0.5rem", textAlign: "left" }}
                           >
                             <button

@@ -291,9 +291,10 @@ def _parse_sort_criteria(
     Wire encoding: ``sort=field:direction,field:direction`` — comma-separated
     ``field:direction`` pairs, first pair = highest priority. ``sortBy``/
     ``sortOrder`` (the #680 single-column params) keep their meaning and are
-    accepted when ``sort`` is absent; omitted sorting defaults to Score
-    descending. Malformed fields, directions, and duplicate fields reject
-    with the request-validation error convention.
+    accepted when ``sort`` is absent: ``sortOrder`` alone still applies to the
+    default ``selectionScore`` field, and omitted sorting defaults to Score
+    descending. Empty list members, malformed fields, directions, and
+    duplicate fields reject with the request-validation error convention.
     """
     if sort is not None:
         if sort_by is not None:
@@ -305,9 +306,8 @@ def _parse_sort_criteria(
         criteria: list[SortCriterion] = []
         seen: set[str] = set()
         for part in sort.split(","):
-            if not part.strip():
-                continue
-            field, separator, direction = part.partition(":")
+            stripped = part.strip()
+            field, _, direction = stripped.partition(":")
             field = field.strip()
             direction = direction.strip()
             if (
@@ -318,13 +318,16 @@ def _parse_sort_criteria(
                 raise ApiError(
                     422,
                     "VALIDATION_ERROR",
-                    f"Invalid sort criteria: {part.strip()}",
+                    f"Invalid sort criteria: {stripped}",
                 )
             seen.add(field)
             criteria.append((field, direction))
-        return criteria or list(DEFAULT_SORT_CRITERIA)
+        return criteria
     if sort_by is not None:
         return [(sort_by, sort_order or "desc")]
+    if sort_order is not None:
+        # Legacy #680 behavior: a bare sortOrder applies to the default field.
+        return [(DEFAULT_SORT_CRITERIA[0][0], sort_order)]
     return list(DEFAULT_SORT_CRITERIA)
 
 
