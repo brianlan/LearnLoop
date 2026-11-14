@@ -55,7 +55,10 @@ describe("exams API module", () => {
     );
   });
 
-  it("createExam POSTs the request body to /exams", async () => {
+  it.each([
+    { mode: "random" as const, maxProblemCount: 5 },
+    { mode: "random" as const, maxProblemCount: 12, folderIds: ["folder-a", "unfiled"], tags: ["algebra", "Review"] },
+  ])("createExam POSTs the Random request body to /exams: %j", async (request) => {
     const response: CreateExamResponse = {
       exam: {
         id: "e1",
@@ -88,14 +91,14 @@ describe("exams API module", () => {
     const mockFetch = mockOk(response);
     vi.stubGlobal("fetch", mockFetch);
 
-    await createExam({ mode: "random", maxProblemCount: 5 });
+    await createExam(request);
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/exams", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ mode: "random", maxProblemCount: 5 }),
+      body: JSON.stringify(request),
     });
   });
 

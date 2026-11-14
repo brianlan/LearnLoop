@@ -170,10 +170,11 @@ export function ActiveExamPage() {
   }, [exam, discardExamMutation]);
 
   const handleOpenCreateExamModal = useCallback(() => {
+    createExamMutation.reset();
     setStaleProblemIds([]);
     setIneligibleMessage(null);
     setShowCreateExamModal(true);
-  }, []);
+  }, [createExamMutation]);
 
   const handleConfirmCreateExam = useCallback(
     (request: CreateExamRequest) => {
@@ -298,6 +299,7 @@ export function ActiveExamPage() {
           onCreate={handleConfirmCreateExam}
           staleProblemIds={staleProblemIds}
           ineligibleMessage={ineligibleMessage}
+          createError={createExamMutation.error}
         />
       </main>
     );

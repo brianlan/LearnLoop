@@ -22,6 +22,16 @@ def test_matches_query_in_operator():
     assert not matches_query(doc, {"status": {"$in": ["deleted"]}})
 
 
+def test_matches_query_all_operator():
+    doc = {"tags": ["Algebra", "review", "extra"]}
+    assert matches_query(doc, {"tags": {"$all": ["review", "Algebra", "Algebra"]}})
+    assert not matches_query(doc, {"tags": {"$all": ["review", "missing"]}})
+    assert not matches_query(doc, {"tags": {"$all": ["algebra"]}})
+    assert not matches_query(doc, {"tags": {"$all": []}})
+    assert not matches_query({}, {"tags": {"$all": ["review"]}})
+    assert not matches_query({"tags": None}, {"tags": {"$all": ["review"]}})
+
+
 def test_matches_query_ne_operator():
     doc = {"value": 10}
     assert matches_query(doc, {"value": {"$ne": 5}})
