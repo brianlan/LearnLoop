@@ -119,7 +119,7 @@ describe("ActiveExamPage", () => {
     expect(screen.getByRole("button", { name: "Start New Exam" })).toBeInTheDocument();
   });
 
-  it("shows generic API error when create exam fails with 500", async () => {
+  it("shows generic API error inside the modal when create exam fails with 500", async () => {
     const user = userEvent.setup();
     mockFetch
       .mockResolvedValueOnce({
@@ -144,9 +144,7 @@ describe("ActiveExamPage", () => {
     await user.click(screen.getByRole("button", { name: "Start New Exam" }));
     await user.click(screen.getByRole("button", { name: "Create Exam" }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Something went wrong/)).toBeInTheDocument();
-    });
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("Something went wrong");
   });
 
   it("opens the problem count selector from the empty state without sending a create request", async () => {

@@ -506,9 +506,11 @@ export function CreateExamModal({
               >
                 Clear filters
               </button>
-              {createError?.code === "NO_ELIGIBLE_PROBLEMS" && (
+              {createError && (
                 <p role="alert" style={{ color: "var(--color-text-danger)", margin: 0 }}>
-                  No eligible problems match. Try adjusting or clearing the filters; cooldown and minimum age still apply.
+                  {createError.code === "NO_ELIGIBLE_PROBLEMS"
+                    ? "No eligible problems match. Try adjusting or clearing the filters; cooldown and minimum age still apply."
+                    : createError.message}
                 </p>
               )}
             </>

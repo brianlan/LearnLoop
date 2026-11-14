@@ -239,12 +239,15 @@ describe("ExamsPage", () => {
     });
   });
 
-  it("shows no-eligible feedback inside the modal without clearing the requested filters", async () => {
+  it.each([
+    { status: 422, code: "NO_ELIGIBLE_PROBLEMS", message: "No eligible problems available", feedback: "Try adjusting or clearing the filters" },
+    { status: 404, code: "NOT_FOUND", message: "Folder not found", feedback: "Folder not found" },
+  ])("shows $code feedback inside the modal without clearing the requested filters", async ({ status, code, message, feedback }) => {
     const user = userEvent.setup();
     await renderLoadedExamsPage();
     mockFetch.mockResolvedValueOnce({
-      ok: false, status: 422,
-      json: async () => ({ error: { code: "NO_ELIGIBLE_PROBLEMS", message: "No eligible problems available" } }),
+      ok: false, status,
+      json: async () => ({ error: { code, message } }),
     });
     await user.click(screen.getByRole("button", { name: "Start New Exam" }));
     await user.click(await screen.findByRole("checkbox", { name: "Math" }));
@@ -252,9 +255,11 @@ describe("ExamsPage", () => {
     await user.click(screen.getByRole("button", { name: "Create Exam" }));
 
     const dialog = screen.getByRole("dialog");
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Try adjusting or clearing the filters");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(feedback);
     expect(screen.getByRole("checkbox", { name: "Math" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "review" })).toBeChecked();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockNavigate).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Start New Exam" }));
     expect(within(screen.getByRole("dialog")).queryByRole("alert")).not.toBeInTheDocument();
