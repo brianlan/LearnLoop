@@ -239,6 +239,186 @@ def test_recency_weight_scales_tested_component_and_base():
     assert breakdown.recency == 5.0
 
 
+@pytest.mark.parametrize(
+    ("correct_count", "failed_count", "expected_recency"),
+    [
+        pytest.param(0, 1, 3.0, id="net_negative_keeps_base_rate"),
+        pytest.param(3, 3, 3.0, id="net_zero_keeps_base_rate"),
+        pytest.param(1, 0, 3.0, id="net_one_keeps_base_rate"),
+        pytest.param(2, 0, 2.4, id="net_two_rate_1_over_50"),
+        pytest.param(5, 0, 1.5, id="net_five_rate_1_over_80"),
+        pytest.param(9, 0, 1.0, id="net_nine_rate_1_over_120"),
+        pytest.param(16, 0, 120 / 190, id="net_sixteen_rate_1_over_190"),
+    ],
+)
+def test_last_correct_recency_slows_with_net_correct_count(
+    correct_count: int, failed_count: int, expected_recency: float
+):
+    """Last-correct daily rate is 1/(40 + 10*max(net - 1, 0)), uncapped (#706).
+
+    Tested 120 days ago with recency_weight=1: net 1 -> 120/40 = 3.0,
+    net 2 -> 120/50 = 2.4, net 5 -> 120/80 = 1.5, net 9 -> 120/120 = 1.0.
+    """
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem(
+        "p1",
+        last_tested_at=now - timedelta(days=120),
+        last_attempt_correct=True,
+        correct_count=correct_count,
+        failed_count=failed_count,
+        exposure_count=correct_count,
+    )
+    config = ProblemSelectionConfig(recency_weight=1.0)
+    breakdown = compute_score_breakdown(problem, config, now)
+    assert breakdown.recency == pytest.approx(expected_recency)
+
+
+def test_last_correct_rate_depends_on_net_not_raw_counts():
+    """Equal net counts with different correct/failed totals get the same rate (#706)."""
+    now = datetime.now(timezone.utc)
+    seven_correct = create_test_problem(
+        "p1",
+        last_tested_at=now - timedelta(days=80),
+        last_attempt_correct=True,
+        correct_count=7,
+        failed_count=2,
+        exposure_count=9,
+    )
+    five_correct = create_test_problem(
+        "p2",
+        last_tested_at=now - timedelta(days=80),
+        last_attempt_correct=True,
+        correct_count=5,
+        failed_count=0,
+        exposure_count=5,
+    )
+    config = ProblemSelectionConfig(recency_weight=1.0)
+    # Both have net = 5 -> rate 1/80 -> 80/80 = 1.0.
+    assert compute_score_breakdown(seven_correct, config, now).recency == pytest.approx(1.0)
+    assert compute_score_breakdown(five_correct, config, now).recency == pytest.approx(1.0)
+
+
+def test_last_correct_rate_continues_decreasing_without_cap():
+    """No minimum positive rate or denominator cap above net 5 (#706)."""
+    now = datetime.now(timezone.utc)
+    config = ProblemSelectionConfig(recency_weight=1.0)
+    recencies = []
+    for net in (5, 16, 100):
+        problem = create_test_problem(
+            f"p{net}",
+            last_tested_at=now - timedelta(days=120),
+            last_attempt_correct=True,
+            correct_count=net,
+            failed_count=0,
+            exposure_count=net,
+        )
+        recencies.append(compute_score_breakdown(problem, config, now).recency)
+    assert recencies[0] > recencies[1] > recencies[2] > 0.0
+
+
+def test_last_wrong_again_with_high_net_correct_keeps_last_wrong_rate():
+    """A wrong-again problem gets no additional slowdown even with a large net count (#706)."""
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem(
+        "p1",
+        last_tested_at=now - timedelta(days=60),
+        last_attempt_correct=False,
+        correct_count=10,
+        failed_count=1,
+        exposure_count=11,
+    )
+    config = ProblemSelectionConfig(recency_weight=1.0)
+    # Unchanged last-wrong rule: base 0.5, rate 1/30 -> 0.5 + 60/30 = 2.5.
+    assert compute_score_breakdown(problem, config, now).recency == 2.5
+
+
+def test_tested_unknown_and_never_tested_ignore_net_correct_count():
+    """Only last-correct problems use the net-count slowdown; other states keep their rates (#706)."""
+    now = datetime.now(timezone.utc)
+    config = ProblemSelectionConfig(recency_weight=1.0)
+
+    tested_unknown = create_test_problem(
+        "unknown",
+        last_tested_at=now - timedelta(days=60),
+        correct_count=10,
+        failed_count=0,
+        exposure_count=10,
+    )
+    # Tested unknown: base 0.0, rate 1/30 -> 2.0 (unchanged).
+    assert compute_score_breakdown(tested_unknown, config, now).recency == 2.0
+
+    never_tested = create_test_problem(
+        "never",
+        last_tested_at=None,
+        created_at=now - timedelta(days=30),
+        correct_count=16,
+        failed_count=0,
+        exposure_count=16,
+    )
+    # Never tested: base 1.0, rate 1/20 -> 2.5 (unchanged).
+    assert compute_score_breakdown(never_tested, config, now).recency == 2.5
+
+
+def test_last_correct_recency_weight_scaling_and_same_day_zero():
+    """recency_weight scales the slowed last-correct component; same-day recency is zero (#706)."""
+    config = ProblemSelectionConfig(recency_weight=2.0)
+    now = datetime.now(timezone.utc)
+
+    slowed = create_test_problem(
+        "slowed",
+        last_tested_at=now - timedelta(days=80),
+        last_attempt_correct=True,
+        correct_count=5,
+        failed_count=0,
+        exposure_count=5,
+    )
+    # Net 5 -> rate 1/80 -> raw 80/80 = 1.0, scaled by 2.0 -> 2.0.
+    assert compute_score_breakdown(slowed, config, now).recency == pytest.approx(2.0)
+
+    zero_weight = compute_score_breakdown(
+        slowed, ProblemSelectionConfig(recency_weight=0.0), now
+    )
+    assert zero_weight.recency == 0.0
+
+    tested_today = create_test_problem(
+        "today", last_tested_at=now, last_attempt_correct=True
+    )
+    assert compute_score_breakdown(
+        tested_today, ProblemSelectionConfig(recency_weight=1.0), now
+    ).recency == 0.0
+
+
+def test_last_correct_high_net_clamped_sampling_weight_preserves_raw_sum():
+    """#706 acceptance: 9 correct / 0 failed / 120 days -> raw sum -1.5, sampling total 0.0.
+
+    The problem is excluded from weighted sampling while its component
+    values (the raw score consumers) stay untouched.
+    """
+    now = datetime.now(timezone.utc)
+    problem = create_test_problem(
+        "p1",
+        last_tested_at=now - timedelta(days=120),
+        last_attempt_correct=True,
+        correct_count=9,
+        failed_count=0,
+        exposure_count=9,
+        created_at=now - timedelta(days=200),
+    )
+    config = ProblemSelectionConfig(
+        recency_weight=1.0, failure_rate_weight=1.0, last_wrong_weight=1.0
+    )
+    breakdown = compute_score_breakdown(problem, config, now)
+    # Net 9 -> recency = 120 * 1/120 = 1.0; failure = -sqrt(9) = -3.0; last_wrong = 0.5.
+    assert breakdown.recency == pytest.approx(1.0)
+    assert breakdown.failure == pytest.approx(-3.0)
+    assert breakdown.last_wrong == pytest.approx(0.5)
+    raw_sum = breakdown.recency + breakdown.failure + breakdown.last_wrong
+    assert raw_sum == pytest.approx(-1.5)
+    # Sampling weight is clamped at zero; the raw component sum above stays -1.5.
+    assert breakdown.total == 0.0
+    assert select_problems([problem], 1, config, now=now) == []
+
+
 def test_failure_score_no_attempts():
     now = datetime.now(timezone.utc)
     problem = create_test_problem("p1", exposure_count=0, failed_count=0, correct_count=0)

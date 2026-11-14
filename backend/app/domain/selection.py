@@ -64,8 +64,12 @@ def compute_score_breakdown(
     now: datetime,
 ) -> ScoreBreakdown:
     # Recency score with status-specific daily growth rate.
-    # Never tested grows fastest (1/20), last-correct slowest (1/40),
-    # last-failed and tested-unknown retain the original pace (1/30).
+    # Never tested grows fastest (1/20); last-failed and tested-unknown
+    # retain the original pace (1/30). Last-correct starts at 1/40 and
+    # slows with repeated success (#706): each net correct attempt
+    # (correctCount - failedCount) beyond the first adds 10 days to the
+    # denominator, with no cap. A later wrong attempt reverts to the
+    # last-wrong rate.
     # The 1.0 base represents the special priority of a never-tested
     # problem; last-wrong problems start from a 0.5 floor so a recently
     # failed problem still contributes a recency signal on day zero;
@@ -76,7 +80,11 @@ def compute_score_breakdown(
         base = 1.0
     else:
         reference_dt = problem.tracking.lastTestedAt
-        daily_rate = 1 / 40 if problem.tracking.lastAttemptCorrect is True else 1 / 30
+        if problem.tracking.lastAttemptCorrect is True:
+            net_correct = problem.tracking.correctCount - problem.tracking.failedCount
+            daily_rate = 1 / (40 + 10 * max(net_correct - 1, 0))
+        else:
+            daily_rate = 1 / 30
         if problem.tracking.lastAttemptCorrect is False:
             base = 0.5
         else:
