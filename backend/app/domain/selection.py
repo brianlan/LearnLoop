@@ -192,29 +192,29 @@ def select_problems(
     return _weighted_sample_without_replacement(weighted, count, rng)
 
 
-_RANK_SORT_KEYS = ("selectionScore", "addDate", "successCount", "failureCount")
+RANK_SORT_FIELDS = (
+    "selectionScore",
+    "addDate",
+    "correctStreak",
+    "successCount",
+    "failureCount",
+)
+
+# Ordered sort criteria: (field, direction) pairs, first pair = highest
+# priority. The canonical sorting interface for the exam picker (#708).
+SortCriterion = tuple[str, str]
+
+DEFAULT_SORT_CRITERIA: list[SortCriterion] = [("selectionScore", "desc")]
 
 
-def rank_eligible_problems(
+def filter_and_score_problems(
     problems: List[Problem],
     config: ProblemSelectionConfig,
     now: datetime,
     *,
     q: str | None = None,
-    sort_by: str = "selectionScore",
-    sort_order: str = "desc",
 ) -> list[tuple[Problem, float]]:
-    """Exam-picker candidate rows: keyword filter, eligibility, score, sort (#680).
-
-    Pure helper — no I/O. ``sort_by``/``sort_order`` are plain ``str``: the
-    endpoint's ``Literal`` query params are the validation boundary, and an
-    unknown value raises ``ValueError`` here rather than falling back silently.
-    """
-    if sort_by not in _RANK_SORT_KEYS:
-        raise ValueError(f"unknown sort_by: {sort_by!r}")
-    if sort_order not in ("asc", "desc"):
-        raise ValueError(f"unknown sort_order: {sort_order!r}")
-
+    """Keyword filter, eligibility, and selection score — no sorting, no I/O."""
     if q is not None:
         trimmed = q.strip()
         if trimmed:
@@ -226,23 +226,55 @@ def rank_eligible_problems(
                 or any(pattern.search(tag) for tag in problem.tags)
             ]
 
-    scored = [
+    return [
         (problem, compute_score_breakdown(problem, config, now).total)
         for problem in get_eligible_problems(problems, config, now)
     ]
 
-    def _sort_value(item: tuple[Problem, float]) -> Any:
-        problem, score = item
-        if sort_by == "selectionScore":
-            return score
-        if sort_by == "addDate":
-            return problem.createdAt
-        if sort_by == "successCount":
-            return problem.tracking.correctCount
-        return problem.tracking.failedCount
 
-    # Stable sort: id tiebreak first (mirrors _problem_id_sort_value), then
-    # the requested column, so equal keys keep a deterministic order.
-    scored.sort(key=lambda item: str(item[0].id))
-    scored.sort(key=_sort_value, reverse=(sort_order == "desc"))
-    return scored
+def sort_scored_problems(
+    scored: list[tuple[Problem, float]],
+    *,
+    criteria: list[SortCriterion],
+    streaks: dict[str, int | None] | None = None,
+) -> list[tuple[Problem, float]]:
+    """Ordered multi-column sort of scored candidates (#708).
+
+    Pure helper — no I/O. ``criteria`` is the priority-ordered list from the
+    endpoint's validation boundary; unknown fields/directions raise
+    ``ValueError`` rather than falling back silently. ``None`` values (only
+    ``correctStreak`` can be ``None``) sort last in both directions at their
+    criterion's priority; two ``None`` values proceed to the next criterion.
+    The initial id-ascending stable pre-sort makes all remaining ties resolve
+    by id ascending regardless of sort directions.
+    """
+    for field, direction in criteria:
+        if field not in RANK_SORT_FIELDS:
+            raise ValueError(f"unknown sort field: {field!r}")
+        if direction not in ("asc", "desc"):
+            raise ValueError(f"unknown sort direction: {direction!r}")
+
+    items = list(scored)
+    # Stable sort: id tiebreak first, then each criterion from lowest to
+    # highest priority, so the final order is criteria-major and ties fall
+    # through to id ascending.
+    items.sort(key=lambda item: str(item[0].id))
+    for field, direction in reversed(criteria):
+        def _sort_value(item: tuple[Problem, float], _field: str = field) -> Any:
+            problem, score = item
+            if _field == "selectionScore":
+                return score
+            if _field == "addDate":
+                return problem.createdAt
+            if _field == "correctStreak":
+                return None if streaks is None else streaks.get(str(problem.id))
+            if _field == "successCount":
+                # Legacy #680 column: cumulative correctCount, not streak (#708).
+                return problem.tracking.correctCount
+            return problem.tracking.failedCount
+
+        known = [item for item in items if _sort_value(item) is not None]
+        unknown = [item for item in items if _sort_value(item) is None]
+        known.sort(key=_sort_value, reverse=(direction == "desc"))
+        items = known + unknown
+    return items

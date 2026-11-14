@@ -5,6 +5,7 @@ import {
   getActiveExam,
   getExam,
   getSelectionCandidates,
+  serializeSortCriteria,
   saveExamAnswer,
   submitExam,
   discardExam,
@@ -154,20 +155,22 @@ describe("exams API module", () => {
 
     await getSelectionCandidates({
       q: "algebra",
-      sortBy: "successCount",
-      sortOrder: "asc",
+      sort: [
+        { field: "correctStreak", direction: "asc" },
+        { field: "selectionScore", direction: "desc" },
+      ],
       page: 2,
       pageSize: 10,
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/v1/exams/selection-candidates?sortBy=successCount&sortOrder=asc&page=2&pageSize=10&q=algebra",
+      "/api/v1/exams/selection-candidates?page=2&pageSize=10&sort=correctStreak%3Aasc%2CselectionScore%3Adesc&q=algebra",
       { credentials: "include" },
     );
   });
 
-  it("getSelectionCandidates omits empty q", async () => {
+  it("getSelectionCandidates omits the sort param when no criteria are given", async () => {
     const response: SelectionCandidatesResponse = {
       items: [],
       page: 1,
@@ -179,16 +182,25 @@ describe("exams API module", () => {
 
     await getSelectionCandidates({
       q: "   ",
-      sortBy: "selectionScore",
-      sortOrder: "desc",
+      sort: [],
       page: 1,
       pageSize: 10,
     });
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/v1/exams/selection-candidates?sortBy=selectionScore&sortOrder=desc&page=1&pageSize=10",
+      "/api/v1/exams/selection-candidates?page=1&pageSize=10",
       { credentials: "include" },
     );
+  });
+
+  it("serializeSortCriteria joins ordered criteria in priority order", () => {
+    expect(
+      serializeSortCriteria([
+        { field: "correctStreak", direction: "asc" },
+        { field: "addDate", direction: "desc" },
+      ]),
+    ).toBe("correctStreak:asc,addDate:desc");
+    expect(serializeSortCriteria([])).toBe("");
   });
 
   it("getActiveExam GETs /exams/active", async () => {

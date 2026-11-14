@@ -8,7 +8,7 @@ import type {
   CreateExamRequest,
   SelectionCandidate,
   SelectionCandidateSortBy,
-  SelectionCandidateSortOrder,
+  SelectionCandidateSortCriterion,
 } from "@/types/exam";
 
 const EXAM_PROBLEM_COUNT_MIN = 1;
@@ -19,8 +19,12 @@ const PICKER_PAGE_SIZE = 10;
 const SORT_COLUMNS: Array<{ key: SelectionCandidateSortBy; label: string }> = [
   { key: "selectionScore", label: "Score" },
   { key: "addDate", label: "Added" },
-  { key: "successCount", label: "Success" },
+  { key: "correctStreak", label: "Correct streak" },
   { key: "failureCount", label: "Failure" },
+];
+
+const DEFAULT_SORT: SelectionCandidateSortCriterion[] = [
+  { field: "selectionScore", direction: "desc" },
 ];
 
 interface CreateExamModalProps {
@@ -33,12 +37,33 @@ interface CreateExamModalProps {
   ineligibleMessage?: string | null;
 }
 
-function sortValue(row: SelectionCandidate, sortBy: SelectionCandidateSortBy): string | number {
+function sortValue(row: SelectionCandidate, field: SelectionCandidateSortBy): number | null {
   // Native timestamp value: the API emits mixed whole/fractional-second ISO
   // forms, so raw strings sort by spelling instead of chronology (#682).
-  if (sortBy === "addDate") return Date.parse(row.createdAt);
-  if (sortBy === "failureCount") return row.failedCount;
-  return row[sortBy];
+  if (field === "addDate") return Date.parse(row.createdAt);
+  if (field === "failureCount") return row.failedCount;
+  if (field === "correctStreak") return row.correctStreak;
+  return row.selectionScore;
+}
+
+/** Mirrors the backend ranking: criteria-major, nulls last, id-asc ties (#708). */
+function compareCandidates(
+  a: SelectionCandidate,
+  b: SelectionCandidate,
+  criteria: SelectionCandidateSortCriterion[],
+): number {
+  for (const { field, direction } of criteria) {
+    const av = sortValue(a, field);
+    const bv = sortValue(b, field);
+    if (av === null && bv === null) continue;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    if (av !== bv) {
+      const compared = av < bv ? -1 : 1;
+      return direction === "desc" ? -compared : compared;
+    }
+  }
+  return a.id < b.id ? -1 : 1;
 }
 
 export function CreateExamModal({
@@ -52,8 +77,7 @@ export function CreateExamModal({
   const [mode, setMode] = useState<"random" | "manual">("random");
   const [problemCountInput, setProblemCountInput] = useState(String(EXAM_PROBLEM_COUNT_DEFAULT));
   const [keyword, setKeyword] = useState("");
-  const [sortBy, setSortBy] = useState<SelectionCandidateSortBy>("selectionScore");
-  const [sortOrder, setSortOrder] = useState<SelectionCandidateSortOrder>("desc");
+  const [sortCriteria, setSortCriteria] = useState<SelectionCandidateSortCriterion[]>([]);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Map<string, SelectionCandidate>>(new Map());
 
@@ -62,20 +86,23 @@ export function CreateExamModal({
       setMode("random");
       setProblemCountInput(String(EXAM_PROBLEM_COUNT_DEFAULT));
       setKeyword("");
-      setSortBy("selectionScore");
-      setSortOrder("desc");
+      setSortCriteria([]);
       setPage(1);
       setSelected(new Map());
     }
   }, [isOpen]);
 
+  // Empty custom criteria IS the default Score-descending state (#708); the
+  // effective list drives both the request and the confirm-time ordering.
+  const effectiveSort =
+    sortCriteria.length > 0 ? sortCriteria : DEFAULT_SORT;
+
   const candidatesQuery = useQuery({
-    queryKey: ["selection-candidates", keyword, sortBy, sortOrder, page],
+    queryKey: ["selection-candidates", keyword, effectiveSort, page],
     queryFn: () =>
       getSelectionCandidates({
         q: keyword,
-        sortBy,
-        sortOrder,
+        sort: effectiveSort,
         page,
         pageSize: PICKER_PAGE_SIZE,
       }),
@@ -107,13 +134,22 @@ export function CreateExamModal({
     });
   }, [staleProblemIds]);
 
+  // Header cycle (#708): inactive -> descending -> ascending -> inactive.
+  // Joining appends at the end (lowest priority); direction flips keep the
+  // criterion's priority; removal renumbers the rest.
   const handleSortClick = (column: SelectionCandidateSortBy) => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-    } else {
-      setSortBy(column);
-      setSortOrder("desc");
-    }
+    setSortCriteria((previous) => {
+      const index = previous.findIndex((criterion) => criterion.field === column);
+      if (index === -1) {
+        return [...previous, { field: column, direction: "desc" }];
+      }
+      if (previous[index].direction === "desc") {
+        return previous.map((criterion, i) =>
+          i === index ? { ...criterion, direction: "asc" as const } : criterion,
+        );
+      }
+      return previous.filter((criterion) => criterion.field !== column);
+    });
     setPage(1);
   };
 
@@ -137,18 +173,11 @@ export function CreateExamModal({
       return;
     }
     if (selected.size === 0) return;
-    // Item order = displayed order at confirm. Direction applies to the
-    // primary column only; tied ids stay ascending in both directions,
-    // mirroring the backend's stable two-pass sort (#682).
-    const ordered = [...selected.values()].sort((a, b) => {
-      const av = sortValue(a, sortBy);
-      const bv = sortValue(b, sortBy);
-      if (av !== bv) {
-        const compared = av < bv ? -1 : 1;
-        return sortOrder === "desc" ? -compared : compared;
-      }
-      return a.id < b.id ? -1 : 1;
-    });
+    // Item order = displayed order at confirm: the same effective criteria
+    // the backend applies, across ALL retained rows (#682, #708).
+    const ordered = [...selected.values()].sort((a, b) =>
+      compareCandidates(a, b, effectiveSort),
+    );
     onCreate({ mode: "manual", problemIds: ordered.map((row) => row.id) });
   };
 
@@ -379,42 +408,90 @@ export function CreateExamModal({
                 </div>
               )}
 
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                {sortCriteria.length === 0 ? (
+                  <span
+                    role="status"
+                    style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--color-text-muted)" }}
+                  >
+                    Default: Score ↓
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSortCriteria([]);
+                    setPage(1);
+                  }}
+                  disabled={sortCriteria.length === 0}
+                  className="btn btn-secondary"
+                  style={{ padding: "0.25rem 0.75rem", fontSize: "0.8125rem", fontWeight: 700 }}
+                >
+                  Reset sorting
+                </button>
+              </div>
+
               <div style={{ overflowX: "auto", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
                   <thead>
                     <tr>
                       <th aria-label="Select" style={{ padding: "0.5rem", width: "2.5rem" }} />
                       <th style={{ padding: "0.5rem", textAlign: "left" }}>Problem</th>
-                      {SORT_COLUMNS.map((column) => (
-                        <th
-                          key={column.key}
-                          aria-sort={
-                            sortBy === column.key
-                              ? sortOrder === "asc"
-                                ? "ascending"
-                                : "descending"
-                              : "none"
-                          }
-                          style={{ padding: "0.5rem", textAlign: "left" }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleSortClick(column.key)}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              padding: 0,
-                              font: "inherit",
-                              fontWeight: 700,
-                              color: sortBy === column.key ? "var(--color-primary)" : "inherit",
-                            }}
+                      {SORT_COLUMNS.map((column) => {
+                        const priority = sortCriteria.findIndex(
+                          (criterion) => criterion.field === column.key,
+                        );
+                        const active = priority !== -1;
+                        const isDefaultPrimary =
+                          !active && column.key === effectiveSort[0].field;
+                        const direction = active ? sortCriteria[priority].direction : null;
+                        const arrow = direction === "asc" ? "↑" : "↓";
+                        // Only the primary criterion gets aria-sort; buttons describe secondary priorities.
+                        const ariaSort =
+                          column.key === effectiveSort[0].field
+                            ? effectiveSort[0].direction === "asc"
+                              ? "ascending"
+                              : "descending"
+                            : "none";
+                        const ariaLabel = active
+                          ? direction === "desc"
+                            ? `${column.label}, descending, priority ${priority + 1}. Activate to switch to ascending.`
+                            : `${column.label}, ascending, priority ${priority + 1}. Activate to remove this sort.`
+                          : isDefaultPrimary
+                            ? `${column.label}, default order ${effectiveSort[0].direction === "asc" ? "ascending" : "descending"}. Activate to sort by ${column.label} explicitly (descending, priority 1).`
+                            : `${column.label}, not sorted. Activate to sort descending.`;
+                        return (
+                          <th
+                            key={column.key}
+                            aria-sort={ariaSort}
+                            style={{ padding: "0.5rem", textAlign: "left" }}
                           >
-                            {column.label}
-                            {sortBy === column.key ? (sortOrder === "asc" ? " ▲" : " ▼") : ""}
-                          </button>
-                        </th>
-                      ))}
+                            <button
+                              type="button"
+                              onClick={() => handleSortClick(column.key)}
+                              aria-label={ariaLabel}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: 0,
+                                font: "inherit",
+                                fontWeight: 700,
+                                color: active ? "var(--color-primary)" : "inherit",
+                              }}
+                            >
+                              {active ? `${column.label} ${arrow} ${priority + 1}` : column.label}
+                            </button>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
@@ -462,7 +539,9 @@ export function CreateExamModal({
                           <td style={{ padding: "0.5rem" }}>
                             {new Date(row.createdAt).toLocaleDateString()}
                           </td>
-                          <td style={{ padding: "0.5rem" }}>{row.successCount}</td>
+                          <td style={{ padding: "0.5rem" }}>
+                            {row.correctStreak === null ? "—" : row.correctStreak}
+                          </td>
                           <td style={{ padding: "0.5rem" }}>{row.failedCount}</td>
                         </tr>
                       );
@@ -477,6 +556,11 @@ export function CreateExamModal({
                   </tbody>
                 </table>
               </div>
+
+              <p style={{ color: "var(--color-text-muted)", fontSize: "0.75rem", margin: 0, fontWeight: 500 }}>
+                Correct streak counts consecutive correct results from saved, judged practice and exam
+                history only. “—” means older history is missing, so the count covers saved records only.
+              </p>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--color-text-muted)" }}>

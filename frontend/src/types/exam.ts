@@ -120,16 +120,24 @@ export type CreateExamRequest =
 export type SelectionCandidateSortBy =
   | "selectionScore"
   | "addDate"
-  | "successCount"
+  | "correctStreak"
   | "failureCount";
 
 export type SelectionCandidateSortOrder = "asc" | "desc";
+
+/** One ordered sorting criterion; list order = priority (#708). */
+export interface SelectionCandidateSortCriterion {
+  field: SelectionCandidateSortBy;
+  direction: SelectionCandidateSortOrder;
+}
 
 export interface SelectionCandidate {
   id: string;
   text: string;
   selectionScore: number;
   createdAt: string;
+  /** Trailing judged-history streak; null = missing older history ("—"). */
+  correctStreak: number | null;
   successCount: number;
   failedCount: number;
 }

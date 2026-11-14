@@ -6,8 +6,7 @@ import type {
   ExamResponse,
   SaveAnswerRequest,
   SaveAnswerResponse,
-  SelectionCandidateSortBy,
-  SelectionCandidateSortOrder,
+  SelectionCandidateSortCriterion,
   SelectionCandidatesResponse,
   SelfReportRequest,
   SelfReportResponse,
@@ -15,21 +14,27 @@ import type {
 
 export interface SelectionCandidatesQuery {
   q?: string;
-  sortBy: SelectionCandidateSortBy;
-  sortOrder: SelectionCandidateSortOrder;
+  /** Ordered criteria; first = highest priority. Empty = backend default. */
+  sort: SelectionCandidateSortCriterion[];
   page: number;
   pageSize: number;
+}
+
+/** Wire encoding for ordered criteria: `field:direction,field:direction` (#708). */
+export function serializeSortCriteria(
+  sort: SelectionCandidateSortCriterion[],
+): string {
+  return sort.map((criterion) => `${criterion.field}:${criterion.direction}`).join(",");
 }
 
 export async function getSelectionCandidates(
   query: SelectionCandidatesQuery,
 ): Promise<SelectionCandidatesResponse> {
   const params = new URLSearchParams({
-    sortBy: query.sortBy,
-    sortOrder: query.sortOrder,
     page: String(query.page),
     pageSize: String(query.pageSize),
   });
+  if (query.sort.length > 0) params.set("sort", serializeSortCriteria(query.sort));
   if (query.q?.trim()) params.append("q", query.q.trim());
   return api.get<SelectionCandidatesResponse>(
     `/exams/selection-candidates?${params.toString()}`,

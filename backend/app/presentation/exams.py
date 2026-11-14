@@ -8,8 +8,17 @@ from typing import Any
 from bson import ObjectId
 from fastapi import APIRouter, Query
 
+from app.domain.attempt_streak import compute_correct_streak
 from app.domain.models import ExamState, GradingStatus, ProblemType, SelectionPolicyConfig
-from app.domain.selection import get_eligible_problems, rank_eligible_problems, select_problems
+from app.domain.selection import (
+    DEFAULT_SORT_CRITERIA,
+    RANK_SORT_FIELDS,
+    SortCriterion,
+    filter_and_score_problems,
+    get_eligible_problems,
+    select_problems,
+    sort_scored_problems,
+)
 from app.domain.state import transition_exam_state
 from app.exam_grading import build_exam_summary, build_tracking_update, grade_item
 from app.presentation.selection_config import problem_selection_config_from_settings
@@ -269,31 +278,169 @@ async def get_active_exam(
     return ExamResponse(exam=serialize_exam(exam))
 
 
+_SORT_DIRECTIONS = ("asc", "desc")
+
+
+def _parse_sort_criteria(
+    sort: str | None,
+    sort_by: str | None,
+    sort_order: str | None,
+) -> list[SortCriterion]:
+    """Ordered ``sort`` criteria; legacy single-column params normalize to one (#708).
+
+    Wire encoding: ``sort=field:direction,field:direction`` — comma-separated
+    ``field:direction`` pairs, first pair = highest priority. ``sortBy``/
+    ``sortOrder`` (the #680 single-column params) keep their meaning and are
+    accepted when ``sort`` is absent: ``sortOrder`` alone still applies to the
+    default ``selectionScore`` field, and omitted sorting defaults to Score
+    descending. Empty list members, malformed fields, directions, and
+    duplicate fields reject with the request-validation error convention.
+    """
+    if sort is not None:
+        if sort_by is not None:
+            raise ApiError(
+                422,
+                "VALIDATION_ERROR",
+                "Use either sort or sortBy, not both",
+            )
+        criteria: list[SortCriterion] = []
+        seen: set[str] = set()
+        for part in sort.split(","):
+            stripped = part.strip()
+            field, _, direction = stripped.partition(":")
+            field = field.strip()
+            direction = direction.strip()
+            if (
+                field not in RANK_SORT_FIELDS
+                or direction not in _SORT_DIRECTIONS
+                or field in seen
+            ):
+                raise ApiError(
+                    422,
+                    "VALIDATION_ERROR",
+                    f"Invalid sort criteria: {stripped}",
+                )
+            seen.add(field)
+            criteria.append((field, direction))
+        return criteria
+    if sort_by is not None:
+        return [(sort_by, sort_order or "desc")]
+    if sort_order is not None:
+        # Legacy #680 behavior: a bare sortOrder applies to the default field.
+        return [(DEFAULT_SORT_CRITERIA[0][0], sort_order)]
+    return list(DEFAULT_SORT_CRITERIA)
+
+
+async def _load_correct_streaks(
+    database: Any,
+    user_id: Any,
+    problems: list[Any],
+) -> dict[str, int | None]:
+    """Batch-load trailing correct streaks for the given candidate problems (#708).
+
+    Two collection queries total — practice attempts and submitted exams —
+    regardless of candidate count; timestamps and tie-breakers reuse the
+    attempt-history endpoint semantics. Creation activities and non-submitted
+    exams are never attempts, so they are not fetched.
+    """
+    problem_oids = [ObjectId(problem.id) for problem in problems if problem.id]
+    if not problem_oids:
+        return {}
+
+    practice_docs = await database["practice_attempts"].find(
+        {
+            "userId": user_id,
+            "problemId": {"$in": problem_oids},
+            "createdAt": {"$ne": None},
+        }
+    ).to_list(length=None)
+    exam_docs = await database["exams"].find(
+        {
+            "userId": user_id,
+            "state": ExamState.SUBMITTED.value,
+            "submittedAt": {"$ne": None},
+            "items.problemId": {"$in": problem_oids},
+        }
+    ).to_list(length=None)
+
+    records_by_problem: dict[str, list[tuple[Any, str, str, str | None]]] = {}
+    for doc in practice_docs:
+        created_at = doc.get("createdAt")
+        if not isinstance(created_at, datetime):
+            continue
+        records_by_problem.setdefault(str(doc["problemId"]), []).append(
+            (
+                created_at,
+                "practice",
+                str(doc["_id"]),
+                str(doc.get("gradingStatus", "ungraded")),
+            )
+        )
+    for exam in exam_docs:
+        submitted_at = exam.get("submittedAt")
+        if not isinstance(submitted_at, datetime):
+            continue
+        seen_problem_ids: set[str] = set()
+        for item in exam.get("items", []):
+            problem_id = str(item.get("problemId"))
+            if problem_id in seen_problem_ids:
+                continue
+            seen_problem_ids.add(problem_id)
+            grading = item.get("grading") or {}
+            records_by_problem.setdefault(problem_id, []).append(
+                (
+                    submitted_at,
+                    "exam",
+                    str(item.get("itemId", exam["_id"])),
+                    str(grading.get("status", "ungraded")),
+                )
+            )
+
+    streaks: dict[str, int | None] = {}
+    for problem in problems:
+        if problem.id is None:
+            continue
+        tracking = problem.tracking
+        has_aggregate = (tracking.correctCount + tracking.failedCount) > 0
+        streaks[str(problem.id)] = compute_correct_streak(
+            records_by_problem.get(str(problem.id), []),
+            has_aggregate_attempts=has_aggregate,
+        )
+    return streaks
+
+
 @router.get("/selection-candidates", response_model=SelectionCandidatesResponse)
 async def list_selection_candidates(
     database: DatabaseDependency,
     current_user: CurrentUserDependency,
     settings: SettingsDependency,
     q: str | None = Query(default=None),
-    sort_by: SelectionCandidateSortBy = Query(
-        default="selectionScore", alias="sortBy"
-    ),
-    sort_order: ProblemSortOrder = Query(default="desc", alias="sortOrder"),
+    sort: str | None = Query(default=None),
+    sort_by: SelectionCandidateSortBy | None = Query(default=None, alias="sortBy"),
+    sort_order: ProblemSortOrder | None = Query(default=None, alias="sortOrder"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> SelectionCandidatesResponse:
-    """Eligibility-filtered, sortable candidate rows for manual exam mode (#680)."""
+    """Eligibility-filtered, sortable candidate rows for manual exam mode (#680).
+
+    Sorting (#708): ``sort`` carries ordered multi-column criteria; streaks
+    are derived from batch-loaded judged history and ``correctStreak`` may be
+    ``None`` (missing history). Ranking stays global; pagination is last.
+    """
+    sort_criteria = _parse_sort_criteria(sort, sort_by, sort_order)
     problem_documents = await database["problems"].find(
         {"userId": current_user["_id"], "isDeleted": False}
     ).to_list(length=None)
-    ranked = rank_eligible_problems(
+    scored = filter_and_score_problems(
         [problem_document_to_model(doc) for doc in problem_documents],
         problem_selection_config_from_settings(settings),
         now=datetime.now(UTC),
         q=q,
-        sort_by=sort_by,
-        sort_order=sort_order,
     )
+    streaks = await _load_correct_streaks(
+        database, current_user["_id"], [problem for problem, _ in scored]
+    )
+    ranked = sort_scored_problems(scored, criteria=sort_criteria, streaks=streaks)
     total = len(ranked)
     start = (page - 1) * page_size
     items = [
@@ -302,6 +449,7 @@ async def list_selection_candidates(
             text=problem.text,
             selectionScore=score,
             createdAt=problem.createdAt,
+            correctStreak=streaks.get(str(problem.id)),
             successCount=problem.tracking.correctCount,
             failedCount=problem.tracking.failedCount,
         )

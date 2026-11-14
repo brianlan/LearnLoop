@@ -1835,13 +1835,13 @@ async def test_selection_candidates_keyword_sort_and_pagination(
     )
     assert failures_asc.json()["items"][-1]["id"] == str(algebra_two["_id"])
 
-    # Remaining directions of the 4×2 matrix (#680 review B2): success count
-    # and add date have robust exact orders; selection score direction is
-    # pinned by monotonic score values (weights make exact ranks brittle).
+    # Legacy #680 contract kept (#708 B1): cumulative-success sorting still
+    # works via sortBy even though the picker UI no longer offers the column.
     success_desc = await client.get(
         "/api/v1/exams/selection-candidates",
         params={"sortBy": "successCount", "sortOrder": "desc"},
     )
+    assert success_desc.status_code == 200
     assert [item["id"] for item in success_desc.json()["items"]] == [
         str(algebra_one["_id"]),
         str(algebra_two["_id"]),
@@ -1851,11 +1851,20 @@ async def test_selection_candidates_keyword_sort_and_pagination(
         "/api/v1/exams/selection-candidates",
         params={"sortBy": "successCount", "sortOrder": "asc"},
     )
+    assert success_asc.status_code == 200
     assert [item["id"] for item in success_asc.json()["items"]] == [
         str(geography["_id"]),
         str(algebra_one["_id"]),
         str(algebra_two["_id"]),
     ]
+    # The ordered wire format accepts the same legacy field with cumulative
+    # semantics (NOT streak values).
+    success_wire = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "successCount:desc"},
+    )
+    assert success_wire.status_code == 200
+    assert [item["successCount"] for item in success_wire.json()["items"]] == [3, 3, 0]
 
     add_date_asc = await client.get(
         "/api/v1/exams/selection-candidates",
@@ -1911,3 +1920,347 @@ async def test_selection_candidates_reject_bogus_sort_params(
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def _make_submitted_exam(
+    user_id: ObjectId,
+    *,
+    submitted_at: datetime,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Submitted-exam fixture trimmed to what streak loading consumes (#708)."""
+    return {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "state": "submitted",
+        "submittedAt": submitted_at,
+        "items": items,
+    }
+
+
+def _make_exam_item(problem_oid: ObjectId, status: str) -> dict[str, Any]:
+    return {
+        "itemId": str(ObjectId()),
+        "problemId": problem_oid,
+        "grading": {"status": status},
+    }
+
+
+def _make_practice_attempt(
+    user_id: ObjectId,
+    problem_oid: ObjectId,
+    *,
+    created_at: datetime,
+    grading_status: str,
+) -> dict[str, Any]:
+    return {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "problemId": problem_oid,
+        "createdAt": created_at,
+        "gradingStatus": grading_status,
+    }
+
+
+def _candidate_streaks_by_id(body: dict[str, Any]) -> dict[str, Any]:
+    return {item["id"]: item["correctStreak"] for item in body["items"]}
+
+
+@pytest.mark.asyncio
+async def test_selection_candidates_streak_sources_and_missing_history(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    other_user = ObjectId()
+    now = datetime.now(UTC)
+
+    mixed = make_problem(user_id, text="mixed", problem_type="fill-in-the-blank", correct_answer="1")
+    never = make_problem(user_id, text="never", problem_type="fill-in-the-blank", correct_answer="2")
+    pending_only = make_problem(user_id, text="pending only", problem_type="fill-in-the-blank", correct_answer="3")
+    aggregate_only = make_problem(
+        user_id, text="aggregate only", problem_type="fill-in-the-blank", correct_answer="4",
+        tracking={"exposureCount": 4, "correctCount": 3, "failedCount": 1,
+                  "lastTestedAt": now - timedelta(days=40), "lastAttemptCorrect": True},
+    )
+    partial = make_problem(
+        user_id, text="partial", problem_type="fill-in-the-blank", correct_answer="5",
+        tracking={"exposureCount": 9, "correctCount": 7, "failedCount": 2,
+                  "lastTestedAt": now - timedelta(days=40), "lastAttemptCorrect": True},
+    )
+    foreign = make_problem(user_id, text="foreign", problem_type="fill-in-the-blank", correct_answer="6")
+    database["problems"].seed(mixed, never, pending_only, aggregate_only, partial, foreign)
+
+    # mixed: incorrect practice (day 5), correct practice (day 3), correct exam
+    # item (day 2, submitted) -> trailing streak 2.
+    database["practice_attempts"].seed(
+        _make_practice_attempt(user_id, mixed["_id"], created_at=now - timedelta(days=5), grading_status="incorrect"),
+        _make_practice_attempt(user_id, mixed["_id"], created_at=now - timedelta(days=3), grading_status="correct"),
+    )
+    database["exams"].seed(
+        _make_submitted_exam(
+            user_id,
+            submitted_at=now - timedelta(days=2),
+            items=[_make_exam_item(mixed["_id"], "correct")],
+        ),
+        # pending_only: submitted exam whose item still awaits review -> 0.
+        _make_submitted_exam(
+            user_id,
+            submitted_at=now - timedelta(days=2),
+            items=[_make_exam_item(pending_only["_id"], "pending-review")],
+        ),
+        # partial: one surviving correct record despite aggregate claiming 9.
+        _make_submitted_exam(
+            user_id,
+            submitted_at=now - timedelta(days=2),
+            items=[_make_exam_item(partial["_id"], "correct")],
+        ),
+        # Another user's submitted exam must not contribute.
+        _make_submitted_exam(
+            other_user,
+            submitted_at=now - timedelta(days=1),
+            items=[_make_exam_item(foreign["_id"], "correct")],
+        ),
+        # In-progress (non-submitted) exams are not attempts.
+        {
+            **_make_submitted_exam(
+                user_id,
+                submitted_at=now,
+                items=[_make_exam_item(foreign["_id"], "correct")],
+            ),
+            "_id": ObjectId(),
+            "state": "in-progress",
+            "submittedAt": None,
+        },
+    )
+
+    response = await client.get("/api/v1/exams/selection-candidates")
+
+    assert response.status_code == 200
+    streaks = _candidate_streaks_by_id(response.json())
+    assert streaks[str(mixed["_id"])] == 2
+    assert streaks[str(never["_id"])] == 0
+    assert streaks[str(pending_only["_id"])] == 0
+    # Legacy row: aggregate counters claim attempts, no saved history -> null.
+    assert streaks[str(aggregate_only["_id"])] is None
+    # Partial history: counts the surviving record instead of inventing events.
+    assert streaks[str(partial["_id"])] == 1
+    # Another user's history is invisible; foreign stays at 0 (never attempted).
+    assert streaks[str(foreign["_id"])] == 0
+
+
+@pytest.mark.asyncio
+async def test_selection_candidates_ordered_sort_criteria_and_validation(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    now = datetime.now(UTC)
+    # Fixed hex ids: tied rows need a deterministic id tiebreak order.
+    id_old = ObjectId("000000000000000000000001")
+    id_new = ObjectId("000000000000000000000002")
+    id_high = ObjectId("000000000000000000000003")
+    id_missing = ObjectId("000000000000000000000004")
+
+    low_streak_old = make_problem(
+        user_id, text="low streak old", problem_type="fill-in-the-blank", correct_answer="1",
+        tracking={"exposureCount": 1, "correctCount": 0, "failedCount": 1,
+                  "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": False},
+    )
+    low_streak_old["_id"] = id_old
+    low_streak_old["createdAt"] = now - timedelta(days=10)
+    low_streak_new = make_problem(
+        user_id, text="low streak new", problem_type="fill-in-the-blank", correct_answer="2",
+        tracking={"exposureCount": 1, "correctCount": 0, "failedCount": 1,
+                  "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": False},
+    )
+    low_streak_new["_id"] = id_new
+    low_streak_new["createdAt"] = now - timedelta(days=1)
+    missing_history = make_problem(
+        user_id, text="missing history", problem_type="fill-in-the-blank", correct_answer="3",
+        tracking={"exposureCount": 2, "correctCount": 2, "failedCount": 0,
+                  "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": True},
+    )
+    missing_history["_id"] = id_missing
+    high_streak = make_problem(
+        user_id, text="high streak", problem_type="fill-in-the-blank", correct_answer="4",
+        tracking={"exposureCount": 1, "correctCount": 0, "failedCount": 1,
+                  "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": False},
+    )
+    high_streak["_id"] = id_high
+    database["problems"].seed(low_streak_old, low_streak_new, missing_history, high_streak)
+    database["practice_attempts"].seed(
+        _make_practice_attempt(user_id, id_old, created_at=now - timedelta(days=5), grading_status="incorrect"),
+        _make_practice_attempt(user_id, id_new, created_at=now - timedelta(days=5), grading_status="incorrect"),
+        _make_practice_attempt(user_id, id_high, created_at=now - timedelta(days=5), grading_status="correct"),
+    )
+
+    # Streak ascending first: the two 0-streaks by Added ascending (old before
+    # new), then the 1; missing history (null) last.
+    ordered = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "correctStreak:asc,addDate:asc"},
+    )
+    assert [item["id"] for item in ordered.json()["items"]] == [
+        str(id_old),
+        str(id_new),
+        str(id_high),
+        str(id_missing),
+    ]
+
+    # Descending streak flips known groups but nulls stay last.
+    ordered_desc = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "correctStreak:desc"},
+    )
+    assert [item["id"] for item in ordered_desc.json()["items"]] == [
+        str(id_high),
+        str(id_old),
+        str(id_new),
+        str(id_missing),
+    ]
+
+    # Omitted sorting is default Score descending; explicit default matches.
+    default = await client.get("/api/v1/exams/selection-candidates")
+    explicit_default = await client.get(
+        "/api/v1/exams/selection-candidates", params={"sort": "selectionScore:desc"}
+    )
+    assert [item["id"] for item in default.json()["items"]] == [
+        item["id"] for item in explicit_default.json()["items"]
+    ]
+
+    # Legacy #680 behavior kept (#708 B2): a bare sortOrder applies to the
+    # default selectionScore field instead of being ignored.
+    order_only_asc = await client.get(
+        "/api/v1/exams/selection-candidates", params={"sortOrder": "asc"}
+    )
+    assert order_only_asc.status_code == 200
+    scores_only = [item["selectionScore"] for item in order_only_asc.json()["items"]]
+    assert scores_only == sorted(scores_only)
+    order_only_desc = await client.get(
+        "/api/v1/exams/selection-candidates", params={"sortOrder": "desc"}
+    )
+    assert order_only_desc.status_code == 200
+    scores_only_desc = [
+        item["selectionScore"] for item in order_only_desc.json()["items"]
+    ]
+    assert scores_only_desc == sorted(scores_only_desc, reverse=True)
+    assert scores_only_desc[0] == scores_only[-1]
+
+    # Legacy single-column params normalize to one criterion.
+    legacy = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sortBy": "failureCount", "sortOrder": "asc"},
+    )
+    assert legacy.status_code == 200
+    failed_counts = [item["failedCount"] for item in legacy.json()["items"]]
+    assert failed_counts == sorted(failed_counts)
+
+    # Malformed sort values reject with the validation convention, including
+    # empty list members (#708 B3): trailing/doubled separators and empty
+    # values are malformed lists, not defaults.
+    for bad in (
+        {"sort": "bogus:asc"},
+        {"sort": "addDate:sideways"},
+        {"sort": "addDate:asc,addDate:desc"},
+        {"sort": "addDate"},
+        {"sort": ",addDate:asc"},
+        {"sort": "addDate:asc,"},
+        {"sort": "addDate:asc,,correctStreak:desc"},
+        {"sort": ",,,"},
+        {"sort": ""},
+        {"sort": " "},
+    ):
+        response = await client.get("/api/v1/exams/selection-candidates", params=bad)
+        assert response.status_code == 422, bad
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    # Mixing the ordered list with the legacy params is ambiguous -> 422.
+    response = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "addDate:asc", "sortBy": "addDate"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_selection_candidates_sort_globally_across_pages(
+    exams_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+    now = datetime.now(UTC)
+
+    problems = []
+    for index in range(5):
+        problem = make_problem(
+            user_id, text=f"problem {index}", problem_type="fill-in-the-blank", correct_answer=str(index),
+            tracking={"exposureCount": 1, "correctCount": 0, "failedCount": 1,
+                      "lastTestedAt": now - timedelta(days=30), "lastAttemptCorrect": False},
+        )
+        problems.append(problem)
+    database["problems"].seed(*problems)
+    # Streaks 0, 1, 2, 3, 4 by creation order; sort streak asc -> p0..p4.
+    # problems[0] gets one incorrect attempt so its streak is a real 0 rather
+    # than missing-history null (which would sort last).
+    for index, problem in enumerate(problems):
+        if index == 0:
+            database["practice_attempts"].seed(
+                _make_practice_attempt(
+                    user_id, problem["_id"], created_at=now - timedelta(days=5), grading_status="incorrect"
+                )
+            )
+        for _ in range(index):
+            database["practice_attempts"].seed(
+                _make_practice_attempt(
+                    user_id, problem["_id"], created_at=now - timedelta(days=5), grading_status="correct"
+                )
+            )
+
+    first_page = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "correctStreak:asc", "page": 1, "pageSize": 2},
+    )
+    second_page = await client.get(
+        "/api/v1/exams/selection-candidates",
+        params={"sort": "correctStreak:asc", "page": 2, "pageSize": 2},
+    )
+    assert [item["correctStreak"] for item in first_page.json()["items"]] == [0, 1]
+    assert [item["correctStreak"] for item in second_page.json()["items"]] == [2, 3]
+    assert second_page.json()["total"] == 5
+
+
+@pytest.mark.asyncio
+async def test_selection_candidates_history_loading_is_batched(
+    exams_app: FastAPI, client: AsyncClient, monkeypatch
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    problems = [
+        make_problem(user_id, text=f"batch {i}", problem_type="fill-in-the-blank", correct_answer=str(i))
+        for i in range(6)
+    ]
+    database["problems"].seed(*problems)
+
+    find_calls = {"practice_attempts": 0, "exams": 0}
+    for collection_name in ("practice_attempts", "exams"):
+        collection = database[collection_name]
+        original_find = collection.find
+
+        def make_counting_find(name: str, original: Any) -> Any:
+            def counting_find(query: dict[str, Any]) -> Any:
+                find_calls[name] += 1
+                return original(query)
+
+            return counting_find
+
+        monkeypatch.setattr(collection, "find", make_counting_find(collection_name, original_find))
+
+    response = await client.get("/api/v1/exams/selection-candidates")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 6
+    # Adding candidates must not scale into per-problem history reads (#708).
+    assert find_calls == {"practice_attempts": 1, "exams": 1}
