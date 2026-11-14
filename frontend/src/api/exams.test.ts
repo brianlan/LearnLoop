@@ -193,9 +193,7 @@ describe("exams API module", () => {
     );
   });
 
-  it("serializeSortCriteria joins ordered criteria in priority order", async () => {
-    const { serializeSortCriteria } = await import("./exams");
-
+  it("serializeSortCriteria joins ordered criteria in priority order", () => {
     expect(
       serializeSortCriteria([
         { field: "correctStreak", direction: "asc" },
