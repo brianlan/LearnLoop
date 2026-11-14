@@ -7,7 +7,6 @@ import { CreateExamModal } from "./CreateExamModal";
 import type {
   SelectionCandidate,
   SelectionCandidateSortBy,
-  SelectionCandidateSortOrder,
 } from "@/types/exam";
 
 const mockFetch = vi.fn();
@@ -27,6 +26,7 @@ function candidate(id: string, overrides: Partial<SelectionCandidate> = {}): Sel
     text: `problem ${id}`,
     selectionScore: 1,
     createdAt: "2024-01-01T00:00:00Z",
+    correctStreak: 0,
     successCount: 0,
     failedCount: 0,
     ...overrides,
@@ -37,7 +37,12 @@ function jsonResponse(data: unknown) {
   return { ok: true, json: async () => data };
 }
 
-/** Mirrors the backend candidate contract: id tiebreak, column sort, direction, q filter, paging. */
+/**
+ * Mirrors the backend candidate contract (#708): ordered `sort` criteria,
+ * id-ascending pre-sort, criteria applied lowest-priority-first so the final
+ * order is criteria-major with id-ascending ties, null streaks last in both
+ * directions, chronological add-date, q filter, global sort then paging.
+ */
 function mockCandidatesEndpoint(all: SelectionCandidate[], pageSize = 10) {
   mockFetch.mockImplementation(async (input: unknown) => {
     const url = new URL(String(input), "http://localhost");
@@ -45,25 +50,37 @@ function mockCandidatesEndpoint(all: SelectionCandidate[], pageSize = 10) {
       return jsonResponse({ ok: false, error: { message: `unexpected fetch: ${input}` } });
     }
     const params = url.searchParams;
-    const sortBy = (params.get("sortBy") ?? "selectionScore") as SelectionCandidateSortBy;
-    const sortOrder = (params.get("sortOrder") ?? "desc") as "asc" | "desc";
+    const sortParam = params.get("sort") ?? "";
+    const criteria = sortParam
+      ? sortParam.split(",").map((part) => {
+          const [field, direction] = part.split(":");
+          return {
+            field: field as SelectionCandidateSortBy,
+            direction: (direction === "asc" ? "asc" : "desc") as "asc" | "desc",
+          };
+        })
+      : [{ field: "selectionScore" as SelectionCandidateSortBy, direction: "desc" as const }];
     const page = Number(params.get("page") ?? "1");
     const q = (params.get("q") ?? "").toLowerCase();
-    const value = (row: SelectionCandidate): string | number => {
-      if (sortBy === "addDate") return Date.parse(row.createdAt);
-      if (sortBy === "failureCount") return row.failedCount;
-      return row[sortBy];
+    const value = (row: SelectionCandidate, field: SelectionCandidateSortBy): number | null => {
+      if (field === "addDate") return Date.parse(row.createdAt);
+      if (field === "failureCount") return row.failedCount;
+      if (field === "correctStreak") return row.correctStreak;
+      return row.selectionScore;
     };
-    // Backend: ascending-id pre-sort, then stable primary sort with the
-    // direction on that key only — ties keep ascending id order either way.
     let rows = [...all].sort((a, b) => (a.id < b.id ? -1 : 1));
-    rows.sort((a, b) => {
-      const av = value(a);
-      const bv = value(b);
-      if (av === bv) return 0;
-      const compared = av < bv ? -1 : 1;
-      return sortOrder === "desc" ? -compared : compared;
-    });
+    for (const { field, direction } of [...criteria].reverse()) {
+      const known = rows.filter((row) => value(row, field) !== null);
+      const unknown = rows.filter((row) => value(row, field) === null);
+      known.sort((a, b) => {
+        const av = value(a, field) as number;
+        const bv = value(b, field) as number;
+        if (av === bv) return 0;
+        const compared = av < bv ? -1 : 1;
+        return direction === "desc" ? -compared : compared;
+      });
+      rows = [...known, ...unknown];
+    }
     if (q) rows = rows.filter((row) => row.text.toLowerCase().includes(q));
     const start = (page - 1) * pageSize;
     return jsonResponse({
@@ -128,15 +145,15 @@ describe("CreateExamModal", () => {
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
       expect(lastCall).toContain("q=algebra");
-      expect(lastCall).toContain("sortBy=selectionScore");
-      expect(lastCall).toContain("sortOrder=desc");
+      // Default state sends the explicit default criterion (#708).
+      expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:desc");
       expect(lastCall).toContain("page=1");
       expect(lastCall).toContain("pageSize=10");
     });
     expect(await screen.findByText("algebra one")).toBeInTheDocument();
   });
 
-  it("changes sort column on header click and toggles direction on repeat clicks", async () => {
+  it("shows the default indicator and cycles a header inactive -> desc -> asc -> inactive", async () => {
     const user = userEvent.setup();
     mockCandidatesEndpoint([
       candidate("id-1", { selectionScore: 3 }),
@@ -145,19 +162,129 @@ describe("CreateExamModal", () => {
     renderModal();
     await openManualPicker(user);
 
-    await user.click(screen.getByRole("button", { name: /Score/ }));
+    // Default state is visibly indicated, headers inactive.
+    expect(screen.getByRole("status")).toHaveTextContent("Default: Score ↓");
+    const streakHeader = screen.getByRole("button", { name: /Correct streak, not sorted/ });
+    expect(streakHeader).toHaveAttribute("aria-label", "Correct streak, not sorted. Activate to sort descending.");
+
+    // Inactive -> descending (priority 1).
+    await user.click(streakHeader);
+    expect(await screen.findByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument(); // default indicator gone
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
-      expect(lastCall).toContain("sortBy=selectionScore");
-      expect(lastCall).toContain("sortOrder=asc");
+      expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:desc");
     });
 
-    await user.click(screen.getByRole("button", { name: /Added/ }));
+    // Descending -> ascending, priority kept.
+    await user.click(screen.getByRole("button", { name: /Correct streak, descending/ }));
+    expect(await screen.findByRole("button", { name: /Correct streak, ascending, priority 1/ })).toBeInTheDocument();
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
-      expect(lastCall).toContain("sortBy=addDate");
-      expect(lastCall).toContain("sortOrder=desc");
+      expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:asc");
     });
+
+    // Ascending -> inactive: back to the default state.
+    await user.click(screen.getByRole("button", { name: /Correct streak, ascending/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:desc");
+    });
+  });
+
+  it("appends later criteria with lower priority, keeps priority on direction change, and renumbers after cancellation", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    renderModal();
+    await openManualPicker(user);
+
+    await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Added, not sorted/ }));
+
+    // Joining order establishes priority: streak 1, added 2.
+    expect(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Added, descending, priority 2/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:desc,addDate:desc");
+    });
+
+    // Direction change keeps the criterion's priority.
+    await user.click(screen.getByRole("button", { name: /Added, descending, priority 2/ }));
+    expect(screen.getByRole("button", { name: /Added, ascending, priority 2/ })).toBeInTheDocument();
+
+    // Cancelling the first criterion: desc -> asc -> inactive, then the
+    // remaining one renumbers to priority 1.
+    await user.click(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ }));
+    await user.click(screen.getByRole("button", { name: /Correct streak, ascending, priority 1/ }));
+    expect(screen.getByRole("button", { name: /Added, ascending, priority 1/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=addDate:asc");
+    });
+  });
+
+  it("activates Score explicitly from the default state and resets to default", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    renderModal();
+    await openManualPicker(user);
+
+    // First click on Score from no-custom-criteria: explicit Score descending.
+    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    expect(screen.getByRole("button", { name: /Score, descending, priority 1/ })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    // Reset sorting restores the default indicator and request.
+    await user.click(screen.getByRole("button", { name: "Reset sorting" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+    expect(screen.getByRole("button", { name: /Score, not sorted/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:desc");
+    });
+
+    // Cancelling the last active criterion has the same effect as reset.
+    await user.click(screen.getByRole("button", { name: /Failure, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Failure, descending, priority 1/ }));
+    await user.click(screen.getByRole("button", { name: /Failure, ascending, priority 1/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+  });
+
+  it("operates header sorting from the keyboard", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    renderModal();
+    await openManualPicker(user);
+
+    const streakHeader = screen.getByRole("button", { name: /Correct streak, not sorted/ });
+    streakHeader.focus();
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:desc");
+    });
+  });
+
+  it("displays — for missing streak history and explains the limitation", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([
+      candidate("id-missing", { correctStreak: null }),
+      candidate("id-zero", { correctStreak: 0, failedCount: 3 }),
+    ]);
+    renderModal();
+    await openManualPicker(user);
+
+    const missingRow = screen.getByText("problem id-missing").closest("tr") as HTMLElement;
+    expect(within(missingRow).getByText("—")).toBeInTheDocument();
+    const zeroRow = screen.getByText("problem id-zero").closest("tr") as HTMLElement;
+    expect(within(zeroRow).getByText("0")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Correct streak counts consecutive correct results/),
+    ).toBeInTheDocument();
   });
 
   it("keeps selections across pagination and emits ids in displayed order at confirm", async () => {
@@ -202,10 +329,12 @@ describe("CreateExamModal", () => {
     for (const name of ["Select problem id-a", "Select problem id-b", "Select problem id-c"]) {
       await user.click(screen.getByRole("checkbox", { name }));
     }
-    await user.click(screen.getByRole("button", { name: /Score/ }));
+    // Two clicks: explicit descending, then ascending (#708 cycle).
+    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Score, descending, priority 1/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
-      expect(lastCall).toContain("sortOrder=asc");
+      expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:asc");
     });
     await user.click(screen.getByRole("button", { name: "Create Exam (3 selected)" }));
 
@@ -247,11 +376,13 @@ describe("CreateExamModal", () => {
       });
     });
 
-    // Ascending ties look the same and submit the same order.
-    await user.click(screen.getByRole("button", { name: /Score/ }));
+    // Ascending ties look the same and submit the same order (two clicks:
+    // explicit descending, then ascending).
+    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Score, descending, priority 1/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
-      expect(lastCall).toContain("sortOrder=asc");
+      expect(decodeURIComponent(lastCall)).toContain("sort=selectionScore:asc");
     });
     const ascOrder = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
     expect(ascOrder).toEqual(descOrder);
@@ -280,11 +411,10 @@ describe("CreateExamModal", () => {
     }
 
     // Switch to the Added column (defaults to descending).
-    await user.click(screen.getByRole("button", { name: /Added/ }));
+    await user.click(screen.getByRole("button", { name: /Added, not sorted/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
-      expect(lastCall).toContain("sortBy=addDate");
-      expect(lastCall).toContain("sortOrder=desc");
+      expect(decodeURIComponent(lastCall)).toContain("sort=addDate:desc");
     });
 
     // Descending add-date: the later problem displays and submits first.
@@ -299,11 +429,10 @@ describe("CreateExamModal", () => {
     });
 
     // Ascending flips both display and submission.
-    await user.click(screen.getByRole("button", { name: /Added/ }));
+    await user.click(screen.getByRole("button", { name: /Added, descending, priority 1/ }));
     await waitFor(() => {
       const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
-      expect(lastCall).toContain("sortBy=addDate");
-      expect(lastCall).toContain("sortOrder=asc");
+      expect(decodeURIComponent(lastCall)).toContain("sort=addDate:asc");
     });
     const ascOrder = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
     expect(ascOrder).toEqual(["Select problem id-early", "Select problem id-late"]);
@@ -314,6 +443,114 @@ describe("CreateExamModal", () => {
         problemIds: ["id-early", "id-late"],
       });
     });
+  });
+
+  it("applies multi-key criteria with null streaks to confirmation order", async () => {
+    const user = userEvent.setup();
+    // Streak ascending primary, Score descending secondary; the null-streak
+    // row sorts last at the streak criterion regardless of direction, and
+    // mixed ISO precision createdAt values compare chronologically.
+    mockCandidatesEndpoint([
+      candidate("id-null", { correctStreak: null, selectionScore: 9, createdAt: "2024-01-01T00:00:00Z" }),
+      candidate("id-b", { correctStreak: 1, selectionScore: 1, createdAt: "2024-01-01T00:00:00.001000Z" }),
+      candidate("id-a", { correctStreak: 1, selectionScore: 5, createdAt: "2024-01-01T00:00:00Z" }),
+      candidate("id-c", { correctStreak: 2, selectionScore: 1, createdAt: "2024-01-01T00:00:00Z" }),
+    ]);
+    const { onCreate } = renderModal();
+    await openManualPicker(user);
+
+    for (const name of ["Select problem id-null", "Select problem id-b", "Select problem id-a", "Select problem id-c"]) {
+      await user.click(screen.getByRole("checkbox", { name }));
+    }
+
+    // Streak ascending, then Score descending.
+    await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
+    await user.click(screen.getByRole("button", { name: /Score, not sorted/ }));
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:desc,selectionScore:desc");
+    });
+
+    const rows = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
+    expect(rows).toEqual([
+      "Select problem id-c",
+      "Select problem id-a",
+      "Select problem id-b",
+      "Select problem id-null",
+    ]);
+
+    // Flip the streak criterion to ascending (priority 1 kept): smaller
+    // streaks first — a,b (streak 1, score desc) then c (streak 2) — null
+    // still last. Confirmation must match the display.
+    await user.click(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ }));
+    await waitFor(() => {
+      const lastCall = mockFetch.mock.calls.at(-1)?.[0] as string;
+      expect(decodeURIComponent(lastCall)).toContain("sort=correctStreak:asc,selectionScore:desc");
+    });
+    await user.click(screen.getByRole("button", { name: "Create Exam (4 selected)" }));
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-a", "id-b", "id-c", "id-null"],
+      });
+    });
+  });
+
+  it("returns to page 1 on sorting changes while retaining cross-page selections", async () => {
+    const user = userEvent.setup();
+    const all = Array.from({ length: 12 }, (_, index) =>
+      candidate(`id-${String(index + 1).padStart(2, "0")}`, { selectionScore: index + 1 }),
+    );
+    mockCandidatesEndpoint(all);
+    const { onCreate } = renderModal();
+    await openManualPicker(user);
+
+    await user.click(screen.getByRole("checkbox", { name: "Select problem id-12" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select problem id-02" }));
+
+    // Sorting change resets to page 1 but keeps the selection: under the
+    // Failure criterion every row ties, so page 1 now lists ids 01..10 and
+    // the previously selected id-02 is still checked.
+    await user.click(screen.getByRole("button", { name: /Failure, not sorted/ }));
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select problem id-02" })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Create Exam (2 selected)" }));
+    await waitFor(() => {
+      // Failure ties everywhere -> id ascending.
+      expect(onCreate).toHaveBeenLastCalledWith({
+        mode: "manual",
+        problemIds: ["id-02", "id-12"],
+      });
+    });
+  });
+
+  it("resets custom sorting when the modal reopens", async () => {
+    const user = userEvent.setup();
+    mockCandidatesEndpoint([candidate("id-1")]);
+    const client = createQueryClient();
+    const ui = (open: boolean) => (
+      <QueryClientProvider client={client}>
+        <CreateExamModal isOpen={open} isCreating={false} onClose={vi.fn()} onCreate={vi.fn()} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui(true));
+    await openManualPicker(user);
+
+    await user.click(screen.getByRole("button", { name: /Correct streak, not sorted/ }));
+    expect(screen.getByRole("button", { name: /Correct streak, descending, priority 1/ })).toBeInTheDocument();
+
+    rerender(ui(false));
+    rerender(ui(true));
+
+    // Reopen lands in random mode as today; re-enter manual and confirm the
+    // sorting state was reset with the rest.
+    await user.click(screen.getByRole("radio", { name: "Manual" }));
+    await screen.findByRole("table");
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Default: Score ↓");
+    expect(screen.getByRole("button", { name: /Correct streak, not sorted/ })).toBeInTheDocument();
   });
 
   it("disables unchecked rows once 30 problems are selected", async () => {

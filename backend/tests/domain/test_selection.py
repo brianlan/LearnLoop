@@ -12,9 +12,11 @@ from app.domain.selection import (
     ScoreBreakdown,
     compute_score_breakdown,
     ensure_utc,
+    filter_and_score_problems,
     get_eligible_problems,
     rank_eligible_problems,
     select_problems,
+    sort_scored_problems,
 )
 
 
@@ -778,17 +780,110 @@ def test_rank_sorts_by_all_columns_both_directions_with_id_tiebreak():
         _picker_problem("c", text="c", correct_count=9, failed_count=0, created_at=now - timedelta(days=150)),
     ]
 
-    assert _rank(problems, now=now, sort_by="successCount", sort_order="desc") == ["c", "a", "b"]
-    assert _rank(problems, now=now, sort_by="successCount", sort_order="asc") == ["a", "b", "c"]
-    assert _rank(problems, now=now, sort_by="failureCount", sort_order="desc") == ["a", "b", "c"]
-    assert _rank(problems, now=now, sort_by="failureCount", sort_order="asc") == ["c", "a", "b"]
-    assert _rank(problems, now=now, sort_by="addDate", sort_order="desc") == ["a", "c", "b"]
-    assert _rank(problems, now=now, sort_by="addDate", sort_order="asc") == ["b", "c", "a"]
+    assert _rank(problems, now=now, sort_criteria=[("failureCount", "desc")]) == ["a", "b", "c"]
+    assert _rank(problems, now=now, sort_criteria=[("failureCount", "asc")]) == ["c", "a", "b"]
+    assert _rank(problems, now=now, sort_criteria=[("correctStreak", "desc")], streaks={"a": 2, "b": 2, "c": 5}) == ["c", "a", "b"]
+    assert _rank(problems, now=now, sort_criteria=[("correctStreak", "asc")], streaks={"a": 2, "b": 2, "c": 5}) == ["a", "b", "c"]
+    assert _rank(problems, now=now, sort_criteria=[("addDate", "desc")]) == ["a", "c", "b"]
+    assert _rank(problems, now=now, sort_criteria=[("addDate", "asc")]) == ["b", "c", "a"]
     # All four columns × both directions (#680): score order is monotonic in
     # age here (identical failure/last-wrong components), so the ranking is
     # b (200d) > c (150d) > a (100d).
-    assert _rank(problems, now=now, sort_by="selectionScore", sort_order="desc") == ["b", "c", "a"]
-    assert _rank(problems, now=now, sort_by="selectionScore", sort_order="asc") == ["a", "c", "b"]
+    assert _rank(problems, now=now, sort_criteria=[("selectionScore", "desc")]) == ["b", "c", "a"]
+    assert _rank(problems, now=now, sort_criteria=[("selectionScore", "asc")]) == ["a", "c", "b"]
+
+
+def test_rank_multi_key_priority_across_directions_and_nulls():
+    now = datetime.now(timezone.utc)
+    problems = [
+        _picker_problem("a", created_at=now - timedelta(days=100), failed_count=1),
+        _picker_problem("b", created_at=now - timedelta(days=100), failed_count=1),
+        _picker_problem("c", created_at=now - timedelta(days=300), failed_count=5),
+        _picker_problem("d", created_at=now - timedelta(days=50), failed_count=0),
+    ]
+    streaks = {"a": 2, "b": 0, "c": None, "d": 2}
+
+    # Streak ascending first (0 before 2, null last), then Added descending:
+    # b (streak 0) | a/d tie on streak 2 -> newer first -> d, a | c null last
+    # (nulls tie -> next criterion -> Added desc -> c created 300d ago).
+    ranked = _rank(
+        problems,
+        now=now,
+        sort_criteria=[("correctStreak", "asc"), ("addDate", "desc")],
+        streaks=streaks,
+    )
+    assert ranked == ["b", "d", "a", "c"]
+
+    # Streak descending flips the known groups but nulls stay last.
+    ranked = _rank(
+        problems,
+        now=now,
+        sort_criteria=[("correctStreak", "desc"), ("addDate", "desc")],
+        streaks=streaks,
+    )
+    assert ranked == ["d", "a", "b", "c"]
+
+    # Two nulls proceed to the next criterion: c and a second null-row tie on
+    # streak, Added ascending (oldest first) then decides.
+    e = _picker_problem("e", created_at=now - timedelta(days=10), failed_count=5)
+    ranked = _rank(
+        [problems[2], e],
+        now=now,
+        sort_criteria=[("correctStreak", "asc"), ("addDate", "asc")],
+        streaks={"c": None, "e": None},
+    )
+    assert ranked == ["c", "e"]
+
+
+def test_rank_all_criteria_ties_resolve_by_id_ascending():
+    now = datetime.now(timezone.utc)
+    problems = [
+        _picker_problem("z9", created_at=now - timedelta(days=100), failed_count=1),
+        _picker_problem("a2", created_at=now - timedelta(days=100), failed_count=1),
+        _picker_problem("m5", created_at=now - timedelta(days=100), failed_count=1),
+    ]
+    streaks = {"z9": 1, "a2": 1, "m5": 1}
+
+    # Identical streaks, dates, failures, and scores: id ascending regardless
+    # of the criteria's directions.
+    for direction in ("asc", "desc"):
+        assert _rank(
+            problems,
+            now=now,
+            sort_criteria=[("correctStreak", direction), ("failureCount", direction)],
+            streaks=streaks,
+        ) == ["a2", "m5", "z9"]
+
+
+def test_rank_streak_sorting_is_global_before_pagination_boundaries():
+    now = datetime.now(timezone.utc)
+    problems = [
+        _picker_problem(f"p{i:02d}", created_at=now - timedelta(days=100 + i), failed_count=i % 3)
+        for i in range(10)
+    ]
+    streaks = {f"p{i:02d}": i for i in range(10)}
+
+    ranked = _rank(
+        problems,
+        now=now,
+        sort_criteria=[("correctStreak", "desc")],
+        streaks=streaks,
+    )
+    # Page 2 of pageSize 4 must continue the global order, not re-sort locally.
+    assert ranked[4:8] == ["p05", "p04", "p03", "p02"]
+
+
+def test_rank_rejects_unknown_fields_and_directions():
+    # Duplicate fields are the request layer's 422 concern (#708); the pure
+    # sorter rejects unknown fields and directions.
+    config = ProblemSelectionConfig()
+    now = datetime.now(timezone.utc)
+    scored = filter_and_score_problems([], config, now)
+
+    with pytest.raises(ValueError):
+        sort_scored_problems(scored, criteria=[("bogus", "asc")])
+    with pytest.raises(ValueError):
+        sort_scored_problems(scored, criteria=[("addDate", "sideways")])
 
 
 def test_rank_default_is_selection_score_desc():
@@ -806,15 +901,5 @@ def test_rank_default_is_selection_score_desc():
 
     ranked = _rank(problems, now=now)
     assert ranked == ["high", "low"]
-    explicit = _rank(problems, now=now, sort_by="selectionScore", sort_order="desc")
+    explicit = _rank(problems, now=now, sort_criteria=[("selectionScore", "desc")])
     assert explicit == ranked
-
-
-def test_rank_rejects_unknown_sort_keys():
-    config = ProblemSelectionConfig()
-    now = datetime.now(timezone.utc)
-
-    with pytest.raises(ValueError):
-        rank_eligible_problems([], config, now, sort_by="bogus")
-    with pytest.raises(ValueError):
-        rank_eligible_problems([], config, now, sort_order="sideways")

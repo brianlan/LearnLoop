@@ -10,7 +10,7 @@ from app.presentation.helpers import build_problem_image_url
 from app.presentation.schemas import CorrectAnswerPayload, SourceImagePayload, UTCDatetime
 
 
-SelectionCandidateSortBy = Literal["selectionScore", "addDate", "successCount", "failureCount"]
+SelectionCandidateSortBy = Literal["selectionScore", "addDate", "correctStreak", "failureCount"]
 
 
 class CreateExamRequest(BaseModel):
@@ -90,6 +90,10 @@ class SelectionCandidatePayload(BaseModel):
     text: str
     selectionScore: float
     createdAt: UTCDatetime
+    # Trailing judged-history streak (#708); null = aggregate counters claim
+    # attempts but no saved attempt history exists (displayed as "—").
+    # successCount stays cumulative — its meaning is unchanged.
+    correctStreak: int | None
     successCount: int
     failedCount: int
 
