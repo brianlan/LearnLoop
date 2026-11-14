@@ -933,8 +933,9 @@ async def test_summary_score_distribution_raw_not_clamped_regression(
 
     # Tested correct with many more corrects than failures -> negative failure score.
     # correctCount=10, failedCount=0 -> failure = -sqrt(10) ~ -3.162.
-    # lastTestedAt 60d ago, lastAttemptCorrect -> base 0.0, rate 1/40 -> recency=0.0+60/40=1.5; last_wrong=0.5.
-    # raw = 1.5 + (-3.162) + 0.5 ~ -1.162 -> floor -2.
+    # lastTestedAt 60d ago, lastAttemptCorrect -> base 0.0, net=10 -> rate 1/(40+10*9)=1/130
+    # -> recency=0.0+60/130~0.462; last_wrong=0.5.
+    # raw = 0.462 + (-3.162) + 0.5 ~ -2.201 -> floor -3. (#706)
     problem = make_problem(
         user_id,
         last_tested_at=sixty_days_ago,
@@ -948,7 +949,7 @@ async def test_summary_score_distribution_raw_not_clamped_regression(
     response = await client.get("/api/v1/home/summary")
     buckets = response.json()["scoreDistribution"]["buckets"]
     assert len(buckets) == 1
-    assert buckets[0]["start"] == -2
+    assert buckets[0]["start"] == -3
     assert buckets[0]["tested"] == 1
 
 
