@@ -172,7 +172,7 @@ describe("HomePage", () => {
     expect(screen.getByTestId("home-xp-progressbar")).toHaveAttribute("aria-valuenow", "45");
   });
 
-  it("does not leak another user's cached XP when accounts switch", async () => {
+  it("does not leak another user's cached XP while the next request is pending", async () => {
     const sharedClient = createQueryClient();
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -186,20 +186,35 @@ describe("HomePage", () => {
     });
     first.unmount();
 
-    mockFetch.mockResolvedValueOnce({
+    // Hold user-2's response open: while it is pending, nothing of user-1's
+    // cached summary may be visible (#712 account isolation).
+    let resolveUser2: (value: { ok: boolean; json: () => Promise<unknown> }) => void = () => {};
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveUser2 = resolve;
+        }),
+    );
+    const second = renderHomePage(sharedClient, "user-2");
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+    // With the old shared query key, React Query served user-1's cached XP
+    // immediately and this assertion failed.
+    expect(screen.queryByTestId("home-xp-total")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-xp-card")).not.toBeInTheDocument();
+
+    resolveUser2({
       ok: true,
       json: async () => summaryResponse({
         xp: { totalXp: 7, level: 1, xpInLevel: 7, xpToNextLevel: 93 },
       }),
     });
-    renderHomePage(sharedClient, "user-2");
     await waitFor(() => {
       expect(screen.getByTestId("home-xp-total").textContent).toBe("7 total XP");
     });
-    // The user-scoped query key forces a fresh fetch instead of reusing
-    // user-1's cached summary.
-    expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("home-xp-level").textContent).toBe("Level 1");
+    second.unmount();
   });
 
   it("renders zero-problem state with 0% and note", async () => {

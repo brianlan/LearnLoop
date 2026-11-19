@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from .selection import ensure_utc
+
 XP_FOR_INCORRECT = 10
 XP_FOR_CORRECT = 5
 XP_FOR_RECOVERY = 20
@@ -35,7 +37,7 @@ class XpProgress:
 
 
 def compute_xp_progress(
-    records: list[tuple[datetime, str, str, str, str | None]],
+    records: list[tuple[datetime, str, str, str, str, str | None]],
 ) -> XpProgress:
     """Fold eligible judged attempts oldest-first into lifetime XP.
 
@@ -47,7 +49,7 @@ def compute_xp_progress(
     """
     usable = [record for record in records if isinstance(record[0], datetime)]
     usable.sort(key=lambda record: (record[1], record[2]))
-    usable.sort(key=lambda record: record[0], reverse=True)
+    usable.sort(key=lambda record: ensure_utc(record[0]), reverse=True)
 
     total_xp = 0
     previous_judgment: dict[str, str] = {}

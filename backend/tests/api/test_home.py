@@ -1285,7 +1285,8 @@ def make_grading_task(
 async def test_summary_xp_recovery_spans_practice_and_exam(
     home_app: FastAPI, client: AsyncClient
 ) -> None:
-    """Exam incorrect (older) then practice correct: recovery totals 30 (#712)."""
+    """Exam incorrect (day 1 task createdAt, graded day 5) then practice
+    correct (day 3): submission order drives recovery, totaling 30 (#712)."""
     database: FakeDatabase = home_app.state.fake_database
     user_id = home_app.state.user["_id"]
     problem = make_problem(user_id)
@@ -1307,8 +1308,9 @@ async def test_summary_xp_recovery_spans_practice_and_exam(
     ])
 
     response = await client.get("/api/v1/home/summary")
-    data = response.json()
-    assert data["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
+    # Submission order: exam incorrect (day 1) then practice correct (day 3)
+    # -> recovery 10 + 20 = 30. Using submittedAt instead would yield 15.
+    assert response.json()["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
 
 
 @pytest.mark.asyncio
@@ -1363,35 +1365,6 @@ async def test_summary_xp_repeated_reads_are_stable_and_write_nothing(
 
     assert first == second == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
     assert documents(database) == documents_snapshot
-
-
-@pytest.mark.asyncio
-async def test_summary_xp_async_exam_uses_task_created_at_for_submission_order(
-    home_app: FastAPI, client: AsyncClient
-) -> None:
-    """Task createdAt (day 1) drives ordering, not grading completion (day 5)."""
-    database: FakeDatabase = home_app.state.fake_database
-    user_id = home_app.state.user["_id"]
-    problem = make_problem(user_id)
-    database.seed("problems", [problem])
-    exam = make_xp_submitted_exam(
-        user_id,
-        items=[make_answered_exam_item(problem["_id"], status="incorrect")],
-        submitted_at=BASE + timedelta(days=5),
-    )
-    database.seed("exams", [exam])
-    database.seed("exam_grading_tasks", [
-        make_grading_task(user_id, exam["_id"], created_at=BASE + timedelta(days=1))
-    ])
-    database.seed("practice_attempts", [
-        make_practice_attempt(user_id, problem["_id"], created_at=BASE + timedelta(days=3),
-                              grading_status="correct"),
-    ])
-
-    response = await client.get("/api/v1/home/summary")
-    # Submission order: exam incorrect (day 1) then practice correct (day 3)
-    # -> recovery 10 + 20 = 30. Using submittedAt instead would yield 15.
-    assert response.json()["xp"]["totalXp"] == 30
 
 
 @pytest.mark.asyncio

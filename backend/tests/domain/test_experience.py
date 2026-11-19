@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from app.domain.experience import compute_xp_progress
 
@@ -17,7 +17,7 @@ def _record(
     answer: str | None = "42",
     source: str = "practice",
     record_id: str = "r",
-) -> tuple[datetime, str, str, str, str | None]:
+) -> tuple[datetime, str, str, str, str, str | None]:
     return (
         BASE + timedelta(days=offset_days),
         source,
@@ -199,3 +199,30 @@ def test_unusable_timestamps_are_skipped() -> None:
         _record(1, "correct", record_id="b"),
     ]
     assert compute_xp_progress(records).totalXp == 5
+
+
+def test_mixed_naive_and_aware_utc_timestamps_normalize() -> None:
+    # Mongo reads are naive UTC while other sources may carry tzinfo; the
+    # sort key must normalize both instead of raising TypeError (#712).
+    records = [
+        (datetime(2026, 1, 2, tzinfo=UTC), "practice", "b", "p1", "correct", "x"),
+        (datetime(2026, 1, 1), "practice", "a", "p1", "incorrect", "x"),
+    ]
+    progress = compute_xp_progress(records)
+    # Older incorrect precedes the correct: 10 + recovery 20.
+    assert progress.totalXp == 30
+    assert progress.level == 1
+
+
+def test_non_utc_offset_timestamps_sort_by_absolute_time() -> None:
+    # 2026-01-01T21:00-05:00 == 2026-01-02T02:00Z, the newest of the three;
+    # treating the wall-clock value as UTC would misorder the recovery.
+    offset_est = timezone(timedelta(hours=-5))
+    records = [
+        (datetime(2026, 1, 1, 21, tzinfo=offset_est), "practice", "c", "p1", "correct", "x"),
+        (datetime(2026, 1, 2), "practice", "a", "p1", "incorrect", "x"),
+        (datetime(2026, 1, 2, 1, tzinfo=UTC), "practice", "b", "p1", "incorrect", "x"),
+    ]
+    # Order: a (00:00Z incorrect) -> b (01:00Z incorrect) -> c (02:00Z recovery).
+    assert compute_xp_progress(records).totalXp == 40
+

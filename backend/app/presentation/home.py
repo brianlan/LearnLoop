@@ -140,10 +140,10 @@ def _collect_xp_records(
     practice_attempts: list[dict[str, Any]],
     submitted_exams: list[dict[str, Any]],
     submission_time_by_exam: dict[Any, datetime],
-) -> list[tuple[datetime, str, str, str, str | None]]:
+) -> list[tuple[datetime, str, str, str, str, str | None]]:
     """Build XP records from full owned history (#712), independent of the
     active problem pool — deleted/disabled problems still contribute."""
-    records: list[tuple[datetime, str, str, str, str | None]] = []
+    records: list[tuple[datetime, str, str, str, str, str | None]] = []
     for attempt in practice_attempts:
         created_at = attempt.get("createdAt")
         problem_id = attempt.get("problemId")
