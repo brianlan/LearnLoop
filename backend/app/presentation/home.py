@@ -8,8 +8,10 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.domain.experience import compute_xp_progress
 from app.domain.models import ExamState, GradingStatus
 from app.domain.selection import ProblemSelectionConfig, compute_score_breakdown, ensure_utc
+from app.infrastructure.storage.mongo import EXAM_GRADING_TASKS_COLLECTION
 from app.presentation.deps import CurrentUserDependency, DatabaseDependency, SettingsDependency
 from app.presentation.problem_serialization import problem_document_to_model
 from app.presentation.selection_config import problem_selection_config_from_settings
@@ -60,12 +62,20 @@ class ScoreDistribution(BaseModel):
     buckets: list[ScoreDistributionBucket]
 
 
+class HomeXpProgress(BaseModel):
+    totalXp: int
+    level: int
+    xpInLevel: int
+    xpToNextLevel: int
+
+
 class HomeSummaryResponse(BaseModel):
     coverage: HomeCoverage
     conquest: HomeConquest
     firstPass: HomeFirstPass
     activity: HomeActivity
     scoreDistribution: ScoreDistribution
+    xp: HomeXpProgress
 
 
 def _selection_config_from_settings(settings: Any):
@@ -124,6 +134,52 @@ def _build_score_distribution(
         for start in range(lowest, highest + 1)
     ]
     return ScoreDistribution(buckets=buckets)
+
+
+def _collect_xp_records(
+    practice_attempts: list[dict[str, Any]],
+    submitted_exams: list[dict[str, Any]],
+    submission_time_by_exam: dict[Any, datetime],
+) -> list[tuple[datetime, str, str, str, str | None]]:
+    """Build XP records from full owned history (#712), independent of the
+    active problem pool — deleted/disabled problems still contribute."""
+    records: list[tuple[datetime, str, str, str, str | None]] = []
+    for attempt in practice_attempts:
+        created_at = attempt.get("createdAt")
+        problem_id = attempt.get("problemId")
+        if problem_id is None or not isinstance(created_at, datetime):
+            continue
+        records.append(
+            (
+                created_at,
+                "practice",
+                str(attempt["_id"]),
+                str(problem_id),
+                str(attempt.get("gradingStatus", "")),
+                attempt.get("submittedAnswer"),
+            )
+        )
+    for exam in submitted_exams:
+        submitted_at = submission_time_by_exam.get(exam["_id"])
+        if not isinstance(submitted_at, datetime):
+            continue
+        for item in exam.get("items", []):
+            problem_id = item.get("problemId")
+            if problem_id is None:
+                continue
+            grading = item.get("grading") or {}
+            answer = (item.get("answer") or {}).get("raw")
+            records.append(
+                (
+                    submitted_at,
+                    "exam",
+                    str(item.get("itemId", exam["_id"])),
+                    str(problem_id),
+                    str(grading.get("status", "")),
+                    answer,
+                )
+            )
+    return records
 
 
 @router.get("/summary", response_model=HomeSummaryResponse)
@@ -273,6 +329,24 @@ async def get_home_summary(
         problem_documents, selection_config, datetime.now(UTC)
     )
 
+    # XP submission order: asynchronous exams' submittedAt records grading
+    # completion (#490), so the durable grading task createdAt is the actual
+    # submission time; synchronous/legacy exams fall back to submittedAt.
+    grading_tasks = await database[EXAM_GRADING_TASKS_COLLECTION].find(
+        {"userId": user_id, "examId": {"$in": [exam["_id"] for exam in submitted_exams]}}
+    ).to_list(length=None)
+    submission_time_by_exam: dict[Any, datetime] = {}
+    for exam in submitted_exams:
+        if isinstance(exam.get("submittedAt"), datetime):
+            submission_time_by_exam[exam["_id"]] = exam["submittedAt"]
+    for task in grading_tasks:
+        if isinstance(task.get("createdAt"), datetime):
+            submission_time_by_exam[task["examId"]] = task["createdAt"]
+
+    xp = compute_xp_progress(
+        _collect_xp_records(practice_attempts, submitted_exams, submission_time_by_exam)
+    )
+
     return HomeSummaryResponse(
         coverage=HomeCoverage(
             totalProblems=total_problems,
@@ -295,4 +369,10 @@ async def get_home_summary(
             days=days,
         ),
         scoreDistribution=score_distribution,
+        xp=HomeXpProgress(
+            totalXp=xp.totalXp,
+            level=xp.level,
+            xpInLevel=xp.xpInLevel,
+            xpToNextLevel=xp.xpToNextLevel,
+        ),
     )

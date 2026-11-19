@@ -2449,3 +2449,125 @@ async def test_selection_candidates_history_loading_is_batched(
     assert response.json()["total"] == 6
     # Adding candidates must not scale into per-problem history reads (#708).
     assert find_calls == {"practice_attempts": 1, "exams": 1}
+
+
+from app.presentation.exam_helpers import make_exam_item
+
+
+def _seed_submitted_exam_with_pending_items(
+    database: FakeDatabase,
+    user_id: ObjectId,
+    problems: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Submitted exam whose items are all pending review with saved answers."""
+    items = []
+    for index, problem in enumerate(problems):
+        item = make_exam_item(problem, order=index + 1)
+        item["answer"] = {"raw": f"answer {index}", "savedAt": datetime.now(UTC)}
+        item["grading"] = {"status": "pending-review"}
+        items.append(item)
+    now = datetime.now(UTC)
+    exam = {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "state": "submitted",
+        "items": items,
+        "summary": {
+            "totalProblems": len(items),
+            "answeredProblems": len(items),
+            "gradedProblems": 0,
+            "pendingProblems": len(items),
+            "correctProblems": 0,
+            "failedProblems": 0,
+            "score": None,
+        },
+        "createdAt": now,
+        "startedAt": now,
+        "submittedAt": now,
+        "updatedAt": now,
+    }
+    database["exams"].seed(exam)
+    return exam
+
+
+@pytest.mark.asyncio
+async def test_self_report_preserves_concurrent_resolutions_of_distinct_items(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """Resolving one item must not revert another resolved item (#712).
+
+    The old write path stored ``items`` from the pre-transaction read, so
+    resolving item B after item A rewrote A back to pending-review.
+    """
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    problems = [
+        make_problem(user_id, text=f"p{i}", problem_type="fill-in-the-blank", correct_answer=str(i))
+        for i in range(2)
+    ]
+    database["problems"].seed(*problems)
+    exam = _seed_submitted_exam_with_pending_items(database, user_id, problems)
+    item_a = exam["items"][0]["itemId"]
+    item_b = exam["items"][1]["itemId"]
+
+    first = await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": True},
+    )
+    assert first.status_code == 200
+
+    second = await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_b}/self-report",
+        json={"isCorrect": False},
+    )
+    assert second.status_code == 200
+
+    stored = database["exams"]._documents[0]
+    stored_by_id = {str(item["itemId"]): item for item in stored["items"]}
+    # Both judgments survive: the second resolution reloaded item A's result.
+    assert stored_by_id[item_a]["grading"]["status"] == "correct"
+    assert stored_by_id[item_b]["grading"]["status"] == "incorrect"
+    assert stored["summary"]["correctProblems"] == 1
+    assert stored["summary"]["failedProblems"] == 1
+
+
+@pytest.mark.asyncio
+async def test_self_report_replay_does_not_double_apply_resolution(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    problems = [
+        make_problem(user_id, text=f"p{i}", problem_type="fill-in-the-blank", correct_answer=str(i))
+        for i in range(2)
+    ]
+    database["problems"].seed(*problems)
+    exam = _seed_submitted_exam_with_pending_items(database, user_id, problems)
+    item_a = exam["items"][0]["itemId"]
+    item_b = exam["items"][1]["itemId"]
+
+    await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": True},
+    )
+    await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_b}/self-report",
+        json={"isCorrect": False},
+    )
+    tracking_after_resolutions = deepcopy(database["problems"]._documents[0]["tracking"])
+    stored_after_resolutions = deepcopy(database["exams"]._documents[0])
+
+    replay = await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": False},
+    )
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "ITEM_NOT_PENDING_REVIEW"
+
+    # The replay changed nothing: judgments and tracking are untouched.
+    assert database["exams"]._documents[0] == stored_after_resolutions
+    assert database["problems"]._documents[0]["tracking"] == tracking_after_resolutions
