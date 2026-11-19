@@ -6,9 +6,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { HomePage } from "./HomePage";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { AuthContext, type AuthContextType } from "@/contexts/AuthContext";
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
+
+const authUser = (id: string, username: string): AuthContextType => ({
+  user: { id, username },
+  isAuthenticated: true,
+  isLoading: false,
+  login: vi.fn(),
+  register: vi.fn(),
+  logout: vi.fn(),
+});
 
 function createQueryClient() {
   return new QueryClient({
@@ -18,12 +28,14 @@ function createQueryClient() {
   });
 }
 
-function renderHomePage() {
+function renderHomePage(client?: QueryClient, userId = "user-1") {
   return render(
-    <QueryClientProvider client={createQueryClient()}>
+    <QueryClientProvider client={client ?? createQueryClient()}>
       <MemoryRouter>
         <ThemeProvider>
-          <HomePage />
+          <AuthContext.Provider value={authUser(userId, "alice")}>
+            <HomePage />
+          </AuthContext.Provider>
         </ThemeProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -41,6 +53,7 @@ function summaryResponse(overrides: Partial<{
   firstPassPercentage: number;
   days: { date: string; count: number }[];
   scoreDistributionBuckets: { start: number; neverTested: number; minAged: number; tested: number; cooldown: number }[];
+  xp: { totalXp: number; level: number; xpInLevel: number; xpToNextLevel: number };
 }> = {}) {
   const today = new Date();
   const days: { date: string; count: number }[] = [];
@@ -74,6 +87,7 @@ function summaryResponse(overrides: Partial<{
     scoreDistribution: {
       buckets: overrides.scoreDistributionBuckets ?? [],
     },
+    xp: overrides.xp ?? { totalXp: 0, level: 1, xpInLevel: 0, xpToNextLevel: 100 },
   };
 }
 
@@ -116,6 +130,91 @@ describe("HomePage", () => {
     const calledUrl = mockFetch.mock.calls[0][0] as string;
     expect(calledUrl).toContain("/home/summary");
     expect(calledUrl).toContain("timezone=");
+  });
+
+  it("renders the XP card at zero XP with accessible progress values", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse(),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-xp-card")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("home-xp-level").textContent).toBe("Level 1");
+    expect(screen.getByTestId("home-xp-total").textContent).toBe("0 total XP");
+    expect(screen.getByTestId("home-xp-progress-text").textContent).toBe(
+      "0 / 100 XP · 100 XP to Level 2"
+    );
+    const progressbar = screen.getByTestId("home-xp-progressbar");
+    expect(progressbar).toHaveAttribute("role", "progressbar");
+    expect(progressbar).toHaveAttribute("aria-valuenow", "0");
+    expect(progressbar).toHaveAttribute("aria-valuemin", "0");
+    expect(progressbar).toHaveAttribute("aria-valuemax", "100");
+  });
+
+  it("renders exact XP level thresholds and progress values", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55 },
+      }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-xp-card")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("home-xp-level").textContent).toBe("Level 3");
+    expect(screen.getByTestId("home-xp-total").textContent).toBe("245 total XP");
+    expect(screen.getByTestId("home-xp-progress-text").textContent).toBe(
+      "45 / 100 XP · 55 XP to Level 4"
+    );
+    expect(screen.getByTestId("home-xp-progressbar")).toHaveAttribute("aria-valuenow", "45");
+  });
+
+  it("does not leak another user's cached XP while the next request is pending", async () => {
+    const sharedClient = createQueryClient();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55 },
+      }),
+    });
+    const first = renderHomePage(sharedClient, "user-1");
+    await waitFor(() => {
+      expect(screen.getByTestId("home-xp-total").textContent).toBe("245 total XP");
+    });
+    first.unmount();
+
+    // Hold user-2's response open: while it is pending, nothing of user-1's
+    // cached summary may be visible (#712 account isolation).
+    let resolveUser2: (value: { ok: boolean; json: () => Promise<unknown> }) => void = () => {};
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveUser2 = resolve;
+        }),
+    );
+    const second = renderHomePage(sharedClient, "user-2");
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+    // With the old shared query key, React Query served user-1's cached XP
+    // immediately and this assertion failed.
+    expect(screen.queryByTestId("home-xp-total")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-xp-card")).not.toBeInTheDocument();
+
+    resolveUser2({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 7, level: 1, xpInLevel: 7, xpToNextLevel: 93 },
+      }),
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("home-xp-total").textContent).toBe("7 total XP");
+    });
+    expect(screen.getByTestId("home-xp-level").textContent).toBe("Level 1");
+    second.unmount();
   });
 
   it("renders zero-problem state with 0% and note", async () => {

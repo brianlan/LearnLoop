@@ -789,29 +789,29 @@ async def self_report_exam_item(
     if exam.get("state") != ExamState.SUBMITTED.value:
         raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not submitted")
 
-    item_index, item = find_item(exam, item_id)
-    grading = dict(item.get("grading", {}))
-    if grading.get("status") != GradingStatus.PENDING_REVIEW.value:
-        raise ApiError(409, "ITEM_NOT_PENDING_REVIEW", "Exam item is not pending review")
+    # Fast-fail pre-transaction checks; the transactional snapshot below is
+    # the authoritative one (#712).
+    find_item(exam, item_id)
 
     resolved_at = datetime.now(UTC)
-    grading.update(
-        {
-            "status": GradingStatus.CORRECT.value if payload.isCorrect else GradingStatus.INCORRECT.value,
-            "method": "self-report",
-            "isCorrect": payload.isCorrect,
-            "score": 1.0 if payload.isCorrect else 0.0,
-            "gradedAt": resolved_at,
-            "selfReportedCorrect": payload.isCorrect,
-        }
-    )
-    updated_item = deepcopy(item)
-    updated_item["grading"] = grading
-    items = deepcopy(list(exam.get("items", [])))
-    items[item_index] = updated_item
-    summary = build_exam_summary(items)
 
-    async def _transaction(session: Any) -> dict[str, Any]:
+    def _resolve_item(item: dict[str, Any]) -> dict[str, Any]:
+        grading = dict(item.get("grading", {}))
+        grading.update(
+            {
+                "status": GradingStatus.CORRECT.value if payload.isCorrect else GradingStatus.INCORRECT.value,
+                "method": "self-report",
+                "isCorrect": payload.isCorrect,
+                "score": 1.0 if payload.isCorrect else 0.0,
+                "gradedAt": resolved_at,
+                "selfReportedCorrect": payload.isCorrect,
+            }
+        )
+        resolved_item = deepcopy(item)
+        resolved_item["grading"] = grading
+        return resolved_item
+
+    async def _transaction(session: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         current_exam = await database["exams"].find_one(
             {"_id": exam["_id"], "userId": current_user["_id"]},
             session=session,
@@ -820,6 +820,18 @@ async def self_report_exam_item(
             raise ApiError(404, "NOT_FOUND", "Exam not found")
         if current_exam.get("state") != ExamState.SUBMITTED.value:
             raise ApiError(409, "INVALID_EXAM_STATE", "Exam is not submitted")
+
+        # Re-read the target item and its pending status from the
+        # transactional snapshot: concurrent resolutions of other items are
+        # preserved, and an already-resolved item fails instead of applying
+        # twice (#712).
+        item_index, item = find_item(current_exam, item_id)
+        if dict(item.get("grading", {})).get("status") != GradingStatus.PENDING_REVIEW.value:
+            raise ApiError(409, "ITEM_NOT_PENDING_REVIEW", "Exam item is not pending review")
+        updated_item = _resolve_item(item)
+        items = deepcopy(list(current_exam.get("items", [])))
+        items[item_index] = updated_item
+        summary = build_exam_summary(items)
 
         await database["exams"].update_one(
             {"_id": current_exam["_id"]},
@@ -845,10 +857,10 @@ async def self_report_exam_item(
 
         updated_exam = deepcopy(current_exam)
         updated_exam.update({"items": items, "summary": summary, "updatedAt": resolved_at})
-        return updated_exam
+        return updated_exam, updated_item
 
     async with adapter.start_session() as session:
-        updated_exam = await session.with_transaction(_transaction)
+        updated_exam, updated_item = await session.with_transaction(_transaction)
     return SelfReportResponse(
         item=serialize_exam_item(updated_item, include_correct_answer=True),
         summary=serialize_exam_summary(dict(updated_exam["summary"])),

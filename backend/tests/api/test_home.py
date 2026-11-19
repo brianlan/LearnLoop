@@ -1221,3 +1221,253 @@ async def test_summary_re_enabling_problem_restores_statistics(
     assert included["coverage"]["triedProblems"] == 1
     assert included["conquest"]["masteredProblems"] == 1
     assert included["scoreDistribution"]["buckets"] != []
+
+
+BASE = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def make_answered_exam_item(
+    problem_id: ObjectId,
+    *,
+    status: str,
+    answer: str | None = "42",
+) -> dict:
+    return {
+        "itemId": str(ObjectId()),
+        "order": 1,
+        "problemId": problem_id,
+        "answer": {"raw": answer, "savedAt": datetime.now(UTC)},
+        "grading": {"status": status},
+    }
+
+
+def make_xp_submitted_exam(
+    user_id: ObjectId,
+    *,
+    items: list[dict],
+    submitted_at: datetime,
+) -> dict:
+    now = datetime.now(UTC)
+    return {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "state": "submitted",
+        "items": items,
+        "summary": {},
+        "createdAt": now,
+        "startedAt": now,
+        "submittedAt": submitted_at,
+        "updatedAt": now,
+    }
+
+
+def make_grading_task(
+    user_id: ObjectId,
+    exam_id: ObjectId,
+    *,
+    created_at: datetime,
+) -> dict:
+    now = datetime.now(UTC)
+    return {
+        "_id": ObjectId(),
+        "examId": exam_id,
+        "userId": user_id,
+        "status": "completed",
+        "claimToken": None,
+        "leaseUntil": None,
+        "error": None,
+        "createdAt": created_at,
+        "updatedAt": now,
+    }
+
+
+@pytest.mark.asyncio
+async def test_summary_xp_recovery_spans_practice_and_exam(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Exam incorrect (day 1 task createdAt, graded day 5) then practice
+    correct (day 3): submission order drives recovery, totaling 30 (#712)."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(
+            user_id, problem["_id"], created_at=BASE + timedelta(days=3),
+            grading_status="correct",
+        )
+    ])
+    exam = make_xp_submitted_exam(
+        user_id,
+        items=[make_answered_exam_item(problem["_id"], status="incorrect")],
+        submitted_at=BASE + timedelta(days=5),
+    )
+    database.seed("exams", [exam])
+    database.seed("exam_grading_tasks", [
+        make_grading_task(user_id, exam["_id"], created_at=BASE + timedelta(days=1))
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    # Submission order: exam incorrect (day 1) then practice correct (day 3)
+    # -> recovery 10 + 20 = 30. Using submittedAt instead would yield 15.
+    assert response.json()["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
+
+
+@pytest.mark.asyncio
+async def test_summary_xp_includes_deleted_and_disabled_problems(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    deleted = make_problem(user_id, is_deleted=True)
+    disabled = make_problem(user_id, is_disabled=True)
+    database.seed("problems", [deleted, disabled])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, deleted["_id"], created_at=BASE + timedelta(days=1),
+                              grading_status="correct"),
+        make_practice_attempt(user_id, disabled["_id"], created_at=BASE + timedelta(days=2),
+                              grading_status="incorrect"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    data = response.json()
+    # Existing statistics keep filtering by the active pool...
+    assert data["coverage"]["triedProblems"] == 0
+    # ...while XP keeps the full history: 5 (correct) + 10 (incorrect).
+    assert data["xp"]["totalXp"] == 15
+
+
+@pytest.mark.asyncio
+async def test_summary_xp_repeated_reads_are_stable_and_write_nothing(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=BASE + timedelta(days=1),
+                              grading_status="incorrect"),
+        make_practice_attempt(user_id, problem["_id"], created_at=BASE + timedelta(days=2),
+                              grading_status="correct"),
+    ])
+    def documents(database: FakeDatabase) -> dict[str, list]:
+        return {
+            name: deepcopy(collection._documents)
+            for name, collection in database._collections.items()
+            if collection._documents
+        }
+
+    documents_snapshot = documents(database)
+
+    first = (await client.get("/api/v1/home/summary")).json()["xp"]
+    second = (await client.get("/api/v1/home/summary")).json()["xp"]
+
+    assert first == second == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
+    assert documents(database) == documents_snapshot
+
+
+@pytest.mark.asyncio
+async def test_summary_xp_falls_back_to_submitted_at_without_task(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Synchronous/legacy exams without a durable task use submittedAt."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=BASE + timedelta(days=3),
+                              grading_status="incorrect"),
+    ])
+    database.seed("exams", [
+        make_xp_submitted_exam(
+            user_id,
+            items=[make_answered_exam_item(problem["_id"], status="correct")],
+            submitted_at=BASE + timedelta(days=5),
+        )
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    # Practice incorrect (day 3) then exam correct (day 5): recovery 10 + 20.
+    assert response.json()["xp"]["totalXp"] == 30
+
+
+@pytest.mark.asyncio
+async def test_summary_xp_is_user_scoped_and_excludes_unsubmitted_exams(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    other_user_id = ObjectId()
+    problem = make_problem(user_id)
+    foreign_problem = make_problem(other_user_id)
+    database.seed("problems", [problem, foreign_problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(other_user_id, problem["_id"], created_at=BASE + timedelta(days=1),
+                              grading_status="incorrect"),
+    ])
+    database.seed("exams", [
+        # In-progress exam with a judged item earns nothing until submitted.
+        {
+            "_id": ObjectId(),
+            "userId": user_id,
+            "state": "in_progress",
+            "items": [make_answered_exam_item(problem["_id"], status="correct")],
+            "summary": {},
+            "createdAt": datetime.now(UTC),
+            "startedAt": datetime.now(UTC),
+            "submittedAt": None,
+            "updatedAt": datetime.now(UTC),
+        },
+        # Another user's submitted exam never contributes.
+        make_xp_submitted_exam(
+            other_user_id,
+            items=[make_answered_exam_item(foreign_problem["_id"], status="incorrect")],
+            submitted_at=BASE + timedelta(days=2),
+        ),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    assert response.json()["xp"]["totalXp"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_xp_excludes_blank_answers_and_pending_judgments(
+    home_app: FastAPI, client: AsyncClient
+) -> None:
+    """Blank/pending records earn nothing and set no recovery predecessor."""
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        # Blank incorrect: earns nothing AND sets no recovery predecessor.
+        make_practice_attempt(user_id, problem["_id"], created_at=BASE + timedelta(days=1),
+                              grading_status="incorrect"),
+    ])
+    database["practice_attempts"]._documents[0]["submittedAnswer"] = "   "
+    database.seed("practice_attempts", [
+        # First eligible judgment: correct earns 5, not a recovery 20.
+        make_practice_attempt(user_id, problem["_id"], created_at=BASE + timedelta(days=2),
+                              grading_status="correct"),
+    ])
+
+    exam = make_xp_submitted_exam(
+        user_id,
+        items=[
+            # Pending review: excluded even with a saved answer.
+            make_answered_exam_item(problem["_id"], status="pending-review"),
+            # Blank correct: earns nothing.
+            make_answered_exam_item(problem["_id"], status="correct", answer="  "),
+        ],
+        submitted_at=BASE + timedelta(days=3),
+    )
+    database.seed("exams", [exam])
+    database.seed("exam_grading_tasks", [
+        make_grading_task(user_id, exam["_id"], created_at=BASE + timedelta(days=3))
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    # If the blank incorrect had set a predecessor, the correct would be 20.
+    assert response.json()["xp"]["totalXp"] == 5

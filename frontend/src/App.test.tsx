@@ -73,6 +73,8 @@ describe("App", () => {
         conquest: { totalProblems: 0, masteredProblems: 0, percentage: 0 },
         firstPass: { attemptedProblems: 0, firstPassCorrectProblems: 0, percentage: 0 },
         activity: { startDate: "2024-01-01", endDate: "2024-12-31", days: [{ date: "2024-01-01", count: 0 }] },
+        scoreDistribution: { buckets: [] },
+        xp: { totalXp: 0, level: 1, xpInLevel: 0, xpToNextLevel: 100 },
       }),
     });
 

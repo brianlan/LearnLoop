@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/api/client";
 import { getTimezone } from "@/utils/format";
 
@@ -51,6 +52,14 @@ interface HomeSummaryResponse {
   firstPass: HomeFirstPass;
   activity: HomeActivity;
   scoreDistribution: ScoreDistribution;
+  xp: HomeXpProgress;
+}
+
+interface HomeXpProgress {
+  totalXp: number;
+  level: number;
+  xpInLevel: number;
+  xpToNextLevel: number;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -116,9 +125,12 @@ function cellIntensity(count: number, maxCount: number): number {
 
 export function HomePage() {
   const { theme } = useTheme();
+  const { user } = useAuth();
   const timezone = getTimezone();
   const { data, isLoading, error } = useQuery<HomeSummaryResponse>({
-    queryKey: ["home-summary", timezone],
+    // User-scoped: two accounts in one browser session must never share
+    // cached summary/XP data (#712).
+    queryKey: ["home-summary", user?.id ?? "anonymous", timezone],
     queryFn: () => api.get<HomeSummaryResponse>(`/home/summary?timezone=${encodeURIComponent(timezone)}`),
   });
 
@@ -176,7 +188,7 @@ export function HomePage() {
     return <main style={pageCanvasStyle} />;
   }
 
-  const { coverage, conquest, firstPass, activity, scoreDistribution } = data;
+  const { coverage, conquest, firstPass, activity, scoreDistribution, xp } = data;
   const maxCount = activity.days.reduce((max, day) => Math.max(max, day.count), 0);
   const weekColumns = buildWeekColumns(activity.days);
   const monthLabels = buildMonthLabels(weekColumns);
@@ -204,6 +216,44 @@ export function HomePage() {
         <h1 style={{ fontSize: "1.75rem", fontWeight: 800, marginBottom: "1.5rem", color: "var(--color-text)" }}>
           Home
         </h1>
+
+        <section
+          data-testid="home-xp-card"
+          style={{
+            padding: "1.5rem",
+            backgroundColor: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-lg)",
+            boxShadow: "var(--shadow-sm)",
+            marginBottom: "1.5rem",
+          }}
+        >
+          <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            Lifetime XP
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0.75rem" }}>
+            <span data-testid="home-xp-level" style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--color-primary)" }}>
+              Level {xp.level}
+            </span>
+            <span data-testid="home-xp-total" style={{ color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+              {xp.totalXp} total XP
+            </span>
+          </div>
+          <div
+            role="progressbar"
+            data-testid="home-xp-progressbar"
+            aria-label={`Level ${xp.level} progress`}
+            aria-valuenow={xp.xpInLevel}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            style={{ marginTop: "0.75rem", height: "0.5rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "999px", overflow: "hidden" }}
+          >
+            <div style={{ width: `${xp.xpInLevel}%`, height: "100%", backgroundColor: "var(--color-primary)" }} />
+          </div>
+          <div data-testid="home-xp-progress-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+            {xp.xpInLevel} / 100 XP · {xp.xpToNextLevel} XP to Level {xp.level + 1}
+          </div>
+        </section>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
         <section style={statCardStyle}>

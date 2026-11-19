@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -12,18 +12,20 @@ from bson import ObjectId
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.exam_grading import build_exam_summary, build_tracking_update
 from app.infrastructure.vlm.client import VLMError
 from app.main import create_app
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.storage.mongo import get_mongo_adapter
 from app.presentation.deps import (
     get_app_settings,
     get_current_user,
     get_database,
     get_grading_vlm_client,
+    get_mongo_adapter,
     get_s3_storage,
 )
 from tests.api.conftest import FakeDatabase
+from tests.test_utils.db_fakes import FakeCollection
 
 
 class FakeSession:
@@ -35,6 +37,110 @@ class FakeMongoAdapter:
     @asynccontextmanager
     async def start_session(self) -> AsyncIterator[FakeSession]:
         yield FakeSession()
+
+
+class _TransientTransactionError(Exception):
+    """Stands in for Mongo's TransientTransactionError abort."""
+
+
+class _ExamFindProbe:
+    """Proxies the fake exams collection to model concurrent writes and
+    transient aborts deterministically (#712): runs ``side_effect`` after
+    read ``side_effect_after`` and aborts read ``abort_on`` before anything
+    is written."""
+
+    def __init__(
+        self,
+        inner: FakeCollection,
+        *,
+        side_effect_after: int | None = None,
+        side_effect: Callable[[], None] | None = None,
+        abort_on: int | None = None,
+    ) -> None:
+        self._inner = inner
+        self._side_effect_after = side_effect_after
+        self._side_effect = side_effect
+        self._abort_on = abort_on
+        self._reads = 0
+
+    async def find_one(
+        self,
+        query: dict[str, Any],
+        sort: Any | None = None,
+        session: Any | None = None,
+    ) -> dict[str, Any] | None:
+        self._reads += 1
+        if self._abort_on is not None and self._reads == self._abort_on:
+            raise _TransientTransactionError()
+        document = await self._inner.find_one(query, sort=sort, session=session)
+        if self._side_effect_after is not None and self._reads == self._side_effect_after:
+            assert self._side_effect is not None
+            self._side_effect()
+        return document
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _RetryingSession(FakeSession):
+    """with_transaction that aborts the first attempt before any write and
+    retries once after ``on_retry`` runs, mirroring Mongo's transient-error
+    retry where the callback reloads its snapshot."""
+
+    def __init__(self, on_retry: Callable[[], None]) -> None:
+        self._on_retry = on_retry
+
+    async def with_transaction(self, callback: Any) -> Any:
+        try:
+            return await callback(self)
+        except _TransientTransactionError:
+            self._on_retry()
+            return await callback(self)
+
+
+class _RetryingOnceAdapter(FakeMongoAdapter):
+    def __init__(self, on_retry: Callable[[], None]) -> None:
+        self._on_retry = on_retry
+
+    @asynccontextmanager
+    async def start_session(self) -> AsyncIterator[_RetryingSession]:
+        yield _RetryingSession(self._on_retry)
+
+
+def _apply_concurrent_self_report(
+    database: FakeDatabase,
+    exam_id: ObjectId,
+    item_id: str,
+    user_id: ObjectId,
+    *,
+    is_correct: bool,
+    resolved_at: datetime,
+) -> None:
+    """Commit the writes a concurrent self-report of ``item_id`` would
+    persist: item grading, exam summary, and problem tracking (#712)."""
+    stored = next(doc for doc in database["exams"]._documents if doc["_id"] == exam_id)
+    for item in stored["items"]:
+        if item["itemId"] != item_id:
+            continue
+        item["grading"] = {
+            "status": "correct" if is_correct else "incorrect",
+            "method": "self-report",
+            "isCorrect": is_correct,
+            "score": 1.0 if is_correct else 0.0,
+            "gradedAt": resolved_at,
+            "selfReportedCorrect": is_correct,
+        }
+        problem = next(
+            doc for doc in database["problems"]._documents if doc["_id"] == item["problemId"]
+        )
+        problem["tracking"] = build_tracking_update(
+            dict(problem.get("tracking", {})),
+            now=resolved_at,
+            is_correct=is_correct,
+        )
+        problem["updatedAt"] = resolved_at
+    stored["summary"] = build_exam_summary(stored["items"])
+    stored["updatedAt"] = resolved_at
 
 
 class FakeStorage:
@@ -2449,3 +2555,216 @@ async def test_selection_candidates_history_loading_is_batched(
     assert response.json()["total"] == 6
     # Adding candidates must not scale into per-problem history reads (#708).
     assert find_calls == {"practice_attempts": 1, "exams": 1}
+
+
+from app.presentation.exam_helpers import make_exam_item
+
+
+def _seed_submitted_exam_with_pending_items(
+    database: FakeDatabase,
+    user_id: ObjectId,
+    problems: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Submitted exam whose items are all pending review with saved answers."""
+    items = []
+    for index, problem in enumerate(problems):
+        item = make_exam_item(problem, order=index + 1)
+        item["answer"] = {"raw": f"answer {index}", "savedAt": datetime.now(UTC)}
+        item["grading"] = {"status": "pending-review"}
+        items.append(item)
+    now = datetime.now(UTC)
+    exam = {
+        "_id": ObjectId(),
+        "userId": user_id,
+        "state": "submitted",
+        "items": items,
+        "summary": {
+            "totalProblems": len(items),
+            "answeredProblems": len(items),
+            "gradedProblems": 0,
+            "pendingProblems": len(items),
+            "correctProblems": 0,
+            "failedProblems": 0,
+            "score": None,
+        },
+        "createdAt": now,
+        "startedAt": now,
+        "submittedAt": now,
+        "updatedAt": now,
+    }
+    database["exams"].seed(exam)
+    return exam
+
+
+@pytest.mark.asyncio
+async def test_self_report_preserves_concurrent_resolutions_of_distinct_items(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """A committed concurrent resolution of item B — landing between the
+    outer read and the transactional snapshot — must survive item A's
+    resolution (#712).
+
+    The old write path stored ``items`` from the pre-transaction read, so the
+    concurrent resolution was reverted to pending-review.
+    """
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    problems = [
+        make_problem(user_id, text=f"p{i}", problem_type="fill-in-the-blank", correct_answer=str(i))
+        for i in range(2)
+    ]
+    database["problems"].seed(*problems)
+    exam = _seed_submitted_exam_with_pending_items(database, user_id, problems)
+    item_a = exam["items"][0]["itemId"]
+    item_b = exam["items"][1]["itemId"]
+    resolved_at = datetime.now(UTC)
+
+    def resolve_item_b_concurrently() -> None:
+        _apply_concurrent_self_report(
+            database, exam["_id"], item_b, user_id, is_correct=False, resolved_at=resolved_at
+        )
+
+    # The self-report request reads exams twice: the outer owned read (#1),
+    # then the transactional snapshot (#2). The concurrent write lands after
+    # #1, so only a snapshot reload inside the transaction can observe it.
+    database._collections["exams"] = _ExamFindProbe(
+        database._collections["exams"],
+        side_effect_after=1,
+        side_effect=resolve_item_b_concurrently,
+    )
+
+    first = await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": True},
+    )
+    assert first.status_code == 200
+
+    stored = database["exams"]._documents[0]
+    stored_by_id = {str(item["itemId"]): item for item in stored["items"]}
+    # Both judgments survive: the transactional snapshot reloaded item B's
+    # committed resolution instead of rewriting it from the outer read.
+    assert stored_by_id[item_a]["grading"]["status"] == "correct"
+    assert stored_by_id[item_b]["grading"]["status"] == "incorrect"
+    assert stored["summary"]["correctProblems"] == 1
+    assert stored["summary"]["failedProblems"] == 1
+    # Tracking incremented exactly once per resolution.
+    tracking_by_problem = {
+        str(doc["_id"]): doc["tracking"] for doc in database["problems"]._documents
+    }
+    assert tracking_by_problem[str(problems[0]["_id"])]["exposureCount"] == 1
+    assert tracking_by_problem[str(problems[0]["_id"])]["correctCount"] == 1
+    assert tracking_by_problem[str(problems[1]["_id"])]["exposureCount"] == 1
+    assert tracking_by_problem[str(problems[1]["_id"])]["failedCount"] == 1
+    # Lifetime XP from the merged history: 5 (correct) + 10 (incorrect).
+    home = await client.get("/api/v1/home/summary")
+    assert home.status_code == 200
+    assert home.json()["xp"]["totalXp"] == 15
+
+
+@pytest.mark.asyncio
+async def test_self_report_retry_reloads_snapshot_and_cannot_overwrite_concurrent_resolutions(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """A transaction retried after a transient abort reloads its snapshot
+    (#712): an already-resolved target fails with 409 instead of overwriting
+    the concurrent resolutions of either item, and tracking is incremented
+    exactly once per resolution.
+    """
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    problems = [
+        make_problem(user_id, text=f"p{i}", problem_type="fill-in-the-blank", correct_answer=str(i))
+        for i in range(2)
+    ]
+    database["problems"].seed(*problems)
+    exam = _seed_submitted_exam_with_pending_items(database, user_id, problems)
+    item_a = exam["items"][0]["itemId"]
+    item_b = exam["items"][1]["itemId"]
+    resolved_at = datetime.now(UTC)
+
+    def resolve_both_items_concurrently() -> None:
+        _apply_concurrent_self_report(
+            database, exam["_id"], item_a, user_id, is_correct=True, resolved_at=resolved_at
+        )
+        _apply_concurrent_self_report(
+            database, exam["_id"], item_b, user_id, is_correct=False, resolved_at=resolved_at
+        )
+
+    # Attempt 1 aborts at the snapshot read (#2) before writing anything; the
+    # concurrent resolutions commit during the retry window, and attempt 2's
+    # snapshot (#3) observes them.
+    database._collections["exams"] = _ExamFindProbe(database._collections["exams"], abort_on=2)
+    exams_app.dependency_overrides[get_mongo_adapter] = lambda: _RetryingOnceAdapter(
+        resolve_both_items_concurrently
+    )
+
+    replay = await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": True},
+    )
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "ITEM_NOT_PENDING_REVIEW"
+
+    stored = database["exams"]._documents[0]
+    stored_by_id = {str(item["itemId"]): item for item in stored["items"]}
+    # The concurrent resolutions survived the aborted retry untouched.
+    assert stored_by_id[item_a]["grading"]["status"] == "correct"
+    assert stored_by_id[item_b]["grading"]["status"] == "incorrect"
+    assert stored["summary"]["correctProblems"] == 1
+    assert stored["summary"]["failedProblems"] == 1
+    # Exactly-once tracking: only the concurrent resolutions counted.
+    tracking_by_problem = {
+        str(doc["_id"]): doc["tracking"] for doc in database["problems"]._documents
+    }
+    assert tracking_by_problem[str(problems[0]["_id"])]["exposureCount"] == 1
+    assert tracking_by_problem[str(problems[0]["_id"])]["correctCount"] == 1
+    assert tracking_by_problem[str(problems[1]["_id"])]["exposureCount"] == 1
+    assert tracking_by_problem[str(problems[1]["_id"])]["failedCount"] == 1
+    # Both judged items feed XP once: 5 (correct) + 10 (incorrect).
+    home = await client.get("/api/v1/home/summary")
+    assert home.status_code == 200
+    assert home.json()["xp"]["totalXp"] == 15
+
+
+@pytest.mark.asyncio
+async def test_self_report_replay_does_not_double_apply_resolution(
+    exams_app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    database: FakeDatabase = exams_app.state.fake_database
+    user_id = exams_app.state.primary_user["_id"]
+
+    problems = [
+        make_problem(user_id, text=f"p{i}", problem_type="fill-in-the-blank", correct_answer=str(i))
+        for i in range(2)
+    ]
+    database["problems"].seed(*problems)
+    exam = _seed_submitted_exam_with_pending_items(database, user_id, problems)
+    item_a = exam["items"][0]["itemId"]
+    item_b = exam["items"][1]["itemId"]
+
+    await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": True},
+    )
+    await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_b}/self-report",
+        json={"isCorrect": False},
+    )
+    tracking_after_resolutions = deepcopy(database["problems"]._documents[0]["tracking"])
+    stored_after_resolutions = deepcopy(database["exams"]._documents[0])
+
+    replay = await client.post(
+        f"/api/v1/exams/{exam['_id']}/items/{item_a}/self-report",
+        json={"isCorrect": False},
+    )
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "ITEM_NOT_PENDING_REVIEW"
+
+    # The replay changed nothing: judgments and tracking are untouched.
+    assert database["exams"]._documents[0] == stored_after_resolutions
+    assert database["problems"]._documents[0]["tracking"] == tracking_after_resolutions

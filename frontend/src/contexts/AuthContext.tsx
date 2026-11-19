@@ -9,13 +9,15 @@ interface AuthState {
   isLoading: boolean;
 }
 
-interface AuthContextType extends AuthState {
+export interface AuthContextType extends AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+
+export { AuthContext };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
