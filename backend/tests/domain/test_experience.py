@@ -225,4 +225,3 @@ def test_non_utc_offset_timestamps_sort_by_absolute_time() -> None:
     ]
     # Order: a (00:00Z incorrect) -> b (01:00Z incorrect) -> c (02:00Z recovery).
     assert compute_xp_progress(records).totalXp == 40
-
