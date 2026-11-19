@@ -93,9 +93,8 @@ jobs:
 
   playwright-tests:
     name: Playwright E2E Tests
-    # Playwright 1.54 cannot install chromium on ubuntu 26.04 runners
-    # ("Playwright does not support chromium on ubuntu26.04-x64"); pin until
-    # the repo's Playwright version supports the newest runner image.
+    # The locked Playwright release cannot install Chromium on Ubuntu 26.04.
+    # Unpin only after browser installation passes on the latest runner image.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
