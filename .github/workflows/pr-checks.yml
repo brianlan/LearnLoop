@@ -93,7 +93,9 @@ jobs:
 
   playwright-tests:
     name: Playwright E2E Tests
-    runs-on: ubuntu-latest
+    # The locked Playwright release cannot install Chromium on Ubuntu 26.04.
+    # Unpin only after browser installation passes on the latest runner image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
