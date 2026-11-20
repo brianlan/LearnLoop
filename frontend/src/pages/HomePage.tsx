@@ -224,18 +224,7 @@ export function HomePage() {
         </h1>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
-          <section
-            data-testid="home-xp-card"
-            style={{
-              flex: "1 1 0",
-              minWidth: "240px",
-              padding: "1.5rem",
-              backgroundColor: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-lg)",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
+          <section data-testid="home-xp-card" style={statCardStyle}>
             <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
               Lifetime XP
             </div>
@@ -263,18 +252,7 @@ export function HomePage() {
             </div>
           </section>
 
-          <section
-            data-testid="home-weekly-xp-card"
-            style={{
-              flex: "1 1 0",
-              minWidth: "240px",
-              padding: "1.5rem",
-              backgroundColor: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-lg)",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
+          <section data-testid="home-weekly-xp-card" style={statCardStyle}>
             <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
               This week's XP
             </div>

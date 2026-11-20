@@ -1561,25 +1561,29 @@ async def test_summary_weekly_xp_uses_local_monday_over_utc_monday(
 async def test_summary_weekly_xp_handles_dst_transition_week(
     home_app: FastAPI, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spring-forward week in New York: Monday Mar 9 00:00 EDT == 04:00Z and
-    next Monday Mar 16 00:00 EDT == 04:00Z (not a 168-hour span) (#717)."""
-    _freeze_home_clock(monkeypatch, _utc(2026, 3, 11, 12))
+    """Spring-forward week in New York: this week's Monday Mar 2 00:00 EST ==
+    05:00Z and next Monday Mar 9 00:00 EDT == 04:00Z, so the week spans 167
+    hours — a fixed 168-hour span from the start (or an EST-derived end of
+    05:00Z) would wrongly include the next Monday morning (#717)."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 3, 4, 12))
     database: FakeDatabase = home_app.state.fake_database
     user_id = home_app.state.user["_id"]
     ids = [make_problem(user_id) for _ in range(4)]
     database.seed("problems", ids)
     database.seed("practice_attempts", [
-        # Mar 9 03:30Z == Sunday 23:30 New York: before the local week start.
-        make_practice_attempt(user_id, ids[0]["_id"], created_at=_utc(2026, 3, 9, 3, 30),
+        # Mar 2 04:30Z == Sunday 23:30 EST New York: before the local week start.
+        make_practice_attempt(user_id, ids[0]["_id"], created_at=_utc(2026, 3, 2, 4, 30),
                               grading_status="correct"),
-        # Mar 9 04:30Z == Monday 00:30 New York: inside (EST-derived bounds would exclude it).
-        make_practice_attempt(user_id, ids[1]["_id"], created_at=_utc(2026, 3, 9, 4, 30),
+        # Mar 2 05:00Z == Monday 00:00 EST New York: exactly at the inclusive start.
+        make_practice_attempt(user_id, ids[1]["_id"], created_at=_utc(2026, 3, 2, 5),
                               grading_status="correct"),
-        # Mar 16 03:30Z == Sunday 23:30 New York: inside the final hours.
-        make_practice_attempt(user_id, ids[2]["_id"], created_at=_utc(2026, 3, 16, 3, 30),
+        # Mar 9 00:00Z == Sunday 20:00 EDT New York (clocks changed Mar 8): inside
+        # the final hours of the shortened week.
+        make_practice_attempt(user_id, ids[2]["_id"], created_at=_utc(2026, 3, 9, 0),
                               grading_status="correct"),
-        # Mar 16 04:30Z == Monday 00:30 next week: outside (168-hour bounds would include it).
-        make_practice_attempt(user_id, ids[3]["_id"], created_at=_utc(2026, 3, 16, 4, 30),
+        # Mar 9 04:30Z == Monday 00:30 EDT next week: excluded by the real
+        # 04:00Z end; a 168-hour or EST-derived 05:00Z end would include it.
+        make_practice_attempt(user_id, ids[3]["_id"], created_at=_utc(2026, 3, 9, 4, 30),
                               grading_status="correct"),
     ])
 

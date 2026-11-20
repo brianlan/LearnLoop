@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -248,7 +248,7 @@ describe("HomePage", () => {
     });
   });
 
-  it("does not refetch on tab focus, visibility change, or reconnect", async () => {
+  it("does not refetch on tab focus or visibility change", async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => summaryResponse(),
@@ -260,10 +260,68 @@ describe("HomePage", () => {
 
     window.dispatchEvent(new Event("focus"));
     window.dispatchEvent(new Event("visibilitychange"));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refetch on a genuine offline-to-online reconnection", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => summaryResponse(),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    // A real reconnection is an offline -> online transition; firing "online"
+    // while the manager is already online would not exercise the path.
+    window.dispatchEvent(new Event("offline"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     window.dispatchEvent(new Event("online"));
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
+    // Restore the shared online manager for subsequent tests.
+    onlineManager.setOnline(true);
+  });
+
+  it("refetches cached Home on remount after the week changed, keeping lifetime progress", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: new Date("2026-02-22T10:00:00Z") }); // Sunday
+    const sharedClient = createQueryClient();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 5 },
+      }),
+    });
+    const first = renderHomePage(sharedClient);
+    await waitFor(() => {
+      expect(screen.getByTestId("home-weekly-xp-total").textContent).toBe("5 XP");
+    });
+    expect(screen.getByTestId("home-xp-total").textContent).toBe("30 total XP");
+    first.unmount();
+
+    // Cross into Monday while Home is unmounted, then revisit.
+    vi.setSystemTime(new Date("2026-02-23T00:05:00Z"));
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 65 },
+      }),
+    });
+    renderHomePage(sharedClient);
+    await waitFor(() => {
+      expect(screen.getByTestId("home-weekly-xp-total").textContent).toBe("65 XP");
+    });
+    expect(screen.getByTestId("home-weekly-xp-progress-text").textContent).toBe("65 / 50 XP");
+    // Lifetime progress is retained unchanged across the week change.
+    expect(screen.getByTestId("home-xp-total").textContent).toBe("30 total XP");
+    expect(screen.getByTestId("home-xp-progress-text").textContent).toBe(
+      "30 / 100 XP · 70 XP to Level 2"
+    );
+    vi.useRealTimers();
   });
 
   it("does not refetch when time advances across Monday while mounted", async () => {
