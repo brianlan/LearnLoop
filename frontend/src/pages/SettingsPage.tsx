@@ -21,6 +21,9 @@ interface SettingsResponse {
     force_path_style: boolean;
   };
   preview_extracting_window_seconds: number;
+  experience: {
+    weekly_xp_goal: number;
+  };
   helper_vlm: VlmProfileSettings;
   math_ingestion_vlm: VlmProfileSettings;
   english_ingestion_vlm: VlmProfileSettings;
@@ -535,6 +538,10 @@ export function SettingsPage() {
 
       <SettingSection title="Preview">
         <SettingRow label="Preview Window (seconds)" value={data.preview_extracting_window_seconds} />
+      </SettingSection>
+
+      <SettingSection title="Experience">
+        <SettingRow label="Weekly XP Goal" value={`${data.experience.weekly_xp_goal} XP`} />
       </SettingSection>
 
       {health && (

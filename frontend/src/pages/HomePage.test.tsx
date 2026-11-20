@@ -53,7 +53,7 @@ function summaryResponse(overrides: Partial<{
   firstPassPercentage: number;
   days: { date: string; count: number }[];
   scoreDistributionBuckets: { start: number; neverTested: number; minAged: number; tested: number; cooldown: number }[];
-  xp: { totalXp: number; level: number; xpInLevel: number; xpToNextLevel: number; weeklyXp: number };
+  xp: { totalXp: number; level: number; xpInLevel: number; xpToNextLevel: number; weeklyXp: number; weeklyGoal: number };
 }> = {}) {
   const today = new Date();
   const days: { date: string; count: number }[] = [];
@@ -87,7 +87,7 @@ function summaryResponse(overrides: Partial<{
     scoreDistribution: {
       buckets: overrides.scoreDistributionBuckets ?? [],
     },
-    xp: overrides.xp ?? { totalXp: 0, level: 1, xpInLevel: 0, xpToNextLevel: 100, weeklyXp: 0 },
+    xp: overrides.xp ?? { totalXp: 0, level: 1, xpInLevel: 0, xpToNextLevel: 100, weeklyXp: 0, weeklyGoal: 50 },
   };
 }
 
@@ -157,7 +157,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55, weeklyXp: 0 },
+        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55, weeklyXp: 0, weeklyGoal: 50 },
       }),
     });
     renderHomePage();
@@ -176,7 +176,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 0 },
+        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 0, weeklyGoal: 50 },
       }),
     });
     renderHomePage();
@@ -199,16 +199,20 @@ describe("HomePage", () => {
   });
 
   it.each([
-    { weeklyXp: 35, expectedNow: "35", expectedWidth: "70%" },
-    { weeklyXp: 50, expectedNow: "50", expectedWidth: "100%" },
-    { weeklyXp: 65, expectedNow: "50", expectedWidth: "100%" },
+    { weeklyXp: 35, weeklyGoal: 50, expectedNow: "35", expectedWidth: "70%" },
+    { weeklyXp: 50, weeklyGoal: 50, expectedNow: "50", expectedWidth: "100%" },
+    { weeklyXp: 65, weeklyGoal: 50, expectedNow: "50", expectedWidth: "100%" },
+    { weeklyXp: 35, weeklyGoal: 100, expectedNow: "35", expectedWidth: "35%" },
+    { weeklyXp: 0, weeklyGoal: 100, expectedNow: "0", expectedWidth: "0%" },
+    { weeklyXp: 35, weeklyGoal: 20, expectedNow: "20", expectedWidth: "100%" },
+    { weeklyXp: 20, weeklyGoal: 20, expectedNow: "20", expectedWidth: "100%" },
   ])(
-    "renders weekly total $weeklyXp XP with capped progress values and uncapped text",
-    async ({ weeklyXp, expectedNow, expectedWidth }) => {
+    "renders weekly total $weeklyXp of goal $weeklyGoal with capped progress values and uncapped text",
+    async ({ weeklyXp, weeklyGoal, expectedNow, expectedWidth }) => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => summaryResponse({
-          xp: { totalXp: 100, level: 2, xpInLevel: 0, xpToNextLevel: 100, weeklyXp },
+          xp: { totalXp: 100, level: 2, xpInLevel: 0, xpToNextLevel: 100, weeklyXp, weeklyGoal },
         }),
       });
       renderHomePage();
@@ -218,12 +222,12 @@ describe("HomePage", () => {
 
       expect(screen.getByTestId("home-weekly-xp-total").textContent).toBe(`${weeklyXp} XP`);
       expect(screen.getByTestId("home-weekly-xp-progress-text").textContent).toBe(
-        `${weeklyXp} / 50 XP`
+        `${weeklyXp} / ${weeklyGoal} XP`
       );
       const bar = screen.getByRole("progressbar", { name: "This week's XP progress" });
       expect(bar).toHaveAttribute("aria-valuenow", expectedNow);
-      expect(bar).toHaveAttribute("aria-valuemax", "50");
-      expect(bar).toHaveAttribute("aria-valuetext", `${weeklyXp} of 50 XP`);
+      expect(bar).toHaveAttribute("aria-valuemax", `${weeklyGoal}`);
+      expect(bar).toHaveAttribute("aria-valuetext", `${weeklyXp} of ${weeklyGoal} XP`);
       expect((bar.firstElementChild as HTMLElement | null)?.style.width).toBe(expectedWidth);
     }
   );
@@ -233,7 +237,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 5, level: 1, xpInLevel: 5, xpToNextLevel: 95, weeklyXp: 5 },
+        xp: { totalXp: 5, level: 1, xpInLevel: 5, xpToNextLevel: 95, weeklyXp: 5, weeklyGoal: 50 },
       }),
     });
     const first = renderHomePage(sharedClient);
@@ -293,7 +297,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 5 },
+        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 5, weeklyGoal: 50 },
       }),
     });
     const first = renderHomePage(sharedClient);
@@ -308,7 +312,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 65 },
+        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 65, weeklyGoal: 50 },
       }),
     });
     renderHomePage(sharedClient);
@@ -345,7 +349,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55, weeklyXp: 20 },
+        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55, weeklyXp: 20, weeklyGoal: 50 },
       }),
     });
     const first = renderHomePage(sharedClient, "user-1");
@@ -375,7 +379,7 @@ describe("HomePage", () => {
     resolveUser2({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 7, level: 1, xpInLevel: 7, xpToNextLevel: 93, weeklyXp: 7 },
+        xp: { totalXp: 7, level: 1, xpInLevel: 7, xpToNextLevel: 93, weeklyXp: 7, weeklyGoal: 50 },
       }),
     });
     await waitFor(() => {

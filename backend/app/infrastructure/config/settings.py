@@ -164,6 +164,11 @@ class Settings(BaseSettings):
     # Teacher password configuration
     teacher_password_default: str = Field(default="default-teacher-password")
 
+    # Weekly XP display goal for Home (Settings shows it as
+    # Experience -> Weekly XP Goal). Runtime key WEEKLY_XP_GOAL in
+    # backend/.env; changes apply after a backend restart.
+    weekly_xp_goal: int = Field(default=50, gt=0)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

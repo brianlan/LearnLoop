@@ -55,6 +55,9 @@ async def get_settings_info() -> dict:
             "force_path_style": settings.s3_force_path_style,
         },
         "preview_extracting_window_seconds": settings.preview_extracting_window_seconds,
+        "experience": {
+            "weekly_xp_goal": settings.weekly_xp_goal,
+        },
         "session": {
             "cookie_name": settings.session_cookie_name,
             "secure": settings.session_secure,

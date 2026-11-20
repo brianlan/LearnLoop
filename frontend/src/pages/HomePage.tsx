@@ -61,6 +61,7 @@ interface HomeXpProgress {
   xpInLevel: number;
   xpToNextLevel: number;
   weeklyXp: number;
+  weeklyGoal: number;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -261,22 +262,23 @@ export function HomePage() {
                 {xp.weeklyXp} XP
               </span>
             </div>
-            {/* 50 XP is a display goal, not a cap: only the bar and its
-                numeric accessibility value clamp; the real total stays visible. */}
+            {/* The weekly goal is backend display metadata, not a cap: only the
+                bar and its numeric accessibility value clamp; the real total
+                stays visible. */}
             <div
               role="progressbar"
               data-testid="home-weekly-xp-progressbar"
               aria-label="This week's XP progress"
-              aria-valuenow={Math.min(xp.weeklyXp, 50)}
+              aria-valuenow={Math.min(xp.weeklyXp, xp.weeklyGoal)}
               aria-valuemin={0}
-              aria-valuemax={50}
-              aria-valuetext={`${xp.weeklyXp} of 50 XP`}
+              aria-valuemax={xp.weeklyGoal}
+              aria-valuetext={`${xp.weeklyXp} of ${xp.weeklyGoal} XP`}
               style={{ marginTop: "0.75rem", height: "0.5rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "999px", overflow: "hidden" }}
             >
-              <div style={{ width: `${Math.min(xp.weeklyXp / 50, 1) * 100}%`, height: "100%", backgroundColor: "var(--color-primary)" }} />
+              <div style={{ width: `${Math.min(xp.weeklyXp / xp.weeklyGoal, 1) * 100}%`, height: "100%", backgroundColor: "var(--color-primary)" }} />
             </div>
             <div data-testid="home-weekly-xp-progress-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
-              {xp.weeklyXp} / 50 XP
+              {xp.weeklyXp} / {xp.weeklyGoal} XP
             </div>
           </section>
         </div>
