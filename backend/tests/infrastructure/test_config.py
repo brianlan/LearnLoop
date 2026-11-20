@@ -343,5 +343,9 @@ def test_get_settings_loads_weekly_xp_goal_from_runtime_dotenv(
         # Process-cached until restart: editing the file does not hot-reload.
         (tmp_path / ".env").write_text("WEEKLY_XP_GOAL=20\n")
         assert settings_module.get_settings().weekly_xp_goal == 80
+
+        # After a restart (cache clear), the new value applies.
+        settings_module.get_settings.cache_clear()
+        assert settings_module.get_settings().weekly_xp_goal == 20
     finally:
         settings_module.get_settings.cache_clear()

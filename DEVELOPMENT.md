@@ -271,7 +271,10 @@ docker compose down
 
 The canonical template lives in `.env.example`.
 
-Runtime settings are read from the backend's local `backend/.env` file (the Compose `app` service imports `./backend/.env`). The loader runs once at startup and the validated result is process-cached, so changing a value requires restarting/recreating the backend; a browser refresh alone never reloads it.
+Runtime settings are read from the backend's local `backend/.env` file (the Compose `app` service imports `./backend/.env`). The loader runs once at startup and the validated result is process-cached, so a browser refresh alone never reloads a value. To apply a change:
+
+- Local Python process: restart the process (it rereads `backend/.env` on startup).
+- Docker Compose: `env_file` values become the container environment at creation, so `docker compose restart app` keeps the old value. Recreate the container instead: `docker compose up -d --force-recreate app`.
 
 | Variable | Purpose | Local dev default |
 | --- | --- | --- |
@@ -358,7 +361,7 @@ Runtime settings are read from the backend's local `backend/.env` file (the Comp
 | `PROBLEM_SELECTION_FAILURE_RATE_WEIGHT` | Weight for problems with high failure rates | `1.0` |
 | `PROBLEM_SELECTION_RECENCY_WEIGHT` | Weight for recently tested problems | `1.0` |
 | `PROBLEM_SELECTION_MIN_AGE_DAYS` | Minimum age (days) before a problem appears in practice or exams | `3` |
-| `WEEKLY_XP_GOAL` | Weekly XP display goal for Home ("This week's XP") and Settings (Experience → Weekly XP Goal); positive integer, read from the runtime `backend/.env` at startup — restart the backend to apply changes | `50` |
+| `WEEKLY_XP_GOAL` | Weekly XP display goal for Home ("This week's XP") and Settings (Experience → Weekly XP Goal); positive integer, read from the runtime `backend/.env` at startup — restart the backend process (or recreate the Compose container) to apply | `50` |
 | `LITELLM_LOCAL_MODEL_COST_MAP` | Skip LiteLLM's remote model-cost-map fetch and use the bundled copy | `True` in tests |
 
 ### AI tutoring VLM notes
