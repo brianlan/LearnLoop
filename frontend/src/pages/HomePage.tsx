@@ -60,6 +60,7 @@ interface HomeXpProgress {
   level: number;
   xpInLevel: number;
   xpToNextLevel: number;
+  weeklyXp: number;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -132,6 +133,11 @@ export function HomePage() {
     // cached summary/XP data (#712).
     queryKey: ["home-summary", user?.id ?? "anonymous", timezone],
     queryFn: () => api.get<HomeSummaryResponse>(`/home/summary?timezone=${encodeURIComponent(timezone)}`),
+    // Weekly XP refreshes on entering/reloading Home only (#717): staying
+    // mounted across Monday, refocusing the tab, or reconnecting must not
+    // refetch. Mount/navigation refetch keeps working via staleTime 0.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const [activeTooltip, setActiveTooltip] = useState<{ date: string; text: string } | null>(null);
@@ -217,43 +223,85 @@ export function HomePage() {
           Home
         </h1>
 
-        <section
-          data-testid="home-xp-card"
-          style={{
-            padding: "1.5rem",
-            backgroundColor: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-lg)",
-            boxShadow: "var(--shadow-sm)",
-            marginBottom: "1.5rem",
-          }}
-        >
-          <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
-            Lifetime XP
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0.75rem" }}>
-            <span data-testid="home-xp-level" style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--color-primary)" }}>
-              Level {xp.level}
-            </span>
-            <span data-testid="home-xp-total" style={{ color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
-              {xp.totalXp} total XP
-            </span>
-          </div>
-          <div
-            role="progressbar"
-            data-testid="home-xp-progressbar"
-            aria-label={`Level ${xp.level} progress`}
-            aria-valuenow={xp.xpInLevel}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            style={{ marginTop: "0.75rem", height: "0.5rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "999px", overflow: "hidden" }}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
+          <section
+            data-testid="home-xp-card"
+            style={{
+              flex: "1 1 0",
+              minWidth: "240px",
+              padding: "1.5rem",
+              backgroundColor: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-lg)",
+              boxShadow: "var(--shadow-sm)",
+            }}
           >
-            <div style={{ width: `${xp.xpInLevel}%`, height: "100%", backgroundColor: "var(--color-primary)" }} />
-          </div>
-          <div data-testid="home-xp-progress-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
-            {xp.xpInLevel} / 100 XP · {xp.xpToNextLevel} XP to Level {xp.level + 1}
-          </div>
-        </section>
+            <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+              Lifetime XP
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0.75rem" }}>
+              <span data-testid="home-xp-level" style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--color-primary)" }}>
+                Level {xp.level}
+              </span>
+              <span data-testid="home-xp-total" style={{ color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+                {xp.totalXp} total XP
+              </span>
+            </div>
+            <div
+              role="progressbar"
+              data-testid="home-xp-progressbar"
+              aria-label={`Level ${xp.level} progress`}
+              aria-valuenow={xp.xpInLevel}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              style={{ marginTop: "0.75rem", height: "0.5rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "999px", overflow: "hidden" }}
+            >
+              <div style={{ width: `${xp.xpInLevel}%`, height: "100%", backgroundColor: "var(--color-primary)" }} />
+            </div>
+            <div data-testid="home-xp-progress-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+              {xp.xpInLevel} / 100 XP · {xp.xpToNextLevel} XP to Level {xp.level + 1}
+            </div>
+          </section>
+
+          <section
+            data-testid="home-weekly-xp-card"
+            style={{
+              flex: "1 1 0",
+              minWidth: "240px",
+              padding: "1.5rem",
+              backgroundColor: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-lg)",
+              boxShadow: "var(--shadow-sm)",
+            }}
+          >
+            <div style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+              This week's XP
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0.75rem" }}>
+              <span data-testid="home-weekly-xp-total" style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--color-primary)" }}>
+                {xp.weeklyXp} XP
+              </span>
+            </div>
+            {/* 50 XP is a display goal, not a cap: only the bar and its
+                numeric accessibility value clamp; the real total stays visible. */}
+            <div
+              role="progressbar"
+              data-testid="home-weekly-xp-progressbar"
+              aria-label="This week's XP progress"
+              aria-valuenow={Math.min(xp.weeklyXp, 50)}
+              aria-valuemin={0}
+              aria-valuemax={50}
+              aria-valuetext={`${xp.weeklyXp} of 50 XP`}
+              style={{ marginTop: "0.75rem", height: "0.5rem", backgroundColor: "var(--color-surface-muted)", borderRadius: "999px", overflow: "hidden" }}
+            >
+              <div style={{ width: `${Math.min(xp.weeklyXp / 50, 1) * 100}%`, height: "100%", backgroundColor: "var(--color-primary)" }} />
+            </div>
+            <div data-testid="home-weekly-xp-progress-text" style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+              {xp.weeklyXp} / 50 XP
+            </div>
+          </section>
+        </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
         <section style={statCardStyle}>

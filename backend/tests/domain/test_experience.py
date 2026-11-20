@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 
-from app.domain.experience import compute_xp_progress
+from app.domain.experience import XpProgress, compute_xp_progress
 
 BASE = datetime(2026, 1, 1, tzinfo=UTC)
+WEEK_START = datetime(2026, 2, 2, tzinfo=UTC)  # Monday
+WEEK_END = datetime(2026, 2, 9, tzinfo=UTC)  # next Monday
+
+# Offsets relative to BASE: 32 == Monday 00:00 of the week, 39 == next Monday.
+def _week(
+    records: list[tuple[datetime, str, str, str, str, str | None]],
+) -> XpProgress:
+    return compute_xp_progress(records, week_start=WEEK_START, week_end=WEEK_END)
 
 
 def _record(
@@ -225,3 +233,126 @@ def test_non_utc_offset_timestamps_sort_by_absolute_time() -> None:
     ]
     # Order: a (00:00Z incorrect) -> b (01:00Z incorrect) -> c (02:00Z recovery).
     assert compute_xp_progress(records).totalXp == 40
+
+
+def test_weekly_empty_history_has_zero_weekly_xp() -> None:
+    progress = _week([])
+    assert (progress.totalXp, progress.weeklyXp) == (0, 0)
+
+
+def test_weekly_no_current_week_history_keeps_lifetime_total() -> None:
+    progress = _week([_record(1, "correct"), _record(30, "incorrect")])
+    assert (progress.totalXp, progress.weeklyXp) == (15, 0)
+
+
+def test_weekly_counts_rewards_inside_the_week() -> None:
+    # Repeated correct (5 each) and failures (10 each) all count weekly.
+    progress = _week(
+        [
+            _record(32, "correct", record_id="a"),
+            _record(33, "incorrect", record_id="b"),
+            _record(34, "incorrect", record_id="c"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (25, 25)
+
+
+def test_weekly_boundaries_are_monday_inclusive_next_monday_exclusive() -> None:
+    progress = _week(
+        [
+            _record(32, "correct", problem_id="p1", record_id="a"),  # Mon 00:00 exact
+            _record(39, "correct", problem_id="p2", record_id="b"),  # next Mon 00:00 exact
+            _record(31.9, "correct", problem_id="p3", record_id="c"),  # prior Sunday
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (15, 5)
+
+
+def test_weekly_recovery_across_start_boundary_counts_twenty() -> None:
+    # Prior-week failure keeps its 10 out of the week; this-week correct is a
+    # recovery 20 inside the week.
+    progress = _week(
+        [
+            _record(31, "incorrect", record_id="a"),
+            _record(33, "correct", record_id="b"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (30, 20)
+
+
+def test_weekly_variants_and_problems_track_rewards_independently() -> None:
+    progress = _week(
+        [
+            _record(31, "incorrect", problem_id="p1", record_id="a"),
+            _record(33, "correct", problem_id="p1", record_id="b"),
+            _record(34, "correct", problem_id="variant", record_id="c"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (35, 25)
+
+
+def test_weekly_bounds_never_change_lifetime_totals() -> None:
+    records = [
+        _record(1, "incorrect", record_id="a"),
+        _record(30, "correct", record_id="b"),
+        _record(33, "correct", record_id="c"),
+    ]
+    with_bounds = _week(records)
+    without_bounds = compute_xp_progress(records)
+    assert (with_bounds.totalXp, with_bounds.level, with_bounds.xpInLevel, with_bounds.xpToNextLevel) == (
+        without_bounds.totalXp,
+        without_bounds.level,
+        without_bounds.xpInLevel,
+        without_bounds.xpToNextLevel,
+    )
+    assert with_bounds.totalXp == 35
+
+
+def test_weekly_unsorted_and_tied_timestamps_count_chronologically() -> None:
+    # Same pair as test_tied_timestamps_break_ties_deterministically, inside
+    # one week: practice incorrect precedes the exam correct recovery.
+    progress = _week(
+        [
+            _record(33, "correct", source="exam", record_id="b"),
+            _record(33, "incorrect", source="practice", record_id="a"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (30, 30)
+
+
+def test_weekly_blank_and_pending_records_earn_nothing() -> None:
+    progress = _week(
+        [
+            _record(33, "pending-review", record_id="a"),
+            _record(34, "incorrect", answer="   ", record_id="b"),
+            _record(35, "correct", record_id="c"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (5, 5)
+
+
+def test_late_resolved_last_week_failure_makes_this_week_correct_a_recovery() -> None:
+    # Last-week exam incorrect (resolved after this week's success) precedes
+    # the this-week correct in submission order: weekly 5 -> 20, and the
+    # failure's own 10 stays in last week (#717).
+    progress = _week(
+        [
+            _record(33, "correct", source="practice", record_id="new"),
+            _record(31, "incorrect", source="exam", record_id="old"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (30, 20)
+
+
+def test_late_resolved_last_week_success_moves_recovery_out_of_this_week() -> None:
+    # A last-week correct resolved late slots between an older failure and a
+    # this-week correct: the recovery 20 moves to last week and the this-week
+    # subtotal drops from 20 to 5 (#717).
+    progress = _week(
+        [
+            _record(24, "incorrect", source="exam", record_id="old-failure"),
+            _record(33, "correct", source="practice", record_id="this-week"),
+            _record(31, "correct", source="exam", record_id="late-last-week"),
+        ]
+    )
+    assert (progress.totalXp, progress.weeklyXp) == (35, 5)

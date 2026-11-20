@@ -53,7 +53,7 @@ function summaryResponse(overrides: Partial<{
   firstPassPercentage: number;
   days: { date: string; count: number }[];
   scoreDistributionBuckets: { start: number; neverTested: number; minAged: number; tested: number; cooldown: number }[];
-  xp: { totalXp: number; level: number; xpInLevel: number; xpToNextLevel: number };
+  xp: { totalXp: number; level: number; xpInLevel: number; xpToNextLevel: number; weeklyXp: number };
 }> = {}) {
   const today = new Date();
   const days: { date: string; count: number }[] = [];
@@ -87,7 +87,7 @@ function summaryResponse(overrides: Partial<{
     scoreDistribution: {
       buckets: overrides.scoreDistributionBuckets ?? [],
     },
-    xp: overrides.xp ?? { totalXp: 0, level: 1, xpInLevel: 0, xpToNextLevel: 100 },
+    xp: overrides.xp ?? { totalXp: 0, level: 1, xpInLevel: 0, xpToNextLevel: 100, weeklyXp: 0 },
   };
 }
 
@@ -157,7 +157,7 @@ describe("HomePage", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55 },
+        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55, weeklyXp: 0 },
       }),
     });
     renderHomePage();
@@ -172,12 +172,122 @@ describe("HomePage", () => {
     expect(screen.getByTestId("home-xp-progressbar")).toHaveAttribute("aria-valuenow", "45");
   });
 
+  it("renders both labelled XP cards with preserved lifetime display at zero weekly XP", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 30, level: 1, xpInLevel: 30, xpToNextLevel: 70, weeklyXp: 0 },
+      }),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(screen.getByTestId("home-weekly-xp-card")).toBeInTheDocument();
+    });
+
+    const weeklyCard = screen.getByTestId("home-weekly-xp-card");
+    expect(weeklyCard.textContent).toContain("This week's XP");
+    expect(screen.getByTestId("home-weekly-xp-total").textContent).toBe("0 XP");
+    expect(screen.getByTestId("home-weekly-xp-progress-text").textContent).toBe("0 / 50 XP");
+
+    const lifetimeBar = screen.getByRole("progressbar", { name: "Level 1 progress" });
+    const weeklyBar = screen.getByRole("progressbar", { name: "This week's XP progress" });
+    expect(lifetimeBar).toHaveAttribute("aria-valuemax", "100");
+    expect(weeklyBar).toHaveAttribute("aria-valuenow", "0");
+    expect(weeklyBar).toHaveAttribute("aria-valuemin", "0");
+    expect(weeklyBar).toHaveAttribute("aria-valuemax", "50");
+    expect(weeklyBar).toHaveAttribute("aria-valuetext", "0 of 50 XP");
+  });
+
+  it.each([
+    { weeklyXp: 35, expectedNow: "35", expectedWidth: "70%" },
+    { weeklyXp: 50, expectedNow: "50", expectedWidth: "100%" },
+    { weeklyXp: 65, expectedNow: "50", expectedWidth: "100%" },
+  ])(
+    "renders weekly total $weeklyXp XP with capped progress values and uncapped text",
+    async ({ weeklyXp, expectedNow, expectedWidth }) => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => summaryResponse({
+          xp: { totalXp: 100, level: 2, xpInLevel: 0, xpToNextLevel: 100, weeklyXp },
+        }),
+      });
+      renderHomePage();
+      await waitFor(() => {
+        expect(screen.getByTestId("home-weekly-xp-card")).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId("home-weekly-xp-total").textContent).toBe(`${weeklyXp} XP`);
+      expect(screen.getByTestId("home-weekly-xp-progress-text").textContent).toBe(
+        `${weeklyXp} / 50 XP`
+      );
+      const bar = screen.getByRole("progressbar", { name: "This week's XP progress" });
+      expect(bar).toHaveAttribute("aria-valuenow", expectedNow);
+      expect(bar).toHaveAttribute("aria-valuemax", "50");
+      expect(bar).toHaveAttribute("aria-valuetext", `${weeklyXp} of 50 XP`);
+      expect((bar.firstElementChild as HTMLElement | null)?.style.width).toBe(expectedWidth);
+    }
+  );
+
+  it("refetches on remount so returning to Home refreshes cached totals", async () => {
+    const sharedClient = createQueryClient();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => summaryResponse({
+        xp: { totalXp: 5, level: 1, xpInLevel: 5, xpToNextLevel: 95, weeklyXp: 5 },
+      }),
+    });
+    const first = renderHomePage(sharedClient);
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+    first.unmount();
+
+    renderHomePage(sharedClient);
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("does not refetch on tab focus, visibility change, or reconnect", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => summaryResponse(),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("online"));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refetch when time advances across Monday while mounted", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => summaryResponse(),
+    });
+    renderHomePage();
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(8 * 24 * 60 * 60 * 1000);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it("does not leak another user's cached XP while the next request is pending", async () => {
     const sharedClient = createQueryClient();
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55 },
+        xp: { totalXp: 245, level: 3, xpInLevel: 45, xpToNextLevel: 55, weeklyXp: 20 },
       }),
     });
     const first = renderHomePage(sharedClient, "user-1");
@@ -207,7 +317,7 @@ describe("HomePage", () => {
     resolveUser2({
       ok: true,
       json: async () => summaryResponse({
-        xp: { totalXp: 7, level: 1, xpInLevel: 7, xpToNextLevel: 93 },
+        xp: { totalXp: 7, level: 1, xpInLevel: 7, xpToNextLevel: 93, weeklyXp: 7 },
       }),
     });
     await waitFor(() => {
