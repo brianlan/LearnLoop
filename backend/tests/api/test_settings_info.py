@@ -115,6 +115,7 @@ async def test_settings_info_exposes_explicit_ai_profiles(client: AsyncClient) -
     assert len(ALL_VLM_PROFILES) == 11
     assert "vlm" not in payload
     assert payload["preview_extracting_window_seconds"] == 18
+    assert payload["experience"] == {"weekly_xp_goal": 50}
     assert payload["problem_selection"] == {
         "cooldown_days": 7,
         "last_wrong_weight": 1.0,

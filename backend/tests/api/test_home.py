@@ -1310,7 +1310,7 @@ async def test_summary_xp_recovery_spans_practice_and_exam(
     response = await client.get("/api/v1/home/summary")
     # Submission order: exam incorrect (day 1) then practice correct (day 3)
     # -> recovery 10 + 20 = 30. Using submittedAt instead would yield 15.
-    assert response.json()["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70, "weeklyXp": 0}
+    assert response.json()["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70, "weeklyXp": 0, "weeklyGoal": 50}
 
 
 @pytest.mark.asyncio
@@ -1363,7 +1363,7 @@ async def test_summary_xp_repeated_reads_are_stable_and_write_nothing(
     first = (await client.get("/api/v1/home/summary")).json()["xp"]
     second = (await client.get("/api/v1/home/summary")).json()["xp"]
 
-    assert first == second == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70, "weeklyXp": 0}
+    assert first == second == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70, "weeklyXp": 0, "weeklyGoal": 50}
     assert documents(database) == documents_snapshot
 
 
@@ -1526,6 +1526,7 @@ async def test_summary_weekly_xp_boundaries_monday_inclusive_next_monday_exclusi
         "xpInLevel": 15,
         "xpToNextLevel": 85,
         "weeklyXp": 5,
+        "weeklyGoal": 50,
     }
 
 
@@ -1642,3 +1643,56 @@ async def test_summary_weekly_xp_late_grading_uses_submission_week(
     # recovery 20 this week; judgment-arrival attribution would put the 10 in
     # this week too (30).
     assert (response.json()["xp"]["totalXp"], response.json()["xp"]["weeklyXp"]) == (30, 20)
+
+
+@pytest.mark.asyncio
+async def test_weekly_goal_is_shared_between_home_and_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#718: Home xp.weeklyGoal and GET /settings experience.weekly_xp_goal
+    expose the same effective configured goal."""
+    from app.presentation import settings as settings_presentation
+
+    settings = Settings(weekly_xp_goal=123, problem_selection_min_age_days=0)
+    application = _build_home_application(settings)
+    monkeypatch.setattr(settings_presentation, "get_settings", lambda: settings)
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        home = (await ac.get("/api/v1/home/summary")).json()
+        config = (await ac.get("/api/v1/settings")).json()
+
+    assert home["xp"]["weeklyGoal"] == 123
+    assert config["experience"]["weekly_xp_goal"] == 123
+
+
+@pytest.mark.asyncio
+async def test_weekly_goal_change_preserves_earned_xp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#718: the same history yields identical earned XP under different
+    weekly goals; only the returned goal differs."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 1, 14, 12))  # Wednesday UTC
+
+    summaries = []
+    for goal in (50, 100):
+        application = _build_home_application(
+            Settings(weekly_xp_goal=goal, problem_selection_min_age_days=0)
+        )
+        database: FakeDatabase = application.state.fake_database
+        user_id = application.state.user["_id"]
+        problem = make_problem(user_id)
+        database.seed("problems", [problem])
+        database.seed("practice_attempts", [
+            make_practice_attempt(user_id, problem["_id"], created_at=_utc(2026, 1, 13, 10)),
+            make_practice_attempt(user_id, problem["_id"], created_at=_utc(2026, 1, 14, 9)),
+        ])
+        transport = ASGITransport(app=application)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            summaries.append((await ac.get("/api/v1/home/summary")).json()["xp"])
+
+    assert summaries[0]["weeklyGoal"] == 50
+    assert summaries[1]["weeklyGoal"] == 100
+    earned = lambda xp: {key: value for key, value in xp.items() if key != "weeklyGoal"}
+    assert earned(summaries[0]) == earned(summaries[1])
+    assert summaries[0]["weeklyXp"] > 0

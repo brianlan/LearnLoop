@@ -154,6 +154,7 @@ const mockSettings = {
   },
   session: { cookie_name: "ll_session", secure: false, samesite: "lax" },
   problem_selection: { cooldown_days: 7, last_wrong_weight: 1.0, failure_rate_weight: 1.0, recency_weight: 1.0, min_problem_age_days: 3 },
+  experience: { weekly_xp_goal: 77 },
 };
 
 describe("SettingsPage", () => {
@@ -215,6 +216,20 @@ describe("SettingsPage", () => {
     renderWithProviders();
     expect(await screen.findByText("Storage (S3)")).toBeInTheDocument();
     expect(await screen.findByText("http://localhost:9000")).toBeInTheDocument();
+  });
+
+  it("renders the weekly XP goal read-only in the Experience section (#718)", async () => {
+    renderWithProviders();
+
+    expect(await screen.findByText("Experience")).toBeInTheDocument();
+    expect(screen.getByText("Weekly XP Goal")).toBeInTheDocument();
+    // Distinctive nondefault fixture value with its XP units.
+    expect(screen.getByText("77 XP")).toBeInTheDocument();
+
+    // Read-only presentation: no editable control inside the section.
+    const section = screen.getByText("Weekly XP Goal").closest("section");
+    expect(section).not.toBeNull();
+    expect(section!.querySelectorAll("input, textarea, select, button")).toHaveLength(0);
   });
 
   it("renders all VLM settings sections", async () => {

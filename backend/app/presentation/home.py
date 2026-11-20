@@ -68,6 +68,7 @@ class HomeXpProgress(BaseModel):
     xpInLevel: int
     xpToNextLevel: int
     weeklyXp: int
+    weeklyGoal: int
 
 
 class HomeSummaryResponse(BaseModel):
@@ -392,5 +393,6 @@ async def get_home_summary(
             xpInLevel=xp.xpInLevel,
             xpToNextLevel=xp.xpToNextLevel,
             weeklyXp=xp.weeklyXp,
+            weeklyGoal=settings.weekly_xp_goal,
         ),
     )

@@ -291,3 +291,57 @@ def test_settings_reject_invalid_bulk_ingestion_values(monkeypatch) -> None:
     monkeypatch.setenv("BULK_INGESTION_MAX_IMAGES", "0")
     with pytest.raises(ValidationError):
         _IsolatedSettings()
+
+
+def test_settings_weekly_xp_goal_defaults_to_50(monkeypatch) -> None:
+    """#718: omitting WEEKLY_XP_GOAL keeps the 50 XP default."""
+    monkeypatch.delenv("WEEKLY_XP_GOAL", raising=False)
+
+    settings = _IsolatedSettings()
+
+    assert settings.weekly_xp_goal == 50
+
+
+def test_settings_weekly_xp_goal_environment_override(monkeypatch) -> None:
+    """#718: a configured positive integer is loaded from the environment."""
+    monkeypatch.setenv("WEEKLY_XP_GOAL", "100")
+
+    assert _IsolatedSettings().weekly_xp_goal == 100
+
+
+def test_settings_weekly_xp_goal_minimum_valid_value(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_XP_GOAL", "1")
+
+    assert _IsolatedSettings().weekly_xp_goal == 1
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "not-a-number", "12.5"])
+def test_settings_reject_invalid_weekly_xp_goal(monkeypatch, raw) -> None:
+    """#718: invalid configuration fails startup instead of falling back."""
+    monkeypatch.setenv("WEEKLY_XP_GOAL", raw)
+
+    with pytest.raises(ValidationError):
+        _IsolatedSettings()
+
+
+def test_get_settings_loads_weekly_xp_goal_from_runtime_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Runtime get_settings() reads backend/.env (redirected here to a
+    temporary file) and caches the validated configuration, so a changed file
+    is only picked up after a restart/cache clear. Direct Settings()
+    construction keeps ignoring dotenv (#718)."""
+    import app.infrastructure.config.settings as settings_module
+
+    (tmp_path / ".env").write_text("WEEKLY_XP_GOAL=80\n")
+    monkeypatch.setattr(settings_module, "_BACKEND_DIR", tmp_path)
+    monkeypatch.delenv("WEEKLY_XP_GOAL", raising=False)
+    settings_module.get_settings.cache_clear()
+    try:
+        assert settings_module.get_settings().weekly_xp_goal == 80
+
+        # Process-cached until restart: editing the file does not hot-reload.
+        (tmp_path / ".env").write_text("WEEKLY_XP_GOAL=20\n")
+        assert settings_module.get_settings().weekly_xp_goal == 80
+    finally:
+        settings_module.get_settings.cache_clear()
