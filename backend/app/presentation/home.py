@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
@@ -67,6 +67,7 @@ class HomeXpProgress(BaseModel):
     level: int
     xpInLevel: int
     xpToNextLevel: int
+    weeklyXp: int
 
 
 class HomeSummaryResponse(BaseModel):
@@ -180,6 +181,19 @@ def _collect_xp_records(
                 )
             )
     return records
+
+
+def _local_week_bounds(today: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    """Half-open [Monday 00:00, next Monday 00:00) bounds for today's local
+    calendar week, converted to UTC (#717). Local midnight conversions keep
+    DST-transition weeks from being assumed to span exactly 168 hours."""
+    monday = today - timedelta(days=today.weekday())
+    next_monday = monday + timedelta(days=7)
+
+    def _midnight_utc(day: date) -> datetime:
+        return datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(UTC)
+
+    return _midnight_utc(monday), _midnight_utc(next_monday)
 
 
 @router.get("/summary", response_model=HomeSummaryResponse)
@@ -343,8 +357,11 @@ async def get_home_summary(
         if isinstance(task.get("createdAt"), datetime):
             submission_time_by_exam[task["examId"]] = task["createdAt"]
 
+    week_start, week_end = _local_week_bounds(today, tz)
     xp = compute_xp_progress(
-        _collect_xp_records(practice_attempts, submitted_exams, submission_time_by_exam)
+        _collect_xp_records(practice_attempts, submitted_exams, submission_time_by_exam),
+        week_start=week_start,
+        week_end=week_end,
     )
 
     return HomeSummaryResponse(
@@ -374,5 +391,6 @@ async def get_home_summary(
             level=xp.level,
             xpInLevel=xp.xpInLevel,
             xpToNextLevel=xp.xpToNextLevel,
+            weeklyXp=xp.weeklyXp,
         ),
     )

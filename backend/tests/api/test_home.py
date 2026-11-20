@@ -1310,7 +1310,7 @@ async def test_summary_xp_recovery_spans_practice_and_exam(
     response = await client.get("/api/v1/home/summary")
     # Submission order: exam incorrect (day 1) then practice correct (day 3)
     # -> recovery 10 + 20 = 30. Using submittedAt instead would yield 15.
-    assert response.json()["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
+    assert response.json()["xp"] == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70, "weeklyXp": 0}
 
 
 @pytest.mark.asyncio
@@ -1363,7 +1363,7 @@ async def test_summary_xp_repeated_reads_are_stable_and_write_nothing(
     first = (await client.get("/api/v1/home/summary")).json()["xp"]
     second = (await client.get("/api/v1/home/summary")).json()["xp"]
 
-    assert first == second == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70}
+    assert first == second == {"totalXp": 30, "level": 1, "xpInLevel": 30, "xpToNextLevel": 70, "weeklyXp": 0}
     assert documents(database) == documents_snapshot
 
 
@@ -1471,3 +1471,174 @@ async def test_summary_xp_excludes_blank_answers_and_pending_judgments(
     response = await client.get("/api/v1/home/summary")
     # If the blank incorrect had set a predecessor, the correct would be 20.
     assert response.json()["xp"]["totalXp"] == 5
+
+
+def _freeze_home_clock(monkeypatch: pytest.MonkeyPatch, instant: datetime) -> None:
+    """Pin datetime.now inside the home module to a controlled instant (#717).
+
+    The metaclass keeps ``isinstance(value, datetime)`` checks in the patched
+    module true for real datetime values read from storage.
+    """
+    fixed = instant
+
+    class _FixedDatetimeMeta(type):
+        def __instancecheck__(cls, instance: object) -> bool:
+            return isinstance(instance, datetime)
+
+    class _FixedDatetime(datetime, metaclass=_FixedDatetimeMeta):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return fixed.astimezone(tz) if tz is not None else fixed
+
+    monkeypatch.setattr("app.presentation.home.datetime", _FixedDatetime)
+
+
+def _utc(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_summary_weekly_xp_boundaries_monday_inclusive_next_monday_exclusive(
+    home_app: FastAPI, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Week is [Monday 00:00, next Monday 00:00); exact next-Monday
+    submissions belong to the next week (#717)."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 1, 12, 0, 30))  # Monday 00:30 UTC
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    at_start = make_problem(user_id)
+    prior_week = make_problem(user_id)
+    next_week = make_problem(user_id)
+    database.seed("problems", [at_start, prior_week, next_week])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, at_start["_id"], created_at=_utc(2026, 1, 12),
+                              grading_status="correct"),
+        make_practice_attempt(user_id, prior_week["_id"], created_at=_utc(2026, 1, 5),
+                              grading_status="correct"),
+        make_practice_attempt(user_id, next_week["_id"], created_at=_utc(2026, 1, 19),
+                              grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    assert response.json()["xp"] == {
+        "totalXp": 15,
+        "level": 1,
+        "xpInLevel": 15,
+        "xpToNextLevel": 85,
+        "weeklyXp": 5,
+    }
+
+
+@pytest.mark.asyncio
+async def test_summary_weekly_xp_uses_local_monday_over_utc_monday(
+    home_app: FastAPI, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-01-12T02:00Z is Monday in UTC but Sunday 21:00 in New York, so the
+    local week still runs Jan 5..Jan 12 local (#717)."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 1, 12, 2))
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    before_local_week = make_problem(user_id)
+    inside_local_week = make_problem(user_id)
+    database.seed("problems", [before_local_week, inside_local_week])
+    database.seed("practice_attempts", [
+        # Jan 5 04:00Z == Sunday 23:00 New York: before the local week start.
+        make_practice_attempt(user_id, before_local_week["_id"],
+                              created_at=_utc(2026, 1, 5, 4), grading_status="correct"),
+        # Jan 5 06:00Z == Monday 01:00 New York: inside the local week.
+        make_practice_attempt(user_id, inside_local_week["_id"],
+                              created_at=_utc(2026, 1, 5, 6), grading_status="correct"),
+    ])
+
+    local = (await client.get("/api/v1/home/summary?timezone=America/New_York")).json()
+    assert (local["xp"]["totalXp"], local["xp"]["weeklyXp"]) == (10, 5)
+
+    utc = (await client.get("/api/v1/home/summary")).json()
+    assert (utc["xp"]["totalXp"], utc["xp"]["weeklyXp"]) == (10, 0)
+
+
+@pytest.mark.asyncio
+async def test_summary_weekly_xp_handles_dst_transition_week(
+    home_app: FastAPI, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spring-forward week in New York: this week's Monday Mar 2 00:00 EST ==
+    05:00Z and next Monday Mar 9 00:00 EDT == 04:00Z, so the week spans 167
+    hours — a fixed 168-hour span from the start (or an EST-derived end of
+    05:00Z) would wrongly include the next Monday morning (#717)."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 3, 4, 12))
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    ids = [make_problem(user_id) for _ in range(4)]
+    database.seed("problems", ids)
+    database.seed("practice_attempts", [
+        # Mar 2 04:30Z == Sunday 23:30 EST New York: before the local week start.
+        make_practice_attempt(user_id, ids[0]["_id"], created_at=_utc(2026, 3, 2, 4, 30),
+                              grading_status="correct"),
+        # Mar 2 05:00Z == Monday 00:00 EST New York: exactly at the inclusive start.
+        make_practice_attempt(user_id, ids[1]["_id"], created_at=_utc(2026, 3, 2, 5),
+                              grading_status="correct"),
+        # Mar 9 00:00Z == Sunday 20:00 EDT New York (clocks changed Mar 8): inside
+        # the final hours of the shortened week.
+        make_practice_attempt(user_id, ids[2]["_id"], created_at=_utc(2026, 3, 9, 0),
+                              grading_status="correct"),
+        # Mar 9 04:30Z == Monday 00:30 EDT next week: excluded by the real
+        # 04:00Z end; a 168-hour or EST-derived 05:00Z end would include it.
+        make_practice_attempt(user_id, ids[3]["_id"], created_at=_utc(2026, 3, 9, 4, 30),
+                              grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary?timezone=America/New_York")
+    assert (response.json()["xp"]["totalXp"], response.json()["xp"]["weeklyXp"]) == (20, 10)
+
+
+@pytest.mark.asyncio
+async def test_summary_weekly_xp_recovery_across_week_start(
+    home_app: FastAPI, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prior-week failure + this-week correct = 20 weekly XP, 30 lifetime (#717)."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 1, 14))
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=_utc(2026, 1, 11),
+                              grading_status="incorrect"),
+        make_practice_attempt(user_id, problem["_id"], created_at=_utc(2026, 1, 13),
+                              grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    assert (response.json()["xp"]["totalXp"], response.json()["xp"]["weeklyXp"]) == (30, 20)
+
+
+@pytest.mark.asyncio
+async def test_summary_weekly_xp_late_grading_uses_submission_week(
+    home_app: FastAPI, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exam submitted (task createdAt) last week but judged this week keeps
+    its reward in the submission week (#717)."""
+    _freeze_home_clock(monkeypatch, _utc(2026, 1, 14))
+    database: FakeDatabase = home_app.state.fake_database
+    user_id = home_app.state.user["_id"]
+    problem = make_problem(user_id)
+    database.seed("problems", [problem])
+    exam = make_xp_submitted_exam(
+        user_id,
+        items=[make_answered_exam_item(problem["_id"], status="incorrect")],
+        submitted_at=_utc(2026, 1, 9),
+    )
+    database.seed("exams", [exam])
+    database.seed("exam_grading_tasks", [
+        make_grading_task(user_id, exam["_id"], created_at=_utc(2026, 1, 9))
+    ])
+    database.seed("practice_attempts", [
+        make_practice_attempt(user_id, problem["_id"], created_at=_utc(2026, 1, 13),
+                              grading_status="correct"),
+    ])
+
+    response = await client.get("/api/v1/home/summary")
+    # Exam incorrect (Jan 9, last week) then practice correct (Jan 13) is a
+    # recovery 20 this week; judgment-arrival attribution would put the 10 in
+    # this week too (30).
+    assert (response.json()["xp"]["totalXp"], response.json()["xp"]["weeklyXp"]) == (30, 20)
